@@ -27,12 +27,28 @@ const f = reactive({
 
 const periods = computed(() => (store.meta && store.meta.periods) || [])
 
+// `sponsor` is not an interactive filter — it arrives via a link from an MP
+// (the headline stat / profile bills section). It's carried in the URL and
+// preserved across the other filters.
+const sponsor = computed(() => route.query.sponsor || '')
+// The sponsor's display name, derived from the returned bills (avoids a second
+// request to the representatives module just for a label).
+const sponsorName = computed(() => {
+  if (!sponsor.value || !data.value) return sponsor.value
+  for (const b of data.value.bills) {
+    const s = (b.sponsors || []).find((x) => x.person_id === sponsor.value)
+    if (s) return s.name
+  }
+  return sponsor.value
+})
+
 function apply() {
   const query = {}
   if (f.q) query.q = f.q
   if (f.status) query.status = f.status
   if (f.period) query.period = f.period
   if (f.sort && f.sort !== 'number') query.sort = f.sort
+  if (sponsor.value) query.sponsor = sponsor.value
   router.push({ name: 'bills', query })
 }
 
@@ -47,7 +63,7 @@ async function load() {
   try {
     data.value = await api.bills({
       q: route.query.q, status: route.query.status, period: route.query.period,
-      sort: route.query.sort || 'number', limit: 200,
+      sponsor: route.query.sponsor, sort: route.query.sort || 'number', limit: 200,
     })
   } catch { error.value = true } finally { loading.value = false }
 }
@@ -94,6 +110,12 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
     </div>
   </form>
 
+  <p v-if="sponsor" class="card pad sponsorfilter">
+    <span>{{ $t('bills.bySponsor') }}: <strong>{{ sponsorName }}</strong></span>
+    <router-link :to="{ name: 'profile', params: { id: sponsor } }" class="small">{{ $t('bills.viewProfile') }}</router-link>
+    <router-link :to="{ name: 'bills' }" class="small clear">✕ {{ $t('bills.clearSponsor') }}</router-link>
+  </p>
+
   <StateBlock
     :loading="loading" :error="error"
     :empty="!!data && data.bills.length === 0" :empty-text="$t('bills.noResults')"
@@ -126,6 +148,8 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
 
 <style scoped>
 .toolbar { display: grid; grid-template-columns: 2fr 1fr 1.4fr 1fr; gap: .8rem; align-items: end; margin: 1rem 0; }
+.sponsorfilter { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; background: var(--accent-soft); }
+.sponsorfilter .clear { margin-left: auto; }
 .billlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
 .billcard { display: flex; flex-direction: column; gap: .4rem; }
 .billhead { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }

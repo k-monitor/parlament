@@ -267,13 +267,16 @@ Primary use cases:
 - **REP-1 (MUST).** A browsable, searchable **list of representatives**, filterable
   by faction, electoral period, and constituency; each links to a profile.
 - **REP-2 (MUST).** A **representative profile** shows: name, photo (if available),
-  current/past faction(s) with dates, constituency, Wikidata link, and a
-  reverse-chronological **list of their speeches** (each linking into the viewer).
+  current/past faction(s) with dates, constituency, Wikidata link, a
+  reverse-chronological **list of their speeches** (each linking into the viewer),
+  and — when the Bills module (§6A) is enabled — a **list of the bills they
+  submitted**, each linking to the bill (the reciprocal of BILL-3's sponsor links).
 - **REP-3 (MUST).** Per-representative **statistics**, including at least:
   - total **speaking time** (sum of speech durations) and number of speeches;
   - speeches per sitting / over time (trend chart);
-  - **number of bills submitted** *(requires the Bills module, §7 — until then
-    this metric is hidden, not faked)*.
+  - **number of bills submitted** — now provided by the Bills module (§6A). When
+    that module is disabled (EXT-6) the metric is hidden, not faked. The headline
+    count links to the bills filtered by that representative as sponsor.
 - **REP-4.** **Faction-level** aggregate statistics (totals and averages per MP),
   with each faction rendered in a consistent color.
 - **REP-5.** Statistics MUST state their **time scope** (which period/date range)
@@ -283,6 +286,43 @@ Primary use cases:
 - **REP-7.** Statistics are served from **precomputed aggregates** (§4.2) and
   recomputed on each ingest; they must never block on live aggregation of the
   full corpus.
+
+---
+
+## 6A. Functional Requirements — Module: Bills (Irományok)
+
+The first additive feature module beyond proceedings and representatives, built
+to validate the module architecture (§7). It surfaces the bills (*irományok*)
+submitted to the Assembly, sourced from the Felicitas `iromany` API.
+
+- **BILL-1 (MUST).** A **browsable, filterable list of bills**, paginated and
+  filterable by **electoral period**, **status**, **type**, **sponsor**, and
+  **title text**; filters combine. List/filter state is in the **URL query**
+  (deep-linkable, shareable) — including the sponsor filter so a link like
+  `/bills?sponsor=<personID>` reopens the list scoped to that representative.
+- **BILL-2 (MUST).** A **bill detail** view shows the bill number, title, type,
+  status, submission date, and its sponsors. It links to the **official bill
+  text on parlament.hu** (LEGAL-1); the PDF is **embedded inline but loaded on
+  demand** (revealed by a button), so it is never fetched unless the user asks.
+  Where no text exists, the view degrades gracefully and falls back to the
+  generic portal page.
+- **BILL-3 (MUST).** **Sponsorship is bidirectional through the shared `person`
+  entity (EXT-2):** every MP sponsor on a bill links to that representative's
+  profile, and (reciprocally, per REP-2) a representative's profile lists the
+  bills they submitted. Government/committee submitters with no `personID` keep
+  their display label but no link. A sponsor whose id is not a known MP is never
+  materialized as a stub representative.
+- **BILL-4 (SHOULD).** A bill's **status/history is shown as a legislative-stage
+  timeline** (the official stage diagram: Tárgysorozatban → … → Kihirdetve),
+  distinguishing **completed (past)** from **upcoming (future)** stages and
+  marking the current position. Provenance is the upstream diagram (TRUST-1).
+- **BILL-5 (MUST).** The module is a self-contained vertical slice per EXT-1..6:
+  its own scraper stage, loader, `bill`/`bill_sponsor` tables, `/api/v1/bills`
+  routes, and frontend views. Disabling it via `OGYWATCH_MODULES` removes its nav
+  entry and routes, and hides REP-3's bills-submitted metric — no errors (EXT-6).
+- **BILL-6 (scope).** v1 "basic support" covers **törvényjavaslatok** (Felicitas
+  `fotipus = T`) for the current cycle. Other iromány types, and per-bill events,
+  votes, and committee timelines (available in the same API) are future work.
 
 ---
 
@@ -310,10 +350,12 @@ rework of existing features.
 - **EXT-6.** A **module disabled in config** must degrade gracefully (its nav
   entry and any dependent metrics hidden), not error.
 
-> **Acceptance probe for extensibility:** introducing the Bills module
-> (a new scraper, `bill` + `bill_sponsor` tables, `/api/v1/bills` routes, a Bills
-> browser view, and unhiding the "bills submitted" stat on profiles) must be
-> achievable as additive changes only.
+> **Acceptance probe for extensibility — ✅ realized.** The Bills module (§6A)
+> was added as purely additive changes: a new scraper stage and `bills-<cycle>.json`
+> output, `bill` + `bill_sponsor` tables, `/api/v1/bills` routes, Bills browser +
+> detail views, and the now-unhidden "bills submitted" stat on profiles — with no
+> schema changes to existing modules. It stands as the worked example for the
+> remaining domains (votes, committees, interpellations).
 
 ---
 
@@ -388,8 +430,9 @@ rework of existing features.
 ## 10. Out of Scope / Future
 
 - User accounts, saved searches, alerts/notifications on topics or speakers.
-- Bills, votes, committees, interpellations — planned as future **modules** (§7);
-  the architecture must already accommodate them.
+- **Bills** are now implemented as the first additive module (§6A). **Votes,
+  committees, interpellations** remain planned future **modules** (§7); the
+  architecture already accommodates them, with Bills as the worked example.
 - **Precise sentence ↔ video sync (planned enhancement to the timing stage,
   §3.4).** v1 uses a positional/character-length estimate (TIM-1). A later
   iteration replaces it — as a drop-in swap of the timing stage (TIM-4) — with
@@ -413,9 +456,11 @@ rework of existing features.
 
 ## 11. Open Questions
 
-1. **Bills/votes data:** the current scraper covers only proceedings + media.
-   Confirm the source endpoints for `irományok`/`szavazások` before scheduling
-   the Bills/Votes modules. (REP-3's "bills submitted" depends on this.)
+1. **Bills/votes data:** ~~confirm the source endpoints for `irományok`/`szavazások`~~
+   — **resolved for bills:** the Felicitas `iromany` API (provider
+   `iromanyok-query-provider`) backs the Bills module (§6A), and REP-3's "bills
+   submitted" now reads from it. `szavazások` (votes) is still to be confirmed
+   before scheduling the Votes module.
 2. **Historical backfill scope:** ship current cycle (43) first, then backfill
    37–42, or backfill all up front?
 3. **Entity enrichment:** NER/NEL is deferred (§10). For v1, do we still want a

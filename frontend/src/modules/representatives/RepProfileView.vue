@@ -4,6 +4,7 @@
 // trend chart, and a reverse-chronological speech list linking into the viewer.
 import { ref, computed, watch, onMounted } from 'vue'
 import { api } from '../../api.js'
+import { store } from '../../store.js'
 import { formatDate, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -14,8 +15,13 @@ const props = defineProps({ id: String })
 const profile = ref(null)
 const stats = ref(null)
 const speeches = ref(null)
+const bills = ref(null)
 const loading = ref(false)
 const error = ref(false)
+
+// The bills section is only meaningful when the Bills module is live (EXT-6);
+// a disabled module simply means no section, not an error.
+const showBills = computed(() => store.moduleEnabled('bills'))
 
 const PLACEHOLDER =
   'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -33,14 +39,19 @@ const overTimeItems = computed(() => {
 
 async function load() {
   loading.value = true; error.value = false
-  profile.value = stats.value = speeches.value = null
+  profile.value = stats.value = speeches.value = bills.value = null
   try {
-    const [p, s, sp] = await Promise.all([
+    // Bills failure must not break the profile, so it resolves to null on error.
+    const billsReq = showBills.value
+      ? api.bills({ sponsor: props.id, limit: 100 }).catch(() => null)
+      : Promise.resolve(null)
+    const [p, s, sp, b] = await Promise.all([
       api.representative(props.id),
       api.repStatistics(props.id),
       api.repSpeeches(props.id, { limit: 50 }),
+      billsReq,
     ])
-    profile.value = p; stats.value = s; speeches.value = sp
+    profile.value = p; stats.value = s; speeches.value = sp; bills.value = b
   } catch { error.value = true } finally { loading.value = false }
 }
 onMounted(load)
@@ -128,8 +139,21 @@ watch(() => props.id, load)
           </section>
         </div>
 
-        <!-- right: speeches -->
+        <!-- right: bills + speeches -->
         <div class="pcol">
+          <section class="card pad" v-if="showBills && bills && bills.total">
+            <h2>{{ $t('profile.bills') }} <span class="muted small">({{ bills.total }})</span></h2>
+            <ul class="billmini">
+              <li v-for="b in bills.bills" :key="b.id">
+                <router-link :to="{ name: 'bill', params: { id: b.id } }" class="billitem">
+                  <span class="bnum">{{ b.bill_number }}</span>
+                  <span class="btitle">{{ b.title }}</span>
+                  <span class="badge" v-if="b.status">{{ b.status }}</span>
+                </router-link>
+              </li>
+            </ul>
+          </section>
+
           <section class="card pad">
             <h2>{{ $t('profile.speeches') }} <span class="muted small" v-if="speeches">({{ speeches.total }})</span></h2>
             <p v-if="speeches && speeches.total === 0" class="muted">{{ $t('profile.noSpeeches') }}</p>
@@ -167,6 +191,11 @@ watch(() => props.id, load)
 .methodology summary { cursor: pointer; font-size: .85rem; color: var(--ink-soft); font-weight: 600; }
 .timeline, .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
 .timeline li { display: flex; gap: .6rem; align-items: center; }
+.billmini { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
+.billitem { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; padding: .5rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
+.billitem:hover { background: var(--accent-soft); text-decoration: none; }
+.billitem .bnum { font-weight: 800; color: var(--accent); }
+.billitem .btitle { flex: 1; min-width: 0; }
 .speechlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .5rem; }
 .speechitem { display: block; padding: .6rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
 .speechitem:hover { background: var(--accent-soft); text-decoration: none; }

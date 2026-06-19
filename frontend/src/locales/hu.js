@@ -98,6 +98,7 @@ export default {
   },
   profile: {
     speeches: 'Felszólalások',
+    bills: 'Benyújtott törvényjavaslatok',
     statistics: 'Statisztikák',
     biography: 'Adatok',
     constituency: 'Választókerület',
@@ -139,6 +140,9 @@ export default {
     sortNumber: 'Irományszám szerint',
     sortDate: 'Benyújtás szerint',
     count: 'törvényjavaslat',
+    bySponsor: 'Benyújtó',
+    viewProfile: 'Képviselő profilja',
+    clearSponsor: 'Szűrő törlése',
     noResults: 'Nincs a feltételeknek megfelelő törvényjavaslat.',
     submitters: 'Benyújtók',
     submittedDate: 'Benyújtás dátuma',

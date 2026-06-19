@@ -52,7 +52,7 @@ export default {
     sortSpeeches: 'By speeches', sortSpeakingTime: 'By speaking time', noResults: 'No matching representatives.', profile: 'Profile',
   },
   profile: {
-    speeches: 'Speeches', statistics: 'Statistics', biography: 'Details', constituency: 'Constituency',
+    speeches: 'Speeches', bills: 'Submitted bills', statistics: 'Statistics', biography: 'Details', constituency: 'Constituency',
     education: 'Highest education', email: 'Email', website: 'Website', committees: 'Committee memberships',
     factionHistory: 'Faction history', wikidata: 'Wikidata', totalSpeeches: 'Number of speeches',
     totalSpeakingTime: 'Total speaking time', billsSubmitted: 'Bills submitted',
@@ -69,6 +69,7 @@ export default {
     title: 'Bills', subtitle: 'Bills submitted to the National Assembly.',
     searchPlaceholder: 'Search in the title…', period: 'Cycle', status: 'Status',
     sortNumber: 'By bill number', sortDate: 'By submission', count: 'bills',
+    bySponsor: 'Submitter', viewProfile: 'View profile', clearSponsor: 'Clear filter',
     noResults: 'No matching bills.', submitters: 'Submitters',
     submittedDate: 'Submission date',
     timeline: "The bill's progress",

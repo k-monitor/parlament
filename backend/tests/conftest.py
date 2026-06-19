@@ -108,7 +108,46 @@ def _bills_registry():
                  {"key": "ZAROSZAVAZAS", "label": "Zárószavazás", "done": False},
              ],
              "sponsors": [{"personID": "k001", "factionId": 7, "committeeId": None,
-                           "label": "Kovács Béla (Fidesz)"}]},
+                           "label": "Kovács Béla (Fidesz)"}],
+             "detail": {
+                 "header": {"subtype": "törvényjavaslat nemzetközi szerződésről",
+                            "character": "új", "negotiationMode": "kivételes tárgyalásban",
+                            "statusType": "folyamatban", "currentEvent": "általános vita alatt",
+                            "promulgationNumber": None, "mkNumber": None,
+                            "promulgationDate": None, "remark": "teszt megjegyzés",
+                            "lastModifier": "100/4"},
+                 "events": [
+                     {"date": "2026-05-26T13:04:20Z", "name": "kivételességi javaslat elfogadva",
+                      "personID": "k001", "committeeId": None, "relatedLabel": "Kovács Béla",
+                      "speechNumber": "3/43", "voteId": "v-1", "remark": ""},
+                     {"date": "2026-05-26T16:45:00Z", "name": "részletes vita megkezdve",
+                      "personID": None, "committeeId": None, "relatedLabel": None,
+                      "speechNumber": None, "voteId": None, "remark": None}],
+                 "committeeEvents": [
+                     {"date": "2026-05-26T17:01:00Z", "name": "a bizottság előadója",
+                      "committee": "Törvényalkotási Bizottság", "committeeId": "c-1",
+                      "personID": "k001", "personLabel": "Kovács Béla",
+                      "amendment": "100/2", "overreachingAmendment": None, "report": "100/3"}],
+                 "votes": [
+                     {"voteId": "v-1", "date": "2026-05-26T13:04:20Z",
+                      "subject": "kivételességi javaslat elfogadva",
+                      "yes": 139, "no": 48, "abstain": 0, "result": "Elfogadva"}],
+                 "deadlines": [
+                     {"name": "módosító javaslat benyújtása", "deadline": "2026-05-26T16:05:00Z",
+                      "reference": "HHSZ 62. § (3)", "remark": None}],
+                 "committees": [
+                     {"committee": "Törvényalkotási Bizottság", "committeeId": "c-1",
+                      "role": "Kijelölt bizottság", "reference": "62. § (5)", "parts": None}],
+                 "documents": [
+                     {"kind": "justification", "title": "önálló indítvány és indokolása",
+                      "url": "https://www.parlament.hu/irom43/00100/00100.pdf",
+                      "date": "2026-05-10T09:00:00Z", "published": None},
+                     {"kind": "background", "title": "háttéranyag",
+                      "url": "https://www.parlament.hu/documents/d/guest/x",
+                      "date": None, "published": None}],
+                 "motionSummary": [
+                     {"type": "Kivételességi javaslat", "valid": 1, "withdrawn": 0, "total": 1}],
+             }},
             {"billId": "bill-uuid-2", "billNumber": "T/101", "billNumberSort": 101,
              "title": "A kormány javaslata", "type": "törvényjavaslat",
              "mainType": "T", "status": "elfogadva",

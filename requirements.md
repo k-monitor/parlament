@@ -305,7 +305,8 @@ submitted to the Assembly, sourced from the Felicitas `iromany` API.
   text on parlament.hu** (LEGAL-1); the PDF is **embedded inline but loaded on
   demand** (revealed by a button), so it is never fetched unless the user asks.
   Where no text exists, the view degrades gracefully and falls back to the
-  generic portal page.
+  generic portal page. **It also surfaces the full upstream detail sheet
+  (BILL-7)** so the page is not limited to the bare list row.
 - **BILL-3 (MUST).** **Sponsorship is bidirectional through the shared `person`
   entity (EXT-2):** every MP sponsor on a bill links to that representative's
   profile, and (reciprocally, per REP-2) a representative's profile lists the
@@ -320,9 +321,25 @@ submitted to the Assembly, sourced from the Felicitas `iromany` API.
   its own scraper stage, loader, `bill`/`bill_sponsor` tables, `/api/v1/bills`
   routes, and frontend views. Disabling it via `PARLAMONITOR_MODULES` removes its nav
   entry and routes, and hides REP-3's bills-submitted metric — no errors (EXT-6).
-- **BILL-6 (scope).** v1 "basic support" covers **törvényjavaslatok** (Felicitas
-  `fotipus = T`) for the current cycle. Other iromány types, and per-bill events,
-  votes, and committee timelines (available in the same API) are future work.
+- **BILL-7 (MUST).** The detail view surfaces the bill's full upstream
+  **adatlap** sheet (the same data parlament.hu shows), each fetched per bill
+  from the Felicitas `iromany-adatlap` sub-queries and stored in dedicated child
+  tables: the **legislative event history** (with the speech number and vote
+  each event is tied to), **committee events** (modifying proposals, reports),
+  **votes** (igen/nem/tartózkodás with the result), **deadlines**, the
+  **negotiating committees**, **justification & background documents**, the
+  **non-self-standing motion** summary, and extra header fields (subtype,
+  character, negotiation mode, promulgation/Magyar Közlöny number & date). Event
+  and committee-event references to an MP link to that representative's profile
+  through the shared `person` entity (EXT-2). A bill scraped without detail (or
+  an early-stage bill with empty sections) degrades to empty sections, never an
+  error (SCR-5). Detail fetching is a separately-skippable scraper step
+  (`--no-detail`) for a fast list-only refresh.
+- **BILL-6 (scope).** v1 covers **törvényjavaslatok** (Felicitas `fotipus = T`)
+  for the current cycle, with the per-bill detail sheet of BILL-7. Remaining
+  future work: **other iromány types**, and **per-MP vote breakdowns** (who voted
+  how — the vote here is the aggregate tally; the roll-call belongs to the Votes
+  module, §10).
 
 ---
 
@@ -354,8 +371,13 @@ rework of existing features.
 > was added as purely additive changes: a new scraper stage and `bills-<cycle>.json`
 > output, `bill` + `bill_sponsor` tables, `/api/v1/bills` routes, Bills browser +
 > detail views, and the now-unhidden "bills submitted" stat on profiles — with no
-> schema changes to existing modules. It stands as the worked example for the
-> remaining domains (votes, committees, interpellations).
+> schema changes to existing modules. The per-bill detail sheet (BILL-7) was then
+> layered on the same way — extra `bill` columns plus `bill_event`,
+> `bill_committee_event`, `bill_vote`, `bill_deadline`, `bill_committee`,
+> `bill_document` and `bill_motion_summary` child tables, an expanded
+> `/api/v1/bills/{id}`, and richer detail-view sections — again touching no other
+> module. It stands as the worked example for the remaining domains (votes,
+> committees, interpellations).
 
 ---
 
@@ -430,9 +452,12 @@ rework of existing features.
 ## 10. Out of Scope / Future
 
 - User accounts, saved searches, alerts/notifications on topics or speakers.
-- **Bills** are now implemented as the first additive module (§6A). **Votes,
-  committees, interpellations** remain planned future **modules** (§7); the
-  architecture already accommodates them, with Bills as the worked example.
+- **Bills** are now implemented as the first additive module (§6A), including
+  the full per-bill detail sheet (BILL-7: event history, aggregate votes,
+  committee timelines, deadlines, documents, motions). **Votes** (roll-call /
+  per-MP breakdowns), **committees, interpellations** remain planned future
+  **modules** (§7); the architecture already accommodates them, with Bills as the
+  worked example.
 - **Precise sentence ↔ video sync (planned enhancement to the timing stage,
   §3.4).** v1 uses a positional/character-length estimate (TIM-1). A later
   iteration replaces it — as a drop-in swap of the timing stage (TIM-4) — with
@@ -458,9 +483,11 @@ rework of existing features.
 
 1. **Bills/votes data:** ~~confirm the source endpoints for `irományok`/`szavazások`~~
    — **resolved for bills:** the Felicitas `iromany` API (provider
-   `iromanyok-query-provider`) backs the Bills module (§6A), and REP-3's "bills
-   submitted" now reads from it. `szavazások` (votes) is still to be confirmed
-   before scheduling the Votes module.
+   `iromanyok-query-provider`, plus the `iromany-adatlap` sub-queries for the
+   per-bill detail sheet, BILL-7) backs the Bills module (§6A), and REP-3's "bills
+   submitted" now reads from it. **Aggregate** per-bill vote tallies are already
+   shown (BILL-7); the **per-MP roll-call** (`szavazások` detail) is still to be
+   confirmed before scheduling the Votes module.
 2. **Historical backfill scope:** ship current cycle (43) first, then backfill
    37–42, or backfill all up front?
 3. **Entity enrichment:** NER/NEL is deferred (§10). For v1, do we still want a

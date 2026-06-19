@@ -51,6 +51,16 @@ KEPVISELO_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
                      "registry/kepviselo-query-provider")
 IROMANY_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
                    "iromanyadatok-iromany-registry/iromanyok-query-provider")
+# Per-bill detail page. The "adatlap" sub-tables (events, votes, committees,
+# deadlines, documents, …) are served by this provider; every sub-query takes
+# ``{"pOnalId": <iromanyId>}``.
+IROMANY_ADATLAP_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
+                   "iromanyexportok-registry/iromany-adatlap-query-provider")
+# The bill's own header sheet (extra fields not in the list query — subtype,
+# character, promulgation, …); takes ``{"pId": <iromanyId>}``.
+IROMANY_INTRA_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
+                   "iromanyadatokonlyintra-registry/"
+                   "onallo-iromany-adatlap-for-intra-query-provider")
 KEPVISELO_REBIND = (f"{BASE}/web/guest/felicitas/api/query/parameter/rebind/"
                    "kepviseloadatok-kepviselo-kepviselolista-idopont/"
                    "kepviselo-lista-idopontban-query")
@@ -351,6 +361,126 @@ class FelicitasClient:
                 } for s in _subrows(r.get("benyujto"))],
             })
         return out
+
+    def bill_detail(self, bill_id: str) -> dict:
+        """The full detail sheet of one bill (the parlament.hu "adatlap").
+
+        Pulls every sub-table the portal shows beyond the bare list row:
+        the legislative **event history** (with the speech/vote each event is
+        tied to), **committee events** (modifying proposals, reports),
+        **votes** (igen/nem/tartózkodás), **deadlines**, the **negotiating
+        committees**, **justification & background documents**, the
+        **non-self-standing motion** summary, and a handful of extra header
+        fields (subtype, character, promulgation). Everything is keyed by the
+        bill's own ``iromanyId`` (``pOnalId``/``pId``) — no extra ids needed.
+
+        ~9 small requests per bill, all politely throttled (SCR-4)."""
+        oid = {"pOnalId": bill_id}
+        P = IROMANY_ADATLAP_PROVIDER
+
+        events = [{
+            "date": e.get("esemenyIdeje"),
+            "name": e.get("esemenyfajtaNev"),
+            "personID": e.get("kapcsolodoSzemelyId"),
+            "committeeId": e.get("kapcsolodoBizottsagId"),
+            "relatedLabel": e.get("kapcsolodoSzemelyOnalloBizottsag"),
+            "speechNumber": e.get("felszolalasSzam"),
+            "voteId": e.get("szavazasId"),
+            "remark": e.get("megjegyzes"),
+        } for e in self.select_all(P, "iromany-esemenyek-lista-query", oid)]
+
+        committee_events = [{
+            "date": e.get("esemenyIdeje"),
+            "name": e.get("esemenyfajtaNev"),
+            "committee": e.get("bizottsagNev"),
+            "committeeId": e.get("bizottsagId"),
+            "personID": e.get("kepviseloId"),
+            "personLabel": e.get("kepviselo"),
+            "amendment": e.get("modositoJavaslat"),
+            "overreachingAmendment": e.get("tulterjeszkedoModositoJavaslat"),
+            "report": e.get("jelentes"),
+        } for e in self.select_all(P, "iromany-bizottsagi-esemenyek-lista-query", oid)]
+
+        votes = [{
+            "voteId": v.get("szavazasId"),
+            "date": v.get("szavazasIdeje"),
+            "subject": v.get("oka"),
+            "yes": v.get("igen"),
+            "no": v.get("nem"),
+            "abstain": v.get("tartozkodas"),
+            "result": v.get("eredmeny"),
+        } for v in self.select_all(P, "iromany-szavazasai-lista-query", oid)]
+
+        deadlines = [{
+            "name": d.get("nev"),
+            "deadline": d.get("idopont"),
+            "reference": d.get("hivakozas"),
+            "remark": d.get("megjegyzes"),
+        } for d in self.select_all(P, "iromany-hataridok-lista-query", oid)]
+
+        committees = [{
+            "committee": c.get("bizottsagNev"),
+            "committeeId": c.get("bizottsagId"),
+            "role": c.get("targyalasiSzerepkor"),
+            "reference": c.get("jogszabalyiHivatkozas"),
+            "parts": ", ".join(c["targyalandoReszek"])
+                     if isinstance(c.get("targyalandoReszek"), list) else None,
+        } for c in self.select_all(P, "iromanyt-targyalo-bizottsagok-lista-query", oid)]
+
+        documents = [{
+            "kind": "justification",
+            "title": j.get("megnevezes"),
+            "url": f"{BASE}{j['szovegLink']}" if j.get("szovegLink") else None,
+            "date": j.get("benyujtasdatuma"),
+            "published": j.get("kozzetetel"),
+        } for j in self.select_all(P, "indoklasok-lista-query", oid)]
+        for h in self.select_all(P, "iromanyhoz-kapcsolodo-hatteranyag-lista-query", oid):
+            link = h.get("iromanyhozKapcsolodoHatteranyagLink")
+            documents.append({
+                "kind": "background",
+                "title": h.get("iromanyhozKapcsolodoHatteranyag"),
+                # background links are sometimes absolute, sometimes site-relative
+                "url": link if (link or "").startswith("http") else
+                       (f"{BASE}{link}" if link else None),
+                "date": None, "published": None,
+            })
+
+        motion_summary = [{
+            "type": m.get("tipus"),
+            "valid": m.get("ervenyes"),
+            "withdrawn": m.get("visszavont"),
+            "total": m.get("osszesen"),
+        } for m in self.select_all(P, "nemonallo-inditvany-osszesito-lista-query", oid)]
+
+        header = {}
+        intra = self.select_all(IROMANY_INTRA_PROVIDER,
+                                "onallo-iromany-adatlap-for-intra-query",
+                                {"pId": bill_id})
+        if intra:
+            h = intra[0]
+            header = {
+                "subtype": h.get("tipus"),
+                "character": h.get("jelleg"),
+                "negotiationMode": h.get("targyalasiMod"),
+                "statusType": h.get("allapottipus"),
+                "currentEvent": h.get("aktualisIromanyEsemeny"),
+                "promulgationNumber": h.get("kihirdetesSzama"),
+                "mkNumber": h.get("mkSzama"),
+                "promulgationDate": h.get("kihirdetesDatuma"),
+                "remark": h.get("megjegyzes"),
+                "lastModifier": h.get("utolsoModositoIromanySzam"),
+            }
+
+        return {
+            "header": header,
+            "events": events,
+            "committeeEvents": committee_events,
+            "votes": votes,
+            "deadlines": deadlines,
+            "committees": committees,
+            "documents": documents,
+            "motionSummary": motion_summary,
+        }
 
 
 # A bill reference embedded in a speech's agenda event (nested ``esemenyId``

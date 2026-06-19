@@ -190,7 +190,18 @@ CREATE TABLE bill (
     no_text        INTEGER DEFAULT 0,
     -- legislative-stage diagram for the bill timeline: ordered
     -- [{key,label,done}] (done = stage happened — past vs future event).
-    stages_json    TEXT
+    stages_json    TEXT,
+    -- extra header fields from the per-bill detail sheet (adatlap):
+    subtype           TEXT,              -- tipus, e.g. "törvényjavaslat nemzetközi szerződésről"
+    character         TEXT,              -- jelleg ("új" / "módosító")
+    negotiation_mode  TEXT,              -- targyalasiMod ("kivételes tárgyalásban")
+    status_type       TEXT,              -- allapottipus ("lezárt" / "folyamatban")
+    current_event     TEXT,              -- aktualisIromanyEsemeny
+    promulgation_number TEXT,            -- kihirdetesSzama
+    mk_number         INTEGER,           -- Magyar Közlöny szám
+    promulgation_date TEXT,              -- kihirdetesDatuma
+    remark            TEXT,              -- megjegyzes
+    last_modifier     TEXT               -- utolsoModositoIromanySzam
 );
 CREATE INDEX idx_bill_period ON bill(period_number);
 CREATE INDEX idx_bill_number_sort ON bill(number_sort);
@@ -205,6 +216,102 @@ CREATE TABLE bill_sponsor (
 );
 CREATE INDEX idx_bill_sponsor_bill ON bill_sponsor(bill_id);
 CREATE INDEX idx_bill_sponsor_person ON bill_sponsor(person_id);
+
+-- Per-bill detail sub-tables (the adatlap sections). Each is a flat child of
+-- bill, replaced wholesale when a bill's cycle is re-ingested (ING-4). Events
+-- that reference an MP resolve person_id through the shared person entity
+-- (EXT-2); unknown persons keep only their label.
+
+CREATE TABLE bill_event (             -- "Iromány események" (legislative history)
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    bill_id      TEXT NOT NULL REFERENCES bill(id),
+    ord          INTEGER,
+    event_date   TEXT,
+    name         TEXT,                 -- esemenyfajtaNev
+    person_id    TEXT REFERENCES person(person_id),
+    related_label TEXT,                -- related person / committee name
+    committee_id TEXT,
+    speech_number TEXT,                -- felszolalasSzam (speech attached to the event)
+    vote_id      TEXT,                 -- joins to bill_vote.vote_id
+    remark       TEXT
+);
+CREATE INDEX idx_bill_event_bill ON bill_event(bill_id);
+
+CREATE TABLE bill_committee_event (   -- "Bizottsági események"
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    bill_id      TEXT NOT NULL REFERENCES bill(id),
+    ord          INTEGER,
+    event_date   TEXT,
+    name         TEXT,
+    committee    TEXT,
+    committee_id TEXT,
+    person_id    TEXT REFERENCES person(person_id),
+    person_label TEXT,
+    amendment    TEXT,                 -- módosító jav.
+    overreaching_amendment TEXT,       -- túlterjeszkedő mód. jav.
+    report       TEXT                  -- jelentés
+);
+CREATE INDEX idx_bill_committee_event_bill ON bill_committee_event(bill_id);
+
+CREATE TABLE bill_vote (              -- "Szavazások"
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    bill_id   TEXT NOT NULL REFERENCES bill(id),
+    ord       INTEGER,
+    vote_id   TEXT,                    -- upstream szavazasId
+    vote_date TEXT,
+    subject   TEXT,                    -- oka
+    yes       INTEGER,
+    no        INTEGER,
+    abstain   INTEGER,
+    result    TEXT
+);
+CREATE INDEX idx_bill_vote_bill ON bill_vote(bill_id);
+
+CREATE TABLE bill_deadline (         -- "Határidők"
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    bill_id   TEXT NOT NULL REFERENCES bill(id),
+    ord       INTEGER,
+    name      TEXT,
+    deadline  TEXT,
+    reference TEXT,                    -- jogszabályi hivatkozás
+    remark    TEXT
+);
+CREATE INDEX idx_bill_deadline_bill ON bill_deadline(bill_id);
+
+CREATE TABLE bill_committee (        -- "Tárgyaló bizottság" (negotiating committees)
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    bill_id      TEXT NOT NULL REFERENCES bill(id),
+    ord          INTEGER,
+    committee    TEXT,
+    committee_id TEXT,
+    role         TEXT,                 -- tárgyalási szerepkör
+    reference    TEXT,                 -- jogszabályi hivatkozás
+    parts        TEXT                  -- tárgyalandó részek
+);
+CREATE INDEX idx_bill_committee_bill ON bill_committee(bill_id);
+
+CREATE TABLE bill_document (          -- "Indokolások" + "Háttéranyagok"
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    bill_id   TEXT NOT NULL REFERENCES bill(id),
+    ord       INTEGER,
+    kind      TEXT,                    -- 'justification' | 'background'
+    title     TEXT,
+    url       TEXT,
+    doc_date  TEXT,
+    published TEXT                     -- közzététel (Magyar Közlöny szám)
+);
+CREATE INDEX idx_bill_document_bill ON bill_document(bill_id);
+
+CREATE TABLE bill_motion_summary (   -- "Nem önálló irományok" összesítő
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    bill_id   TEXT NOT NULL REFERENCES bill(id),
+    ord       INTEGER,
+    type      TEXT,
+    valid     INTEGER,
+    withdrawn INTEGER,
+    total     INTEGER
+);
+CREATE INDEX idx_bill_motion_summary_bill ON bill_motion_summary(bill_id);
 
 -- ---------------------------------------------------------------------------
 -- Reserved for the deferred NER/NEL stage (§10) — kept so the shape has room.

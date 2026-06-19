@@ -27,6 +27,14 @@ export function formatDate(iso) {
   return iso.slice(0, 10)
 }
 
+// Date + HH:MM for events/votes that carry a time-of-day (e.g. "2026-05-27 08:34").
+export function formatDateTime(iso) {
+  if (!iso) return ''
+  const d = iso.slice(0, 10)
+  const t = iso.slice(11, 16)
+  return t ? `${d} ${t}` : d
+}
+
 export function agendaLabel(type) {
   if (!type) return ''
   const key = `agendaTypes.${type}`

@@ -111,3 +111,37 @@ def test_bill_without_diagram_has_empty_stages(client):
     """A bill with no stage diagram (kellDiagram false upstream) returns []."""
     d = client.get("/api/v1/bills/bill-uuid-2").json()
     assert d["stages"] == []
+
+
+def test_bill_detail_sections(client):
+    """The detail sheet's sections (events, votes, committees, deadlines,
+    documents, motion summary) and extra header fields round-trip through the
+    loader into the API."""
+    d = client.get("/api/v1/bills/bill-uuid-1").json()
+    # extra header fields
+    assert d["subtype"] == "törvényjavaslat nemzetközi szerződésről"
+    assert d["negotiation_mode"] == "kivételes tárgyalásban"
+    assert d["current_event"] == "általános vita alatt"
+    assert d["last_modifier"] == "100/4"
+    # event history, in order, with the MP resolved (EXT-2) and a speech ref
+    assert [e["name"] for e in d["events"]] == [
+        "kivételességi javaslat elfogadva", "részletes vita megkezdve"]
+    assert d["events"][0]["person_id"] == "k001"
+    assert d["events"][0]["person_name"]  # resolved through the shared person
+    assert d["events"][0]["speech_number"] == "3/43"
+    # votes / committees / deadlines / documents / motion summary
+    v = d["votes"][0]
+    assert (v["yes"], v["no"], v["abstain"], v["result"]) == (139, 48, 0, "Elfogadva")
+    assert d["committee_events"][0]["committee"] == "Törvényalkotási Bizottság"
+    assert d["committees"][0]["role"] == "Kijelölt bizottság"
+    assert d["deadlines"][0]["reference"] == "HHSZ 62. § (3)"
+    assert {x["kind"] for x in d["documents"]} == {"justification", "background"}
+    assert d["motion_summary"][0]["total"] == 1
+
+
+def test_bill_detail_absent_is_empty(client):
+    """A bill scraped without detail still returns the sections as empty lists
+    (no crash, EXT-6/SCR-5 degraded shape)."""
+    d = client.get("/api/v1/bills/bill-uuid-2").json()
+    assert d["events"] == [] and d["votes"] == [] and d["documents"] == []
+    assert d["subtype"] is None

@@ -171,7 +171,8 @@ def cmd_bills(args) -> None:
 
     try:
         with acquire(paths.lockfile, force=args.force_lock):
-            registry = fetch_bills(felicitas, args.cycle, main_types=main_types)
+            registry = fetch_bills(felicitas, args.cycle, main_types=main_types,
+                                   with_detail=not args.no_detail)
             save_bills(paths, args.cycle, registry)
     finally:
         felicitas.close()
@@ -240,6 +241,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--main-types", default=None,
                     help="comma-separated Felicitas fotipus codes "
                          "(default: T = törvényjavaslat)")
+    sp.add_argument("--no-detail", action="store_true",
+                    help="skip per-bill detail (events/votes/committees/…) "
+                         "for a fast list-only refresh")
     sp.set_defaults(func=cmd_bills)
     return p
 

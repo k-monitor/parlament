@@ -235,22 +235,38 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
         conn.execute("INSERT INTO electoral_period(number) VALUES (?) "
                      "ON CONFLICT(number) DO NOTHING", (period,))
 
-    # Replace this cycle's bills (delete children first for the FK).
-    conn.execute(
-        "DELETE FROM bill_sponsor WHERE bill_id IN "
-        "(SELECT id FROM bill WHERE period_number IS ?)", (period,))
+    # Replace this cycle's bills (delete children first for the FK). Every
+    # per-bill child table is cleared so a re-ingest is fully idempotent.
+    child_tables = ("bill_sponsor", "bill_event", "bill_committee_event",
+                    "bill_vote", "bill_deadline", "bill_committee",
+                    "bill_document", "bill_motion_summary")
+    for tbl in child_tables:
+        conn.execute(
+            f"DELETE FROM {tbl} WHERE bill_id IN "
+            "(SELECT id FROM bill WHERE period_number IS ?)", (period,))
     conn.execute("DELETE FROM bill WHERE period_number IS ?", (period,))
+
+    def _person(pid):
+        """A kepviseloId, but only if it's a known MP (so the FK holds)."""
+        if pid and conn.execute(
+                "SELECT 1 FROM person WHERE person_id=?", (pid,)).fetchone():
+            return pid
+        return None
 
     for rec in data:
         bid = rec.get("billId")
         if not bid:
             continue
         text_url = rec.get("textUrl")
+        h = (rec.get("detail") or {}).get("header") or {}
         conn.execute(
             """INSERT INTO bill(id, bill_number, number_sort, period_number,
                    title, type, main_type, status, submitted_date, text_url,
-                   text_caption, source_url, no_text, stages_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   text_caption, source_url, no_text, stages_json,
+                   subtype, character, negotiation_mode, status_type,
+                   current_event, promulgation_number, mk_number,
+                   promulgation_date, remark, last_modifier)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                    bill_number=excluded.bill_number, number_sort=excluded.number_sort,
                    period_number=excluded.period_number, title=excluded.title,
@@ -258,20 +274,25 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
                    status=excluded.status, submitted_date=excluded.submitted_date,
                    text_url=excluded.text_url, text_caption=excluded.text_caption,
                    source_url=excluded.source_url, no_text=excluded.no_text,
-                   stages_json=excluded.stages_json""",
+                   stages_json=excluded.stages_json,
+                   subtype=excluded.subtype, character=excluded.character,
+                   negotiation_mode=excluded.negotiation_mode,
+                   status_type=excluded.status_type, current_event=excluded.current_event,
+                   promulgation_number=excluded.promulgation_number,
+                   mk_number=excluded.mk_number, promulgation_date=excluded.promulgation_date,
+                   remark=excluded.remark, last_modifier=excluded.last_modifier""",
             (bid, rec.get("billNumber"), rec.get("billNumberSort"), period,
              rec.get("title"), rec.get("type"), rec.get("mainType"),
              rec.get("status"), rec.get("submittedDate"), text_url,
              rec.get("textCaption"), text_url or _BILL_PORTAL_FALLBACK,
-             1 if rec.get("noText") else 0, _json_or_none(rec.get("stages"))))
+             1 if rec.get("noText") else 0, _json_or_none(rec.get("stages")),
+             h.get("subtype"), h.get("character"), h.get("negotiationMode"),
+             h.get("statusType"), h.get("currentEvent"), h.get("promulgationNumber"),
+             h.get("mkNumber"), h.get("promulgationDate"), h.get("remark"),
+             h.get("lastModifier")))
 
         for i, sp in enumerate(rec.get("sponsors") or []):
-            pid = sp.get("personID")
-            # Link person_id only if it's a known person, so the FK holds and
-            # we never invent stub MPs from a sponsor list.
-            if pid and not conn.execute(
-                    "SELECT 1 FROM person WHERE person_id=?", (pid,)).fetchone():
-                pid = None
+            pid = _person(sp.get("personID"))
             faction_id = None
             ext = sp.get("factionId")
             if ext is not None:
@@ -282,9 +303,74 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
                 "INSERT INTO bill_sponsor(bill_id, person_id, faction_id, label, ord) "
                 "VALUES (?,?,?,?,?)",
                 (bid, pid, faction_id, sp.get("label"), i))
+
+        _load_bill_detail(conn, bid, rec.get("detail") or {}, _person)
     conn.commit()
     logger.info("Loaded %d bills (cycle %s)", len(data), period)
     return len(data)
+
+
+def _load_bill_detail(conn: sqlite3.Connection, bill_id: str, detail: dict,
+                      resolve_person) -> None:
+    """Insert one bill's adatlap detail (events, votes, committees, deadlines,
+    documents, motion summary) into the child tables. ``resolve_person`` maps a
+    kepviseloId to a known person_id or None (EXT-2)."""
+    for i, e in enumerate(detail.get("events") or []):
+        conn.execute(
+            """INSERT INTO bill_event(bill_id, ord, event_date, name, person_id,
+                   related_label, committee_id, speech_number, vote_id, remark)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (bill_id, i, e.get("date"), e.get("name"),
+             resolve_person(e.get("personID")), e.get("relatedLabel"),
+             e.get("committeeId"), e.get("speechNumber"), e.get("voteId"),
+             e.get("remark")))
+
+    for i, e in enumerate(detail.get("committeeEvents") or []):
+        conn.execute(
+            """INSERT INTO bill_committee_event(bill_id, ord, event_date, name,
+                   committee, committee_id, person_id, person_label, amendment,
+                   overreaching_amendment, report)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (bill_id, i, e.get("date"), e.get("name"), e.get("committee"),
+             e.get("committeeId"), resolve_person(e.get("personID")),
+             e.get("personLabel"), e.get("amendment"),
+             e.get("overreachingAmendment"), e.get("report")))
+
+    for i, v in enumerate(detail.get("votes") or []):
+        conn.execute(
+            """INSERT INTO bill_vote(bill_id, ord, vote_id, vote_date, subject,
+                   yes, no, abstain, result)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (bill_id, i, v.get("voteId"), v.get("date"), v.get("subject"),
+             v.get("yes"), v.get("no"), v.get("abstain"), v.get("result")))
+
+    for i, d in enumerate(detail.get("deadlines") or []):
+        conn.execute(
+            "INSERT INTO bill_deadline(bill_id, ord, name, deadline, reference, remark) "
+            "VALUES (?,?,?,?,?,?)",
+            (bill_id, i, d.get("name"), d.get("deadline"), d.get("reference"),
+             d.get("remark")))
+
+    for i, c in enumerate(detail.get("committees") or []):
+        conn.execute(
+            "INSERT INTO bill_committee(bill_id, ord, committee, committee_id, "
+            "role, reference, parts) VALUES (?,?,?,?,?,?,?)",
+            (bill_id, i, c.get("committee"), c.get("committeeId"), c.get("role"),
+             c.get("reference"), c.get("parts")))
+
+    for i, d in enumerate(detail.get("documents") or []):
+        conn.execute(
+            "INSERT INTO bill_document(bill_id, ord, kind, title, url, doc_date, "
+            "published) VALUES (?,?,?,?,?,?,?)",
+            (bill_id, i, d.get("kind"), d.get("title"), d.get("url"),
+             d.get("date"), d.get("published")))
+
+    for i, m in enumerate(detail.get("motionSummary") or []):
+        conn.execute(
+            "INSERT INTO bill_motion_summary(bill_id, ord, type, valid, withdrawn, "
+            "total) VALUES (?,?,?,?,?,?)",
+            (bill_id, i, m.get("type"), m.get("valid"), m.get("withdrawn"),
+             m.get("total")))
 
 
 # Bills have no clean per-bill permalink on the modern portal; the text PDF is

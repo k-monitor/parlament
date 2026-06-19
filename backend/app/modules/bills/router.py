@@ -130,13 +130,46 @@ def bill_facets(period: Optional[int] = None,
     return {"statuses": statuses, "types": types}
 
 
+def _rows(db: sqlite3.Connection, sql: str, bill_id: str) -> list[dict]:
+    return [dict(r) for r in db.execute(sql, (bill_id,)).fetchall()]
+
+
 @router.get("/{bill_id}")
 def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
-    """A single bill with its full sponsor list (each linked to a profile)."""
+    """A single bill with its full sponsor list and detail sections (events,
+    votes, committees, deadlines, documents, non-self-standing motions)."""
     b = db.execute("SELECT * FROM bill WHERE id = ?", (bill_id,)).fetchone()
     if not b:
         raise HTTPException(404, "Bill not found")
     sponsors = _sponsors_for(db, [bill_id]).get(bill_id, [])
+
+    events = _rows(db,
+        """SELECT e.event_date, e.name, e.person_id, e.related_label,
+                  e.speech_number, e.vote_id, e.remark, p.label AS person_name
+           FROM bill_event e LEFT JOIN person p ON p.person_id = e.person_id
+           WHERE e.bill_id = ? ORDER BY e.ord""", bill_id)
+    committee_events = _rows(db,
+        """SELECT c.event_date, c.name, c.committee, c.person_id, c.person_label,
+                  c.amendment, c.overreaching_amendment, c.report,
+                  p.label AS person_name
+           FROM bill_committee_event c LEFT JOIN person p ON p.person_id = c.person_id
+           WHERE c.bill_id = ? ORDER BY c.ord""", bill_id)
+    votes = _rows(db,
+        "SELECT vote_date, subject, yes, no, abstain, result FROM bill_vote "
+        "WHERE bill_id = ? ORDER BY ord", bill_id)
+    deadlines = _rows(db,
+        "SELECT name, deadline, reference, remark FROM bill_deadline "
+        "WHERE bill_id = ? ORDER BY ord", bill_id)
+    committees = _rows(db,
+        "SELECT committee, role, reference, parts FROM bill_committee "
+        "WHERE bill_id = ? ORDER BY ord", bill_id)
+    documents = _rows(db,
+        "SELECT kind, title, url, doc_date, published FROM bill_document "
+        "WHERE bill_id = ? ORDER BY ord", bill_id)
+    motion_summary = _rows(db,
+        "SELECT type, valid, withdrawn, total FROM bill_motion_summary "
+        "WHERE bill_id = ? ORDER BY ord", bill_id)
+
     return {
         "id": b["id"], "bill_number": b["bill_number"], "title": b["title"],
         "type": b["type"], "main_type": b["main_type"], "status": b["status"],
@@ -145,4 +178,15 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "no_text": bool(b["no_text"]), "period_number": b["period_number"],
         "stages": _stages(b["stages_json"]),
         "sponsors": sponsors,
+        # extra header fields from the detail sheet
+        "subtype": b["subtype"], "character": b["character"],
+        "negotiation_mode": b["negotiation_mode"], "status_type": b["status_type"],
+        "current_event": b["current_event"],
+        "promulgation_number": b["promulgation_number"], "mk_number": b["mk_number"],
+        "promulgation_date": b["promulgation_date"], "remark": b["remark"],
+        "last_modifier": b["last_modifier"],
+        # detail sections
+        "events": events, "committee_events": committee_events, "votes": votes,
+        "deadlines": deadlines, "committees": committees, "documents": documents,
+        "motion_summary": motion_summary,
     }

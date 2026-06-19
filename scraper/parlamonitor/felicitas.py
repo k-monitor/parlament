@@ -387,6 +387,7 @@ class FelicitasClient:
             "committeeId": e.get("kapcsolodoBizottsagId"),
             "relatedLabel": e.get("kapcsolodoSzemelyOnalloBizottsag"),
             "speechNumber": e.get("felszolalasSzam"),
+            "speechId": e.get("felszolalasId"),
             "voteId": e.get("szavazasId"),
             "remark": e.get("megjegyzes"),
         } for e in self.select_all(P, "iromany-esemenyek-lista-query", oid)]

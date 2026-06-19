@@ -182,7 +182,9 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
 
     events = _rows(db,
         """SELECT e.event_date, e.name, e.person_id, e.related_label,
-                  e.speech_number, e.vote_id, e.remark, p.label AS person_name
+                  e.speech_number, e.vote_id, e.remark, p.label AS person_name,
+                  (SELECT s.uid FROM speech s WHERE s.speech_uuid = e.speech_id
+                   ORDER BY s.speech_index LIMIT 1) AS speech_uid
            FROM bill_event e LEFT JOIN person p ON p.person_id = e.person_id
            WHERE e.bill_id = ? ORDER BY e.ord""", bill_id)
     committee_events = _rows(db,

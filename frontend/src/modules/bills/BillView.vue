@@ -152,7 +152,10 @@ watch(() => props.id, load)
                 <router-link v-if="e.person_id" :to="{ name: 'profile', params: { id: e.person_id } }">{{ e.person_name || e.related_label }}</router-link>
                 <span v-else>{{ e.related_label }}</span>
               </span>
-              <span v-if="e.speech_number" class="echip mic" :title="$t('bills.speechNumber')">🎙 {{ e.speech_number }}</span>
+              <router-link v-if="e.speech_number && e.speech_uid" class="echip mic link"
+                :to="{ name: 'viewer', params: { uid: e.speech_uid } }"
+                :title="$t('bills.viewSpeech')">🎙 {{ e.speech_number }}</router-link>
+              <span v-else-if="e.speech_number" class="echip mic" :title="$t('bills.speechNumber')">🎙 {{ e.speech_number }}</span>
               <span v-if="e.vote_id" class="echip vote">{{ $t('bills.voteTag') }}</span>
             </div>
           </li>
@@ -426,6 +429,8 @@ watch(() => props.id, load)
   background: var(--line); color: var(--ink-soft);
 }
 .echip.mic { background: var(--accent-soft); color: var(--accent); }
+.echip.link { text-decoration: none; cursor: pointer; }
+.echip.link:hover { background: var(--accent); color: #fff; }
 .echip.vote { background: #eef6ee; color: #2e7d32; }
 .echip.justification { background: var(--accent-soft); color: var(--accent); }
 .echip.background { background: #f0eee8; color: var(--ink-soft); }

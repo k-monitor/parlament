@@ -129,6 +129,10 @@ def test_bill_detail_sections(client):
     assert d["events"][0]["person_id"] == "k001"
     assert d["events"][0]["person_name"]  # resolved through the shared person
     assert d["events"][0]["speech_number"] == "3/43"
+    # the speech ref resolves to an in-site viewer uid via speech.speech_uuid;
+    # an event with no matching speech stays unlinked
+    assert d["events"][0]["speech_uid"] == "43001-1"
+    assert d["events"][1]["speech_uid"] is None
     # votes / committees / deadlines / documents / motion summary
     v = d["votes"][0]
     assert (v["yes"], v["no"], v["abstain"], v["result"]) == (139, 48, 0, "Elfogadva")

@@ -83,6 +83,7 @@ export default {
     yes: 'Yes', no: 'No', abstain: 'Abstain', voteTag: 'vote',
     events: 'Bill events',
     speechNumber: 'Speech no.',
+    viewSpeech: 'View this speech',
     committeeEvents: 'Committee events',
     committees: 'Negotiating committees',
     deadlines: 'Deadlines',

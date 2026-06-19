@@ -162,6 +162,7 @@ export default {
     yes: 'Igen', no: 'Nem', abstain: 'Tartózkodás', voteTag: 'szavazás',
     events: 'Iromány eseményei',
     speechNumber: 'Felszólalás száma',
+    viewSpeech: 'Felszólalás megtekintése',
     committeeEvents: 'Bizottsági események',
     committees: 'Tárgyaló bizottság',
     deadlines: 'Határidők',

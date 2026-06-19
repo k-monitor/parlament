@@ -174,9 +174,10 @@ Primary use cases:
 - **session** (sitting day) — id, period, date start/end, source page.
 - **agenda_item** — title, official title, `type` (from the pipeline's agenda
   taxonomy, e.g. `CORE_OPENING`, `CORE_VOTING`, `CORE_QA`, …), order within session.
-- **speech** — `originID`, session, agenda item, order, speaker reference,
-  speaker status/context (e.g. `main-speaker`, chair), media reference,
-  start/end, confidence, align-method.
+- **speech** — `originID`, Felicitas speech UUID (`speech_uuid`, for
+  cross-module links such as BILL-8), session, agenda item, order, speaker
+  reference, speaker status/context (e.g. `main-speaker`, chair), media
+  reference, start/end, confidence, align-method.
 - **sentence** — speech reference, order, **text**, `timeStart`, `timeEnd`
   (day-absolute seconds). This is the unit of search and of video seeking.
 - **media** — per session day: HLS `videoFileURI`, duration, license, creator.
@@ -325,7 +326,8 @@ submitted to the Assembly, sourced from the Felicitas `iromany` API.
   **adatlap** sheet (the same data parlament.hu shows), each fetched per bill
   from the Felicitas `iromany-adatlap` sub-queries and stored in dedicated child
   tables: the **legislative event history** (with the speech number and vote
-  each event is tied to), **committee events** (modifying proposals, reports),
+  each event is tied to, and an **in-site link to that speech** — BILL-8),
+  **committee events** (modifying proposals, reports),
   **votes** (igen/nem/tartózkodás with the result), **deadlines**, the
   **negotiating committees**, **justification & background documents**, the
   **non-self-standing (dependent) irományok** — the individual motions attached
@@ -346,6 +348,17 @@ submitted to the Assembly, sourced from the Felicitas `iromany` API.
   future work: **other iromány types**, and **per-MP vote breakdowns** (who voted
   how — the vote here is the aggregate tally; the roll-call belongs to the Votes
   module, §10).
+- **BILL-8 (SHOULD).** Where a bill event references a plenary **speech** (as
+  parlament.hu's adatlap does), the event links **into this site's own speech
+  viewer** (VIE-5), not out to parlament.hu. The link is resolved through the
+  shared core data (EXT-2): each event carries the Felicitas speech UUID
+  (`felszolalasId`), which is matched against the same UUID stored on the
+  proceedings **speech** records (`speech_uuid`) to recover the viewer's
+  `uid`. The match is by UUID, never by the displayed *felszólalás-szám* (which
+  is not the speech index); one UUID may map to several speech rows (a speech
+  spanning agenda items), in which case the first is linked. An event whose
+  speech has not been ingested keeps the plain speech-number chip with no link
+  (graceful degradation, SCR-5).
 
 ---
 

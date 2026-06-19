@@ -325,12 +325,13 @@ def _load_bill_detail(conn: sqlite3.Connection, bill_id: str, detail: dict,
     for i, e in enumerate(detail.get("events") or []):
         conn.execute(
             """INSERT INTO bill_event(bill_id, ord, event_date, name, person_id,
-                   related_label, committee_id, speech_number, vote_id, remark)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                   related_label, committee_id, speech_number, speech_id,
+                   vote_id, remark)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (bill_id, i, e.get("date"), e.get("name"),
              resolve_person(e.get("personID")), e.get("relatedLabel"),
-             e.get("committeeId"), e.get("speechNumber"), e.get("voteId"),
-             e.get("remark")))
+             e.get("committeeId"), e.get("speechNumber"), e.get("speechId"),
+             e.get("voteId"), e.get("remark")))
 
     for i, e in enumerate(detail.get("committeeEvents") or []):
         conn.execute(
@@ -524,13 +525,14 @@ def _load_speech(conn, sid, period, sp, agenda_cache) -> None:
     speech_index = sp.get("speechIndex")
     uid = f"{sid}-{speech_index}"
     conn.execute(
-        """INSERT INTO speech(uid, origin_id, session_id, agenda_item_id,
+        """INSERT INTO speech(uid, origin_id, speech_uuid, session_id, agenda_item_id,
                period_number, speech_index, person_id, speaker_label,
                speaker_status, faction_id, time_start, time_end, video_start,
                video_end, duration, confidence, align_method, has_text,
                source_uri, source_page)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (uid, origin_id, sid, agenda_id, period, speech_index, pid,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (uid, origin_id, debug.get("speechUUID"), sid, agenda_id, period,
+         speech_index, pid,
          speaker.get("label"), speaker.get("context"), faction_id,
          time_start, time_end, media.get("videoStart"), media.get("videoEnd"),
          duration, debug.get("confidence"), debug.get("align-method"),

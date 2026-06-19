@@ -109,6 +109,7 @@ CREATE INDEX idx_agenda_session ON agenda_item(session_id);
 CREATE TABLE speech (
     uid            TEXT PRIMARY KEY,     -- "43003-12" (session + speech_index)
     origin_id      TEXT,                 -- upstream felszólalás id "43-3-12"
+    speech_uuid    TEXT,                 -- Felicitas felszólalás UUID (joins bill events to a speech)
     session_id     TEXT NOT NULL REFERENCES session(id),
     agenda_item_id INTEGER REFERENCES agenda_item(id),
     period_number  INTEGER,
@@ -135,6 +136,7 @@ CREATE INDEX idx_speech_person ON speech(person_id);
 CREATE INDEX idx_speech_agenda ON speech(agenda_item_id);
 CREATE INDEX idx_speech_faction ON speech(faction_id);
 CREATE INDEX idx_speech_origin ON speech(origin_id);
+CREATE INDEX idx_speech_uuid ON speech(speech_uuid);
 
 CREATE TABLE sentence (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,6 +234,7 @@ CREATE TABLE bill_event (             -- "Iromány események" (legislative hist
     related_label TEXT,                -- related person / committee name
     committee_id TEXT,
     speech_number TEXT,                -- felszolalasSzam (speech attached to the event)
+    speech_id    TEXT,                 -- felszolalasId (joins to speech.speech_uuid for an in-site link)
     vote_id      TEXT,                 -- joins to bill_vote.vote_id
     remark       TEXT
 );

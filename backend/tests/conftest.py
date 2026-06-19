@@ -49,7 +49,8 @@ def _session_record(session="43001", period=43, sitting=1, date="2026-05-09"):
                                         {"text": "Az ÁGAZATI fejlesztés ügye sürgős!",
                                          "timeStart": 20.0, "timeEnd": 40.0},
                                     ]}]}],
-                "debug": {"confidence": 0.7, "align-method": "estimated-day-offset"},
+                "debug": {"confidence": 0.7, "align-method": "estimated-day-offset",
+                          "speechUUID": "uuid-sp-1"},
             },
             {
                 "originID": f"{period}-{sitting}-2", "speechIndex": 2,
@@ -119,10 +120,12 @@ def _bills_registry():
                  "events": [
                      {"date": "2026-05-26T13:04:20Z", "name": "kivételességi javaslat elfogadva",
                       "personID": "k001", "committeeId": None, "relatedLabel": "Kovács Béla",
-                      "speechNumber": "3/43", "voteId": "v-1", "remark": ""},
+                      "speechNumber": "3/43", "speechId": "uuid-sp-1",
+                      "voteId": "v-1", "remark": ""},
                      {"date": "2026-05-26T16:45:00Z", "name": "részletes vita megkezdve",
                       "personID": None, "committeeId": None, "relatedLabel": None,
-                      "speechNumber": None, "voteId": None, "remark": None}],
+                      "speechNumber": None, "speechId": None,
+                      "voteId": None, "remark": None}],
                  "committeeEvents": [
                      {"date": "2026-05-26T17:01:00Z", "name": "a bizottság előadója",
                       "committee": "Törvényalkotási Bizottság", "committeeId": "c-1",

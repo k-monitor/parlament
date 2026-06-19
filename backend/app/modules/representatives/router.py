@@ -183,7 +183,7 @@ def get_statistics(person_id: str, db: sqlite3.Connection = Depends(get_db)):
 
     return {
         "person_id": person_id,
-        "scope": {"description": "Az Országgyűlés Watch által feldolgozott "
+        "scope": {"description": "A Parlamonitor által feldolgozott "
                                  "ülésnapok alapján.",
                   "sessions_covered": db.execute(
                       "SELECT COUNT(DISTINCT session_id) AS c FROM person_session_stats "

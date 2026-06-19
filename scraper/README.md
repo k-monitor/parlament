@@ -1,6 +1,6 @@
-# Országgyűlés Watch — Scraper
+# Parlamonitor — Scraper
 
-The scraping pipeline for [Országgyűlés Watch](../requirements.md): it fetches
+The scraping pipeline for [Parlamonitor](../requirements.md): it fetches
 Hungarian National Assembly (*Magyar Országgyűlés*) data from `parlament.hu`,
 parses it, segments speeches into sentences, estimates sentence↔video timing,
 and writes self-contained JSON records ready to load into the search database.
@@ -13,8 +13,8 @@ kept only as reference material; nothing here imports it at runtime.
 
 | Output | Module | Shape |
 | ------ | ------ | ----- |
-| `processed/<session>-session.json` | `ogywatch.proceedings` | one record per sitting day: ordered speeches, each with agenda item, speaker(s), the whole-day HLS video, and `textContents → textBody → sentences[]` with day-absolute `timeStart`/`timeEnd`. |
-| `processed/representatives-<cycle>.json` | `ogywatch.representatives` | the MP registry for a cycle: bio, faction & committee history, constituency, education, and per-cycle speech / bill-submission counts. |
+| `processed/<session>-session.json` | `parlamonitor.proceedings` | one record per sitting day: ordered speeches, each with agenda item, speaker(s), the whole-day HLS video, and `textContents → textBody → sentences[]` with day-absolute `timeStart`/`timeEnd`. |
+| `processed/representatives-<cycle>.json` | `parlamonitor.representatives` | the MP registry for a cycle: bio, faction & committee history, constituency, education, and per-cycle speech / bill-submission counts. |
 | `logs/ingest-<ts>.json` | both | per-run ingestion log (run time, sittings added, errors, backend). |
 
 Each speech's speaker carries a `personID` (`kepviseloId`) that joins directly
@@ -23,7 +23,7 @@ to the representative registry — no name matching needed (requirements EXT-2).
 ## How the data is fetched
 
 Everything goes through the modern, **token-free Felicitas JSON API**
-(`ogywatch/felicitas.py`), verified against browser captures (2026-06):
+(`parlamonitor/felicitas.py`), verified against browser captures (2026-06):
 
 **Proceedings** — `plenaris-ules-adatok-query-provider`:
 
@@ -51,7 +51,7 @@ HLS stream, so clicking a sentence seeks into it (TIM-2). Every timed sentence i
 stamped `align-method = "estimated-day-offset"` with reduced `confidence` so the
 UI can disclose the imprecision (TIM-3 / VIE-6).
 
-Timing is a **distinct, swappable stage** (`ogywatch/timing.py`, TIM-4): the
+Timing is a **distinct, swappable stage** (`parlamonitor/timing.py`, TIM-4): the
 real per-speech offsets the scraper already captures into
 `media.videoStart`/`videoEnd`, or forced alignment, can replace it later without
 touching the fetch/parse/segment stages or the data shape (requirements §10).
@@ -66,32 +66,32 @@ python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt        # just `requests`; spaCy is optional
 
 # Proceedings: download + transform the current cycle (43) into ./data
-python -m ogywatch proceedings --cycle 43 ./data
+python -m parlamonitor proceedings --cycle 43 ./data
 
 # Re-run only the offline transform/timing over already-downloaded raw files
-python -m ogywatch proceedings --cycle 43 --transform-only ./data
+python -m parlamonitor proceedings --cycle 43 --transform-only ./data
 
 # A bounded slice (e.g. backfill a date window)
-python -m ogywatch proceedings --cycle 43 --from 2026-05-09 --to 2026-06-18 ./data
+python -m parlamonitor proceedings --cycle 43 --from 2026-05-09 --to 2026-06-18 ./data
 
 # Representative registry — roster only (one paged query, fast)
-python -m ogywatch representatives --cycle 43 --no-details ./data
+python -m parlamonitor representatives --cycle 43 --no-details ./data
 
 # Full registry with per-MP detail + portraits (heavier; one run per cycle)
-python -m ogywatch representatives --cycle 43 --photos ./data
+python -m parlamonitor representatives --cycle 43 --photos ./data
 ```
 
 ### Operational knobs (all environment-driven — OPS-4 / SCR-4)
 
 | Flag | Env var | Default | Purpose |
 | ---- | ------- | ------- | ------- |
-| `--sleep` | `OGYWATCH_SLEEP` | `1.0` | politeness delay between requests |
-| `--retry-count` | `OGYWATCH_RETRY_COUNT` | `5` | retries per request (exp. backoff) |
-| `--proxy` | `OGYWATCH_PROXY` | — | SOCKS5/HTTP proxy for `parlament.hu` |
-| — | `OGYWATCH_USER_AGENT` | civic-tech UA | request User-Agent |
+| `--sleep` | `PARLAMONITOR_SLEEP` | `1.0` | politeness delay between requests |
+| `--retry-count` | `PARLAMONITOR_RETRY_COUNT` | `5` | retries per request (exp. backoff) |
+| `--proxy` | `PARLAMONITOR_PROXY` | — | SOCKS5/HTTP proxy for `parlament.hu` |
+| — | `PARLAMONITOR_USER_AGENT` | civic-tech UA | request User-Agent |
 | `--no-offsets` | — | off | skip per-speech offset resolution (faster) |
 
-Runs are **idempotent** and guarded by a lockfile (`data/ogywatch.lock`,
+Runs are **idempotent** and guarded by a lockfile (`data/parlamonitor.lock`,
 SCR-1): a cached sitting is skipped unless it is the still-live latest sitting
 or `--force` is given. A sitting with no resolvable recording or no transcript
 is still written in degraded form and flagged (`confidence`, `confidence_reason`,
@@ -103,7 +103,7 @@ Schedule it from cron/systemd (OPS-2); each run appends an ingestion log under
 ## Layout
 
 ```
-ogywatch/
+parlamonitor/
   config.py            paths + environment-driven runtime config
   http_client.py       polite, retrying HTTP client
   lockfile.py          PID lockfile (concurrency guard)
@@ -136,7 +136,7 @@ in `../captures/`.
 ## Extending (new modules)
 
 Adding a domain (Bills/*irományok*, Votes/*szavazások*, Committees) is additive
-(requirements §7, EXT-1): create a sibling package under `ogywatch/` with its own
+(requirements §7, EXT-1): create a sibling package under `parlamonitor/` with its own
 `scrape.py`, add a subcommand in `cli.py`, and reference shared core entities
 (`personID`, faction, session) rather than duplicating them. The captures show
 the matching Felicitas providers already exist (`iromanyadatok-iromany-iromanyok`,

@@ -1,11 +1,11 @@
-# Országgyűlés Watch
+# Parlamonitor
 
 A third-party, civic-tech website making the **Hungarian National Assembly's**
 public proceedings searchable and watchable down to the individual sentence, with
 transparent statistics about representatives. See [requirements.md](requirements.md).
 
 ```
-scraper/     ogywatch — the scraping pipeline (parlament.hu / Felicitas JSON API)  [pre-existing]
+scraper/     parlamonitor — the scraping pipeline (parlament.hu / Felicitas JSON API)  [pre-existing]
 backend/     FastAPI read-only API over SQLite+FTS5, plus the JSON→DB loader        §3.3, §4, §5, §6, §8
 frontend/    Vue 3 + Vite SPA (search, viewer, representatives, statistics)         §5, §6, §8
 data/        scraper output (processed/*.json) + the built runtime DB consumes it
@@ -20,21 +20,21 @@ owns fetch/parse/segment/timing; the **loader** is the only DB writer (ING-2); t
 
 ```bash
 # 1. (already done) scrape -> data/processed/*.json
-#    python -m ogywatch proceedings --cycle 43 ./data
-#    python -m ogywatch representatives --cycle 43 --photos ./data
+#    python -m parlamonitor proceedings --cycle 43 ./data
+#    python -m parlamonitor representatives --cycle 43 --photos ./data
 
 # 2. build the runtime database (JSON -> SQLite + FTS5 + aggregates)
 cd backend
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-python -m app.loader ../data ogywatch.db
+python -m app.loader ../data parlamonitor.db
 
 # 3. build the frontend
 cd ../frontend && npm install && npm run build
 
 # 4. serve API + SPA from one process
 cd ../backend
-OGYWATCH_FRONTEND_DIST=$(pwd)/../frontend/dist uvicorn app.main:app
+PARLAMONITOR_FRONTEND_DIST=$(pwd)/../frontend/dist uvicorn app.main:app
 #   → app at http://localhost:8000  · API docs at /api/docs
 ```
 

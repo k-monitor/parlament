@@ -3,7 +3,7 @@
 Each feature module exposes an APIRouter under its own namespace. Mounting a new
 domain (Bills, Votes, …) is purely additive: write its router, add one entry
 here, list it in ``ALL_MODULES`` (config). Existing routes are untouched (EXT-3),
-and a module left out of ``OGYWATCH_MODULES`` is simply never mounted (EXT-6).
+and a module left out of ``PARLAMONITOR_MODULES`` is simply never mounted (EXT-6).
 """
 
 from __future__ import annotations

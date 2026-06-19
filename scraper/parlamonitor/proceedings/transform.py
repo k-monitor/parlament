@@ -7,7 +7,7 @@ merge collapses to a single pass here). Each raw speech becomes one speech entry
 with the logical shape the requirements fix (§3.1), reusing the field names the
 reference output established so downstream consumers stay compatible.
 
-The timing stage (``ogywatch.timing``) runs last and is deliberately separate
+The timing stage (``parlamonitor.timing``) runs last and is deliberately separate
 and swappable (TIM-4): this module produces fully-segmented, untimed speeches,
 and timing stamps day-absolute offsets onto the sentences.
 """

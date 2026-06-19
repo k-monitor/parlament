@@ -1,4 +1,4 @@
-# Országgyűlés Watch — Backend
+# Parlamonitor — Backend
 
 A stateless **FastAPI** read-only API over a **SQLite + FTS5** database, plus the
 **loader** that builds that database from the scraper's JSON output. Satisfies
@@ -26,8 +26,8 @@ The loader reads the scraper's output under `<data_dir>/processed/`
 it in atomically (DB-4):
 
 ```bash
-python -m app.loader ../data ogywatch.db          # full rebuild
-python -m app.loader ../data ogywatch.db --session 43003   # one sitting
+python -m app.loader ../data parlamonitor.db          # full rebuild
+python -m app.loader ../data parlamonitor.db --session 43003   # one sitting
 ```
 
 ## Run the API
@@ -39,18 +39,18 @@ uvicorn app.main:app --reload                      # http://localhost:8000
 
 * OpenAPI/Swagger docs: `/api/docs` — ReDoc: `/api/redoc` (NFR-3)
 * Module manifest the SPA registers against: `/api/v1/meta` (EXT-4)
-* MP portraits served from `OGYWATCH_PHOTOS_DIR` at `/media/photos/<file>`
+* MP portraits served from `PARLAMONITOR_PHOTOS_DIR` at `/media/photos/<file>`
 
 ### Configuration (all environment-driven — OPS-4)
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `OGYWATCH_DB` | `./ogywatch.db` | SQLite file path |
-| `OGYWATCH_MODULES` | all | comma list of enabled modules (EXT-6) |
-| `OGYWATCH_CORS_ORIGINS` | localhost:5173 | allowed SPA origins |
-| `OGYWATCH_PHOTOS_DIR` | `../data/media/photos` | MP portrait directory |
-| `OGYWATCH_FRONTEND_DIST` | — | if set, serves the built SPA from one process (OPS-1) |
-| `OGYWATCH_MAX_SEARCH_TOTAL` | 5000 | cap on reported search totals |
+| `PARLAMONITOR_DB` | `./parlamonitor.db` | SQLite file path |
+| `PARLAMONITOR_MODULES` | all | comma list of enabled modules (EXT-6) |
+| `PARLAMONITOR_CORS_ORIGINS` | localhost:5173 | allowed SPA origins |
+| `PARLAMONITOR_PHOTOS_DIR` | `../data/media/photos` | MP portrait directory |
+| `PARLAMONITOR_FRONTEND_DIST` | — | if set, serves the built SPA from one process (OPS-1) |
+| `PARLAMONITOR_MAX_SEARCH_TOTAL` | 5000 | cap on reported search totals |
 
 ## Tests
 

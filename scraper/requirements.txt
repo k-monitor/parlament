@@ -4,7 +4,7 @@
 requests>=2.31,<3
 
 # Optional: better Hungarian sentence segmentation. The pipeline runs without
-# it (regex fallback in ogywatch/segment.py), so it is not required for a clean
+# it (regex fallback in parlamonitor/segment.py), so it is not required for a clean
 # scrape — install it for higher-quality sentence boundaries.
 # spacy>=3.7,<3.9
 

@@ -1,4 +1,4 @@
-"""Command-line workflow for the Országgyűlés Watch scraper.
+"""Command-line workflow for the Parlamonitor scraper.
 
 Stages are individually runnable and idempotent (requirements SCR-1/SCR-2); a
 whole run is guarded by a lockfile and writes an ingestion log (SCR-3). All
@@ -6,19 +6,19 @@ politeness/transport knobs come from the environment or flags, never hard-coded
 (SCR-4 / OPS-4).
 
     # Proceedings: download + transform the current cycle's sittings
-    python -m ogywatch proceedings --cycle 43 ./data
+    python -m parlamonitor proceedings --cycle 43 ./data
 
     # Just re-run the (offline) transform over already-downloaded raw files
-    python -m ogywatch proceedings --cycle 43 --transform-only ./data
+    python -m parlamonitor proceedings --cycle 43 --transform-only ./data
 
     # Representative registry (roster only, fast)
-    python -m ogywatch representatives --cycle 43 --no-details ./data
+    python -m parlamonitor representatives --cycle 43 --no-details ./data
 
     # Full representative registry with per-MP detail + photos
-    python -m ogywatch representatives --cycle 43 --photos ./data
+    python -m parlamonitor representatives --cycle 43 --photos ./data
 
     # Bills (irományok) of the current cycle
-    python -m ogywatch bills --cycle 43 ./data
+    python -m parlamonitor bills --cycle 43 ./data
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from .proceedings.scrape import download_period
 from .proceedings.transform import transform_day
 from .representatives.scrape import fetch_representatives, save_representatives
 
-logger = logging.getLogger("ogywatch")
+logger = logging.getLogger("parlamonitor")
 
 
 def _client(args) -> FelicitasClient:
@@ -175,8 +175,8 @@ def cmd_bills(args) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="ogywatch",
-                                description="Országgyűlés Watch scraper")
+    p = argparse.ArgumentParser(prog="parlamonitor",
+                                description="Parlamonitor scraper")
     p.add_argument("--debug", action="store_true")
     sub = p.add_subparsers(dest="command", required=True)
 

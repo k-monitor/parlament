@@ -1,7 +1,7 @@
 // English locale (I18N-1: copy externalized so a second locale can be added).
 export default {
   app: {
-    title: 'Országgyűlés Watch',
+    title: 'Parlamonitor',
     tagline: 'Public proceedings of the Hungarian National Assembly — searchable to the sentence, synced to video.',
     skipToContent: 'Skip to content',
     loading: 'Loading…',
@@ -10,7 +10,7 @@ export default {
     notFound: 'The page you are looking for was not found.',
     backHome: 'Back to home',
     source: 'Source',
-    sourceNote: 'Data is sourced from parlament.hu; processing by Országgyűlés Watch.',
+    sourceNote: 'Data is sourced from parlament.hu; processing by Parlamonitor.',
     openData: 'Open data',
   },
   nav: { home: 'Home', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', factions: 'Factions', bills: 'Bills', about: 'About' },
@@ -81,7 +81,7 @@ export default {
     viewOnParlament: 'View on parlament.hu',
   },
   about: {
-    title: 'About', body: 'Országgyűlés Watch is a third-party civic-tech website that makes the public sessions of the Hungarian National Assembly searchable and watchable down to the sentence. All data is sourced from parlament.hu and every fact links back to its original source.',
+    title: 'About', body: 'Parlamonitor is a third-party civic-tech website that makes the public sessions of the Hungarian National Assembly searchable and watchable down to the sentence. All data is sourced from parlament.hu and every fact links back to its original source.',
     dataTitle: 'Data & accuracy',
     dataBody: 'Video timing in this version is a positional estimate (the day stream duration distributed by character position), so it is approximate — to the neighbourhood of a passage, not the word. Estimated precision is indicated on every sentence.',
     privacyTitle: 'Privacy', privacyBody: 'This site uses no third-party advertising or tracking scripts. Any visit statistics are anonymous and GDPR-compliant.',

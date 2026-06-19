@@ -3,7 +3,7 @@ import vue from '@vitejs/plugin-vue'
 
 // In dev the SPA runs under Vite and proxies API + media to the FastAPI backend
 // (NFR-1: separate backend). In prod `npm run build` emits a static bundle that
-// the backend can serve directly (OGYWATCH_FRONTEND_DIST) or any static host.
+// the backend can serve directly (PARLAMONITOR_FRONTEND_DIST) or any static host.
 export default defineConfig({
   plugins: [vue()],
   server: {

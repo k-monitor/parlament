@@ -17,8 +17,8 @@ Design points satisfied here:
 
 Usage::
 
-    python -m app.loader ../data backend/ogywatch.db          # full rebuild
-    python -m app.loader ../data backend/ogywatch.db --session 43003
+    python -m app.loader ../data backend/parlamonitor.db          # full rebuild
+    python -m app.loader ../data backend/parlamonitor.db --session 43003
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-logger = logging.getLogger("ogywatch.loader")
+logger = logging.getLogger("parlamonitor.loader")
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -605,7 +605,7 @@ def _day_creator(record: dict):
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Build the Országgyűlés Watch SQLite DB")
+    ap = argparse.ArgumentParser(description="Build the Parlamonitor SQLite DB")
     ap.add_argument("data_dir", help="scraper data directory (contains processed/)")
     ap.add_argument("db_path", help="output SQLite file")
     ap.add_argument("--session", help="load only this session id (e.g. 43003)")
@@ -613,7 +613,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
-    logging.getLogger("ogywatch.loader").setLevel(logging.INFO)
+    logging.getLogger("parlamonitor.loader").setLevel(logging.INFO)
     build_database(args.data_dir, args.db_path, only_session=args.session)
     return 0
 

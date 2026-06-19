@@ -11,7 +11,7 @@ reference pipeline so its outputs stay comparable:
         representatives-<cycle>.json              # the MP registry for a cycle
       logs/
         ingest-<timestamp>.json                   # per-run ingestion log (SCR-3)
-      ogywatch.lock                               # concurrency lockfile (SCR-1)
+      parlamonitor.lock                               # concurrency lockfile (SCR-1)
 
 Every operational knob (politeness sleep, retries, proxy, optional API key)
 is read from the environment so nothing is hard-coded (requirements OPS-4 /
@@ -49,18 +49,18 @@ class RuntimeConfig:
 
     @classmethod
     def from_env(cls, **overrides) -> "RuntimeConfig":
-        """Build from ``OGYWATCH_*`` env vars; explicit ``overrides`` win."""
+        """Build from ``PARLAMONITOR_*`` env vars; explicit ``overrides`` win."""
         def _f(name: str, default: float) -> float:
             raw = os.environ.get(name)
             return float(raw) if raw not in (None, "") else default
 
         cfg = cls(
-            sleep=_f("OGYWATCH_SLEEP", cls.sleep),
-            retry_count=int(_f("OGYWATCH_RETRY_COUNT", cls.retry_count)),
-            retry_delay_max=_f("OGYWATCH_RETRY_DELAY_MAX", cls.retry_delay_max),
-            timeout=_f("OGYWATCH_TIMEOUT", cls.timeout),
-            proxy=os.environ.get("OGYWATCH_PROXY") or None,
-            user_agent=os.environ.get("OGYWATCH_USER_AGENT") or cls.user_agent,
+            sleep=_f("PARLAMONITOR_SLEEP", cls.sleep),
+            retry_count=int(_f("PARLAMONITOR_RETRY_COUNT", cls.retry_count)),
+            retry_delay_max=_f("PARLAMONITOR_RETRY_DELAY_MAX", cls.retry_delay_max),
+            timeout=_f("PARLAMONITOR_TIMEOUT", cls.timeout),
+            proxy=os.environ.get("PARLAMONITOR_PROXY") or None,
+            user_agent=os.environ.get("PARLAMONITOR_USER_AGENT") or cls.user_agent,
         )
         for k, v in overrides.items():
             if v is not None:
@@ -76,7 +76,7 @@ class Paths:
         self.raw_plenary = self.data / "original" / "plenary"
         self.processed = self.data / "processed"
         self.logs = self.data / "logs"
-        self.lockfile = self.data / "ogywatch.lock"
+        self.lockfile = self.data / "parlamonitor.lock"
 
     def ensure(self) -> None:
         for d in (self.raw_plenary, self.processed, self.logs):

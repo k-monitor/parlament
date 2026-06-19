@@ -1,9 +1,9 @@
 {
-  "name": "ogywatch-frontend",
+  "name": "parlamonitor-frontend",
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Országgyűlés Watch — SPA frontend (NFR-1)",
+  "description": "Parlamonitor — SPA frontend (NFR-1)",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

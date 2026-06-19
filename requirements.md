@@ -1,4 +1,4 @@
-# Országgyűlés Watch — Requirements
+# Parlamonitor — Requirements
 
 A third-party, civic-tech website for the Hungarian National Assembly
 (*Magyar Országgyűlés*). The site makes parliamentary proceedings searchable
@@ -318,7 +318,7 @@ submitted to the Assembly, sourced from the Felicitas `iromany` API.
   marking the current position. Provenance is the upstream diagram (TRUST-1).
 - **BILL-5 (MUST).** The module is a self-contained vertical slice per EXT-1..6:
   its own scraper stage, loader, `bill`/`bill_sponsor` tables, `/api/v1/bills`
-  routes, and frontend views. Disabling it via `OGYWATCH_MODULES` removes its nav
+  routes, and frontend views. Disabling it via `PARLAMONITOR_MODULES` removes its nav
   entry and routes, and hides REP-3's bills-submitted metric — no errors (EXT-6).
 - **BILL-6 (scope).** v1 "basic support" covers **törvényjavaslatok** (Felicitas
   `fotipus = T`) for the current cycle. Other iromány types, and per-bill events,

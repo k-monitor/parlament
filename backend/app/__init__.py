@@ -1,1 +1,1 @@
-"""Országgyűlés Watch backend package."""
+"""Parlamonitor backend package."""

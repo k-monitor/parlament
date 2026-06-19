@@ -109,8 +109,8 @@ def test_disabled_module_not_mounted(monkeypatch, db_path):
     """EXT-6: a module absent from config is never mounted (routes 404)."""
     import importlib
     from app import config as config_module
-    monkeypatch.setenv("OGYWATCH_MODULES", "proceedings")
-    monkeypatch.setenv("OGYWATCH_DB", str(db_path))
+    monkeypatch.setenv("PARLAMONITOR_MODULES", "proceedings")
+    monkeypatch.setenv("PARLAMONITOR_DB", str(db_path))
     importlib.reload(config_module)
     import app.main as main_module
     importlib.reload(main_module)
@@ -119,6 +119,6 @@ def test_disabled_module_not_mounted(monkeypatch, db_path):
     assert c.get("/api/v1/proceedings/sessions").status_code == 200
     assert c.get("/api/v1/representatives").status_code == 404
     # restore for other tests
-    monkeypatch.delenv("OGYWATCH_MODULES")
+    monkeypatch.delenv("PARLAMONITOR_MODULES")
     importlib.reload(config_module)
     importlib.reload(main_module)

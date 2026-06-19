@@ -1,4 +1,4 @@
--- Országgyűlés Watch — normalized SQLite schema (DB-1).
+-- Parlamonitor — normalized SQLite schema (DB-1).
 --
 -- The runtime DB is a regenerable cache built from the scraper's session and
 -- representative records (DB-3). The loader is the only writer (ING-2); the

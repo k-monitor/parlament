@@ -1,4 +1,4 @@
-"""Országgyűlés Watch backend — FastAPI app (NFR-1/NFR-2/NFR-3).
+"""Parlamonitor backend — FastAPI app (NFR-1/NFR-2/NFR-3).
 
 A stateless API over a read-only SQLite file. Feature modules are mounted under
 a stable, versioned, namespaced API (`/api/v1/<module>/…`, EXT-3); OpenAPI/Swagger
@@ -23,7 +23,7 @@ from .modules.registry import load_modules
 API_PREFIX = "/api/v1"
 
 app = FastAPI(
-    title="Országgyűlés Watch API",
+    title="Parlamonitor API",
     version="1.0.0",
     description=(
         "Harmadik feles, civil-tech API a Magyar Országgyűlés nyilvános "
@@ -64,13 +64,13 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
     build = {r["key"]: r["value"] for r in db.execute(
         "SELECT key, value FROM build_meta")}
     return {
-        "name": "Országgyűlés Watch",
+        "name": "Parlamonitor",
         "source_attribution": {  # LEGAL-1 / TRUST-1
             "name": "Magyar Országgyűlés",
             "url": "https://www.parlament.hu",
             "license_url": "https://www.parlament.hu/web/guest/jogi-nyilatkozat",
-            "note": "Az adatok forrása a parlament.hu; a feldolgozást az "
-                    "Országgyűlés Watch végzi.",
+            "note": "Az adatok forrása a parlament.hu; a feldolgozást a "
+                    "Parlamonitor végzi.",
         },
         "modules": [{"name": m.name, "label": m.label_hu} for m in _MODULES],
         "periods": periods,

@@ -20,9 +20,9 @@ function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
   <a class="skip-link" href="#main">{{ $t('app.skipToContent') }}</a>
   <header class="site-header">
     <div class="container row" style="justify-content:space-between;">
-      <router-link :to="{ name: 'home' }" class="brand" aria-label="Országgyűlés Watch">
+      <router-link :to="{ name: 'home' }" class="brand" aria-label="Parlamonitor">
         <span class="brand-mark" aria-hidden="true">⬢</span>
-        <span class="brand-text">Országgyűlés&nbsp;Watch</span>
+        <span class="brand-text">Parlamonitor</span>
       </router-link>
       <nav class="mainnav" :aria-label="$t('nav.home')">
         <router-link :to="{ name: 'home' }">{{ $t('nav.home') }}</router-link>

@@ -1,7 +1,7 @@
 // Hungarian — the primary UI language (I18N-1). All user-facing copy lives here.
 export default {
   app: {
-    title: 'Országgyűlés Watch',
+    title: 'Parlamonitor',
     tagline: 'A Magyar Országgyűlés nyilvános jegyzőkönyvei — mondatszinten kereshetően, videóval szinkronizálva.',
     skipToContent: 'Ugrás a tartalomra',
     loading: 'Betöltés…',
@@ -10,7 +10,7 @@ export default {
     notFound: 'A keresett oldal nem található.',
     backHome: 'Vissza a főoldalra',
     source: 'Forrás',
-    sourceNote: 'Az adatok forrása a parlament.hu; a feldolgozást az Országgyűlés Watch végzi.',
+    sourceNote: 'Az adatok forrása a parlament.hu; a feldolgozást a Parlamonitor végzi.',
     openData: 'Nyílt adat',
   },
   nav: {
@@ -161,7 +161,7 @@ export default {
   },
   about: {
     title: 'A projektről',
-    body: 'Az Országgyűlés Watch egy harmadik feles, civil-tech weboldal, amely a Magyar Országgyűlés nyilvános üléseit teszi mondatszinten kereshetővé és megtekinthetővé. Minden adat forrása a parlament.hu, és minden tény visszavezethető az eredeti forrására.',
+    body: 'A Parlamonitor egy harmadik feles, civil-tech weboldal, amely a Magyar Országgyűlés nyilvános üléseit teszi mondatszinten kereshetővé és megtekinthetővé. Minden adat forrása a parlament.hu, és minden tény visszavezethető az eredeti forrására.',
     dataTitle: 'Adatok és pontosság',
     dataBody: 'A felszólalások videóidőzítése a jelenlegi verzióban pozícióalapú becslés (a napi videó hosszát a szöveg karakterarányában osztja el), ezért közelítő pontosságú — a passzus környékére, nem a szóra pontos. Minden mondatnál jelezzük a becsült pontosságot.',
     privacyTitle: 'Adatvédelem',

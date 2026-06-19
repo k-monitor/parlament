@@ -10,12 +10,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ogywatch import agenda
-from ogywatch.names import build_person, split_name, split_speaker
-from ogywatch.segment import html_to_text, split_sentences
-from ogywatch.timing import apply_timing, smil_span_seconds
-from ogywatch.proceedings.transform import transform_day
-from ogywatch.proceedings.scrape import sitting_number
+from parlamonitor import agenda
+from parlamonitor.names import build_person, split_name, split_speaker
+from parlamonitor.segment import html_to_text, split_sentences
+from parlamonitor.timing import apply_timing, smil_span_seconds
+from parlamonitor.proceedings.transform import transform_day
+from parlamonitor.proceedings.scrape import sitting_number
 
 
 # --- names -----------------------------------------------------------------

@@ -94,29 +94,22 @@ class SSHProxy:
                 "SSH tunnelling needs the 'paramiko' package "
                 "(pip install paramiko)") from e
 
-        client = paramiko.SSHClient()
-        if self.known_hosts:
-            client.load_host_keys(self.known_hosts)
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
-        else:
-            # No known_hosts configured: accept the host key on first use.
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        pkey = self._load_key(paramiko)
 
-        try:
-            client.connect(
-                hostname=self.host,
-                port=self.port,
-                username=self.user,
-                key_filename=self.key_path,
-                passphrase=self.key_passphrase,
-                timeout=self.connect_timeout,
-                allow_agent=False,
-                look_for_keys=False,
-            )
-        except Exception as e:
+        # Try a normal connection first. If it fails and the key is RSA, the
+        # server may be an old one that only accepts the legacy ``ssh-rsa``
+        # (RSA-SHA1) signature — modern paramiko offers ``rsa-sha2-*`` first and
+        # won't fall back unless we disable those (the paramiko equivalent of
+        # ``ssh -o PubkeyAcceptedKeyTypes=ssh-rsa``). Retry once that way.
+        client, err = self._connect(paramiko, pkey, force_ssh_rsa=False)
+        if client is None and isinstance(pkey, paramiko.RSAKey):
+            logger.info("SSH connect failed (%s); retrying with legacy "
+                        "ssh-rsa (RSA-SHA1)", err)
+            client, err = self._connect(paramiko, pkey, force_ssh_rsa=True)
+        if client is None:
             raise SSHProxyError(
                 f"SSH connection to {self.user}@{self.host}:{self.port} "
-                f"failed: {e}") from e
+                f"failed (key {self.key_path}): {err}") from err
 
         transport = client.get_transport()
         if transport is None:
@@ -128,6 +121,71 @@ class SSHProxy:
         self._start_listener()
         logger.info("SSH proxy up: 127.0.0.1:%d -> %s@%s:%d",
                     self._local_port, self.user, self.host, self.port)
+
+    def _load_key(self, paramiko):
+        """Load the private key, trying each key type until one parses.
+
+        ``SSHClient.connect`` can auto-detect, but loading explicitly gives a
+        clear error (and lets us know the key type for the ssh-rsa fallback).
+        """
+        # RSA first: it is the common case for the legacy servers this targets.
+        candidates = [paramiko.RSAKey, paramiko.Ed25519Key,
+                      paramiko.ECDSAKey, paramiko.DSSKey]
+        errors = []
+        for cls in candidates:
+            try:
+                return cls.from_private_key_file(
+                    self.key_path, password=self.key_passphrase)
+            except paramiko.PasswordRequiredException as e:
+                raise SSHProxyError(
+                    f"SSH key {self.key_path} is encrypted; set "
+                    f"PARLAMONITOR_SSH_KEY_PASSPHRASE") from e
+            except (paramiko.SSHException, OSError) as e:
+                errors.append(f"{cls.__name__}: {e}")
+        raise SSHProxyError(
+            f"Could not load SSH key {self.key_path}: " + "; ".join(errors))
+
+    def _connect(self, paramiko, pkey, *, force_ssh_rsa: bool):
+        """Open one SSH connection.
+
+        Returns ``(client, None)`` on success, or ``(None, exc)`` on an
+        SSH-level failure (auth / key-algorithm negotiation) that the caller
+        may retry. Transport-level failures (DNS, refused) raise immediately —
+        retrying with a different signature algorithm wouldn't help.
+        """
+        client = paramiko.SSHClient()
+        if self.known_hosts:
+            client.load_host_keys(self.known_hosts)
+            client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        else:
+            # No known_hosts configured: accept the host key on first use
+            # (the equivalent of ``-o StrictHostKeyChecking=no``).
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        disabled = ({"pubkeys": ["rsa-sha2-512", "rsa-sha2-256"]}
+                    if force_ssh_rsa else None)
+        try:
+            client.connect(
+                hostname=self.host,
+                port=self.port,
+                username=self.user,
+                pkey=pkey,
+                timeout=self.connect_timeout,
+                allow_agent=False,
+                look_for_keys=False,
+                compress=True,
+                disabled_algorithms=disabled,
+            )
+            return client, None
+        except paramiko.SSHException as e:
+            # Auth failure or signature-algorithm mismatch — retryable.
+            client.close()
+            return None, e
+        except Exception as e:
+            client.close()
+            raise SSHProxyError(
+                f"SSH connection to {self.user}@{self.host}:{self.port} "
+                f"failed: {e}") from e
 
     def _start_listener(self) -> None:
         """Bind the local proxy socket and spawn the accept thread.

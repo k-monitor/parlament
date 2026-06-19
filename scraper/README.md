@@ -105,7 +105,14 @@ and `--ssh-key`) opens one key-based SSH connection via **paramiko** and serves
 a local HTTP-CONNECT proxy backed by `direct-tcpip` channels, so all
 parlament.hu traffic exits from the SSH host. It takes precedence over
 `--proxy`. Needs `paramiko` installed (`pip install paramiko`); imported lazily,
-so a plain scrape works without it. Example:
+so a plain scrape works without it.
+
+Compression (`-C`) is on, and the host key is trusted on first use unless
+`--ssh-known-hosts` is given (i.e. `StrictHostKeyChecking=no` by default). Old
+servers that only accept the legacy `ssh-rsa` (RSA-SHA1) signature are handled
+automatically: if the first attempt fails with an RSA key, it retries forcing
+`ssh-rsa` — the equivalent of `ssh -o PubkeyAcceptedKeyTypes=ssh-rsa`.
+
 
 ```bash
 python -m parlamonitor representatives --cycle 43 \

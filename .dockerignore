@@ -1,0 +1,21 @@
+# Keep the build context small and reproducible.
+.git
+**/.venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+
+# Runtime DBs (rebuilt inside the container from /data).
+*.db
+*.db-wal
+*.db-shm
+*.db.building*
+backend/*.db*
+
+# The SPA is built inside the image, not copied in.
+frontend/dist
+
+# Large / regenerable data is mounted at /data, not baked into the image.
+data/
+captures/

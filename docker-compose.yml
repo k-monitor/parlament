@@ -1,0 +1,48 @@
+# Parlamonitor — Docker Compose deployment.
+#
+# One stateless container (OPS-1) serves the API, the Vue SPA and the MP photos.
+# It reads the scraper output mounted read-only at /data and builds the runtime
+# SQLite DB into the `dbdata` volume on first boot.
+#
+#   docker compose up -d --build      # build image + start
+#   docker compose logs -f app        # watch (DB build then uvicorn)
+#   open http://localhost:8000        # app + /api/docs
+#
+# See DEPLOYMENT.md for the full guide.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: parlamonitor:latest
+    ports:
+      - "${PARLAMONITOR_PORT:-8000}:8000"
+    environment:
+      # Paths inside the container (match the volumes below).
+      PARLAMONITOR_DB: /db/parlamonitor.db
+      PARLAMONITOR_DATA_DIR: /data
+      PARLAMONITOR_PHOTOS_DIR: /data/media/photos
+      PARLAMONITOR_FRONTEND_DIST: /app/frontend/dist
+      # Served same-origin, so CORS only matters if you point a separate SPA host
+      # at this API. Set to your public origin(s), comma-separated.
+      PARLAMONITOR_CORS_ORIGINS: ${PARLAMONITOR_CORS_ORIGINS:-http://localhost:8000}
+      # Empty = all modules (proceedings,representatives,bills). EXT-6.
+      PARLAMONITOR_MODULES: ${PARLAMONITOR_MODULES:-}
+      # Set to 1 to rebuild the DB from /data on the next start.
+      REBUILD_DB: ${REBUILD_DB:-0}
+    volumes:
+      # Scraper output (processed/*.json + media/photos), read-only.
+      - ./data:/data:ro
+      # Persisted runtime DB so it survives restarts and isn't rebuilt each boot.
+      - dbdata:/db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  dbdata:

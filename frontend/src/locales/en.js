@@ -13,7 +13,7 @@ export default {
     sourceNote: 'Data is sourced from parlament.hu; processing by Országgyűlés Watch.',
     openData: 'Open data',
   },
-  nav: { home: 'Home', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', factions: 'Factions', about: 'About' },
+  nav: { home: 'Home', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', factions: 'Factions', bills: 'Bills', about: 'About' },
   home: {
     searchPlaceholder: 'Search for a phrase in the proceedings…',
     searchButton: 'Search',
@@ -64,6 +64,16 @@ export default {
   factions: {
     title: 'Factions', subtitle: 'Faction-level aggregate statistics.', members: 'members', speeches: 'speeches',
     speakingTime: 'speaking time', avgPerMp: 'avg / MP', methodology: 'Methodology',
+  },
+  bills: {
+    title: 'Bills', subtitle: 'Bills submitted to the National Assembly.',
+    searchPlaceholder: 'Search in the title…', period: 'Cycle', status: 'Status',
+    sortNumber: 'By bill number', sortDate: 'By submission', count: 'bills',
+    noResults: 'No matching bills.', submitters: 'Submitters',
+    submittedDate: 'Submission date', source: 'Source', openText: 'Bill text (PDF)',
+    showDocument: 'Show document', hideDocument: 'Hide document', openInNewTab: 'Open in new tab',
+    noText: 'No downloadable text is available for this bill.',
+    viewOnParlament: 'View on parlament.hu',
   },
   about: {
     title: 'About', body: 'Országgyűlés Watch is a third-party civic-tech website that makes the public sessions of the Hungarian National Assembly searchable and watchable down to the sentence. All data is sourced from parlament.hu and every fact links back to its original source.',

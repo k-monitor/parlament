@@ -16,6 +16,9 @@ politeness/transport knobs come from the environment or flags, never hard-coded
 
     # Full representative registry with per-MP detail + photos
     python -m ogywatch representatives --cycle 43 --photos ./data
+
+    # Bills (irományok) of the current cycle
+    python -m ogywatch bills --cycle 43 ./data
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from .config import Paths, RuntimeConfig
 from .felicitas import FelicitasClient
 from .http_client import HttpClient
 from .lockfile import acquire
+from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
 from .proceedings.scrape import download_period
 from .proceedings.transform import transform_day
 from .representatives.scrape import fetch_representatives, save_representatives
@@ -150,6 +154,26 @@ def cmd_representatives(args) -> None:
     })
 
 
+def cmd_bills(args) -> None:
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    felicitas = _client(args)
+    main_types = (tuple(t.strip() for t in args.main_types.split(",") if t.strip())
+                  if args.main_types else DEFAULT_MAIN_TYPES)
+
+    with acquire(paths.lockfile, force=args.force_lock):
+        registry = fetch_bills(felicitas, args.cycle, main_types=main_types)
+        save_bills(paths, args.cycle, registry)
+
+    _write_log(paths, {
+        "command": "bills",
+        "cycle": args.cycle,
+        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "mainTypes": list(main_types),
+        "count": registry["meta"]["count"],
+    })
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ogywatch",
                                 description="Országgyűlés Watch scraper")
@@ -189,6 +213,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=None,
                     help="cap number of MPs (for testing)")
     sp.set_defaults(func=cmd_representatives)
+
+    sp = sub.add_parser("bills", help="scrape the cycle's bills (irományok)")
+    _common(sp)
+    sp.add_argument("--main-types", default=None,
+                    help="comma-separated Felicitas fotipus codes "
+                         "(default: T = törvényjavaslat)")
+    sp.set_defaults(func=cmd_bills)
     return p
 
 

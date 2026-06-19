@@ -169,6 +169,41 @@ CREATE TRIGGER sentence_au AFTER UPDATE ON sentence BEGIN
 END;
 
 -- ---------------------------------------------------------------------------
+-- Bills module (irományok) — a self-contained vertical slice (EXT-1). It owns
+-- these two tables and references the shared person/faction/electoral_period
+-- core entities for sponsorship rather than duplicating them (EXT-2).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE bill (
+    id             TEXT PRIMARY KEY,     -- Felicitas iromanyId (UUID)
+    bill_number    TEXT,                 -- "T/229"
+    number_sort    INTEGER,              -- numeric sort key within a cycle
+    period_number  INTEGER REFERENCES electoral_period(number),
+    title          TEXT,
+    type           TEXT,                 -- "törvényjavaslat"
+    main_type      TEXT,                 -- Felicitas fotipus, e.g. "T"
+    status         TEXT,                 -- "tárgysorozatban"
+    submitted_date TEXT,
+    text_url       TEXT,                 -- bill text PDF on parlament.hu (LEGAL-1)
+    text_caption   TEXT,
+    source_url     TEXT,                 -- most specific resolvable original
+    no_text        INTEGER DEFAULT 0
+);
+CREATE INDEX idx_bill_period ON bill(period_number);
+CREATE INDEX idx_bill_number_sort ON bill(number_sort);
+
+CREATE TABLE bill_sponsor (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    bill_id    TEXT NOT NULL REFERENCES bill(id),
+    person_id  TEXT REFERENCES person(person_id),  -- NULL for govt/committee
+    faction_id INTEGER REFERENCES faction(id),
+    label      TEXT,                                -- "Dr. X (TISZA)" / "kormány (…)"
+    ord        INTEGER
+);
+CREATE INDEX idx_bill_sponsor_bill ON bill_sponsor(bill_id);
+CREATE INDEX idx_bill_sponsor_person ON bill_sponsor(person_id);
+
+-- ---------------------------------------------------------------------------
 -- Reserved for the deferred NER/NEL stage (§10) — kept so the shape has room.
 -- ---------------------------------------------------------------------------
 CREATE TABLE entity (

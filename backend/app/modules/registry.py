@@ -22,9 +22,11 @@ class ModuleSpec:
 
 def load_modules() -> list[ModuleSpec]:
     # Imported lazily so a syntax error in one module can't break import order.
+    from .bills.router import router as bills_router
     from .proceedings.router import router as proceedings_router
     from .representatives.router import router as representatives_router
     return [
         ModuleSpec("proceedings", "Felszólalások", proceedings_router),
         ModuleSpec("representatives", "Képviselők", representatives_router),
+        ModuleSpec("bills", "Törvényjavaslatok", bills_router),
     ]

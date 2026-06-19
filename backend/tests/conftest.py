@@ -89,6 +89,32 @@ def _registry():
     }
 
 
+def _bills_registry():
+    """Two bills: one with a known-MP sponsor (links to k001), one government
+    bill (no MP link, kept with its label)."""
+    return {
+        "meta": {"cycle": 43, "mainTypes": ["T"], "source": "felicitas-iromany-api",
+                 "scrapedAt": "2026-06-18T00:00:00+00:00", "count": 2},
+        "data": [
+            {"billId": "bill-uuid-1", "billNumber": "T/100", "billNumberSort": 100,
+             "title": "A költségvetésről szóló törvényjavaslat", "type": "törvényjavaslat",
+             "mainType": "T", "status": "tárgysorozatban",
+             "submittedDate": "2026-05-10T09:00:00Z",
+             "textUrl": "https://www.parlament.hu/irom43/00100/00100.pdf",
+             "textCaption": "szöveges PDF", "noText": False,
+             "sponsors": [{"personID": "k001", "factionId": 7, "committeeId": None,
+                           "label": "Kovács Béla (Fidesz)"}]},
+            {"billId": "bill-uuid-2", "billNumber": "T/101", "billNumberSort": 101,
+             "title": "A kormány javaslata", "type": "törvényjavaslat",
+             "mainType": "T", "status": "elfogadva",
+             "submittedDate": "2026-05-12T09:00:00Z",
+             "textUrl": None, "textCaption": None, "noText": True,
+             "sponsors": [{"personID": None, "factionId": None, "committeeId": None,
+                           "label": "kormány (pénzügyminiszter)"}]},
+        ],
+    }
+
+
 @pytest.fixture
 def db_path(tmp_path):
     data = tmp_path / "data"
@@ -96,6 +122,8 @@ def db_path(tmp_path):
     import json
     (data / "processed" / "representatives-43.json").write_text(
         json.dumps(_registry(), ensure_ascii=False))
+    (data / "processed" / "bills-43.json").write_text(
+        json.dumps(_bills_registry(), ensure_ascii=False))
     (data / "processed" / "43001-session.json").write_text(
         json.dumps(_session_record(), ensure_ascii=False))
     out = tmp_path / "test.db"

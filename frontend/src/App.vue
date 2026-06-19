@@ -11,6 +11,7 @@ onMounted(() => { loadMeta().catch(() => {}) })
 // never appears. Core links (home/about) are always shown.
 const showProceedings = computed(() => store.moduleEnabled('proceedings'))
 const showReps = computed(() => store.moduleEnabled('representatives'))
+const showBills = computed(() => store.moduleEnabled('bills'))
 
 function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
 </script>
@@ -29,6 +30,7 @@ function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
         <router-link v-if="showProceedings" :to="{ name: 'sessions' }">{{ $t('nav.sessions') }}</router-link>
         <router-link v-if="showReps" :to="{ name: 'representatives' }">{{ $t('nav.representatives') }}</router-link>
         <router-link v-if="showReps" :to="{ name: 'factions' }">{{ $t('nav.factions') }}</router-link>
+        <router-link v-if="showBills" :to="{ name: 'bills' }">{{ $t('nav.bills') }}</router-link>
         <router-link :to="{ name: 'about' }">{{ $t('nav.about') }}</router-link>
         <button class="lang" @click="toggleLang" :aria-label="'Language: ' + locale">
           {{ locale === 'hu' ? 'EN' : 'HU' }}

@@ -1,0 +1,96 @@
+"""Bills module: loader (JSON -> bill/bill_sponsor) + API contract (OPS-3)."""
+
+from __future__ import annotations
+
+from app import loader
+
+
+# --- loader ---------------------------------------------------------------
+
+def test_bills_and_sponsors_loaded(conn):
+    assert conn.execute("SELECT COUNT(*) FROM bill").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM bill_sponsor").fetchone()[0] == 2
+
+
+def test_sponsor_links_known_mp_only(conn):
+    """EXT-2: a sponsor that is a known MP links to person; a government
+    submitter keeps its label with no link (no stub person invented)."""
+    linked = conn.execute(
+        "SELECT person_id FROM bill_sponsor WHERE bill_id='bill-uuid-1'").fetchone()
+    assert linked["person_id"] == "k001"
+    govt = conn.execute(
+        "SELECT person_id, label FROM bill_sponsor WHERE bill_id='bill-uuid-2'").fetchone()
+    assert govt["person_id"] is None
+    assert "kormány" in govt["label"]
+    # No stub person was created for the government submitter.
+    assert conn.execute("SELECT COUNT(*) FROM person WHERE is_mp=1").fetchone()[0] == 2
+
+
+def test_sponsor_faction_resolved_by_ext_id(conn):
+    """factionId (Felicitas frakcioId) resolves to the shared faction row."""
+    row = conn.execute(
+        """SELECT f.label FROM bill_sponsor bs JOIN faction f ON f.id=bs.faction_id
+           WHERE bs.bill_id='bill-uuid-1'""").fetchone()
+    assert row["label"] == "Fidesz"
+
+
+def test_bill_source_url_falls_back_when_no_text(conn):
+    """LEGAL-1: a bill with text links to the PDF; one without falls back to
+    the generic portal page rather than a dead link."""
+    with_text = conn.execute("SELECT source_url FROM bill WHERE id='bill-uuid-1'").fetchone()
+    assert with_text["source_url"].endswith("00100.pdf")
+    no_text = conn.execute("SELECT source_url FROM bill WHERE id='bill-uuid-2'").fetchone()
+    assert "iromanyok-lekerdezese" in no_text["source_url"]
+
+
+def test_reingest_bills_is_idempotent(conn, db_path):
+    """ING-4: re-loading a cycle's bills replaces, never duplicates."""
+    from tests.conftest import _bills_registry
+    c = loader.connect(db_path)
+    loader.load_bills(c, _bills_registry())
+    loader.load_bills(c, _bills_registry())
+    assert c.execute("SELECT COUNT(*) FROM bill").fetchone()[0] == 2
+    assert c.execute("SELECT COUNT(*) FROM bill_sponsor").fetchone()[0] == 2
+    c.close()
+
+
+# --- API ------------------------------------------------------------------
+
+def test_list_bills(client):
+    d = client.get("/api/v1/bills").json()
+    assert d["total"] == 2
+    # Default sort is by number, descending.
+    assert d["bills"][0]["bill_number"] == "T/101"
+
+
+def test_list_bills_filter_by_sponsor(client):
+    d = client.get("/api/v1/bills", params={"sponsor": "k001"}).json()
+    assert d["total"] == 1
+    bill = d["bills"][0]
+    assert bill["bill_number"] == "T/100"
+    sp = bill["sponsors"][0]
+    assert sp["person_id"] == "k001"
+    assert sp["name"] == "Kovács Béla"           # resolved from the person row
+    assert sp["faction"]["label"] == "Fidesz"
+
+
+def test_list_bills_search_and_status(client):
+    assert client.get("/api/v1/bills", params={"q": "költségvetés"}).json()["total"] == 1
+    assert client.get("/api/v1/bills", params={"status": "elfogadva"}).json()["total"] == 1
+
+
+def test_bill_facets(client):
+    d = client.get("/api/v1/bills/facets").json()
+    assert "tárgysorozatban" in d["statuses"]
+    assert any(t["main_type"] == "T" for t in d["types"])
+
+
+def test_get_bill_detail(client):
+    d = client.get("/api/v1/bills/bill-uuid-1").json()
+    assert d["bill_number"] == "T/100"
+    assert d["text_url"].endswith("00100.pdf")
+    assert d["sponsors"][0]["person_id"] == "k001"
+
+
+def test_get_bill_404(client):
+    assert client.get("/api/v1/bills/does-not-exist").status_code == 404

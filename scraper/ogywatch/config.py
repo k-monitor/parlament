@@ -96,3 +96,8 @@ class Paths:
 
     def representatives_file(self, cycle: int) -> Path:
         return self.processed / f"representatives-{int(cycle)}.json"
+
+    # --- bills -------------------------------------------------------------
+
+    def bills_file(self, cycle: int) -> Path:
+        return self.processed / f"bills-{int(cycle)}.json"

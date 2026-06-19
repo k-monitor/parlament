@@ -76,7 +76,10 @@ watch(() => props.id, load)
             <div class="bignums">
               <div><span class="num">{{ stats.totals.speech_count }}</span><span class="lbl">{{ $t('profile.totalSpeeches') }}</span></div>
               <div><span class="num">{{ formatSpeakingTime(stats.totals.speaking_seconds) }}</span><span class="lbl">{{ $t('profile.totalSpeakingTime') }}</span></div>
-              <div v-if="stats.totals.bills_available"><span class="num">{{ stats.totals.bills_submitted }}</span><span class="lbl">{{ $t('profile.billsSubmitted') }}</span></div>
+              <div v-if="stats.totals.bills_available">
+                <router-link :to="{ name: 'bills', query: { sponsor: id } }" class="num biglink">{{ stats.totals.bills_submitted }}</router-link>
+                <span class="lbl">{{ $t('profile.billsSubmitted') }}</span>
+              </div>
             </div>
             <!-- REP-3: bills metric hidden, not faked, until the Bills module ships -->
             <p v-if="!stats.totals.bills_available" class="small muted bills-note">ⓘ {{ $t('profile.billsUnavailable') }}</p>
@@ -157,6 +160,8 @@ watch(() => props.id, load)
 .bignums { display: flex; gap: 2rem; flex-wrap: wrap; }
 .bignums .num { font-size: 1.8rem; font-weight: 800; color: var(--accent); display: block; }
 .bignums .lbl { font-size: .82rem; color: var(--ink-faint); }
+.bignums .biglink { text-decoration: none; }
+.bignums .biglink:hover { text-decoration: underline; }
 .bills-note { margin-top: .8rem; }
 .methodology { margin-top: 1rem; }
 .methodology summary { cursor: pointer; font-size: .85rem; color: var(--ink-soft); font-weight: 600; }

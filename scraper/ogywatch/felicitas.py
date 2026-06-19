@@ -49,6 +49,8 @@ PLENARY_PROVIDER = (f"{BASE}/felicitas/api/query/select/"
                     "plenaris-ules-adatok-query-provider")
 KEPVISELO_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
                      "registry/kepviselo-query-provider")
+IROMANY_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
+                   "iromanyadatok-iromany-registry/iromanyok-query-provider")
 KEPVISELO_REBIND = (f"{BASE}/web/guest/felicitas/api/query/parameter/rebind/"
                    "kepviseloadatok-kepviselo-kepviselolista-idopont/"
                    "kepviselo-lista-idopontban-query")
@@ -296,11 +298,66 @@ class FelicitasClient:
         self.http.polite_sleep()
         return self.http.get_bytes(f"{PHOTO_RESOURCE}/{person_id}", headers=_REFERER)
 
+    # ---- bills (irományok) ----------------------------------------------
+
+    def bills(self, cycle: int, *, main_type: str = "T") -> list[dict]:
+        """The bills (irományok) of ``cycle`` from ``iromany-query``, paged.
+
+        ``main_type`` is the Felicitas ``fotipus`` filter; ``"T"`` selects
+        törvényjavaslatok (law proposals), the basic-support default. Each
+        returned dict carries the bill's number, title, type, status, submission
+        date, the PDF text link, and its **submitters** — each with the
+        ``personID`` (kepviseloId) that joins to an MP profile (EXT-2).
+        """
+        body = {
+            "pMultiCiklus": [int(cycle)],
+            "pUnios": False, "pNemzetisegi": False, "pIdokeretes": False,
+            "pFotipus": [main_type] if main_type else [],
+            "pTipus": [], "pKepviselo": [], "pAllapottipus": [],
+            "pTargyalasiMod": [], "pIromanyEsemeny": [],
+        }
+        out: list[dict] = []
+        for r in self.select_all(IROMANY_PROVIDER, "iromany-query", body):
+            text = _first_subrow(r.get("iromanyszoveg"))
+            link = (text or {}).get("iromanyszovegLink")
+            out.append({
+                "billId": r.get("iromanyId"),
+                "billNumber": r.get("iromanyszam"),
+                "billNumberSort": r.get("iromanyszamSorrendezeshez"),
+                "title": r.get("cim"),
+                "type": r.get("iromanytipus"),
+                "mainType": main_type,
+                "status": r.get("iromanyAllapot"),
+                "submittedDate": r.get("benyujtasDatuma"),
+                "textUrl": f"{BASE}{link}" if link else None,
+                "textCaption": (text or {}).get("iromanyszovegCaption"),
+                "noText": bool(r.get("nincsSzoveg")),
+                "sponsors": [{
+                    "personID": s.get("kepviseloId"),
+                    "factionId": s.get("kepviseloFrakcioId"),
+                    "committeeId": s.get("bizottsagId"),
+                    "label": s.get("benyujto"),
+                } for s in _subrows(r.get("benyujto"))],
+            })
+        return out
+
 
 # A bill reference embedded in a speech's agenda event (nested ``esemenyId``
 # blob from aktusok). Best-effort: the structure varies, so we pull recognisable
 # bill codes out of whatever string content is present.
 _BILL_CODE_RE = re.compile(r"\b[A-ZÁÉÍÓÖŐÚÜŰ]/\d+")
+
+
+def _subrows(nested) -> list[dict]:
+    """Rows of a Felicitas nested sub-table (``{metadata, rows}``) as dicts."""
+    if not isinstance(nested, dict):
+        return []
+    return rows_as_dicts(nested)
+
+
+def _first_subrow(nested) -> dict | None:
+    rows = _subrows(nested)
+    return rows[0] if rows else None
 
 
 def _parse_type_table(nested) -> tuple[str | None, list[str]]:

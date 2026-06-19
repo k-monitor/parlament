@@ -61,15 +61,24 @@ def test_representative_profile(client):
     assert d["education"]
 
 
-def test_representative_statistics_hides_bills(client):
-    """REP-3: bills metric hidden (not faked) until the Bills module."""
+def test_representative_statistics_shows_bills_when_module_enabled(client):
+    """REP-3: with the Bills module live, the bills-submitted metric is shown."""
     d = client.get("/api/v1/representatives/k001/statistics").json()
     assert d["totals"]["speech_count"] == 1
     assert d["totals"]["speaking_seconds"] == 30.0
-    assert d["totals"]["bills_available"] is False
-    assert d["totals"]["bills_submitted"] is None
+    assert d["totals"]["bills_available"] is True
+    assert d["totals"]["bills_submitted"] == 3   # from upstream per-cycle counts
     assert d["methodology"]                       # REP-5 methodology note present
     assert d["over_time"]                          # trend data present
+
+
+def test_representative_statistics_hides_bills_when_module_disabled(client, monkeypatch):
+    """REP-3/EXT-6: with the Bills module disabled, the metric is hidden, not faked."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "enabled_modules", ["proceedings", "representatives"])
+    d = client.get("/api/v1/representatives/k001/statistics").json()
+    assert d["totals"]["bills_available"] is False
+    assert d["totals"]["bills_submitted"] is None
 
 
 def test_representative_speeches_list(client):

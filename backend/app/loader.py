@@ -219,6 +219,80 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Bills (irományok) registry
+# ---------------------------------------------------------------------------
+
+def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load a cycle's bills + sponsors (Bills module). Re-ingesting a cycle
+    replaces its bills (idempotent, ING-4). Sponsors join to the shared person
+    and faction tables (EXT-2); a sponsor whose kepviseloId isn't a known MP
+    (or a government/committee submitter) keeps its display label but no link."""
+    meta = registry.get("meta", {})
+    period = meta.get("cycle")
+    data = registry.get("data", [])
+
+    if period is not None:
+        conn.execute("INSERT INTO electoral_period(number) VALUES (?) "
+                     "ON CONFLICT(number) DO NOTHING", (period,))
+
+    # Replace this cycle's bills (delete children first for the FK).
+    conn.execute(
+        "DELETE FROM bill_sponsor WHERE bill_id IN "
+        "(SELECT id FROM bill WHERE period_number IS ?)", (period,))
+    conn.execute("DELETE FROM bill WHERE period_number IS ?", (period,))
+
+    for rec in data:
+        bid = rec.get("billId")
+        if not bid:
+            continue
+        text_url = rec.get("textUrl")
+        conn.execute(
+            """INSERT INTO bill(id, bill_number, number_sort, period_number,
+                   title, type, main_type, status, submitted_date, text_url,
+                   text_caption, source_url, no_text)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(id) DO UPDATE SET
+                   bill_number=excluded.bill_number, number_sort=excluded.number_sort,
+                   period_number=excluded.period_number, title=excluded.title,
+                   type=excluded.type, main_type=excluded.main_type,
+                   status=excluded.status, submitted_date=excluded.submitted_date,
+                   text_url=excluded.text_url, text_caption=excluded.text_caption,
+                   source_url=excluded.source_url, no_text=excluded.no_text""",
+            (bid, rec.get("billNumber"), rec.get("billNumberSort"), period,
+             rec.get("title"), rec.get("type"), rec.get("mainType"),
+             rec.get("status"), rec.get("submittedDate"), text_url,
+             rec.get("textCaption"), text_url or _BILL_PORTAL_FALLBACK,
+             1 if rec.get("noText") else 0))
+
+        for i, sp in enumerate(rec.get("sponsors") or []):
+            pid = sp.get("personID")
+            # Link person_id only if it's a known person, so the FK holds and
+            # we never invent stub MPs from a sponsor list.
+            if pid and not conn.execute(
+                    "SELECT 1 FROM person WHERE person_id=?", (pid,)).fetchone():
+                pid = None
+            faction_id = None
+            ext = sp.get("factionId")
+            if ext is not None:
+                frow = conn.execute("SELECT id FROM faction WHERE ext_id=?",
+                                    (ext,)).fetchone()
+                faction_id = frow["id"] if frow else None
+            conn.execute(
+                "INSERT INTO bill_sponsor(bill_id, person_id, faction_id, label, ord) "
+                "VALUES (?,?,?,?,?)",
+                (bid, pid, faction_id, sp.get("label"), i))
+    conn.commit()
+    logger.info("Loaded %d bills (cycle %s)", len(data), period)
+    return len(data)
+
+
+# Bills have no clean per-bill permalink on the modern portal; the text PDF is
+# the most specific resolvable original (LEGAL-1). This generic search page is
+# the fallback when a bill has no text.
+_BILL_PORTAL_FALLBACK = "https://www.parlament.hu/web/guest/iromanyok-lekerdezese"
+
+
+# ---------------------------------------------------------------------------
 # Session record
 # ---------------------------------------------------------------------------
 
@@ -427,6 +501,11 @@ def build_database(data_dir: str | Path, db_path: str | Path, *,
             registry = json.loads(rp.read_text())
             _load_period_meta(conn, registry.get("meta", {}))
             load_representatives(conn, registry)
+
+        # Bills load after representatives so sponsor person/faction links
+        # resolve against already-loaded core entities (EXT-2).
+        for bp in sorted((data_dir / "processed").glob("bills-*.json")):
+            load_bills(conn, json.loads(bp.read_text()))
 
         sessions = sorted((data_dir / "processed").glob("*-session.json"))
         loaded = 0

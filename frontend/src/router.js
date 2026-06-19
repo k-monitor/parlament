@@ -40,6 +40,16 @@ const routes = [
     component: () => import('./modules/representatives/RepProfileView.vue'), props: true,
   },
 
+  // --- bills module ---
+  {
+    path: '/bills', name: 'bills', meta: { module: 'bills' },
+    component: () => import('./modules/bills/BillsListView.vue'),
+  },
+  {
+    path: '/bills/:id', name: 'bill', meta: { module: 'bills' },
+    component: () => import('./modules/bills/BillView.vue'), props: true,
+  },
+
   { path: '/:pathMatch(.*)*', name: 'notfound', component: () => import('./views/NotFoundView.vue') },
 ]
 

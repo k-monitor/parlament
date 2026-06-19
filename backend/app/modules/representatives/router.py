@@ -13,13 +13,10 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ...config import settings
 from ...db import get_db
 
 router = APIRouter(prefix="/representatives", tags=["representatives"])
-
-# REP-3: "number of bills submitted" requires the Bills module (§7); until that
-# module exists the metric is hidden, never faked. Flip via the Bills module.
-BILLS_MODULE_AVAILABLE = False
 
 
 @router.get("")
@@ -173,9 +170,16 @@ def get_statistics(person_id: str, db: sqlite3.Connection = Depends(get_db)):
            FROM person_session_stats pss JOIN session s ON s.id=pss.session_id
            WHERE pss.person_id=? ORDER BY pss.date""", (person_id,)).fetchall()
 
-    bills = None
-    if BILLS_MODULE_AVAILABLE:  # REP-3: hidden, not faked, until the Bills module
-        bills = _loads(p["external_stats_json"])
+    # REP-3: "bills submitted" stays hidden (not faked) until the Bills module
+    # is live (EXT-6). When it is, surface the official parlament.hu own-bill
+    # count for the most recent cycle on record, plus the per-cycle breakdown.
+    bills_available = settings.module_enabled("bills")
+    bills_submitted = None
+    bills_by_cycle = []
+    if bills_available:
+        ext = _loads(p["external_stats_json"]) or {}
+        bills_by_cycle = (ext or {}).get("billsSubmitted") or []
+        bills_submitted = _latest_own_bills(bills_by_cycle)
 
     return {
         "person_id": person_id,
@@ -188,8 +192,9 @@ def get_statistics(person_id: str, db: sqlite3.Connection = Depends(get_db)):
             "speech_count": totals["speech_count"] if totals else 0,
             "speaking_seconds": totals["speaking_seconds"] if totals else 0,
             "sentence_count": totals["sentence_count"] if totals else 0,
-            "bills_submitted": bills,            # null while Bills module is off
-            "bills_available": BILLS_MODULE_AVAILABLE,
+            "bills_submitted": bills_submitted,  # null while Bills module is off
+            "bills_available": bills_available,
+            "bills_by_cycle": bills_by_cycle,
         },
         "by_period": [dict(r) for r in by_period],
         "over_time": [dict(r) for r in over_time],
@@ -227,6 +232,18 @@ def get_speeches(person_id: str, limit: int = Query(50, ge=1, le=200),
              "excerpt": (r["first_sentence"] or "")[:200]}
             for r in rows],
     }
+
+
+def _latest_own_bills(by_cycle: list) -> Optional[int]:
+    """The own-bills count for the most recent cycle in the upstream breakdown."""
+    best = None
+    for entry in by_cycle or []:
+        cyc = entry.get("cycle")
+        if cyc is None:
+            continue
+        if best is None or cyc > best[0]:
+            best = (cyc, entry.get("ownBills"))
+    return best[1] if best else None
 
 
 def _loads(s):

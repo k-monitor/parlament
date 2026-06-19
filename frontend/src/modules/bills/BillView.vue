@@ -158,7 +158,7 @@ watch(() => props.id, load)
       <section v-if="bill.committee_events && bill.committee_events.length" class="card pad">
         <h2>{{ $t('bills.committeeEvents') }}</h2>
         <div class="tablewrap">
-          <table class="grid">
+          <table class="dtable">
             <thead><tr>
               <th>{{ $t('bills.date') }}</th><th>{{ $t('bills.committee') }}</th>
               <th>{{ $t('bills.event') }}</th><th>{{ $t('bills.amendment') }}</th>
@@ -200,7 +200,7 @@ watch(() => props.id, load)
         <section v-if="bill.deadlines && bill.deadlines.length" class="card pad">
           <h2>{{ $t('bills.deadlines') }}</h2>
           <div class="tablewrap">
-            <table class="grid">
+            <table class="dtable">
               <thead><tr>
                 <th>{{ $t('bills.name') }}</th><th>{{ $t('bills.deadline') }}</th>
                 <th>{{ $t('bills.reference') }}</th>
@@ -219,7 +219,7 @@ watch(() => props.id, load)
         <section v-if="bill.motion_summary && bill.motion_summary.length" class="card pad">
           <h2>{{ $t('bills.motionSummary') }}</h2>
           <div class="tablewrap">
-            <table class="grid">
+            <table class="dtable">
               <thead><tr>
                 <th>{{ $t('bills.type') }}</th><th class="num">{{ $t('bills.valid') }}</th>
                 <th class="num">{{ $t('bills.withdrawn') }}</th><th class="num">{{ $t('bills.total') }}</th>
@@ -301,8 +301,12 @@ watch(() => props.id, load)
 .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .5rem; }
 .sponsor { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 
-/* Compact reference sections laid side-by-side when there's room. */
-.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; align-items: start; }
+/* Reference sections stack full-width like the rest of the page. (A side-by-side
+   grid was tried but these cards vary wildly in height — a one-line committee
+   next to a six-row deadline table — so any fixed columns left ragged gaps.) */
+.cols { display: flex; flex-direction: column; gap: 1rem; }
+/* Keep wide tables from stretching to sparse full width on large screens. */
+.cols .dtable, .cols .plain { max-width: 760px; }
 
 /* Vertical past→future legislative-stage timeline. Each step's connector (the
    line above its dot) is solid when reached, dashed when still upcoming. */
@@ -390,11 +394,11 @@ watch(() => props.id, load)
 
 /* Tables */
 .tablewrap { overflow-x: auto; }
-.grid { width: 100%; border-collapse: collapse; font-size: .9rem; }
-.grid th, .grid td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
-.grid tr:last-child td { border-bottom: 0; }
-.grid th { color: var(--ink-faint); font-weight: 600; }
-.grid th.num, .grid td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.dtable { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.dtable th, .dtable td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.dtable tr:last-child td { border-bottom: 0; }
+.dtable th { color: var(--ink-faint); font-weight: 600; }
+.dtable th.num, .dtable td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .nowrap { white-space: nowrap; }
 .docs .doc { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
 .docs a { word-break: break-word; }

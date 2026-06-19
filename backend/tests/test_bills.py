@@ -139,9 +139,31 @@ def test_bill_detail_sections(client):
     assert d["motion_summary"][0]["total"] == 1
 
 
+def test_bill_non_self_standing_motions(client):
+    """The individual non-self-standing motions round-trip with their PDF and an
+    MP-linked submitter (EXT-2); a committee/Speaker submitter stays label-only."""
+    d = client.get("/api/v1/bills/bill-uuid-1").json()
+    motions = d["motions"]
+    assert [m["bill_number"] for m in motions] == ["T/100/3", "T/100/1"]
+    # first motion: has a downloadable PDF and an MP-linked submitter
+    m0 = motions[0]
+    assert m0["type"] == "Módosító javaslat"
+    assert m0["text_url"].endswith("00100-0003.pdf")
+    assert m0["no_text"] is False and m0["has_vote"] is True
+    assert m0["sponsors"][0]["person_id"] == "k001"
+    assert m0["sponsors"][0]["name"]            # resolved through shared person
+    assert m0["sponsors"][0]["faction"]["label"]
+    # second motion: no text, committee/Speaker submitter kept label-only (no link)
+    m1 = motions[1]
+    assert m1["text_url"] is None and m1["no_text"] is True
+    assert m1["sponsors"][0]["person_id"] is None
+    assert m1["sponsors"][0]["label"] == "az Országgyűlés elnöke"
+
+
 def test_bill_detail_absent_is_empty(client):
     """A bill scraped without detail still returns the sections as empty lists
     (no crash, EXT-6/SCR-5 degraded shape)."""
     d = client.get("/api/v1/bills/bill-uuid-2").json()
     assert d["events"] == [] and d["votes"] == [] and d["documents"] == []
+    assert d["motions"] == []
     assert d["subtype"] is None

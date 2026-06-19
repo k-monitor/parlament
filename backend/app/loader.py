@@ -237,9 +237,15 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
 
     # Replace this cycle's bills (delete children first for the FK). Every
     # per-bill child table is cleared so a re-ingest is fully idempotent.
+    # bill_motion_sponsor keys on motion_id (not bill_id), so clear it first
+    # via its parent motions before the bill-id-keyed tables are wiped.
+    conn.execute(
+        "DELETE FROM bill_motion_sponsor WHERE motion_id IN "
+        "(SELECT id FROM bill_motion WHERE bill_id IN "
+        "(SELECT id FROM bill WHERE period_number IS ?))", (period,))
     child_tables = ("bill_sponsor", "bill_event", "bill_committee_event",
                     "bill_vote", "bill_deadline", "bill_committee",
-                    "bill_document", "bill_motion_summary")
+                    "bill_document", "bill_motion_summary", "bill_motion")
     for tbl in child_tables:
         conn.execute(
             f"DELETE FROM {tbl} WHERE bill_id IN "
@@ -313,7 +319,8 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
 def _load_bill_detail(conn: sqlite3.Connection, bill_id: str, detail: dict,
                       resolve_person) -> None:
     """Insert one bill's adatlap detail (events, votes, committees, deadlines,
-    documents, motion summary) into the child tables. ``resolve_person`` maps a
+    documents, motion summary, and the individual non-self-standing motions with
+    their submitters) into the child tables. ``resolve_person`` maps a
     kepviseloId to a known person_id or None (EXT-2)."""
     for i, e in enumerate(detail.get("events") or []):
         conn.execute(
@@ -371,6 +378,33 @@ def _load_bill_detail(conn: sqlite3.Connection, bill_id: str, detail: dict,
             "total) VALUES (?,?,?,?,?,?)",
             (bill_id, i, m.get("type"), m.get("valid"), m.get("withdrawn"),
              m.get("total")))
+
+    def _faction(ext):
+        if ext is None:
+            return None
+        frow = conn.execute("SELECT id FROM faction WHERE ext_id=?", (ext,)).fetchone()
+        return frow["id"] if frow else None
+
+    # The individual non-self-standing motions (each its own iromány with a PDF);
+    # their submitters link to an MP profile where the kepviseloId is a known MP.
+    for i, m in enumerate(detail.get("motions") or []):
+        cur = conn.execute(
+            """INSERT INTO bill_motion(bill_id, ord, iromany_id, bill_number,
+                   number_sort, main_type, type, submitted_date, text_url,
+                   text_caption, no_text, has_vote, note)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (bill_id, i, m.get("iromanyId"), m.get("billNumber"),
+             m.get("billNumberSort"), m.get("mainType"), m.get("type"),
+             m.get("submittedDate"), m.get("textUrl"), m.get("textCaption"),
+             1 if m.get("noText") else 0, 1 if m.get("hasVote") else 0,
+             m.get("note")))
+        motion_id = cur.lastrowid
+        for j, sp in enumerate(m.get("sponsors") or []):
+            conn.execute(
+                "INSERT INTO bill_motion_sponsor(motion_id, person_id, faction_id, "
+                "label, ord) VALUES (?,?,?,?,?)",
+                (motion_id, resolve_person(sp.get("personID")),
+                 _faction(sp.get("factionId")), sp.get("label"), j))
 
 
 # Bills have no clean per-bill permalink on the modern portal; the text PDF is

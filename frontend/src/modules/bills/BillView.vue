@@ -4,7 +4,7 @@
 // full detail sheet from parlament.hu: event history, votes, committee events,
 // negotiating committees, deadlines, justification/background documents and the
 // non-self-standing motion summary. Links to the official text (LEGAL-1).
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { api } from '../../api.js'
 import { formatDate, formatDateTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
@@ -18,6 +18,10 @@ const error = ref(false)
 // The embedded PDF is heavy, so it isn't loaded until the user asks: the <iframe>
 // is only rendered (and its src only fetched) after clicking "show document".
 const docRevealed = ref(false)
+// Per-motion PDF reveal (keyed by motion index), same on-demand pattern as the
+// main bill: a motion's <iframe> only exists once its toggle is clicked.
+const motionOpen = reactive({})
+function toggleMotion(i) { motionOpen[i] = !motionOpen[i] }
 
 // Header key/value pairs, only those the bill actually carries.
 const meta = computed(() => {
@@ -50,6 +54,7 @@ function voteParts(v) {
 
 async function load() {
   loading.value = true; error.value = false; bill.value = null; docRevealed.value = false
+  Object.keys(motionOpen).forEach((k) => delete motionOpen[k])
   try { bill.value = await api.bill(props.id) } catch { error.value = true }
   finally { loading.value = false }
 }
@@ -237,6 +242,39 @@ watch(() => props.id, load)
         </section>
       </div>
 
+      <!-- Non-self-standing motions: the individual dependent irományok, each
+           linked to the bill with its own number, type, submitters and PDF. -->
+      <section v-if="bill.motions && bill.motions.length" class="card pad">
+        <h2>{{ $t('bills.motions') }}</h2>
+        <ul class="plain motions">
+          <li v-for="(m, i) in bill.motions" :key="i" class="motion">
+            <div class="motion-head">
+              <span class="mnum">{{ m.bill_number }}</span>
+              <span class="mtype">{{ m.type }}</span>
+              <span v-if="m.submitted_date" class="muted small nowrap">· {{ formatDate(m.submitted_date) }}</span>
+            </div>
+            <div v-if="m.sponsors && m.sponsors.length" class="motion-sub small muted">
+              <span v-for="(s, j) in m.sponsors" :key="j" class="msponsor">
+                <router-link v-if="s.person_id" :to="{ name: 'profile', params: { id: s.person_id } }">{{ s.name }}</router-link>
+                <span v-else>{{ s.name }}</span>
+                <FactionBadge v-if="s.faction" :faction="s.faction" />
+              </span>
+            </div>
+            <div v-if="m.text_url" class="docbar">
+              <button type="button" class="btn small" :aria-expanded="!!motionOpen[i]" @click="toggleMotion(i)">
+                {{ motionOpen[i] ? $t('bills.hideDocument') : $t('bills.showDocument') }}
+              </button>
+              <a :href="m.text_url" target="_blank" rel="noopener" class="small">↗ {{ $t('bills.openInNewTab') }}</a>
+            </div>
+            <p v-else class="muted small">{{ $t('bills.noText') }}</p>
+            <!-- iframe (and thus the PDF fetch) only exists once revealed -->
+            <div v-if="motionOpen[i] && m.text_url" class="docframe">
+              <iframe :src="m.text_url" :title="m.text_caption || m.bill_number" loading="lazy"></iframe>
+            </div>
+          </li>
+        </ul>
+      </section>
+
       <!-- Documents: justifications + background materials -->
       <section v-if="bill.documents && bill.documents.length" class="card pad">
         <h2>{{ $t('bills.documents') }}</h2>
@@ -402,6 +440,17 @@ watch(() => props.id, load)
 .nowrap { white-space: nowrap; }
 .docs .doc { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
 .docs a { word-break: break-word; }
+
+/* Non-self-standing motions */
+.motions { display: flex; flex-direction: column; gap: .9rem; }
+.motion { padding-bottom: .9rem; border-bottom: 1px solid var(--line); }
+.motion:last-child { padding-bottom: 0; border-bottom: 0; }
+.motion-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+.motion-head .mnum { font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+.motion-head .mtype { font-weight: 600; }
+.motion-sub { display: flex; flex-wrap: wrap; gap: .15rem .6rem; align-items: center; margin: .3rem 0 .55rem; }
+.msponsor { display: inline-flex; align-items: center; gap: .45rem; }
+.msponsor:not(:last-child)::after { content: ','; color: var(--ink-faint); margin-left: -.45rem; }
 
 .docbar { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
 .docframe { margin-top: .9rem; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }

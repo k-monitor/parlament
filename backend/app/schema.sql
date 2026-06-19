@@ -302,7 +302,7 @@ CREATE TABLE bill_document (          -- "Indokolások" + "Háttéranyagok"
 );
 CREATE INDEX idx_bill_document_bill ON bill_document(bill_id);
 
-CREATE TABLE bill_motion_summary (   -- "Nem önálló irományok" összesítő
+CREATE TABLE bill_motion_summary (   -- "Nem önálló irományok" összesítő (counts)
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     bill_id   TEXT NOT NULL REFERENCES bill(id),
     ord       INTEGER,
@@ -312,6 +312,35 @@ CREATE TABLE bill_motion_summary (   -- "Nem önálló irományok" összesítő
     total     INTEGER
 );
 CREATE INDEX idx_bill_motion_summary_bill ON bill_motion_summary(bill_id);
+
+CREATE TABLE bill_motion (           -- "Nem önálló irományok" — the individual
+                                     -- dependent motions (each its own iromány)
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    bill_id      TEXT NOT NULL REFERENCES bill(id),
+    ord          INTEGER,
+    iromany_id   TEXT,               -- the motion's own iromanyId (modositoId)
+    bill_number  TEXT,               -- iromanyszam, e.g. "53/3"
+    number_sort  INTEGER,
+    main_type    TEXT,               -- fotipus, e.g. "egyéb"
+    type         TEXT,               -- tipus, e.g. "Módosító javaslat"
+    submitted_date TEXT,
+    text_url     TEXT,               -- downloadable PDF/text (LEGAL-1)
+    text_caption TEXT,
+    no_text      INTEGER DEFAULT 0,
+    has_vote     INTEGER DEFAULT 0,
+    note         TEXT
+);
+CREATE INDEX idx_bill_motion_bill ON bill_motion(bill_id);
+
+CREATE TABLE bill_motion_sponsor (   -- submitters of a non-self-standing motion
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    motion_id  INTEGER NOT NULL REFERENCES bill_motion(id),
+    person_id  TEXT REFERENCES person(person_id),   -- NULL for committee/Speaker
+    faction_id INTEGER REFERENCES faction(id),
+    label      TEXT,
+    ord        INTEGER
+);
+CREATE INDEX idx_bill_motion_sponsor_motion ON bill_motion_sponsor(motion_id);
 
 -- ---------------------------------------------------------------------------
 -- Reserved for the deferred NER/NEL stage (§10) — kept so the shape has room.

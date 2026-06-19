@@ -328,10 +328,16 @@ submitted to the Assembly, sourced from the Felicitas `iromany` API.
   each event is tied to), **committee events** (modifying proposals, reports),
   **votes** (igen/nem/tartózkodás with the result), **deadlines**, the
   **negotiating committees**, **justification & background documents**, the
-  **non-self-standing motion** summary, and extra header fields (subtype,
-  character, negotiation mode, promulgation/Magyar Közlöny number & date). Event
-  and committee-event references to an MP link to that representative's profile
-  through the shared `person` entity (EXT-2). A bill scraped without detail (or
+  **non-self-standing (dependent) irományok** — the individual motions attached
+  to the bill (amendments, committee reports, urgency motions, …), each surfaced
+  as its own row with its iromány number, type, submission date, submitter(s)
+  and a **downloadable PDF/text viewable from the bill page** (revealed on
+  demand, like the bill's own text — BILL-2), alongside their per-type **summary
+  counts** — and extra header fields (subtype,
+  character, negotiation mode, promulgation/Magyar Közlöny number & date). Event,
+  committee-event **and motion-submitter** references to an MP link to that
+  representative's profile through the shared `person` entity (EXT-2);
+  committee/government submitters keep their label but no link (BILL-3). A bill scraped without detail (or
   an early-stage bill with empty sections) degrades to empty sections, never an
   error (SCR-5). Detail fetching is a separately-skippable scraper step
   (`--no-detail`) for a fast list-only refresh.
@@ -376,7 +382,10 @@ rework of existing features.
 > `bill_committee_event`, `bill_vote`, `bill_deadline`, `bill_committee`,
 > `bill_document` and `bill_motion_summary` child tables, an expanded
 > `/api/v1/bills/{id}`, and richer detail-view sections — again touching no other
-> module. It stands as the worked example for the remaining domains (votes,
+> module. The non-self-standing-motions list (with per-motion PDFs and
+> MP-linked submitters) was layered on the same way — `bill_motion` +
+> `bill_motion_sponsor` child tables, a `motions` array on the detail API, and a
+> motions section in the detail view — once more touching no other module. It stands as the worked example for the remaining domains (votes,
 > committees, interpellations).
 
 ---

@@ -134,6 +134,43 @@ def _rows(db: sqlite3.Connection, sql: str, bill_id: str) -> list[dict]:
     return [dict(r) for r in db.execute(sql, (bill_id,)).fetchall()]
 
 
+def _motions_for(db: sqlite3.Connection, bill_id: str) -> list[dict]:
+    """The bill's non-self-standing motions, each with its submitters grouped in
+    (MP sponsors linked to their profile via person_id, EXT-2)."""
+    motions = [dict(r) for r in db.execute(
+        """SELECT id, iromany_id, bill_number, main_type, type, submitted_date,
+                  text_url, text_caption, no_text, has_vote, note
+           FROM bill_motion WHERE bill_id = ? ORDER BY ord""", (bill_id,)).fetchall()]
+    if not motions:
+        return []
+    by_id = {m["id"]: m for m in motions}
+    for m in motions:
+        m["no_text"] = bool(m["no_text"])
+        m["has_vote"] = bool(m["has_vote"])
+        m["sponsors"] = []
+    rows = db.execute(
+        f"""SELECT ms.motion_id, ms.person_id, ms.label,
+                   p.label AS person_label,
+                   f.id AS faction_id, f.label AS faction_label, f.color AS faction_color
+            FROM bill_motion_sponsor ms
+            LEFT JOIN person p ON p.person_id = ms.person_id
+            LEFT JOIN faction f ON f.id = ms.faction_id
+            WHERE ms.motion_id IN ({",".join("?" * len(motions))})
+            ORDER BY ms.motion_id, ms.ord""",
+        [m["id"] for m in motions]).fetchall()
+    for r in rows:
+        by_id[r["motion_id"]]["sponsors"].append({
+            "person_id": r["person_id"],
+            "label": r["label"],
+            "name": r["person_label"] or r["label"],
+            "faction": {"id": r["faction_id"], "label": r["faction_label"],
+                        "color": r["faction_color"]} if r["faction_label"] else None,
+        })
+    for m in motions:
+        m.pop("id", None)
+    return motions
+
+
 @router.get("/{bill_id}")
 def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     """A single bill with its full sponsor list and detail sections (events,
@@ -169,6 +206,7 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     motion_summary = _rows(db,
         "SELECT type, valid, withdrawn, total FROM bill_motion_summary "
         "WHERE bill_id = ? ORDER BY ord", bill_id)
+    motions = _motions_for(db, bill_id)
 
     return {
         "id": b["id"], "bill_number": b["bill_number"], "title": b["title"],
@@ -188,5 +226,5 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         # detail sections
         "events": events, "committee_events": committee_events, "votes": votes,
         "deadlines": deadlines, "committees": committees, "documents": documents,
-        "motion_summary": motion_summary,
+        "motion_summary": motion_summary, "motions": motions,
     }

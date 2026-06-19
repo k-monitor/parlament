@@ -370,7 +370,9 @@ class FelicitasClient:
         tied to), **committee events** (modifying proposals, reports),
         **votes** (igen/nem/tartózkodás), **deadlines**, the **negotiating
         committees**, **justification & background documents**, the
-        **non-self-standing motion** summary, and a handful of extra header
+        **non-self-standing motions** (the individual dependent irományok — each
+        with its own number, type, submitters and PDF — plus their per-type
+        summary counts), and a handful of extra header
         fields (subtype, character, promulgation). Everything is keyed by the
         bill's own ``iromanyId`` (``pOnalId``/``pId``) — no extra ids needed.
 
@@ -452,6 +454,37 @@ class FelicitasClient:
             "total": m.get("osszesen"),
         } for m in self.select_all(P, "nemonallo-inditvany-osszesito-lista-query", oid)]
 
+        # The actual non-self-standing (dependent) motions themselves — each is
+        # its own iromány with a number, type, submitter(s) and a downloadable
+        # PDF/text, attached to this bill (amendments, committee reports, urgency
+        # motions, …). ``nemonallo-inditvany-osszesito-lista-query`` above is only
+        # the per-type *count*; this query lists the individual documents.
+        # (A ``…-biz-query`` committee variant exists but is a strict subset, so
+        # the main query alone covers every motion.)
+        motions = []
+        for m in self.select_all(P, "nem-onallo-iromany-for-onallo-iromany-query", oid):
+            text = _first_subrow(m.get("iromanyszoveg"))
+            link = (text or {}).get("iromanyszovegLink")
+            motions.append({
+                "iromanyId": m.get("modositoId"),
+                "billNumber": m.get("iromanyszam"),
+                "billNumberSort": m.get("iromanyszamSorrendhez"),
+                "mainType": m.get("fotipus"),
+                "type": m.get("tipus"),
+                "submittedDate": m.get("benyujtasDatuma"),
+                "textUrl": f"{BASE}{link}" if link else None,
+                "textCaption": (text or {}).get("iromanyszovegCaption"),
+                "noText": bool(m.get("nincsSzoveg")),
+                "hasVote": bool(m.get("vanSzavazas")),
+                "note": m.get("megjegyzes"),
+                "sponsors": [{
+                    "personID": s.get("kepviseloId"),
+                    "factionId": s.get("kepviseloFrakcioId"),
+                    "committeeId": s.get("bizottsagId"),
+                    "label": s.get("benyujto"),
+                } for s in _subrows(m.get("benyujto"))],
+            })
+
         header = {}
         intra = self.select_all(IROMANY_INTRA_PROVIDER,
                                 "onallo-iromany-adatlap-for-intra-query",
@@ -480,6 +513,7 @@ class FelicitasClient:
             "committees": committees,
             "documents": documents,
             "motionSummary": motion_summary,
+            "motions": motions,
         }
 
 

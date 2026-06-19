@@ -35,6 +35,7 @@ from .felicitas import FelicitasClient
 from .http_client import HttpClient
 from .lockfile import acquire
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
+from .votes.scrape import fetch_votes, save_votes
 from .proceedings.scrape import download_period
 from .proceedings.transform import transform_day
 from .representatives.scrape import fetch_representatives, save_representatives
@@ -186,6 +187,28 @@ def cmd_bills(args) -> None:
     })
 
 
+def cmd_votes(args) -> None:
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    felicitas = _client(args)
+
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            start, end = _resolve_range(felicitas, args.cycle, args)
+            registry = fetch_votes(felicitas, args.cycle, start, end,
+                                   with_detail=not args.no_detail)
+            save_votes(paths, args.cycle, registry)
+    finally:
+        felicitas.close()
+
+    _write_log(paths, {
+        "command": "votes",
+        "cycle": args.cycle,
+        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "count": registry["meta"]["count"],
+    })
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="parlamonitor",
                                 description="Parlamonitor scraper")
@@ -245,6 +268,17 @@ def build_parser() -> argparse.ArgumentParser:
                     help="skip per-bill detail (events/votes/committees/…) "
                          "for a fast list-only refresh")
     sp.set_defaults(func=cmd_bills)
+
+    sp = sub.add_parser("votes", help="scrape the cycle's roll-call votes (szavazások)")
+    _common(sp)
+    sp.add_argument("--from", dest="date_from", default=None,
+                    help="ISO start date (default: cycle start)")
+    sp.add_argument("--to", dest="date_to", default=None,
+                    help="ISO end date (default: cycle end or today)")
+    sp.add_argument("--no-detail", action="store_true",
+                    help="skip per-vote detail (per-MP roll call + faction "
+                         "breakdown) for a fast list-only refresh")
+    sp.set_defaults(func=cmd_votes)
     return p
 
 

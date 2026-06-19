@@ -61,6 +61,12 @@ IROMANY_ADATLAP_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
 IROMANY_INTRA_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
                    "iromanyadatokonlyintra-registry/"
                    "onallo-iromany-adatlap-for-intra-query-provider")
+# Votes (szavazások). The list query and every per-vote detail sub-query
+# (per-MP roll call, per-faction breakdown, basic data) are served by this one
+# provider. The list takes a cycle + date range; the detail queries take the
+# vote's own ``szavazasId`` (``pId`` / ``pSzavazasId``).
+SZAVAZAS_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
+                   "szavazasok-registry/szavazasok-query-provider")
 KEPVISELO_REBIND = (f"{BASE}/web/guest/felicitas/api/query/parameter/rebind/"
                    "kepviseloadatok-kepviselo-kepviselolista-idopont/"
                    "kepviselo-lista-idopontban-query")
@@ -517,6 +523,94 @@ class FelicitasClient:
             "motions": motions,
         }
 
+    # ---- votes (szavazások) ---------------------------------------------
+
+    def votes(self, cycle: int, date_from: str, date_to: str) -> list[dict]:
+        """The roll-call votes of ``cycle`` within ``[date_from, date_to]``, paged.
+
+        Each returned dict carries the vote's UUID (``voteId`` — the same
+        ``szavazasId`` a bill's vote tally references, so the two link both
+        ways), datetime, voting mode, subject, result, the igen/nem/tartózkodás
+        tallies, whether a per-MP roll call exists (``hasPerMp``), and the
+        **subjects voted on** — each with the ``billId`` (iromanyId) that joins
+        to a bill where it is one we hold (EXT-2)."""
+        body = {
+            "pCiklus": int(cycle),
+            "hCiklusElejeLimit": date_from,
+            "pIdoszakEleje": date_from,
+            "pIdoszakVege": date_to,
+            "pIdopont": date_to,
+            "pSzavazasiMod": [], "pSzavazasOka": [],
+            "pFrakcio": [], "pKepviselo": [],
+        }
+        out: list[dict] = []
+        for r in self.select_all(SZAVAZAS_PROVIDER, "szavazas-lista-query", body):
+            out.append({
+                "voteId": r.get("id"),
+                "datetime": r.get("idopont"),
+                "votingMode": r.get("szavazasiMod"),
+                "subject": r.get("szavazasOka"),
+                "result": r.get("eredmeny"),
+                "yes": r.get("igen"),
+                "no": r.get("nem"),
+                "abstain": r.get("tartozkodas"),
+                "cycle": r.get("ciklus"),
+                "hasPerMp": bool(r.get("hasKepviselo")),
+                "subjects": _parse_vote_subjects(r.get("szavazasTargya")),
+            })
+        return out
+
+    def vote_detail(self, vote_id: str) -> dict:
+        """The full detail of one vote: its basic header, the **per-MP roll
+        call** (every representative's individual vote, keyed by the
+        ``kepviseloId`` that joins to an MP profile — EXT-2) and the
+        **per-faction breakdown**.
+
+        Three small requests per vote, all politely throttled (SCR-4)."""
+        pid = {"pId": vote_id}
+
+        records = [{
+            "personID": r.get("kepviseloId"),
+            "name": r.get("nev"),
+            "factionName": r.get("frakcioNev"),
+            "voteValue": r.get("szavazatTipus"),
+        } for r in self.select_all(
+            SZAVAZAS_PROVIDER, "szavazat-by-szavazas-and-tipus-list-query",
+            {"pSzavazasId": vote_id})]
+
+        faction_stats = []
+        for r in self.select_all(SZAVAZAS_PROVIDER,
+                                 "szavazas-by-frakcio-stat-query", pid):
+            sub = _first_subrow(r.get("szavazasByFrakcioSchema")) or {}
+            faction_stats.append({
+                "factionName": r.get("frakcioNev"),
+                "factionId": r.get("frakcioId"),
+                "againstFaction": r.get("frakcioElleniSzavazat"),
+                "total": sub.get("osszesen"),
+                "yes": sub.get("igenSzam"),
+                "no": sub.get("nemSzam"),
+                "abstain": sub.get("tartozkodasSzam"),
+                "absent": sub.get("igazoltanTavolSzam"),
+                "notVoting": sub.get("nemSzavazottSzam"),
+            })
+
+        header = {}
+        basic = self.select_all(SZAVAZAS_PROVIDER, "szavazas-alap-adatok-query", pid)
+        if basic:
+            b = basic[0]
+            header = {
+                "votingModeDisplay": b.get("szavazasiMod"),
+                "subjectDisplay": b.get("szavazasOkaMegjelenites"),
+                "totalVotes": b.get("osszesSzavazat"),
+                "remark": b.get("megjegyzes"),
+            }
+
+        return {
+            "header": header,
+            "records": records,
+            "factionStats": faction_stats,
+        }
+
 
 # A bill reference embedded in a speech's agenda event (nested ``esemenyId``
 # blob from aktusok). Best-effort: the structure varies, so we pull recognisable
@@ -552,6 +646,24 @@ def _parse_stages(diagram) -> list[dict]:
             "done": allapot.endswith("_MEGTORTENT"),
         })
     return stages
+
+
+def _parse_vote_subjects(nested) -> list[dict]:
+    """The vote's ``szavazasTargya`` nested sub-table → the bills/motions it
+    decided. Each row carries the iromány UUID (``iromanyId`` — joins to a bill
+    when it is a type we hold, EXT-2), number and title; a vote can decide more
+    than one subject (final vote on a bill plus its motions)."""
+    out: list[dict] = []
+    for r in _subrows(nested):
+        num = r.get("iromanySzam")
+        if not (r.get("iromanyId") or num):
+            continue
+        out.append({
+            "billId": r.get("iromanyId"),
+            "billNumber": num,
+            "title": r.get("iromanyCim"),
+        })
+    return out
 
 
 def _parse_type_table(nested) -> tuple[str | None, list[str]]:

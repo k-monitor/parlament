@@ -408,6 +408,114 @@ def _load_bill_detail(conn: sqlite3.Connection, bill_id: str, detail: dict,
                  _faction(sp.get("factionId")), sp.get("label"), j))
 
 
+# ---------------------------------------------------------------------------
+# Votes (szavazások) registry
+# ---------------------------------------------------------------------------
+
+# Normalize the raw Hungarian vote type to a stable code for counting/colouring.
+_VOTE_CODES = {
+    "Igen": "yes",
+    "Nem": "no",
+    "Tartózkodás": "abstain",
+    "Nem szavazott": "novote",
+    "Jelen, nem szavazott": "novote",
+    "Előre bejelentett hiányzó": "absent",
+}
+
+
+def _vote_code(value: str | None) -> str | None:
+    if not value:
+        return None
+    return _VOTE_CODES.get(value.strip(), "other")
+
+
+def load_votes(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load a cycle's roll-call votes (Votes module). Re-ingesting a cycle
+    replaces its votes (idempotent, ING-4). The per-MP roll call joins to the
+    shared person entity, each vote subject to a held bill, and each faction
+    breakdown to the shared faction entity (EXT-2). A vote's id is the upstream
+    szavazasId, matching ``bill_vote.vote_id`` — the link is by that shared key.
+
+    Must run after representatives and bills so the person/bill/faction links
+    resolve against already-loaded core entities."""
+    meta = registry.get("meta", {})
+    period = meta.get("cycle")
+    data = registry.get("data", [])
+
+    if period is not None:
+        conn.execute("INSERT INTO electoral_period(number) VALUES (?) "
+                     "ON CONFLICT(number) DO NOTHING", (period,))
+
+    # Replace this cycle's votes (children first for the FK).
+    for tbl in ("vote_record", "vote_faction_stat", "vote_subject"):
+        conn.execute(
+            f"DELETE FROM {tbl} WHERE vote_id IN "
+            "(SELECT id FROM vote WHERE period_number IS ?)", (period,))
+    conn.execute("DELETE FROM vote WHERE period_number IS ?", (period,))
+
+    def _person(pid):
+        if pid and conn.execute(
+                "SELECT 1 FROM person WHERE person_id=?", (pid,)).fetchone():
+            return pid
+        return None
+
+    def _faction(name):
+        if not name:
+            return None
+        frow = conn.execute("SELECT id FROM faction WHERE label=?",
+                            (name.strip(),)).fetchone()
+        return frow["id"] if frow else None
+
+    for rec in data:
+        vid = rec.get("voteId")
+        if not vid:
+            continue
+        detail = rec.get("detail") or {}
+        h = detail.get("header") or {}
+        # The upstream `hasKepviselo` flag is unreliable (false even when a roll
+        # call exists), so derive has_per_mp from whether records were actually
+        # returned — that is what the UI keys the roll-call section on.
+        has_per_mp = 1 if (detail.get("records")) else 0
+        conn.execute(
+            """INSERT INTO vote(id, period_number, vote_datetime, voting_mode,
+                   subject, result, yes, no, abstain, total_votes, has_per_mp, remark)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (vid, period, rec.get("datetime"), rec.get("votingMode"),
+             rec.get("subject"), rec.get("result"), rec.get("yes"),
+             rec.get("no"), rec.get("abstain"), h.get("totalVotes"),
+             has_per_mp, h.get("remark")))
+
+        for i, s in enumerate(rec.get("subjects") or []):
+            # Store the raw iromanyId; the bill link is resolved at query time so
+            # re-ingesting bills can't break votes (EXT-1).
+            conn.execute(
+                "INSERT INTO vote_subject(vote_id, ord, iromany_id, "
+                "bill_number, title) VALUES (?,?,?,?,?)",
+                (vid, i, s.get("billId"), s.get("billNumber"), s.get("title")))
+
+        for r in detail.get("records") or []:
+            conn.execute(
+                "INSERT INTO vote_record(vote_id, person_id, name, faction_name, "
+                "value, value_code) VALUES (?,?,?,?,?,?)",
+                (vid, _person(r.get("personID")), r.get("name"),
+                 r.get("factionName"), r.get("voteValue"),
+                 _vote_code(r.get("voteValue"))))
+
+        for i, fs in enumerate(detail.get("factionStats") or []):
+            conn.execute(
+                """INSERT INTO vote_faction_stat(vote_id, ord, faction_id,
+                       faction_name, total, yes, no, abstain, absent, not_voting,
+                       against_faction)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (vid, i, _faction(fs.get("factionName")), fs.get("factionName"),
+                 fs.get("total"), fs.get("yes"), fs.get("no"), fs.get("abstain"),
+                 fs.get("absent"), fs.get("notVoting"), fs.get("againstFaction")))
+
+    conn.commit()
+    logger.info("Loaded %d votes (cycle %s)", len(data), period)
+    return len(data)
+
+
 # Bills have no clean per-bill permalink on the modern portal; the text PDF is
 # the most specific resolvable original (LEGAL-1). This generic search page is
 # the fallback when a bill has no text.
@@ -629,6 +737,11 @@ def build_database(data_dir: str | Path, db_path: str | Path, *,
         # resolve against already-loaded core entities (EXT-2).
         for bp in sorted((data_dir / "processed").glob("bills-*.json")):
             load_bills(conn, json.loads(bp.read_text()))
+
+        # Votes load after bills so a vote's subject links to a held bill and its
+        # roll call / faction breakdown to loaded persons/factions (EXT-2).
+        for vp in sorted((data_dir / "processed").glob("votes-*.json")):
+            load_votes(conn, json.loads(vp.read_text()))
 
         sessions = sorted((data_dir / "processed").glob("*-session.json"))
         loaded = 0

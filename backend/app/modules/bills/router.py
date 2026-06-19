@@ -193,9 +193,14 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
                   p.label AS person_name
            FROM bill_committee_event c LEFT JOIN person p ON p.person_id = c.person_id
            WHERE c.bill_id = ? ORDER BY c.ord""", bill_id)
+    # Each bill vote carries the upstream szavazasId (vote_id). Where the Votes
+    # module has ingested that vote, resolve a `vote_ref` so the bill page can
+    # link into the full roll call (EXT-2); otherwise it stays a plain tally.
     votes = _rows(db,
-        "SELECT vote_date, subject, yes, no, abstain, result FROM bill_vote "
-        "WHERE bill_id = ? ORDER BY ord", bill_id)
+        """SELECT bv.vote_date, bv.subject, bv.yes, bv.no, bv.abstain, bv.result,
+                  bv.vote_id,
+                  (SELECT v.id FROM vote v WHERE v.id = bv.vote_id) AS vote_ref
+           FROM bill_vote bv WHERE bv.bill_id = ? ORDER BY bv.ord""", bill_id)
     deadlines = _rows(db,
         "SELECT name, deadline, reference, remark FROM bill_deadline "
         "WHERE bill_id = ? ORDER BY ord", bill_id)

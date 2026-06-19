@@ -13,7 +13,7 @@ from pathlib import Path
 # Every module the backend knows how to mount. A module absent from
 # PARLAMONITOR_MODULES is never registered: its API routes 404 and the frontend,
 # which reads /api/v1/meta, hides its nav entry (EXT-6).
-ALL_MODULES = ("proceedings", "representatives", "bills")
+ALL_MODULES = ("proceedings", "representatives", "bills", "votes")
 
 
 @dataclass

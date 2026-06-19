@@ -346,6 +346,84 @@ CREATE TABLE bill_motion_sponsor (   -- submitters of a non-self-standing motion
 CREATE INDEX idx_bill_motion_sponsor_motion ON bill_motion_sponsor(motion_id);
 
 -- ---------------------------------------------------------------------------
+-- Votes module (szavazások) — a self-contained vertical slice (EXT-1). It owns
+-- these tables and references the shared person/faction/bill core entities for
+-- the roll call, faction breakdown and the bill(s) decided, rather than
+-- duplicating them (EXT-2). A vote's `id` is the upstream szavazasId — the same
+-- key a bill's vote tally (`bill_vote.vote_id`) already references, so the two
+-- modules link both ways without any new join key.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE vote (
+    id             TEXT PRIMARY KEY,     -- Felicitas szavazasId (UUID)
+    period_number  INTEGER REFERENCES electoral_period(number),
+    vote_datetime  TEXT,                 -- idopont (ISO)
+    voting_mode    TEXT,                 -- szavazasiMod ("Listás a jelenlevők 2/3-ával")
+    subject        TEXT,                 -- szavazasOka ("sürgősségi javaslat elfogadva")
+    result         TEXT,                 -- eredmeny ("Elfogadva")
+    yes            INTEGER,              -- igen
+    no             INTEGER,              -- nem
+    abstain        INTEGER,              -- tartózkodás
+    total_votes    INTEGER,              -- osszesSzavazat (from the detail sheet)
+    has_per_mp     INTEGER DEFAULT 0,    -- hasKepviselo: a per-MP roll call exists
+    remark         TEXT                  -- megjegyzes
+);
+CREATE INDEX idx_vote_period ON vote(period_number);
+CREATE INDEX idx_vote_datetime ON vote(vote_datetime);
+
+-- The subject(s) a vote decided — one row per iromány (a vote can decide a bill
+-- plus its motions). `iromany_id` is the upstream iromanyId; it is resolved to a
+-- held bill at query time (LEFT JOIN bill ON bill.id = iromany_id) rather than by
+-- a hard FK, so the two modules stay decoupled (EXT-1: re-ingesting bills must
+-- not break votes). For iromány types we don't hold (resolutions, motions) the
+-- join yields no bill and the number/title are kept as a label (SCR-5).
+CREATE TABLE vote_subject (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    vote_id     TEXT NOT NULL REFERENCES vote(id),
+    ord         INTEGER,
+    iromany_id  TEXT,                    -- upstream iromanyId (joins to bill.id when held)
+    bill_number TEXT,                    -- "T/174"
+    title       TEXT
+);
+CREATE INDEX idx_vote_subject_vote ON vote_subject(vote_id);
+CREATE INDEX idx_vote_subject_iromany ON vote_subject(iromany_id);
+
+-- The per-MP roll call: every representative's individual vote. person_id joins
+-- to the shared person entity (EXT-2); a kepviseloId not in the roster keeps its
+-- name label only (no FK). value is the raw Hungarian vote type; value_code
+-- normalizes it (yes/no/abstain/absent/novote) for counting and colouring.
+CREATE TABLE vote_record (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    vote_id      TEXT NOT NULL REFERENCES vote(id),
+    person_id    TEXT REFERENCES person(person_id),
+    name         TEXT,                   -- nev (as recorded on the vote)
+    faction_name TEXT,                   -- frakcioNev (as recorded on the vote)
+    value        TEXT,                   -- szavazatTipus ("Igen", "Nem", …)
+    value_code   TEXT                    -- yes|no|abstain|absent|novote
+);
+CREATE INDEX idx_vote_record_vote ON vote_record(vote_id);
+CREATE INDEX idx_vote_record_person ON vote_record(person_id);
+
+-- Per-faction breakdown of a vote (igen/nem/tartózkodás per faction, plus
+-- against-faction defections). faction_id resolves to the shared faction entity
+-- (EXT-2) where the Felicitas frakcioId is known.
+CREATE TABLE vote_faction_stat (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    vote_id       TEXT NOT NULL REFERENCES vote(id),
+    ord           INTEGER,
+    faction_id    INTEGER REFERENCES faction(id),
+    faction_name  TEXT,
+    total         INTEGER,
+    yes           INTEGER,
+    no            INTEGER,
+    abstain       INTEGER,
+    absent        INTEGER,
+    not_voting    INTEGER,
+    against_faction TEXT                 -- frakcioElleniSzavazat (defections, e.g. "0 fő")
+);
+CREATE INDEX idx_vote_faction_stat_vote ON vote_faction_stat(vote_id);
+
+-- ---------------------------------------------------------------------------
 -- Reserved for the deferred NER/NEL stage (§10) — kept so the shape has room.
 -- ---------------------------------------------------------------------------
 CREATE TABLE entity (

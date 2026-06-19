@@ -32,9 +32,14 @@ export const api = {
   representative: (id) => get(`/representatives/${id}`),
   repStatistics: (id) => get(`/representatives/${id}/statistics`),
   repSpeeches: (id, params) => get(`/representatives/${id}/speeches`, params),
+  repVotes: (id, params) => get(`/representatives/${id}/votes`, params),
   factions: () => get('/representatives/factions'),
   // bills
   bills: (params) => get('/bills', params),
   bill: (id) => get(`/bills/${id}`),
   billFacets: (params) => get('/bills/facets', params),
+  // votes
+  votes: (params) => get('/votes', params),
+  vote: (id) => get(`/votes/${id}`),
+  voteFacets: (params) => get('/votes/facets', params),
 }

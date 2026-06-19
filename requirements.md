@@ -345,9 +345,9 @@ submitted to the Assembly, sourced from the Felicitas `iromany` API.
   (`--no-detail`) for a fast list-only refresh.
 - **BILL-6 (scope).** v1 covers **törvényjavaslatok** (Felicitas `fotipus = T`)
   for the current cycle, with the per-bill detail sheet of BILL-7. Remaining
-  future work: **other iromány types**, and **per-MP vote breakdowns** (who voted
-  how — the vote here is the aggregate tally; the roll-call belongs to the Votes
-  module, §10).
+  future work: **other iromány types**. (The per-bill vote here is the aggregate
+  tally; the **per-MP roll-call** is now provided by the Votes module, §6B, and
+  each bill-detail vote links into it — VOTE-6.)
 - **BILL-8 (SHOULD).** Where a bill event references a plenary **speech** (as
   parlament.hu's adatlap does), the event links **into this site's own speech
   viewer** (VIE-5), not out to parlament.hu. The link is resolved through the
@@ -359,6 +359,72 @@ submitted to the Assembly, sourced from the Felicitas `iromany` API.
   spanning agenda items), in which case the first is linked. An event whose
   speech has not been ingested keeps the plain speech-number chip with no link
   (graceful degradation, SCR-5).
+
+---
+
+## 6B. Functional Requirements — Module: Votes (Szavazások)
+
+The second additive feature module beyond proceedings and representatives,
+layered on the same module architecture (§7) as Bills (§6A). It surfaces the
+Assembly's **roll-call votes** (*szavazások*) and — the point of the module —
+**who voted how**, sourced from the Felicitas `szavazas` API (provider
+`szavazasok-query-provider`: `szavazas-lista-query` for the list, plus the
+per-vote `szavazat-by-szavazas-and-tipus-list-query` roll call,
+`szavazas-by-frakcio-stat-query` faction breakdown and `szavazas-alap-adatok-query`
+header).
+
+- **VOTE-1 (MUST).** A **browsable, filterable list of votes**, paginated and
+  filterable by **electoral period**, **result** (elfogadva/elutasítva/…) and
+  **subject/iromány-number text**; filters combine. List/filter state is in the
+  **URL query** (deep-linkable, shareable), including a `bill` scope so a link
+  like `/votes?bill=<iromanyId>` reopens the list scoped to one bill's votes.
+  Each row shows the datetime, subject, result, the igen/nem/tartózkodás tally
+  (as a bar), and the bill(s) the vote decided.
+- **VOTE-2 (MUST).** A **vote detail** view shows the vote's datetime, voting
+  mode, subject, result, the aggregate tally and the total votes cast, and the
+  **bill(s) it decided** (BILL/iromány links, VOTE-5). It surfaces the
+  **per-faction breakdown** (igen/nem/tartózkodás/nem szavazott/távol per
+  faction, with defection counts) and the full **per-MP roll call**.
+- **VOTE-3 (MUST).** The **per-MP roll call** is the signature feature: every
+  representative's individual vote (Igen / Nem / Tartózkodás / Nem szavazott /
+  Jelen, nem szavazott / Előre bejelentett hiányzó), grouped by vote value and
+  colour-coded, **each MP linked to their profile** through the shared `person`
+  entity (EXT-2). The join is by the Felicitas `kepviseloId`, never by name; an
+  id that is not a known MP keeps its recorded name but no link (SCR-5). The raw
+  Hungarian vote type is normalized to a stable code (`yes`/`no`/`abstain`/
+  `novote`/`absent`) for counting, colouring and the a11y tally. A vote with no
+  roll call (a list/voice vote) degrades to its header + tally with a clear "no
+  roll call available" note (SCR-5); the per-MP flag is derived from whether
+  records actually exist, not the unreliable upstream `hasKepviselo`.
+- **VOTE-4 (MUST).** **Reciprocal link on the representative profile (REP-2 /
+  EXT-2):** an MP's profile lists **how they voted**, reverse-chronologically,
+  each entry showing their vote value and linking to the full vote. The section
+  (and the backend `/representatives/{id}/votes` route) is hidden when the Votes
+  module is disabled (EXT-6), never faked.
+- **VOTE-5 (MUST).** **Vote ↔ bill is bidirectional through the shared data
+  (EXT-2):** a vote's subject links to the bill it decided where that bill is one
+  we hold (`fotipus = T`); an iromány type we don't hold (resolutions, motions)
+  keeps its number/title with no link. The link is resolved at query time
+  (`vote_subject.iromany_id` → `bill.id`), **not** a hard FK, so re-ingesting
+  either module cannot break the other (EXT-1).
+- **VOTE-6 (MUST).** **Bill detail ↔ vote is bidirectional:** a vote's `id` is
+  the upstream `szavazasId` — the very key a bill's aggregate vote tally
+  (`bill_vote.vote_id`, BILL-7) already carries — so each vote on a bill's detail
+  sheet links **into this site's own vote page** (the full roll call), with no
+  new join key. A bill vote whose szavazás has not been ingested keeps the plain
+  tally with no link (graceful degradation, SCR-5).
+- **VOTE-7 (MUST).** The module is a self-contained vertical slice per EXT-1..6:
+  its own scraper stage (`votes-<cycle>.json`), loader, `vote` / `vote_subject` /
+  `vote_record` / `vote_faction_stat` tables, `/api/v1/votes` routes, and
+  frontend views. Disabling it via `PARLAMONITOR_MODULES` removes its nav entry
+  and routes and hides the profile's votes section — no errors (EXT-6). Detail
+  fetching (roll call + faction breakdown) is a separately-skippable scraper step
+  (`--no-detail`) for a fast list-only refresh.
+- **VOTE-8 (scope).** v1 covers the current cycle's votes with their per-MP roll
+  call, per-faction breakdown and bill links. Remaining future work: **the
+  hemicycle seating chart** (the Felicitas `szavazas-patko-query` returns per-seat
+  SVG geometry + each MP's vote — out of scope for v1), and **vote-based
+  statistics** (party cohesion, attendance, defection rates).
 
 ---
 
@@ -398,8 +464,19 @@ rework of existing features.
 > module. The non-self-standing-motions list (with per-motion PDFs and
 > MP-linked submitters) was layered on the same way — `bill_motion` +
 > `bill_motion_sponsor` child tables, a `motions` array on the detail API, and a
-> motions section in the detail view — once more touching no other module. It stands as the worked example for the remaining domains (votes,
-> committees, interpellations).
+> motions section in the detail view — once more touching no other module.
+>
+> The **Votes module (§6B)** is the second worked example, added the same purely
+> additive way: a new scraper stage and `votes-<cycle>.json` output, `vote` +
+> `vote_subject` + `vote_record` + `vote_faction_stat` tables, `/api/v1/votes`
+> routes, Votes browser + detail (roll-call) views, the reciprocal votes section
+> on the MP profile, and bidirectional bill ↔ vote links — with **no schema
+> changes to existing modules**. Notably the two cross-module links (vote subject
+> → bill, bill vote → vote) are resolved at query time through shared keys
+> (`iromany_id`/`szavazasId`), not hard foreign keys, so the modules stay
+> decoupled and either can be re-ingested independently (EXT-1). These two
+> modules stand as the worked examples for the remaining domains (committees,
+> interpellations).
 
 ---
 
@@ -474,12 +551,15 @@ rework of existing features.
 ## 10. Out of Scope / Future
 
 - User accounts, saved searches, alerts/notifications on topics or speakers.
-- **Bills** are now implemented as the first additive module (§6A), including
-  the full per-bill detail sheet (BILL-7: event history, aggregate votes,
-  committee timelines, deadlines, documents, motions). **Votes** (roll-call /
-  per-MP breakdowns), **committees, interpellations** remain planned future
-  **modules** (§7); the architecture already accommodates them, with Bills as the
-  worked example.
+- **Bills** are implemented as the first additive module (§6A), including the
+  full per-bill detail sheet (BILL-7: event history, aggregate votes, committee
+  timelines, deadlines, documents, motions). **Votes** are now implemented as the
+  second additive module (§6B): the roll-call list, per-MP breakdown, per-faction
+  breakdown, and bidirectional links to bills and representatives. **Committees,
+  interpellations** remain planned future **modules** (§7); the architecture
+  already accommodates them, with Bills and Votes as the worked examples.
+  Within Votes, the **hemicycle seating chart** and **vote-based statistics**
+  (cohesion, attendance, defection rates) remain future work (VOTE-8).
 - **Precise sentence ↔ video sync (planned enhancement to the timing stage,
   §3.4).** v1 uses a positional/character-length estimate (TIM-1). A later
   iteration replaces it — as a drop-in swap of the timing stage (TIM-4) — with
@@ -504,12 +584,14 @@ rework of existing features.
 ## 11. Open Questions
 
 1. **Bills/votes data:** ~~confirm the source endpoints for `irományok`/`szavazások`~~
-   — **resolved for bills:** the Felicitas `iromany` API (provider
-   `iromanyok-query-provider`, plus the `iromany-adatlap` sub-queries for the
-   per-bill detail sheet, BILL-7) backs the Bills module (§6A), and REP-3's "bills
-   submitted" now reads from it. **Aggregate** per-bill vote tallies are already
-   shown (BILL-7); the **per-MP roll-call** (`szavazások` detail) is still to be
-   confirmed before scheduling the Votes module.
+   — **resolved.** The Felicitas `iromany` API (provider `iromanyok-query-provider`,
+   plus the `iromany-adatlap` sub-queries, BILL-7) backs the Bills module (§6A),
+   and REP-3's "bills submitted" reads from it. The Felicitas `szavazas` API
+   (provider `szavazasok-query-provider`: `szavazas-lista-query` +
+   `szavazat-by-szavazas-and-tipus-list-query` per-MP roll call +
+   `szavazas-by-frakcio-stat-query` faction breakdown) backs the **Votes module
+   (§6B)** — the per-MP roll-call is implemented and links to representatives and
+   bills both ways.
 2. **Historical backfill scope:** ship current cycle (43) first, then backfill
    37–42, or backfill all up front?
 3. **Entity enrichment:** NER/NEL is deferred (§10). For v1, do we still want a

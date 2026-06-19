@@ -120,3 +120,8 @@ class Paths:
 
     def bills_file(self, cycle: int) -> Path:
         return self.processed / f"bills-{int(cycle)}.json"
+
+    # --- votes -------------------------------------------------------------
+
+    def votes_file(self, cycle: int) -> Path:
+        return self.processed / f"votes-{int(cycle)}.json"

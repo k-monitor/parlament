@@ -50,6 +50,16 @@ const routes = [
     component: () => import('./modules/bills/BillView.vue'), props: true,
   },
 
+  // --- votes module ---
+  {
+    path: '/votes', name: 'votes', meta: { module: 'votes' },
+    component: () => import('./modules/votes/VotesListView.vue'),
+  },
+  {
+    path: '/votes/:id', name: 'vote', meta: { module: 'votes' },
+    component: () => import('./modules/votes/VoteView.vue'), props: true,
+  },
+
   { path: '/:pathMatch(.*)*', name: 'notfound', component: () => import('./views/NotFoundView.vue') },
 ]
 

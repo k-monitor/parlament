@@ -120,8 +120,10 @@ watch(() => props.id, load)
         <ul class="plain votes">
           <li v-for="(v, i) in bill.votes" :key="i" class="vote">
             <div class="vote-head">
-              <span class="vsubject">{{ v.subject }}</span>
+              <router-link v-if="v.vote_ref" :to="{ name: 'vote', params: { id: v.vote_ref } }" class="vsubject link">{{ v.subject }}</router-link>
+              <span v-else class="vsubject">{{ v.subject }}</span>
               <span class="badge" :class="{ ok: v.result === 'Elfogadva' }">{{ v.result }}</span>
+              <router-link v-if="v.vote_ref" :to="{ name: 'vote', params: { id: v.vote_ref } }" class="echip link rollcall">{{ $t('bills.viewRollCall') }}</router-link>
             </div>
             <p class="muted small vdate" v-if="v.vote_date">{{ formatDateTime(v.vote_date) }}</p>
             <div class="vbar" role="img"
@@ -388,6 +390,8 @@ watch(() => props.id, load)
 .vote:first-child { padding-top: 0; border-top: 0; }
 .vote-head { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .vsubject { font-weight: 600; }
+.vsubject.link { color: var(--accent); }
+.echip.rollcall { background: var(--accent-soft); color: var(--accent); }
 .vdate { margin: .15rem 0 .45rem; }
 .badge.ok { background: #eef6ee; color: #2e7d32; }
 .vbar { display: flex; height: .8rem; border-radius: 999px; overflow: hidden; margin: 0 0 .45rem; background: var(--line); box-shadow: inset 0 0 0 1px rgba(0,0,0,.04); }

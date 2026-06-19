@@ -234,6 +234,48 @@ def get_speeches(person_id: str, limit: int = Query(50, ge=1, le=200),
     }
 
 
+@router.get("/{person_id}/votes")
+def get_votes(person_id: str, limit: int = Query(50, ge=1, le=200),
+              offset: int = Query(0, ge=0),
+              db: sqlite3.Connection = Depends(get_db)):
+    """How an MP voted, reverse-chronologically (the reciprocal of the Votes
+    module's per-MP roll call, EXT-2). Empty when the Votes module is disabled
+    (EXT-6) — its tables may not exist, so guard before querying."""
+    if not settings.module_enabled("votes"):
+        return {"total": 0, "limit": limit, "offset": offset, "votes": [],
+                "available": False}
+    total = db.execute("SELECT COUNT(*) AS c FROM vote_record WHERE person_id=?",
+                       (person_id,)).fetchone()["c"]
+    rows = db.execute(
+        """SELECT v.id, v.vote_datetime, v.subject, v.result,
+                  vr.value, vr.value_code
+           FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
+           WHERE vr.person_id = :pid
+           ORDER BY v.vote_datetime DESC LIMIT :limit OFFSET :offset""",
+        {"pid": person_id, "limit": limit, "offset": offset}).fetchall()
+    # The bills each of those votes decided (for context on the profile).
+    ids = [r["id"] for r in rows]
+    subjects: dict[str, list] = {}
+    if ids:
+        ph = ",".join("?" * len(ids))
+        for s in db.execute(
+            f"""SELECT vs.vote_id, b.id AS bill_id, vs.bill_number, vs.title
+                FROM vote_subject vs LEFT JOIN bill b ON b.id = vs.iromany_id
+                WHERE vs.vote_id IN ({ph}) ORDER BY vs.vote_id, vs.ord""", ids).fetchall():
+            subjects.setdefault(s["vote_id"], []).append(
+                {"bill_id": s["bill_id"], "bill_number": s["bill_number"],
+                 "title": s["title"]})
+    return {
+        "total": total, "limit": limit, "offset": offset, "available": True,
+        "votes": [{
+            "id": r["id"], "vote_datetime": r["vote_datetime"],
+            "subject": r["subject"], "result": r["result"],
+            "value": r["value"], "value_code": r["value_code"],
+            "subjects": subjects.get(r["id"], []),
+        } for r in rows],
+    }
+
+
 def _latest_own_bills(by_cycle: list) -> Optional[int]:
     """The own-bills count for the most recent cycle in the upstream breakdown."""
     best = None

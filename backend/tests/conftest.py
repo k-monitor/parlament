@@ -178,6 +178,55 @@ def _bills_registry():
     }
 
 
+def _votes_registry():
+    """Two votes. The first decides bill T/100 (id bill-uuid-1) and has the same
+    vote id (v-1) as that bill's vote tally — exercising the bill <-> vote link —
+    with a per-MP roll call (k001 Igen, n002 Nem) and a per-faction breakdown.
+    The second has no roll call (a list/voice vote) and decides a non-held
+    iromány (H/9), so its subject stays label-only (no bill link)."""
+    return {
+        "meta": {"cycle": 43, "dateFrom": "2026-05-09", "dateTo": "2026-06-19",
+                 "source": "felicitas-szavazas-api",
+                 "scrapedAt": "2026-06-19T00:00:00+00:00", "count": 2},
+        "data": [
+            {"voteId": "v-1", "datetime": "2026-05-26T13:04:20Z",
+             "votingMode": "Gépi szavazás", "subject": "kivételességi javaslat elfogadva",
+             "result": "Elfogadva", "yes": 1, "no": 1, "abstain": 0, "cycle": 43,
+             "hasPerMp": True,
+             "subjects": [
+                 {"billId": "bill-uuid-1", "billNumber": "T/100",
+                  "title": "A költségvetésről szóló törvényjavaslat"}],
+             "detail": {
+                 "header": {"votingModeDisplay": "Gépi szavazás",
+                            "subjectDisplay": "kivételességi javaslat elfogadva",
+                            "totalVotes": 2, "remark": None},
+                 "records": [
+                     {"personID": "k001", "name": "Kovács Béla",
+                      "factionName": "Fidesz", "voteValue": "Igen"},
+                     {"personID": "n002", "name": "Nagy Anna",
+                      "factionName": "TISZA", "voteValue": "Nem"},
+                     {"personID": "x999", "name": "Külső Géza",
+                      "factionName": "független", "voteValue": "Tartózkodás"}],
+                 "factionStats": [
+                     {"factionName": "Fidesz", "factionId": 7, "againstFaction": "0 fő",
+                      "total": 1, "yes": 1, "no": 0, "abstain": 0, "absent": 0,
+                      "notVoting": 0},
+                     {"factionName": "TISZA", "factionId": None, "againstFaction": "0 fő",
+                      "total": 1, "yes": 0, "no": 1, "abstain": 0, "absent": 0,
+                      "notVoting": 0}],
+             }},
+            {"voteId": "v-2", "datetime": "2026-05-27T10:00:00Z",
+             "votingMode": "Listás", "subject": "határozati javaslat",
+             "result": "Elutasítva", "yes": 0, "no": 2, "abstain": 0, "cycle": 43,
+             "hasPerMp": False,
+             "subjects": [
+                 {"billId": "h-uuid-9", "billNumber": "H/9",
+                  "title": "Egy határozati javaslat"}],
+             "detail": {"header": {}, "records": [], "factionStats": []}},
+        ],
+    }
+
+
 @pytest.fixture
 def db_path(tmp_path):
     data = tmp_path / "data"
@@ -187,6 +236,8 @@ def db_path(tmp_path):
         json.dumps(_registry(), ensure_ascii=False))
     (data / "processed" / "bills-43.json").write_text(
         json.dumps(_bills_registry(), ensure_ascii=False))
+    (data / "processed" / "votes-43.json").write_text(
+        json.dumps(_votes_registry(), ensure_ascii=False))
     (data / "processed" / "43001-session.json").write_text(
         json.dumps(_session_record(), ensure_ascii=False))
     out = tmp_path / "test.db"

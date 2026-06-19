@@ -16,12 +16,14 @@ const profile = ref(null)
 const stats = ref(null)
 const speeches = ref(null)
 const bills = ref(null)
+const votes = ref(null)
 const loading = ref(false)
 const error = ref(false)
 
-// The bills section is only meaningful when the Bills module is live (EXT-6);
+// The bills/votes sections are only meaningful when their module is live (EXT-6);
 // a disabled module simply means no section, not an error.
 const showBills = computed(() => store.moduleEnabled('bills'))
+const showVotes = computed(() => store.moduleEnabled('votes'))
 
 const PLACEHOLDER =
   'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -37,21 +39,29 @@ const overTimeItems = computed(() => {
   }))
 })
 
+// Vote-value chip colour by normalized code, matching the Votes module palette.
+const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote', absent: 'absent' }
+
 async function load() {
   loading.value = true; error.value = false
-  profile.value = stats.value = speeches.value = bills.value = null
+  profile.value = stats.value = speeches.value = bills.value = votes.value = null
   try {
-    // Bills failure must not break the profile, so it resolves to null on error.
+    // A feature-module failure must not break the profile, so each resolves to
+    // null on error (and is skipped entirely when its module is disabled).
     const billsReq = showBills.value
       ? api.bills({ sponsor: props.id, limit: 100 }).catch(() => null)
       : Promise.resolve(null)
-    const [p, s, sp, b] = await Promise.all([
+    const votesReq = showVotes.value
+      ? api.repVotes(props.id, { limit: 20 }).catch(() => null)
+      : Promise.resolve(null)
+    const [p, s, sp, b, v] = await Promise.all([
       api.representative(props.id),
       api.repStatistics(props.id),
       api.repSpeeches(props.id, { limit: 50 }),
       billsReq,
+      votesReq,
     ])
-    profile.value = p; stats.value = s; speeches.value = sp; bills.value = b
+    profile.value = p; stats.value = s; speeches.value = sp; bills.value = b; votes.value = v
   } catch { error.value = true } finally { loading.value = false }
 }
 onMounted(load)
@@ -156,6 +166,25 @@ watch(() => props.id, load)
             </ul>
           </section>
 
+          <section class="card pad" v-if="showVotes && votes && votes.total">
+            <h2>{{ $t('profile.votes') }} <span class="muted small">({{ votes.total }})</span></h2>
+            <p class="small muted">{{ $t('profile.votesNote') }}</p>
+            <ul class="votemini">
+              <li v-for="v in votes.votes" :key="v.id">
+                <router-link :to="{ name: 'vote', params: { id: v.id } }" class="voteitem">
+                  <span class="vchip" :class="VOTE_CLASS[v.value_code] || 'other'">{{ $t('votes.' + v.value_code) }}</span>
+                  <span class="vmeta">
+                    <span class="vsub">{{ v.subject }}</span>
+                    <span class="muted small">
+                      {{ formatDate(v.vote_datetime) }}
+                      <template v-for="(s, i) in v.subjects" :key="i"> · {{ s.bill_number }}</template>
+                    </span>
+                  </span>
+                </router-link>
+              </li>
+            </ul>
+          </section>
+
           <section class="card pad">
             <h2>{{ $t('profile.speeches') }} <span class="muted small" v-if="speeches">({{ speeches.total }})</span></h2>
             <p v-if="speeches && speeches.total === 0" class="muted">{{ $t('profile.noSpeeches') }}</p>
@@ -199,6 +228,15 @@ watch(() => props.id, load)
 .billitem-head { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .billitem .bnum { font-weight: 800; color: var(--accent); }
 .billitem .btitle { color: var(--ink); }
+.votemini { list-style: none; padding: 0; margin: .5rem 0 0; display: flex; flex-direction: column; gap: .4rem; }
+.voteitem { display: flex; gap: .6rem; align-items: flex-start; padding: .5rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
+.voteitem:hover { background: var(--accent-soft); text-decoration: none; }
+.vmeta { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+.vsub { font-weight: 600; }
+.vchip { flex: none; font-size: .72rem; font-weight: 700; line-height: 1.6; padding: 0 .5rem; border-radius: 999px; color: #fff; white-space: nowrap; }
+.vchip.yes { background: #2e7d32; } .vchip.no { background: #c62828; }
+.vchip.abstain { background: #8a8780; } .vchip.novote { background: #c79a2e; }
+.vchip.absent { background: #7c8288; } .vchip.other { background: #777; }
 .speechlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .5rem; }
 .speechitem { display: block; padding: .6rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
 .speechitem:hover { background: var(--accent-soft); text-decoration: none; }

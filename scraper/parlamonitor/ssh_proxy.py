@@ -97,26 +97,28 @@ class SSHProxy:
         pkey = self._load_key(paramiko)
 
         # Try a normal connection first. If it fails and the key is RSA, the
-        # server may be an old one that only accepts the legacy ``ssh-rsa``
-        # (RSA-SHA1) signature — modern paramiko offers ``rsa-sha2-*`` first and
-        # won't fall back unless we disable those (the paramiko equivalent of
-        # ``ssh -o PubkeyAcceptedKeyTypes=ssh-rsa``). Retry once that way.
-        client, err = self._connect(paramiko, pkey, force_ssh_rsa=False)
-        if client is None and isinstance(pkey, paramiko.RSAKey):
-            logger.info("SSH connect failed (%s); retrying with legacy "
-                        "ssh-rsa (RSA-SHA1)", err)
-            client, err = self._connect(paramiko, pkey, force_ssh_rsa=True)
-        if client is None:
+        # server may be an old one (e.g. OpenSSH < 7.2) that only accepts the
+        # legacy ``ssh-rsa`` (RSA-SHA1) signature. We re-enable that signature
+        # and force it on the retry — the equivalent of
+        # ``ssh -o PubkeyAcceptedKeyTypes=ssh-rsa``.
+        transport, err = self._connect(paramiko, pkey, force_ssh_rsa=False)
+        if transport is None and isinstance(pkey, paramiko.RSAKey):
+            if self._enable_legacy_ssh_rsa(paramiko):
+                logger.info("SSH connect failed (%s); retrying with legacy "
+                            "ssh-rsa (RSA-SHA1)", err)
+                transport, err = self._connect(
+                    paramiko, pkey, force_ssh_rsa=True)
+            else:
+                logger.warning("SSH connect failed and SHA-1 RSA signing is "
+                               "unavailable; cannot fall back to ssh-rsa")
+        if transport is None:
             raise SSHProxyError(
                 f"SSH connection to {self.user}@{self.host}:{self.port} "
                 f"failed (key {self.key_path}): {err}") from err
 
-        transport = client.get_transport()
-        if transport is None:
-            raise SSHProxyError("SSH transport unavailable after connect")
         transport.set_keepalive(30)
-
-        self._client = client
+        # The Transport owns the socket; close() closes it via _client.
+        self._client = transport
         self._transport = transport
         self._start_listener()
         logger.info("SSH proxy up: 127.0.0.1:%d -> %s@%s:%d",
@@ -148,47 +150,98 @@ class SSHProxy:
         raise SSHProxyError(
             f"Could not load SSH key {self.key_path}: " + "; ".join(errors))
 
-    def _connect(self, paramiko, pkey, *, force_ssh_rsa: bool):
-        """Open one SSH connection.
+    @staticmethod
+    def _enable_legacy_ssh_rsa(paramiko) -> bool:
+        """Restore SHA-1 RSA signing if this paramiko build dropped it.
 
-        Returns ``(client, None)`` on success, or ``(None, exc)`` on an
-        SSH-level failure (auth / key-algorithm negotiation) that the caller
-        may retry. Transport-level failures (DNS, refused) raise immediately —
-        retrying with a different signature algorithm wouldn't help.
+        paramiko >= 4 removed ``ssh-rsa`` from ``RSAKey.HASHES``, so it can no
+        longer produce the SHA-1 signature that pre-7.2 OpenSSH servers
+        require — attempting it raises ``KeyError: 'ssh-rsa'``. cryptography
+        still implements SHA-1, so we add the entry back. Returns ``True`` once
+        ssh-rsa signing is available.
         """
-        client = paramiko.SSHClient()
-        if self.known_hosts:
-            client.load_host_keys(self.known_hosts)
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
-        else:
-            # No known_hosts configured: accept the host key on first use
-            # (the equivalent of ``-o StrictHostKeyChecking=no``).
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-        disabled = ({"pubkeys": ["rsa-sha2-512", "rsa-sha2-256"]}
-                    if force_ssh_rsa else None)
+        hashes_map = paramiko.RSAKey.HASHES
+        if "ssh-rsa" in hashes_map:
+            return True
         try:
-            client.connect(
-                hostname=self.host,
-                port=self.port,
-                username=self.user,
-                pkey=pkey,
-                timeout=self.connect_timeout,
-                allow_agent=False,
-                look_for_keys=False,
-                compress=True,
-                disabled_algorithms=disabled,
-            )
-            return client, None
-        except paramiko.SSHException as e:
-            # Auth failure or signature-algorithm mismatch — retryable.
-            client.close()
-            return None, e
-        except Exception as e:
-            client.close()
+            from cryptography.hazmat.primitives import hashes
+        except ImportError:  # pragma: no cover - cryptography is a paramiko dep
+            return False
+        hashes_map["ssh-rsa"] = hashes.SHA1
+        hashes_map.setdefault("ssh-rsa-cert-v01@openssh.com", hashes.SHA1)
+        return True
+
+    def _connect(self, paramiko, pkey, *, force_ssh_rsa: bool):
+        """Open one authenticated SSH transport.
+
+        Returns ``(transport, None)`` on success, or ``(None, exc)`` on an
+        SSH-level failure (auth / key-algorithm negotiation) that the caller
+        may retry with ``force_ssh_rsa``. Transport-level failures (DNS,
+        refused, host-key mismatch) raise :class:`SSHProxyError` immediately —
+        retrying with a different signature algorithm wouldn't help.
+
+        Uses paramiko's low-level ``Transport`` rather than ``SSHClient`` so we
+        can control the public-key signature algorithm list directly, which is
+        the only way to re-enable the legacy ``ssh-rsa`` signature.
+        """
+        try:
+            sock = socket.create_connection(
+                (self.host, self.port), timeout=self.connect_timeout)
+        except OSError as e:
             raise SSHProxyError(
                 f"SSH connection to {self.user}@{self.host}:{self.port} "
                 f"failed: {e}") from e
+
+        transport = paramiko.Transport(sock)
+        transport.use_compression(True)
+        if force_ssh_rsa:
+            # Enable the legacy ssh-rsa (SHA-1) public-key signature for auth.
+            transport._preferred_pubkeys = ("ssh-rsa",)
+
+        try:
+            transport.start_client(timeout=self.connect_timeout)
+        except paramiko.SSHException as e:
+            transport.close()
+            return None, e
+        except Exception as e:
+            transport.close()
+            raise SSHProxyError(
+                f"SSH connection to {self.user}@{self.host}:{self.port} "
+                f"failed: {e}") from e
+
+        try:
+            self._verify_host_key(paramiko, transport)
+        except Exception:
+            transport.close()
+            raise
+
+        try:
+            transport.auth_publickey(self.user, pkey)
+        except paramiko.SSHException as e:
+            transport.close()
+            return None, e
+
+        if not transport.is_authenticated():
+            transport.close()
+            return None, paramiko.AuthenticationException(
+                "authentication failed")
+        return transport, None
+
+    def _verify_host_key(self, paramiko, transport) -> None:
+        """Reject unknown host keys against ``known_hosts``; else trust-on-use.
+
+        With no ``known_hosts`` configured this is a no-op — the equivalent of
+        ``-o StrictHostKeyChecking=no``.
+        """
+        if not self.known_hosts:
+            return
+        server_key = transport.get_remote_server_key()
+        hostkeys = paramiko.HostKeys(self.known_hosts)
+        entry = self.host if self.port == 22 else f"[{self.host}]:{self.port}"
+        if not hostkeys.check(entry, server_key):
+            raise SSHProxyError(
+                f"host key verification failed for {entry} "
+                f"(not in {self.known_hosts})")
 
     def _start_listener(self) -> None:
         """Bind the local proxy socket and spawn the accept thread.

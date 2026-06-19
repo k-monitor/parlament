@@ -1,0 +1,170 @@
+<script setup>
+// Representative profile (REP-2/REP-3/REP-5). Shows bio + faction history, the
+// precomputed statistics (with explicit scope + methodology), an accessible
+// trend chart, and a reverse-chronological speech list linking into the viewer.
+import { ref, computed, watch, onMounted } from 'vue'
+import { api } from '../../api.js'
+import { formatDate, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
+import StateBlock from '../../components/StateBlock.vue'
+import FactionBadge from '../../components/FactionBadge.vue'
+import BarChart from '../../components/BarChart.vue'
+
+const props = defineProps({ id: String })
+
+const profile = ref(null)
+const stats = ref(null)
+const speeches = ref(null)
+const loading = ref(false)
+const error = ref(false)
+
+const PLACEHOLDER =
+  'data:image/svg+xml;utf8,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="110"><rect width="110" height="110" fill="%23e7e5df"/><circle cx="55" cy="44" r="22" fill="%23bdb9af"/><rect x="18" y="74" width="74" height="40" rx="20" fill="%23bdb9af"/></svg>')
+function onImgErr(e) { e.target.src = PLACEHOLDER }
+
+const overTimeItems = computed(() => {
+  if (!stats.value) return []
+  return stats.value.over_time.map((p) => ({
+    label: `${formatDate(p.date)}`,
+    value: p.speech_count,
+    sub: p.session_id,
+  }))
+})
+
+async function load() {
+  loading.value = true; error.value = false
+  profile.value = stats.value = speeches.value = null
+  try {
+    const [p, s, sp] = await Promise.all([
+      api.representative(props.id),
+      api.repStatistics(props.id),
+      api.repSpeeches(props.id, { limit: 50 }),
+    ])
+    profile.value = p; stats.value = s; speeches.value = sp
+  } catch { error.value = true } finally { loading.value = false }
+}
+onMounted(load)
+watch(() => props.id, load)
+</script>
+
+<template>
+  <StateBlock :loading="loading" :error="error" @retry="load">
+    <div v-if="profile" class="profile">
+      <router-link :to="{ name: 'representatives' }" class="small">‹ {{ $t('reps.title') }}</router-link>
+
+      <header class="phead card pad">
+        <img class="avatar lg" :src="profile.photo_uri || PLACEHOLDER" @error="onImgErr" alt="" />
+        <div class="pinfo">
+          <h1>{{ profile.label }}</h1>
+          <div class="row" style="gap:.8rem;">
+            <FactionBadge :faction="profile.current_faction" />
+            <span v-if="profile.constituency" class="muted">📍 {{ profile.constituency }}</span>
+          </div>
+          <div class="row small links" style="gap:1rem;margin-top:.5rem;">
+            <a v-if="profile.website" :href="profile.website" target="_blank" rel="noopener">🌐 {{ $t('profile.website') }}</a>
+            <a v-if="profile.email" :href="'mailto:' + profile.email">✉ {{ profile.email }}</a>
+            <a v-if="profile.wikidata_id" :href="'https://www.wikidata.org/wiki/' + profile.wikidata_id" target="_blank" rel="noopener">Wikidata</a>
+          </div>
+        </div>
+      </header>
+
+      <div class="pgrid">
+        <!-- left: stats + bio -->
+        <div class="pcol">
+          <section class="card pad">
+            <h2>{{ $t('profile.statistics') }}</h2>
+            <div class="bignums">
+              <div><span class="num">{{ stats.totals.speech_count }}</span><span class="lbl">{{ $t('profile.totalSpeeches') }}</span></div>
+              <div><span class="num">{{ formatSpeakingTime(stats.totals.speaking_seconds) }}</span><span class="lbl">{{ $t('profile.totalSpeakingTime') }}</span></div>
+              <div v-if="stats.totals.bills_available"><span class="num">{{ stats.totals.bills_submitted }}</span><span class="lbl">{{ $t('profile.billsSubmitted') }}</span></div>
+            </div>
+            <!-- REP-3: bills metric hidden, not faked, until the Bills module ships -->
+            <p v-if="!stats.totals.bills_available" class="small muted bills-note">ⓘ {{ $t('profile.billsUnavailable') }}</p>
+
+            <div v-if="overTimeItems.length" style="margin-top:1rem;">
+              <BarChart
+                :items="overTimeItems"
+                :caption="$t('profile.speechesOverTime')"
+                :unit="$t('reps.speeches')"
+              />
+            </div>
+
+            <details class="methodology">
+              <summary>{{ $t('profile.methodology') }} · {{ $t('profile.scope') }}</summary>
+              <p class="small muted">{{ stats.scope.description }} ({{ stats.scope.sessions_covered }} {{ $t('profile.sessionsCovered') }})</p>
+              <p class="small muted">{{ stats.methodology }}</p>
+            </details>
+          </section>
+
+          <section class="card pad" v-if="profile.faction_history && profile.faction_history.length">
+            <h2>{{ $t('profile.factionHistory') }}</h2>
+            <ul class="timeline">
+              <li v-for="(h, i) in profile.faction_history" :key="i">
+                <FactionBadge :faction="h.faction" />
+                <span class="muted small">{{ h.cycle }}</span>
+              </li>
+            </ul>
+          </section>
+
+          <section class="card pad" v-if="profile.committees && profile.committees.length">
+            <h2>{{ $t('profile.committees') }}</h2>
+            <ul class="plain">
+              <li v-for="(c, i) in profile.committees.slice(0, 12)" :key="i" class="small">
+                {{ c.committee || c }} <span class="muted" v-if="c.role">— {{ c.role }}</span>
+              </li>
+            </ul>
+          </section>
+
+          <section class="card pad" v-if="profile.education && profile.education.length">
+            <h2>{{ $t('profile.education') }}</h2>
+            <ul class="plain">
+              <li v-for="(e, i) in profile.education" :key="i" class="small">
+                {{ e.degree }} <span class="muted" v-if="e.institution">— {{ e.institution }}</span>
+              </li>
+            </ul>
+          </section>
+        </div>
+
+        <!-- right: speeches -->
+        <div class="pcol">
+          <section class="card pad">
+            <h2>{{ $t('profile.speeches') }} <span class="muted small" v-if="speeches">({{ speeches.total }})</span></h2>
+            <p v-if="speeches && speeches.total === 0" class="muted">{{ $t('profile.noSpeeches') }}</p>
+            <ul v-else-if="speeches" class="speechlist">
+              <li v-for="s in speeches.speeches" :key="s.uid">
+                <router-link :to="{ name: 'viewer', params: { uid: s.uid } }" class="speechitem">
+                  <div class="row small" style="gap:.6rem;">
+                    <strong>{{ formatDate(s.date) }}</strong>
+                    <span class="badge" v-if="s.agenda_type">{{ agendaLabel(s.agenda_type) }}</span>
+                    <span class="muted" v-if="s.duration">⏱ {{ formatDuration(s.duration) }}</span>
+                  </div>
+                  <p class="excerpt">{{ s.excerpt || (s.has_text ? '' : $t('viewer.videoOnly')) }}</p>
+                </router-link>
+              </li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </div>
+  </StateBlock>
+</template>
+
+<style scoped>
+.phead { display: flex; gap: 1.2rem; align-items: center; margin: .8rem 0 1rem; }
+.phead h1 { margin: 0 0 .4rem; }
+.pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; align-items: start; }
+.pcol { display: flex; flex-direction: column; gap: 1.2rem; }
+.bignums { display: flex; gap: 2rem; flex-wrap: wrap; }
+.bignums .num { font-size: 1.8rem; font-weight: 800; color: var(--accent); display: block; }
+.bignums .lbl { font-size: .82rem; color: var(--ink-faint); }
+.bills-note { margin-top: .8rem; }
+.methodology { margin-top: 1rem; }
+.methodology summary { cursor: pointer; font-size: .85rem; color: var(--ink-soft); font-weight: 600; }
+.timeline, .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
+.timeline li { display: flex; gap: .6rem; align-items: center; }
+.speechlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .5rem; }
+.speechitem { display: block; padding: .6rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
+.speechitem:hover { background: var(--accent-soft); text-decoration: none; }
+.excerpt { margin: .3rem 0 0; color: var(--ink-soft); font-size: .9rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+@media (max-width: 820px) { .pgrid { grid-template-columns: 1fr; } }
+</style>

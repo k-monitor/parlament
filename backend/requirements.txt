@@ -1,0 +1,5 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+# stdlib sqlite3 (FTS5) is used directly — no ORM. Tests:
+pytest>=8.0
+httpx>=0.27

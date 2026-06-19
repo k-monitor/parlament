@@ -1,0 +1,12 @@
+# Runtime dependencies — kept deliberately small (requirements SCR-6).
+# v1 needs only HTTP access to parlament.hu/Felicitas; Hungarian sentence
+# segmentation has an optional, pinned spaCy path with a regex fallback.
+requests>=2.31,<3
+
+# Optional: better Hungarian sentence segmentation. The pipeline runs without
+# it (regex fallback in ogywatch/segment.py), so it is not required for a clean
+# scrape — install it for higher-quality sentence boundaries.
+# spacy>=3.7,<3.9
+
+# Test-only:
+#   pytest>=8

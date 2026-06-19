@@ -1,0 +1,1 @@
+"""Országgyűlés Watch backend package."""

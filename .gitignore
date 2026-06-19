@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+backend/.venv/
+.pytest_cache/
+
+# SQLite runtime DB (regenerable from source data — DB-3)
+*.db
+*.db-wal
+*.db-shm
+*.db.building*
+
+# Node / Vite
+frontend/node_modules/
+frontend/dist/
+
+# Scraper data (large; regenerable)
+data/original/
+data/media/
+data/logs/*.log
+captures/
+data/

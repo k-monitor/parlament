@@ -12,6 +12,7 @@ import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
+import TrendChart from '../../components/TrendChart.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,6 +32,7 @@ const filters = reactive({
 const showFilters = ref(false)
 
 const data = ref(null)
+const trend = ref(null)
 const loading = ref(false)
 const error = ref(false)
 
@@ -66,16 +68,23 @@ function gotoPage(p) {
 }
 
 async function runFromRoute() {
-  if (!route.query.q) { data.value = null; return }
+  if (!route.query.q) { data.value = null; trend.value = null; return }
   loading.value = true; error.value = false
+  const filterArgs = {
+    q: route.query.q,
+    period: route.query.period,
+    date_from: route.query.date_from,
+    date_to: route.query.date_to,
+    faction_id: route.query.faction_id,
+    agenda_type: route.query.agenda_type,
+  }
+  // The over-time popularity chart (SEA-8) is an independent aggregate over the
+  // whole result set (not just this page), so it runs alongside and its failure
+  // must never break the results list.
+  api.searchTrend(filterArgs).then((t) => { trend.value = t }).catch(() => { trend.value = null })
   try {
     data.value = await api.search({
-      q: route.query.q,
-      period: route.query.period,
-      date_from: route.query.date_from,
-      date_to: route.query.date_to,
-      faction_id: route.query.faction_id,
-      agenda_type: route.query.agenda_type,
+      ...filterArgs,
       limit: PAGE,
       offset: route.query.offset || 0,
     })
@@ -165,6 +174,14 @@ function viewerLink(r) {
         {{ $t('search.results') }}
       </p>
 
+      <section v-if="trend && trend.buckets.length > 1" class="card pad trendcard">
+        <TrendChart
+          :buckets="trend.buckets" :granularity="trend.granularity"
+          :caption="$t('search.trendCaption', { q: data.query })"
+          :unit="$t('search.results')"
+        />
+      </section>
+
       <ol class="results">
         <li v-for="r in data.results" :key="r.sentence_id" class="card pad result">
           <router-link :to="viewerLink(r)" class="result-sentence">
@@ -193,6 +210,7 @@ function viewerLink(r) {
 <style scoped>
 .filters { border: none; border-top: 1px solid var(--line); margin-top: .8rem; padding: .8rem 0 0; }
 .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .7rem; }
+.trendcard { margin: 0 0 .9rem; }
 .results { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .7rem; }
 .result-sentence { display: block; font-size: 1.12rem; color: var(--ink); line-height: 1.5; }
 .result-sentence:hover { text-decoration: none; color: var(--accent); }

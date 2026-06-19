@@ -53,6 +53,7 @@ export default {
     all: 'Mind',
     watch: 'Megtekintés',
     on: '·',
+    trendCaption: 'A(z) „{q}” előfordulása az időben',
   },
   viewer: {
     transcript: 'Jegyzőkönyv',

@@ -215,6 +215,14 @@ Primary use cases:
 - **SEA-6.** Search is reachable and shareable via **URL query params**
   (deep-linkable search state) so a search can be cited.
 - **SEA-7 (SHOULD).** Search-as-you-type suggestions for speakers and factions.
+- **SEA-8 (SHOULD).** A **popularity-over-time chart** accompanies a query: the
+  number of matching sentences bucketed by calendar period (monthly, collapsing
+  to yearly over a long span), so a user sees when a term was most discussed.
+  The chart describes the **same result set** — it honors all active filters
+  (§SEA-3) — and is computed over **all** matches, not just the current page. It
+  is a separate aggregate from the paginated results (so it never slows the
+  result list) and, like all charts, has an accessible table equivalent
+  (REP-6 / A11Y-1). Quiet periods render as zero, not as gaps.
 
 ### 5.2 Proceedings viewer (sentence ↔ video sync)
 

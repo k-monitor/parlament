@@ -31,6 +31,7 @@ export default {
     hint: 'Tip: use quotes for an exact phrase, e.g. "tisztelt ház".',
     filters: 'Filters', clearFilters: 'Clear filters', period: 'Term', dateFrom: 'From', dateTo: 'To',
     speaker: 'Speaker', faction: 'Faction', agendaType: 'Agenda type', all: 'All', watch: 'Watch', on: '·',
+    trendCaption: 'Occurrences of “{q}” over time',
   },
   viewer: {
     transcript: 'Transcript', noTranscript: 'No transcript text is available for this speech.',

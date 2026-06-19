@@ -147,6 +147,78 @@ def search(
     }
 
 
+@router.get("/search/trend")
+def search_trend(
+    q: str = Query(..., min_length=1, description="Free-text query; \"…\" = exact phrase"),
+    date_from: Optional[str] = Query(None, description="ISO date lower bound"),
+    date_to: Optional[str] = Query(None, description="ISO date upper bound"),
+    period: Optional[int] = Query(None, description="Electoral period number"),
+    person_id: Optional[str] = None,
+    faction_id: Optional[int] = None,
+    agenda_type: Optional[str] = None,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Popularity of a query over time (SEA-8): matching-sentence counts bucketed
+    by calendar period, honouring the *same* filters as `/search` so the chart
+    describes the very result set being browsed.
+
+    Granularity adapts to the span — monthly for a few years, yearly for the full
+    historical corpus (PERF-3) — so the timeline stays readable. Buckets are the
+    ones that actually have hits; the client fills the gaps with zeros so the
+    timeline is continuous and honest."""
+    match = build_match(q)
+    if not match:
+        raise HTTPException(400, "Query contains no searchable terms")
+
+    where = ["sentence_fts MATCH :match"]
+    params: dict = {"match": match}
+    if date_from:
+        where.append("ss.date >= :date_from"); params["date_from"] = date_from
+    if date_to:
+        where.append("ss.date <= :date_to"); params["date_to"] = date_to
+    if period is not None:
+        where.append("sp.period_number = :period"); params["period"] = period
+    if person_id:
+        where.append("sp.person_id = :person_id"); params["person_id"] = person_id
+    if faction_id is not None:
+        where.append("sp.faction_id = :faction_id"); params["faction_id"] = faction_id
+    if agenda_type:
+        where.append("ai.type = :agenda_type"); params["agenda_type"] = agenda_type
+    where_sql = " AND ".join(where)
+
+    base_from = """
+        FROM sentence_fts
+        JOIN sentence se ON se.id = sentence_fts.rowid
+        JOIN speech sp ON sp.uid = se.speech_id
+        JOIN session ss ON ss.id = sp.session_id
+        LEFT JOIN agenda_item ai ON ai.id = sp.agenda_item_id
+    """
+
+    span = db.execute(
+        f"SELECT MIN(ss.date) AS lo, MAX(ss.date) AS hi {base_from} WHERE {where_sql}",
+        params).fetchone()
+    if not span or not span["lo"]:
+        return {"query": q, "granularity": "month", "buckets": []}
+
+    # Roughly how many months the hits span (dates are ISO 'YYYY-MM-DD').
+    lo_y, lo_m = int(span["lo"][:4]), int(span["lo"][5:7])
+    hi_y, hi_m = int(span["hi"][:4]), int(span["hi"][5:7])
+    months = (hi_y - lo_y) * 12 + (hi_m - lo_m) + 1
+    granularity = "year" if months > 36 else "month"
+    fmt = "%Y" if granularity == "year" else "%Y-%m"
+
+    rows = db.execute(
+        f"""SELECT strftime('{fmt}', ss.date) AS period, COUNT(*) AS hits
+            {base_from} WHERE {where_sql}
+            GROUP BY period ORDER BY period""",
+        params).fetchall()
+    return {
+        "query": q,
+        "granularity": granularity,
+        "buckets": [{"period": r["period"], "hits": r["hits"]} for r in rows],
+    }
+
+
 @router.get("/suggest")
 def suggest(q: str = Query(..., min_length=1), limit: int = Query(8, ge=1, le=20),
             db: sqlite3.Connection = Depends(get_db)):

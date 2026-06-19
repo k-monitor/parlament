@@ -64,6 +64,23 @@ def test_search_result_carries_seek_and_provenance(client):
     assert res["speaker"]["label"] == "Kovács Béla"
 
 
+def test_search_trend_buckets_hits_over_time(client):
+    # SEA-8: the popularity chart counts matching sentences per calendar bucket,
+    # honouring the same filters as /search.
+    r = client.get("/api/v1/proceedings/search/trend", params={"q": "koltsegvetes"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["granularity"] in ("month", "year")
+    assert sum(b["hits"] for b in data["buckets"]) >= 1
+    assert all(b["period"] and b["hits"] >= 1 for b in data["buckets"])
+    # Same faction filter as the result list → same emptiness.
+    fac = client.get("/api/v1/representatives/factions").json()["factions"]
+    tisza = next(f for f in fac if f["label"] == "TISZA")["id"]
+    empty = client.get("/api/v1/proceedings/search/trend",
+                       params={"q": "koltsegvetes", "faction_id": tisza}).json()
+    assert empty["buckets"] == []
+
+
 def test_filter_by_faction_and_agenda(client):
     # Filter to a faction with no costing-related hit.
     fac = client.get("/api/v1/representatives/factions").json()["factions"]

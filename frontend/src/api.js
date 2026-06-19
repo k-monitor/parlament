@@ -23,6 +23,7 @@ export const api = {
   meta: () => get('/meta'),
   // proceedings
   search: (params) => get('/proceedings/search', params),
+  searchTrend: (params) => get('/proceedings/search/trend', params),
   suggest: (q) => get('/proceedings/suggest', { q }),
   sessions: (period) => get('/proceedings/sessions', { period }),
   session: (id) => get(`/proceedings/sessions/${id}`),

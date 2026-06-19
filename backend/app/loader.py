@@ -249,20 +249,21 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
         conn.execute(
             """INSERT INTO bill(id, bill_number, number_sort, period_number,
                    title, type, main_type, status, submitted_date, text_url,
-                   text_caption, source_url, no_text)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   text_caption, source_url, no_text, stages_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                    bill_number=excluded.bill_number, number_sort=excluded.number_sort,
                    period_number=excluded.period_number, title=excluded.title,
                    type=excluded.type, main_type=excluded.main_type,
                    status=excluded.status, submitted_date=excluded.submitted_date,
                    text_url=excluded.text_url, text_caption=excluded.text_caption,
-                   source_url=excluded.source_url, no_text=excluded.no_text""",
+                   source_url=excluded.source_url, no_text=excluded.no_text,
+                   stages_json=excluded.stages_json""",
             (bid, rec.get("billNumber"), rec.get("billNumberSort"), period,
              rec.get("title"), rec.get("type"), rec.get("mainType"),
              rec.get("status"), rec.get("submittedDate"), text_url,
              rec.get("textCaption"), text_url or _BILL_PORTAL_FALLBACK,
-             1 if rec.get("noText") else 0))
+             1 if rec.get("noText") else 0, _json_or_none(rec.get("stages"))))
 
         for i, sp in enumerate(rec.get("sponsors") or []):
             pid = sp.get("personID")

@@ -9,6 +9,7 @@ back to its parlament.hu source text (LEGAL-1).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Optional
 
@@ -17,6 +18,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ...db import get_db
 
 router = APIRouter(prefix="/bills", tags=["bills"])
+
+
+def _stages(stages_json: Optional[str]) -> list[dict]:
+    """Parse the stored legislative-stage diagram and flag the current stage
+    (the furthest reached) so the UI can split the timeline into past/future."""
+    try:
+        stages = json.loads(stages_json) if stages_json else []
+    except (ValueError, TypeError):
+        return []
+    last_done = -1
+    for i, s in enumerate(stages):
+        if s.get("done"):
+            last_done = i
+    for i, s in enumerate(stages):
+        s["current"] = (i == last_done)
+    return stages
 
 
 def _sponsors_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, list]:
@@ -126,5 +143,6 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "submitted_date": b["submitted_date"], "text_url": b["text_url"],
         "text_caption": b["text_caption"], "source_url": b["source_url"],
         "no_text": bool(b["no_text"]), "period_number": b["period_number"],
+        "stages": _stages(b["stages_json"]),
         "sponsors": sponsors,
     }

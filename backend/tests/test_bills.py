@@ -94,3 +94,20 @@ def test_get_bill_detail(client):
 
 def test_get_bill_404(client):
     assert client.get("/api/v1/bills/does-not-exist").status_code == 404
+
+
+def test_bill_timeline_stages(client):
+    """The stage diagram is returned in order, with the furthest-reached stage
+    flagged `current` (so the UI can split past from future events)."""
+    d = client.get("/api/v1/bills/bill-uuid-1").json()
+    labels = [s["label"] for s in d["stages"]]
+    assert labels == ["Tárgysorozatban", "Általános vita alatt", "Zárószavazás"]
+    assert [s["done"] for s in d["stages"]] == [True, True, False]
+    # current = the last done stage; future stages are not current.
+    assert [s["current"] for s in d["stages"]] == [False, True, False]
+
+
+def test_bill_without_diagram_has_empty_stages(client):
+    """A bill with no stage diagram (kellDiagram false upstream) returns []."""
+    d = client.get("/api/v1/bills/bill-uuid-2").json()
+    assert d["stages"] == []

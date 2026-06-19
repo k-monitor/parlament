@@ -187,7 +187,10 @@ CREATE TABLE bill (
     text_url       TEXT,                 -- bill text PDF on parlament.hu (LEGAL-1)
     text_caption   TEXT,
     source_url     TEXT,                 -- most specific resolvable original
-    no_text        INTEGER DEFAULT 0
+    no_text        INTEGER DEFAULT 0,
+    -- legislative-stage diagram for the bill timeline: ordered
+    -- [{key,label,done}] (done = stage happened — past vs future event).
+    stages_json    TEXT
 );
 CREATE INDEX idx_bill_period ON bill(period_number);
 CREATE INDEX idx_bill_number_sort ON bill(number_sort);

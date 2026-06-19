@@ -102,6 +102,11 @@ def _bills_registry():
              "submittedDate": "2026-05-10T09:00:00Z",
              "textUrl": "https://www.parlament.hu/irom43/00100/00100.pdf",
              "textCaption": "szöveges PDF", "noText": False,
+             "stages": [
+                 {"key": "TARGYSOROZATBAN", "label": "Tárgysorozatban", "done": True},
+                 {"key": "ALTALANOS_VITA_ALATT", "label": "Általános vita alatt", "done": True},
+                 {"key": "ZAROSZAVAZAS", "label": "Zárószavazás", "done": False},
+             ],
              "sponsors": [{"personID": "k001", "factionId": 7, "committeeId": None,
                            "label": "Kovács Béla (Fidesz)"}]},
             {"billId": "bill-uuid-2", "billNumber": "T/101", "billNumberSort": 101,

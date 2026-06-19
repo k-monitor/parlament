@@ -328,6 +328,7 @@ class FelicitasClient:
                 "type": r.get("iromanytipus"),
                 "mainType": main_type,
                 "status": r.get("iromanyAllapot"),
+                "stages": _parse_stages(r.get("diagram")) if r.get("kellDiagram") else [],
                 "submittedDate": r.get("benyujtasDatuma"),
                 "textUrl": f"{BASE}{link}" if link else None,
                 "textCaption": (text or {}).get("iromanyszovegCaption"),
@@ -358,6 +359,24 @@ def _subrows(nested) -> list[dict]:
 def _first_subrow(nested) -> dict | None:
     rows = _subrows(nested)
     return rows[0] if rows else None
+
+
+def _parse_stages(diagram) -> list[dict]:
+    """The bill's legislative-stage diagram → ordered ``[{key, label, done}]``.
+
+    The Felicitas ``diagram`` sub-table lists the fixed legislative stages
+    (Tárgysorozatban → … → Kihirdetve) in order; each row's ``allapot`` ends in
+    ``_MEGTORTENT`` (the stage has happened — a past event) or ``_NEM_TORTENT_MEG``
+    (not yet — a future event). This drives the bill timeline (status/history)."""
+    stages = []
+    for d in _subrows(diagram):
+        allapot = d.get("allapot") or ""
+        stages.append({
+            "key": d.get("diagramElem"),
+            "label": d.get("tooltip"),
+            "done": allapot.endswith("_MEGTORTENT"),
+        })
+    return stages
 
 
 def _parse_type_table(nested) -> tuple[str | None, list[str]]:

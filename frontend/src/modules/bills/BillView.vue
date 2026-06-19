@@ -43,6 +43,24 @@ watch(() => props.id, load)
         </p>
       </header>
 
+      <section v-if="bill.stages && bill.stages.length" class="card pad">
+        <h2>{{ $t('bills.timeline') }}</h2>
+        <p class="muted small timeline-legend">{{ $t('bills.timelineNote') }}</p>
+        <ol class="timeline" :aria-label="$t('bills.timeline')">
+          <li
+            v-for="(s, i) in bill.stages" :key="i"
+            class="tstep" :class="{ done: s.done, current: s.current, future: !s.done }"
+            :aria-current="s.current ? 'step' : undefined"
+          >
+            <span class="tmarker" aria-hidden="true">{{ s.current ? '●' : (s.done ? '✓' : '') }}</span>
+            <span class="tlabel">{{ s.label }}</span>
+            <span class="visually-hidden">
+              — {{ s.current ? $t('bills.stageCurrent') : (s.done ? $t('bills.stageDone') : $t('bills.stagePending')) }}
+            </span>
+          </li>
+        </ol>
+      </section>
+
       <section class="card pad">
         <h2>{{ $t('bills.submitters') }}</h2>
         <ul class="plain">
@@ -84,6 +102,38 @@ watch(() => props.id, load)
 .bnum { font-weight: 800; color: var(--accent); font-size: 1.1rem; }
 .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .5rem; }
 .sponsor { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+/* Vertical past→future legislative-stage timeline. Each step's connector (the
+   line above its dot) is solid when reached, dashed when still upcoming. */
+.timeline-legend { margin: 0 0 1rem; }
+.timeline { list-style: none; margin: 0; padding: 0; }
+.tstep {
+  position: relative; display: flex; align-items: center; gap: .8rem;
+  padding: .55rem 0 .55rem 2.2rem; min-height: 1.4rem;
+}
+.tmarker {
+  position: absolute; left: 0; width: 1.7rem; height: 1.7rem; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .85rem; font-weight: 800; z-index: 1; background: var(--surface);
+  border: 2px solid var(--line); color: var(--ink-faint);
+}
+/* connector line running up from each dot to the previous one */
+.tstep::before {
+  content: ''; position: absolute; left: calc(0.85rem - 1px); top: -0.55rem;
+  width: 2px; height: 0.55rem; background: var(--line);
+}
+.tstep:first-child::before { display: none; }
+.tstep.done .tmarker { background: var(--accent); border-color: var(--accent); color: var(--accent-ink, #fff); }
+.tstep.done::before { background: var(--accent); }
+.tstep.current .tmarker { box-shadow: 0 0 0 3px var(--accent-soft); }
+.tstep.future .tmarker { background: var(--surface); }
+/* the segment leading into a not-yet-reached step is dashed/muted */
+.tstep.future::before {
+  background: none;
+  border-left: 2px dashed var(--line); width: 0; left: calc(0.85rem - 1px);
+}
+.tlabel { font-size: .95rem; }
+.tstep.future .tlabel { color: var(--ink-faint); }
+.tstep.current .tlabel { font-weight: 700; }
 .docbar { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
 .btn {
   background: var(--accent); color: var(--accent-ink, #fff); border: none;

@@ -146,9 +146,11 @@ watch(() => props.id, load)
             <ul class="billmini">
               <li v-for="b in bills.bills" :key="b.id">
                 <router-link :to="{ name: 'bill', params: { id: b.id } }" class="billitem">
-                  <span class="bnum">{{ b.bill_number }}</span>
+                  <span class="billitem-head">
+                    <span class="bnum">{{ b.bill_number }}</span>
+                    <span class="badge" v-if="b.status">{{ b.status }}</span>
+                  </span>
                   <span class="btitle">{{ b.title }}</span>
-                  <span class="badge" v-if="b.status">{{ b.status }}</span>
                 </router-link>
               </li>
             </ul>
@@ -192,10 +194,11 @@ watch(() => props.id, load)
 .timeline, .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
 .timeline li { display: flex; gap: .6rem; align-items: center; }
 .billmini { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
-.billitem { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; padding: .5rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
+.billitem { display: flex; flex-direction: column; gap: .3rem; padding: .5rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
 .billitem:hover { background: var(--accent-soft); text-decoration: none; }
+.billitem-head { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .billitem .bnum { font-weight: 800; color: var(--accent); }
-.billitem .btitle { flex: 1; min-width: 0; }
+.billitem .btitle { color: var(--ink); }
 .speechlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .5rem; }
 .speechitem { display: block; padding: .6rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
 .speechitem:hover { background: var(--accent-soft); text-decoration: none; }

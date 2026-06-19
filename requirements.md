@@ -238,6 +238,15 @@ Primary use cases:
 - **VIE-8 (SHOULD).** Speeches with no transcript (video-only,
   `confidence = 0.5`, `no-proceedings-text`) still render with video + metadata
   and a clear "no transcript available" note.
+- **VIE-9 (MUST).** The player shows **only the current speech**, not the whole
+  day stream. Playback is confined to the speech's day-absolute
+  `[time_start, time_end]` window: it starts at the speech's `time_start`, and
+  when the playhead reaches `time_end` the viewer **auto-advances to the next
+  speech** (navigating to its page, §VIE-5) and continues playing; on the last
+  speech of a sitting it stops at the end. Scrubbing before the speech start
+  snaps back to it. Because consecutive speeches share one day stream, advancing
+  within a sitting is a seek (no player reload). Speeches with no usable timing
+  (degraded, §VIE-8) fall back to plain whole-stream playback.
 
 ---
 

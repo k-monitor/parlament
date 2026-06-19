@@ -35,6 +35,8 @@ export default {
   viewer: {
     transcript: 'Transcript', noTranscript: 'No transcript text is available for this speech.',
     videoOnly: 'Video only.', play: 'Play from here', prevSpeech: 'Previous speech', nextSpeech: 'Next speech',
+    playBtn: 'Play', pauseBtn: 'Pause', mute: 'Mute', unmute: 'Unmute',
+    fullscreen: 'Fullscreen', seek: 'Seek within speech', volume: 'Volume',
     estimatedTiming: 'Estimated timing',
     estimatedTimingTip: 'Video timing is a positional estimate (by character position), so it is approximate.',
     viewOnParlament: 'View original on parlament.hu', license: 'License', agenda: 'Agenda item', speaker: 'Speaker',

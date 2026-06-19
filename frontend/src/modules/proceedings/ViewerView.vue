@@ -28,27 +28,65 @@ const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
 const videoEl = ref(null)
+const playerEl = ref(null)
 const currentOrd = ref(-1)
 const copied = ref(false)
+// Custom-controls state (the native controls expose the whole day stream; we
+// drive our own bar scoped to the speech — VIE-9).
+const playing = ref(false)
+const muted = ref(false)
+const volume = ref(1)
+const duration = ref(0)        // full day-stream duration
+const currentTime = ref(0)     // raw day-absolute playhead
+const isFullscreen = ref(false)
 let hls = null
 let autoFollow = true
+// Player state that must survive navigation between speeches of one sitting
+// (vue-router reuses this component instance, so plain `let`s persist):
+//   resumePlaying — carry the play/pause state across an auto-advance
+//   advancing     — guard so onSpeechEnd fires the navigation only once
+//   loadedSrc     — the day-stream URL currently attached, to skip reloads
+let resumePlaying = false
+let advancing = false
+let loadedSrc = null
 
 const sentences = computed(() => (data.value && data.value.sentences) || [])
 const speech = computed(() => data.value && data.value.speech)
 const session = computed(() => data.value && data.value.session)
+// The current speech's day-absolute bounds (VIE-9); null when timing is
+// unavailable (degraded speech), in which case playback isn't confined.
+const speechStart = computed(() => (speech.value && speech.value.time_start != null) ? speech.value.time_start : null)
+const speechEnd = computed(() => (speech.value && speech.value.time_end != null) ? speech.value.time_end : null)
+
+// The window the custom controls represent. Falls back to the whole stream when
+// the speech has no usable timing (degraded), so controls still work.
+const clipStart = computed(() => speechStart.value != null ? speechStart.value : 0)
+const clipEnd = computed(() => speechEnd.value != null ? speechEnd.value : duration.value)
+const clipDuration = computed(() => Math.max(0, clipEnd.value - clipStart.value))
+// Playhead position relative to the speech, clamped to [0, clipDuration].
+const relTime = computed(() => Math.min(Math.max(currentTime.value - clipStart.value, 0), clipDuration.value))
 
 async function load() {
-  loading.value = true; error.value = false; data.value = null
+  // When navigating between speeches we already have data on screen — keep it
+  // (and the live <video>) mounted instead of dropping to the loading state,
+  // so the player isn't torn down and recreated. Only the first load (no data
+  // yet) shows the spinner, since the <video> doesn't exist until then.
+  const navigating = !!data.value
+  error.value = false
+  if (!navigating) { loading.value = true; data.value = null }
+  let next
   try {
-    data.value = await api.speech(props.uid)
+    next = await api.speech(props.uid)
   } catch (e) {
-    error.value = true; loading.value = false; return
+    error.value = true; loading.value = false; data.value = null; return
   }
-  // The <video> is rendered inside StateBlock's slot, which only mounts once
-  // loading is false. Flip loading first, then wait a tick so the element
-  // exists before we attach the player — otherwise setupPlayer finds no
-  // <video> and silently does nothing (no source ⇒ play() aborts the load).
+  data.value = next
   loading.value = false
+  currentOrd.value = -1
+  advancing = false        // ready to detect the next speech boundary
+  // Wait a tick so the <video> exists (first load) / data has propagated,
+  // then position the player. setupPlayer reuses the live player when the day
+  // stream is unchanged, or builds one when it isn't.
   await nextTick()
   setupPlayer()
 }
@@ -67,19 +105,30 @@ function setupPlayer() {
   const video = videoEl.value
   if (!video || !session.value || !session.value.video_uri) return
   const src = session.value.video_uri
-  destroyHls()
 
-  // Ping the activation endpoint in the background; attach the player right away.
-  activateStream()
-
-  // Apply the deep-link start point once the media is ready (never set
-  // currentTime on an unloaded element — that races the load and aborts it).
+  // Position the player at the start of this speech (VIE-9), unless a deep link
+  // overrides it. Never set currentTime on an unloaded element — that races the
+  // load and aborts it — so this runs once the media is ready.
   const applyInitialSeek = () => {
     const t = route.query.t != null ? Number(route.query.t) : null
     const s = route.query.s != null ? Number(route.query.s) : null
-    if (t != null && !Number.isNaN(t)) seekTo(t, false)
-    else if (s != null && sentences.value[s]) playSentence(sentences.value[s], false)
+    if (t != null && !Number.isNaN(t)) seekTo(t, resumePlaying)
+    else if (s != null && sentences.value[s]) playSentence(sentences.value[s], resumePlaying)
+    else if (speechStart.value != null) seekTo(speechStart.value, resumePlaying)
+    resumePlaying = false
   }
+
+  // Consecutive speeches share one day stream: when only the speech changed,
+  // keep the attached player and just reposition — no reload, no rebuffer.
+  if (loadedSrc === src && (hls || video.src)) {
+    applyInitialSeek()
+    return
+  }
+
+  destroyHls()
+  loadedSrc = src
+  // Ping the activation endpoint in the background; attach the player right away.
+  activateStream()
 
   if (Hls.isSupported()) {
     // hls.js (Chrome/Firefox/Edge): more reliable than trusting canPlayType.
@@ -100,15 +149,50 @@ function setupPlayer() {
     video.src = src
     video.addEventListener('loadedmetadata', applyInitialSeek, { once: true })
   }
+  // Bound once on the build path; the element persists across same-stream
+  // navigation, so these survive without re-binding.
   video.addEventListener('timeupdate', onTimeUpdate)
+  video.addEventListener('play', onPlayState)
+  video.addEventListener('pause', onPlayState)
+  video.addEventListener('durationchange', onDurationChange)
+  video.addEventListener('volumechange', onVolumeChange)
+  onPlayState(); onDurationChange(); onVolumeChange()
 }
+
+function onPlayState() { const v = videoEl.value; if (v) playing.value = !v.paused }
+function onDurationChange() { const v = videoEl.value; if (v && isFinite(v.duration)) duration.value = v.duration }
+function onVolumeChange() { const v = videoEl.value; if (v) { muted.value = v.muted; volume.value = v.volume } }
 
 function destroyHls() {
   if (hls) { try { hls.destroy() } catch { /* ignore */ } hls = null }
+  loadedSrc = null
+}
+
+// Reaching the end of the current speech (VIE-9): hop to the next speech and
+// keep playing, or stop at the end on the last speech of the sitting.
+function onSpeechEnd() {
+  if (advancing) return
+  advancing = true
+  const v = videoEl.value
+  const next = data.value && data.value.neighbours && data.value.neighbours.next
+  if (next) {
+    resumePlaying = !!(v && !v.paused)
+    router.push({ name: 'viewer', params: { uid: next } })
+  } else if (v) {
+    try { v.pause(); if (speechEnd.value != null) v.currentTime = speechEnd.value } catch { /* ignore */ }
+  }
 }
 
 function onTimeUpdate() {
-  const now = videoEl.value.currentTime
+  const v = videoEl.value
+  if (!v) return
+  const now = v.currentTime
+  currentTime.value = now      // drive the custom control bar
+  const start = speechStart.value, end = speechEnd.value
+  // Confine playback to this speech (VIE-9): snap back if we drift before its
+  // start, advance once we pass its end. (No bounds ⇒ degraded speech, play on.)
+  if (start != null && now < start - 1) { seekTo(start, !v.paused); return }
+  if (end != null && now >= end) { onSpeechEnd(); return }
   // Find the sentence whose [time_start, time_end) contains `now`.
   const list = sentences.value
   let idx = -1
@@ -158,6 +242,29 @@ function copyLink(s) {
   })
 }
 
+// --- Custom controls (scoped to the speech window, VIE-9) ---------------
+function togglePlay() {
+  const v = videoEl.value; if (!v) return
+  if (v.paused) { const p = v.play(); if (p && p.catch) p.catch(() => {}) }
+  else v.pause()
+}
+function onSeekBar(e) {
+  const v = videoEl.value; if (!v) return
+  autoFollow = true
+  seekTo(clipStart.value + Number(e.target.value), !v.paused)
+}
+function toggleMute() { const v = videoEl.value; if (v) v.muted = !v.muted }
+function onVolumeBar(e) {
+  const v = videoEl.value; if (!v) return
+  const val = Number(e.target.value); v.volume = val; v.muted = val === 0
+}
+function toggleFullscreen() {
+  const el = playerEl.value; if (!el) return
+  if (document.fullscreenElement) document.exitFullscreen && document.exitFullscreen()
+  else el.requestFullscreen && el.requestFullscreen()
+}
+function onFullscreenChange() { isFullscreen.value = !!document.fullscreenElement }
+
 // Pause auto-follow while the user manually scrolls; resume when they stop.
 let scrollTimer = null
 function onUserScroll() {
@@ -166,9 +273,12 @@ function onUserScroll() {
   scrollTimer = setTimeout(() => { autoFollow = true }, 4000)
 }
 
-onMounted(load)
-watch(() => props.uid, load)
+onMounted(() => { document.addEventListener('fullscreenchange', onFullscreenChange); load() })
+// Switching speeches should keep playing (continuous viewing, VIE-9). The click
+// that triggers navigation is a user gesture, so autoplay is allowed.
+watch(() => props.uid, () => { resumePlaying = true; load() })
 onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
   if (videoEl.value) videoEl.value.removeEventListener('timeupdate', onTimeUpdate)
   destroyHls()
 })
@@ -196,9 +306,30 @@ onBeforeUnmount(() => {
       <div class="vgrid">
         <!-- Video column -->
         <div class="vcol-video">
-          <div class="player">
-            <video ref="videoEl" controls playsinline preload="metadata"
-                   :aria-label="$t('viewer.transcript')"></video>
+          <!-- Custom controls scoped to the current speech (VIE-9): the native
+               control bar would expose the whole multi-hour day stream. -->
+          <div class="player" ref="playerEl" :class="{ paused: !playing }">
+            <video ref="videoEl" playsinline preload="metadata"
+                   :aria-label="speech ? speech.speaker.label : $t('viewer.transcript')"
+                   @click="togglePlay"></video>
+            <div class="vcontrols" @click.stop>
+              <button class="vc-btn" :aria-label="playing ? $t('viewer.pauseBtn') : $t('viewer.playBtn')"
+                      :title="playing ? $t('viewer.pauseBtn') : $t('viewer.playBtn')" @click="togglePlay">
+                {{ playing ? '⏸' : '▶' }}
+              </button>
+              <input class="vc-seek" type="range" min="0" :max="clipDuration || 0" step="0.1"
+                     :value="relTime" :disabled="!clipDuration"
+                     :aria-label="$t('viewer.seek')" @input="onSeekBar" />
+              <span class="vc-time">{{ formatDuration(relTime) }} / {{ formatDuration(clipDuration) }}</span>
+              <button class="vc-btn" :aria-label="muted ? $t('viewer.unmute') : $t('viewer.mute')"
+                      :title="muted ? $t('viewer.unmute') : $t('viewer.mute')" @click="toggleMute">
+                {{ muted || volume === 0 ? '🔇' : '🔊' }}
+              </button>
+              <input class="vc-vol" type="range" min="0" max="1" step="0.05"
+                     :value="muted ? 0 : volume" :aria-label="$t('viewer.volume')" @input="onVolumeBar" />
+              <button class="vc-btn" :aria-label="$t('viewer.fullscreen')" :title="$t('viewer.fullscreen')"
+                      @click="toggleFullscreen">{{ isFullscreen ? '🗗' : '⛶' }}</button>
+            </div>
           </div>
           <div class="vactions row small">
             <a v-if="speech.source_page" :href="speech.source_page" target="_blank" rel="noopener" class="btn secondary small">
@@ -252,8 +383,29 @@ onBeforeUnmount(() => {
 .vhead h1 { margin: .4rem 0; font-size: 1.3rem; }
 .vgrid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
 .vcol-video { position: sticky; top: 70px; }
-.player { background: #000; border-radius: var(--radius); overflow: hidden; aspect-ratio: 16 / 9; }
-.player video { width: 100%; height: 100%; display: block; }
+.player { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; aspect-ratio: 16 / 9; }
+.player video { width: 100%; height: 100%; display: block; object-fit: contain; cursor: pointer; }
+.player:fullscreen { aspect-ratio: auto; width: 100vw; height: 100vh; border-radius: 0; }
+
+/* Custom control bar — scoped to the current speech (VIE-9). */
+.vcontrols {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; gap: .5rem;
+  padding: .45rem .6rem;
+  background: linear-gradient(transparent, rgba(0,0,0,.75));
+  opacity: 0; transition: opacity .2s; pointer-events: none;
+}
+.player:hover .vcontrols, .player:focus-within .vcontrols,
+.player.paused .vcontrols { opacity: 1; pointer-events: auto; }
+.vc-btn {
+  background: none; border: none; color: #fff; cursor: pointer;
+  font-size: 1rem; line-height: 1; padding: .25rem .35rem; border-radius: 6px;
+}
+.vc-btn:hover { background: rgba(255,255,255,.18); }
+.vc-time { color: #fff; font-size: .78rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vc-seek { flex: 1; min-width: 60px; accent-color: var(--accent); cursor: pointer; }
+.vc-vol { width: 64px; accent-color: #fff; cursor: pointer; }
+@media (max-width: 520px) { .vc-vol { display: none; } }
 .vactions { margin-top: .6rem; gap: 1rem; flex-wrap: wrap; }
 .timing-note { margin-top: .4rem; }
 .no-text { text-align: center; }

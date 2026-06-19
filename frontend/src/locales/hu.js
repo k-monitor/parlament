@@ -57,6 +57,8 @@ export default {
     noTranscript: 'Ehhez a felszólaláshoz nem érhető el szövegezett jegyzőkönyv.',
     videoOnly: 'Csak videó érhető el.',
     play: 'Lejátszás innen',
+    playBtn: 'Lejátszás', pauseBtn: 'Szünet', mute: 'Némítás', unmute: 'Hang bekapcsolása',
+    fullscreen: 'Teljes képernyő', seek: 'Tekerés a felszólaláson belül', volume: 'Hangerő',
     prevSpeech: 'Előző felszólalás',
     nextSpeech: 'Következő felszólalás',
     estimatedTiming: 'Becsült időzítés',

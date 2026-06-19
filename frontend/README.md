@@ -36,7 +36,7 @@ npm run build        # -> dist/  (static bundle)
 Serve `dist/` from any static host, or let the backend serve it from one process:
 
 ```bash
-OGYWATCH_FRONTEND_DIST=$(pwd)/dist uvicorn app.main:app   # SPA + API together (OPS-1)
+OGYWATCH_FRONTEND_DIST=../frontend/dist uvicorn app.main:app   # SPA + API together (OPS-1)
 ```
 
 The backend applies HTML5-history fallback, so deep links like

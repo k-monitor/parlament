@@ -129,8 +129,11 @@ class SSHProxy:
         clear error (and lets us know the key type for the ssh-rsa fallback).
         """
         # RSA first: it is the common case for the legacy servers this targets.
-        candidates = [paramiko.RSAKey, paramiko.Ed25519Key,
-                      paramiko.ECDSAKey, paramiko.DSSKey]
+        # Use getattr so key types absent in a given paramiko version (e.g.
+        # DSSKey, removed as DSA was deprecated) are simply skipped.
+        candidates = [getattr(paramiko, n, None) for n in
+                      ("RSAKey", "Ed25519Key", "ECDSAKey", "DSSKey")]
+        candidates = [c for c in candidates if c is not None]
         errors = []
         for cls in candidates:
             try:

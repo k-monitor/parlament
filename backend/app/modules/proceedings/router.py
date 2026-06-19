@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...config import settings
 from ...db import get_db
+from ...media import per_speech_clip
 from ...search import build_match
 
 router = APIRouter(prefix="/proceedings", tags=["proceedings"])
@@ -243,8 +244,15 @@ def get_speech(uid: str, db: sqlite3.Connection = Depends(get_db)):
         "SELECT id, ord, text, time_start, time_end FROM sentence "
         "WHERE speech_id = ? ORDER BY ord", (uid,)).fetchall()
     nb = _speech_neighbours(db, sp["session_id"], sp["speech_index"])
+    speech = _speech_full(sp)
+    # Source the player on a clip of just this speech (VIE-9), derived from the
+    # day stream + the speech's real offsets; falls back to the whole-day stream.
+    clip = per_speech_clip(session["video_uri"], session["video_playseq"],
+                           sp["video_start"], sp["video_end"]) if session else None
+    speech["video_uri"] = clip["video_uri"] if clip else None
+    speech["video_playseq"] = clip["video_playseq"] if clip else None
     return {
-        "speech": _speech_full(sp),
+        "speech": speech,
         "session": _session_dict(session),
         "sentences": [dict(r) for r in sentences],
         "neighbours": nb,

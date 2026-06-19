@@ -1,16 +1,19 @@
 <script setup>
 // Proceedings viewer (§5.2) — the signature feature.
 //
-// * VIE-2: embeds an HLS player (hls.js where the browser lacks native HLS) on
-//   the whole-day stream.
-// * VIE-3: click a sentence → seek the player to its day-absolute `time_start`.
+// * VIE-2/VIE-9: embeds an HLS player (hls.js where the browser lacks native
+//   HLS) on a clip of *this speech* — the per-speech smil the backend derives
+//   from the day recording — so the player shows only the current speech, not
+//   the whole multi-hour day. Falls back to the whole-day stream if no clip.
+// * VIE-3: click a sentence → seek the player to its `time_start`.
 // * VIE-4: as the video plays, the currently-spoken sentence highlights and the
 //   transcript auto-scrolls (karaoke following on time_start/time_end).
 // * VIE-5: deep-linkable — /proceedings/<uid>?s=<ord> or ?t=<seconds> reopens at
 //   the exact moment. The current sentence is reflected back into the URL hash.
 // * VIE-6/VIE-7/VIE-8: estimated-timing disclosure, source link, and a graceful
 //   no-transcript state.
-import { ref, shallowRef, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+// * VIE-9: when the clip ends, auto-advance to the next speech and keep playing.
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
 import { api } from '../../api.js'
@@ -31,21 +34,21 @@ const videoEl = ref(null)
 const playerEl = ref(null)
 const currentOrd = ref(-1)
 const copied = ref(false)
-// Custom-controls state (the native controls expose the whole day stream; we
-// drive our own bar scoped to the speech — VIE-9).
+// Custom-controls state. The player loads a per-speech clip (0-based timeline),
+// so currentTime/duration already describe just this speech — no windowing.
 const playing = ref(false)
 const muted = ref(false)
 const volume = ref(1)
-const duration = ref(0)        // full day-stream duration
-const currentTime = ref(0)     // raw day-absolute playhead
+const duration = ref(0)        // loaded clip duration (≈ the speech length)
+const currentTime = ref(0)     // playhead within the clip (clip-relative seconds)
 const isFullscreen = ref(false)
 let hls = null
 let autoFollow = true
-// Player state that must survive navigation between speeches of one sitting
-// (vue-router reuses this component instance, so plain `let`s persist):
-//   resumePlaying — carry the play/pause state across an auto-advance
-//   advancing     — guard so onSpeechEnd fires the navigation only once
-//   loadedSrc     — the day-stream URL currently attached, to skip reloads
+// Player state that must survive navigation between speeches (vue-router reuses
+// this component instance, so plain `let`s persist):
+//   resumePlaying — keep playing across an auto-advance / navigation
+//   advancing     — guard so the clip's `ended` fires the next-jump only once
+//   loadedSrc     — the clip URL currently attached, to skip redundant reloads
 let resumePlaying = false
 let advancing = false
 let loadedSrc = null
@@ -53,18 +56,26 @@ let loadedSrc = null
 const sentences = computed(() => (data.value && data.value.sentences) || [])
 const speech = computed(() => data.value && data.value.speech)
 const session = computed(() => data.value && data.value.session)
-// The current speech's day-absolute bounds (VIE-9); null when timing is
-// unavailable (degraded speech), in which case playback isn't confined.
-const speechStart = computed(() => (speech.value && speech.value.time_start != null) ? speech.value.time_start : null)
-const speechEnd = computed(() => (speech.value && speech.value.time_end != null) ? speech.value.time_end : null)
 
-// The window the custom controls represent. Falls back to the whole stream when
-// the speech has no usable timing (degraded), so controls still work.
-const clipStart = computed(() => speechStart.value != null ? speechStart.value : 0)
-const clipEnd = computed(() => speechEnd.value != null ? speechEnd.value : duration.value)
-const clipDuration = computed(() => Math.max(0, clipEnd.value - clipStart.value))
-// Playhead position relative to the speech, clamped to [0, clipDuration].
-const relTime = computed(() => Math.min(Math.max(currentTime.value - clipStart.value, 0), clipDuration.value))
+// Prefer the per-speech clip (VIE-9); fall back to the whole-day stream when the
+// backend couldn't derive one (speech missing real offsets).
+const usingClip = computed(() => !!(speech.value && speech.value.video_uri))
+const videoSrc = computed(() =>
+  (speech.value && speech.value.video_uri) || (session.value && session.value.video_uri) || null)
+const videoPlayseq = computed(() => usingClip.value
+  ? (speech.value && speech.value.video_playseq) || null
+  : (session.value && session.value.video_playseq) || null)
+// Day-absolute time that the clip's t=0 maps to, so sentence times (which are
+// day-absolute) convert to clip-relative seeks: clipT = time - clipOrigin. For
+// the whole-day fallback the clip *is* the day, so the origin is 0.
+const clipOrigin = computed(() =>
+  (usingClip.value && speech.value.time_start != null) ? speech.value.time_start : 0)
+
+// "View on parlament.hu" (VIE-7): the per-speech playseq player plays exactly
+// this speech's clip on parlament.hu's own server — a real per-speech original,
+// not the generic portal. Falls back to the generic page when there's no clip.
+const sourceLink = computed(() => (speech.value
+  && (speech.value.video_playseq || speech.value.source_page)) || null)
 
 async function load() {
   // When navigating between speeches we already have data on screen — keep it
@@ -83,6 +94,7 @@ async function load() {
   data.value = next
   loading.value = false
   currentOrd.value = -1
+  currentTime.value = 0; duration.value = 0   // new clip; clear stale bar values
   advancing = false        // ready to detect the next speech boundary
   // Wait a tick so the <video> exists (first load) / data has propagated,
   // then position the player. setupPlayer reuses the live player when the day
@@ -91,44 +103,48 @@ async function load() {
   setupPlayer()
 }
 
-// The whole-day VOD sometimes needs its `playseq` endpoint pinged once to start
-// serving segments. It's a cross-origin side-effect endpoint, so we fire it
-// no-cors and ignore the (opaque) response. Strictly best-effort and fully
-// non-blocking — it never gates player setup or playback.
+// The clip's smil VOD is generated on demand: its playlist 404s until the
+// `playseq.php` activation endpoint has been hit once. It's a cross-origin
+// side-effect endpoint (opaque response), so we await the request (capped, so a
+// hang never stalls the player) before requesting the playlist.
 function activateStream() {
-  const playseq = session.value && session.value.video_playseq
-  if (!playseq) return
-  try { fetch(playseq, { mode: 'no-cors' }).catch(() => {}) } catch { /* ignore */ }
+  const playseq = videoPlayseq.value
+  if (!playseq) return Promise.resolve()
+  let f
+  try { f = fetch(playseq, { mode: 'no-cors' }).catch(() => {}) }
+  catch { return Promise.resolve() }
+  return Promise.race([f, new Promise((r) => setTimeout(r, 4000))])
 }
 
-function setupPlayer() {
+async function setupPlayer() {
   const video = videoEl.value
-  if (!video || !session.value || !session.value.video_uri) return
-  const src = session.value.video_uri
+  if (!video || !videoSrc.value) return
+  const src = videoSrc.value
 
-  // Position the player at the start of this speech (VIE-9), unless a deep link
-  // overrides it. Never set currentTime on an unloaded element — that races the
-  // load and aborts it — so this runs once the media is ready.
+  // Position the playhead, unless a deep link overrides it. Never set
+  // currentTime on an unloaded element — that races the load and aborts it — so
+  // this runs once the media is ready. Sentence/`?t` targets are day-absolute;
+  // the clip is 0-based, so they convert through clipOrigin.
   const applyInitialSeek = () => {
     const t = route.query.t != null ? Number(route.query.t) : null
     const s = route.query.s != null ? Number(route.query.s) : null
-    if (t != null && !Number.isNaN(t)) seekTo(t, resumePlaying)
+    if (t != null && !Number.isNaN(t)) seekToDay(t, resumePlaying)
     else if (s != null && sentences.value[s]) playSentence(sentences.value[s], resumePlaying)
-    else if (speechStart.value != null) seekTo(speechStart.value, resumePlaying)
+    else seekClip(0, resumePlaying)
     resumePlaying = false
   }
 
-  // Consecutive speeches share one day stream: when only the speech changed,
-  // keep the attached player and just reposition — no reload, no rebuffer.
+  // Same clip already attached (e.g. re-entering the same speech): just
+  // reposition without a reload.
   if (loadedSrc === src && (hls || video.src)) {
     applyInitialSeek()
     return
   }
 
   destroyHls()
+  await activateStream()                 // make the clip's playlist available
+  if (videoEl.value !== video || videoSrc.value !== src) return  // navigated away meanwhile
   loadedSrc = src
-  // Ping the activation endpoint in the background; attach the player right away.
-  activateStream()
 
   if (Hls.isSupported()) {
     // hls.js (Chrome/Firefox/Edge): more reliable than trusting canPlayType.
@@ -137,7 +153,7 @@ function setupPlayer() {
     hls.on(Hls.Events.ERROR, (_e, d) => {
       if (!d || !d.fatal) return
       if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
-        activateStream(); hls && hls.startLoad()      // re-activate + retry
+        activateStream().then(() => hls && hls.startLoad())   // re-activate + retry
       } else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
         hls && hls.recoverMediaError()
       }
@@ -149,11 +165,12 @@ function setupPlayer() {
     video.src = src
     video.addEventListener('loadedmetadata', applyInitialSeek, { once: true })
   }
-  // Bound once on the build path; the element persists across same-stream
-  // navigation, so these survive without re-binding.
+  // Bound once per element; addEventListener dedupes identical (fn, options)
+  // pairs, so rebuilding on the persistent element never double-registers.
   video.addEventListener('timeupdate', onTimeUpdate)
   video.addEventListener('play', onPlayState)
   video.addEventListener('pause', onPlayState)
+  video.addEventListener('ended', onSpeechEnd)
   video.addEventListener('durationchange', onDurationChange)
   video.addEventListener('volumechange', onVolumeChange)
   onPlayState(); onDurationChange(); onVolumeChange()
@@ -168,37 +185,29 @@ function destroyHls() {
   loadedSrc = null
 }
 
-// Reaching the end of the current speech (VIE-9): hop to the next speech and
-// keep playing, or stop at the end on the last speech of the sitting.
+// The clip ended (VIE-9): hop to the next speech and keep playing. On the last
+// speech there's no next, so the player simply rests at the end.
 function onSpeechEnd() {
   if (advancing) return
-  advancing = true
-  const v = videoEl.value
   const next = data.value && data.value.neighbours && data.value.neighbours.next
-  if (next) {
-    resumePlaying = !!(v && !v.paused)
-    router.push({ name: 'viewer', params: { uid: next } })
-  } else if (v) {
-    try { v.pause(); if (speechEnd.value != null) v.currentTime = speechEnd.value } catch { /* ignore */ }
-  }
+  if (!next) return
+  advancing = true
+  resumePlaying = true                  // reached the end by playing — keep going
+  router.push({ name: 'viewer', params: { uid: next } })
 }
 
 function onTimeUpdate() {
   const v = videoEl.value
   if (!v) return
-  const now = v.currentTime
-  currentTime.value = now      // drive the custom control bar
-  const start = speechStart.value, end = speechEnd.value
-  // Confine playback to this speech (VIE-9): snap back if we drift before its
-  // start, advance once we pass its end. (No bounds ⇒ degraded speech, play on.)
-  if (start != null && now < start - 1) { seekTo(start, !v.paused); return }
-  if (end != null && now >= end) { onSpeechEnd(); return }
-  // Find the sentence whose [time_start, time_end) contains `now`.
+  currentTime.value = v.currentTime     // clip-relative; drives the control bar
+  // Highlight the sentence being spoken. Sentence times are day-absolute, the
+  // playhead is clip-relative, so compare in day-absolute coordinates.
+  const dayNow = v.currentTime + clipOrigin.value
   const list = sentences.value
   let idx = -1
   for (let i = 0; i < list.length; i++) {
     const a = list[i].time_start, b = list[i].time_end
-    if (a != null && now >= a && (b == null || now < b)) { idx = i; break }
+    if (a != null && dayNow >= a && (b == null || dayNow < b)) { idx = i; break }
   }
   if (idx !== currentOrd.value) {
     currentOrd.value = idx
@@ -211,11 +220,12 @@ function scrollToCurrent() {
   if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
 }
 
-function seekTo(seconds, play = true) {
+// Seek to a clip-relative second (the control bar / clip start work in these).
+function seekClip(seconds, play = true) {
   const v = videoEl.value
   if (!v) return
   const go = () => {
-    try { v.currentTime = seconds } catch { /* not seekable yet */ }
+    try { v.currentTime = Math.max(0, seconds) } catch { /* not seekable yet */ }
     // play() can reject (autoplay policy, or the seek interrupting a pending
     // load). Always swallow it — it's not an error the user needs to see.
     if (play && v.play) { const p = v.play(); if (p && p.catch) p.catch(() => {}) }
@@ -224,10 +234,15 @@ function seekTo(seconds, play = true) {
   else v.addEventListener('loadedmetadata', go, { once: true })
 }
 
+// Seek to a day-absolute second (sentence times, `?t` deep links).
+function seekToDay(daySeconds, play = true) {
+  seekClip(daySeconds - clipOrigin.value, play)
+}
+
 function playSentence(s, play = true) {
   if (s.time_start == null) return
   autoFollow = true
-  seekTo(s.time_start, play)
+  seekToDay(s.time_start, play)
   currentOrd.value = s.ord
   // Reflect the chosen sentence in the URL so the moment is citable (VIE-5).
   router.replace({ query: { ...route.query, s: s.ord, t: undefined } })
@@ -251,7 +266,7 @@ function togglePlay() {
 function onSeekBar(e) {
   const v = videoEl.value; if (!v) return
   autoFollow = true
-  seekTo(clipStart.value + Number(e.target.value), !v.paused)
+  seekClip(Number(e.target.value), !v.paused)
 }
 function toggleMute() { const v = videoEl.value; if (v) v.muted = !v.muted }
 function onVolumeBar(e) {
@@ -317,10 +332,10 @@ onBeforeUnmount(() => {
                       :title="playing ? $t('viewer.pauseBtn') : $t('viewer.playBtn')" @click="togglePlay">
                 {{ playing ? '⏸' : '▶' }}
               </button>
-              <input class="vc-seek" type="range" min="0" :max="clipDuration || 0" step="0.1"
-                     :value="relTime" :disabled="!clipDuration"
+              <input class="vc-seek" type="range" min="0" :max="duration || 0" step="0.1"
+                     :value="currentTime" :disabled="!duration"
                      :aria-label="$t('viewer.seek')" @input="onSeekBar" />
-              <span class="vc-time">{{ formatDuration(relTime) }} / {{ formatDuration(clipDuration) }}</span>
+              <span class="vc-time">{{ formatDuration(currentTime) }} / {{ formatDuration(duration) }}</span>
               <button class="vc-btn" :aria-label="muted ? $t('viewer.unmute') : $t('viewer.mute')"
                       :title="muted ? $t('viewer.unmute') : $t('viewer.mute')" @click="toggleMute">
                 {{ muted || volume === 0 ? '🔇' : '🔊' }}
@@ -332,7 +347,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="vactions row small">
-            <a v-if="speech.source_page" :href="speech.source_page" target="_blank" rel="noopener" class="btn secondary small">
+            <a v-if="sourceLink" :href="sourceLink" target="_blank" rel="noopener" class="btn secondary small">
               ↗ {{ $t('viewer.viewOnParlament') }}
             </a>
             <a v-if="session && session.video_license" :href="session.video_license" target="_blank" rel="noopener" class="muted">

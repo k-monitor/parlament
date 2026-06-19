@@ -233,20 +233,32 @@ Primary use cases:
 - **VIE-6.** Where timing is **estimated** (not real per-speech offsets) or
   confidence is low, the UI MUST **indicate reduced precision** (e.g. a subtle
   marker / tooltip explaining timing is approximate). Source: pipeline `debug`.
-- **VIE-7.** A **"view original on parlament.hu"** link is always present
-  (`sourcePage`/`sourceURI`), and the video license/attribution is shown.
+- **VIE-7.** A **"view original on parlament.hu"** link is always present, and the
+  video license/attribution is shown. It points as **specifically** as possible:
+  to the speech's own `playseq` player on parlament.hu's stream server (which
+  plays exactly that speech's clip) in the viewer, and to the day recording's
+  player on the sitting page. Because the modern proceedings portal exposes no
+  working anonymous per-speech/per-day text permalink (the legacy `naplo_fadat`
+  link 404s), the per-speech video player is the most specific resolvable
+  original; the generic portal page (`sourcePage`/`sourceURI`) is the fallback
+  when no clip is available.
 - **VIE-8 (SHOULD).** Speeches with no transcript (video-only,
   `confidence = 0.5`, `no-proceedings-text`) still render with video + metadata
   and a clear "no transcript available" note.
 - **VIE-9 (MUST).** The player shows **only the current speech**, not the whole
-  day stream. Playback is confined to the speech's day-absolute
-  `[time_start, time_end]` window: it starts at the speech's `time_start`, and
-  when the playhead reaches `time_end` the viewer **auto-advances to the next
-  speech** (navigating to its page, §VIE-5) and continues playing; on the last
-  speech of a sitting it stops at the end. Scrubbing before the speech start
-  snaps back to it. Because consecutive speeches share one day stream, advancing
-  within a sitting is a seek (no player reload). Speeches with no usable timing
-  (degraded, §VIE-8) fall back to plain whole-stream playback.
+  day stream. The video **source is the speech's own clip URL**, derived from the
+  day recording's stream URL by shifting its offsets to the speech's real
+  `[video_start, video_end]` window (the same offsets that anchor sentence
+  timing). The streaming server serves that URL as a playlist cropped to exactly
+  the speech, so the player's timeline is the speech's own length (0-based), not
+  a multi-hour day stream, and the controls reflect only it. Deriving the clip
+  needs no extra scraping (offsets are already stored); the generic whole-day
+  stream URL is **not** used as the player source except as a fallback when a
+  speech has no usable offsets (degraded, §VIE-8). When the clip ends the viewer
+  **auto-advances to the next speech** (navigating to its page, §VIE-5) and keeps
+  playing; on the last speech of a sitting it rests at the end. The clip's smil
+  VOD is generated on demand, so its activation endpoint is pinged before the
+  playlist is requested.
 
 ---
 

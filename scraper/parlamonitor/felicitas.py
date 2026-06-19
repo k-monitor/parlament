@@ -98,6 +98,16 @@ class FelicitasClient:
     def __init__(self, http: HttpClient):
         self.http = http
 
+    def close(self) -> None:
+        """Release transport resources (HTTP session, SSH tunnel if any)."""
+        self.http.close()
+
+    def __enter__(self) -> "FelicitasClient":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     # ---- generic POST select --------------------------------------------
 
     def _select(self, provider: str, query: str, body: dict, page: int = 0) -> dict:

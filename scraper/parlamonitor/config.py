@@ -47,6 +47,16 @@ class RuntimeConfig:
         "OrszaggyulesWatch/1.0 (+https://github.com/k-monitor; civic-tech)"
     )
 
+    # Optional SSH tunnel: route parlament.hu traffic through an SSH host so it
+    # egresses from a known IP (see parlamonitor/ssh_proxy.py). Active once
+    # ``ssh_host`` and ``ssh_key`` are both set; takes precedence over ``proxy``.
+    ssh_host: str | None = None
+    ssh_port: int = 22
+    ssh_user: str | None = None
+    ssh_key: str | None = None              # path to the private key file
+    ssh_key_passphrase: str | None = None
+    ssh_known_hosts: str | None = None      # path; None -> trust-on-first-use
+
     @classmethod
     def from_env(cls, **overrides) -> "RuntimeConfig":
         """Build from ``PARLAMONITOR_*`` env vars; explicit ``overrides`` win."""
@@ -54,13 +64,22 @@ class RuntimeConfig:
             raw = os.environ.get(name)
             return float(raw) if raw not in (None, "") else default
 
+        def _s(name: str) -> str | None:
+            return os.environ.get(name) or None
+
         cfg = cls(
             sleep=_f("PARLAMONITOR_SLEEP", cls.sleep),
             retry_count=int(_f("PARLAMONITOR_RETRY_COUNT", cls.retry_count)),
             retry_delay_max=_f("PARLAMONITOR_RETRY_DELAY_MAX", cls.retry_delay_max),
             timeout=_f("PARLAMONITOR_TIMEOUT", cls.timeout),
-            proxy=os.environ.get("PARLAMONITOR_PROXY") or None,
+            proxy=_s("PARLAMONITOR_PROXY"),
             user_agent=os.environ.get("PARLAMONITOR_USER_AGENT") or cls.user_agent,
+            ssh_host=_s("PARLAMONITOR_SSH_HOST"),
+            ssh_port=int(_f("PARLAMONITOR_SSH_PORT", cls.ssh_port)),
+            ssh_user=_s("PARLAMONITOR_SSH_USER"),
+            ssh_key=_s("PARLAMONITOR_SSH_KEY"),
+            ssh_key_passphrase=_s("PARLAMONITOR_SSH_KEY_PASSPHRASE"),
+            ssh_known_hosts=_s("PARLAMONITOR_SSH_KNOWN_HOSTS"),
         )
         for k, v in overrides.items():
             if v is not None:

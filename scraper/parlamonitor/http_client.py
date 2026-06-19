@@ -16,6 +16,7 @@ import time
 import requests
 
 from .config import RuntimeConfig
+from .ssh_proxy import SSHProxy
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,14 @@ class HttpClient:
         self.config = config
         self.session = requests.Session()
         self.session.headers["User-Agent"] = config.user_agent
-        if config.proxy:
+        # An SSH tunnel, if configured, wins over a plain proxy: it stands up a
+        # local HTTP proxy and we point the session at that. Otherwise fall
+        # back to an explicit proxy URL.
+        self._ssh_proxy = SSHProxy.from_config(config)
+        if self._ssh_proxy is not None:
+            self._ssh_proxy.start()
+            self.session.proxies = self._ssh_proxy.requests_proxies()
+        elif config.proxy:
             self.session.proxies = {"http": config.proxy, "https": config.proxy}
 
     def _request(self, method: str, url: str, **kw) -> requests.Response:
@@ -78,3 +86,16 @@ class HttpClient:
     def polite_sleep(self) -> None:
         if self.config.sleep:
             time.sleep(self.config.sleep)
+
+    def close(self) -> None:
+        """Release the HTTP session and tear down the SSH tunnel, if any."""
+        self.session.close()
+        if self._ssh_proxy is not None:
+            self._ssh_proxy.close()
+            self._ssh_proxy = None
+
+    def __enter__(self) -> "HttpClient":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()

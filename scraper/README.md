@@ -90,6 +90,28 @@ python -m parlamonitor representatives --cycle 43 --photos ./data
 | `--proxy` | `PARLAMONITOR_PROXY` | — | SOCKS5/HTTP proxy for `parlament.hu` |
 | — | `PARLAMONITOR_USER_AGENT` | civic-tech UA | request User-Agent |
 | `--no-offsets` | — | off | skip per-speech offset resolution (faster) |
+| `--ssh-host` | `PARLAMONITOR_SSH_HOST` | — | route traffic through an SSH host |
+| `--ssh-port` | `PARLAMONITOR_SSH_PORT` | `22` | SSH port |
+| `--ssh-user` | `PARLAMONITOR_SSH_USER` | — | SSH username |
+| `--ssh-key` | `PARLAMONITOR_SSH_KEY` | — | path to the SSH private key |
+| `--ssh-known-hosts` | `PARLAMONITOR_SSH_KNOWN_HOSTS` | — | `known_hosts` file (else trust-on-first-use) |
+| — | `PARLAMONITOR_SSH_KEY_PASSPHRASE` | — | passphrase for an encrypted key |
+
+#### SSH tunnel proxy
+
+When `parlament.hu` is only reachable from a specific egress IP, route every
+request through an SSH host you control. Setting `--ssh-host` (with `--ssh-user`
+and `--ssh-key`) opens one key-based SSH connection via **paramiko** and serves
+a local HTTP-CONNECT proxy backed by `direct-tcpip` channels, so all
+parlament.hu traffic exits from the SSH host. It takes precedence over
+`--proxy`. Needs `paramiko` installed (`pip install paramiko`); imported lazily,
+so a plain scrape works without it. Example:
+
+```bash
+python -m parlamonitor representatives --cycle 43 \
+  --ssh-host bastion.example.org --ssh-user scraper \
+  --ssh-key ~/.ssh/parlamonitor_ed25519 ./data
+```
 
 Runs are **idempotent** and guarded by a lockfile (`data/parlamonitor.lock`,
 SCR-1): a cached sitting is skipped unless it is the still-live latest sitting
@@ -106,6 +128,7 @@ Schedule it from cron/systemd (OPS-2); each run appends an ingestion log under
 parlamonitor/
   config.py            paths + environment-driven runtime config
   http_client.py       polite, retrying HTTP client
+  ssh_proxy.py         optional SSH-tunnel HTTP proxy (paramiko)
   lockfile.py          PID lockfile (concurrency guard)
   felicitas.py         Felicitas JSON API client (plenary + representatives)
   names.py             speaker → name / faction / role / context

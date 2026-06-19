@@ -8,5 +8,10 @@ requests>=2.31,<3
 # scrape — install it for higher-quality sentence boundaries.
 # spacy>=3.7,<3.9
 
+# Optional: route parlament.hu traffic through an SSH host (parlamonitor/ssh_proxy.py).
+# Only needed when --ssh-host / PARLAMONITOR_SSH_HOST is used; paramiko is
+# imported lazily, so a plain scrape works without it installed.
+# paramiko>=3,<4
+
 # Test-only:
 #   pytest>=8

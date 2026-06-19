@@ -44,7 +44,9 @@ logger = logging.getLogger("parlamonitor")
 
 def _client(args) -> FelicitasClient:
     cfg = RuntimeConfig.from_env(
-        sleep=args.sleep, retry_count=args.retry_count, proxy=args.proxy)
+        sleep=args.sleep, retry_count=args.retry_count, proxy=args.proxy,
+        ssh_host=args.ssh_host, ssh_port=args.ssh_port, ssh_user=args.ssh_user,
+        ssh_key=args.ssh_key, ssh_known_hosts=args.ssh_known_hosts)
     return FelicitasClient(HttpClient(cfg))
 
 
@@ -100,22 +102,25 @@ def cmd_proceedings(args) -> None:
     errors: list[str] = []
     downloaded: list[str] = []
 
-    with acquire(paths.lockfile, force=args.force_lock):
-        if not args.transform_only:
-            start, end = _resolve_range(felicitas, args.cycle, args)
-            logger.info("Downloading cycle %s sittings in [%s, %s]",
-                        args.cycle, start, end)
-            try:
-                downloaded = download_period(
-                    felicitas, paths, args.cycle, start, end,
-                    force=args.force, resolve_offsets=not args.no_offsets)
-            except Exception as e:
-                logger.exception("Download failed")
-                errors.append(f"download: {e}")
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            if not args.transform_only:
+                start, end = _resolve_range(felicitas, args.cycle, args)
+                logger.info("Downloading cycle %s sittings in [%s, %s]",
+                            args.cycle, start, end)
+                try:
+                    downloaded = download_period(
+                        felicitas, paths, args.cycle, start, end,
+                        force=args.force, resolve_offsets=not args.no_offsets)
+                except Exception as e:
+                    logger.exception("Download failed")
+                    errors.append(f"download: {e}")
 
-        built = []
-        if not args.download_only:
-            built = transform_all(paths, force=args.force)
+            built = []
+            if not args.download_only:
+                built = transform_all(paths, force=args.force)
+    finally:
+        felicitas.close()
 
     _write_log(paths, {
         "command": "proceedings",
@@ -138,12 +143,15 @@ def cmd_representatives(args) -> None:
     felicitas = _client(args)
     photos_dir = (paths.data / "media" / "photos") if args.photos else None
 
-    with acquire(paths.lockfile, force=args.force_lock):
-        registry = fetch_representatives(
-            felicitas, args.cycle,
-            details=not args.no_details, limit=args.limit,
-            photos_dir=photos_dir)
-        save_representatives(paths, args.cycle, registry)
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            registry = fetch_representatives(
+                felicitas, args.cycle,
+                details=not args.no_details, limit=args.limit,
+                photos_dir=photos_dir)
+            save_representatives(paths, args.cycle, registry)
+    finally:
+        felicitas.close()
 
     _write_log(paths, {
         "command": "representatives",
@@ -161,9 +169,12 @@ def cmd_bills(args) -> None:
     main_types = (tuple(t.strip() for t in args.main_types.split(",") if t.strip())
                   if args.main_types else DEFAULT_MAIN_TYPES)
 
-    with acquire(paths.lockfile, force=args.force_lock):
-        registry = fetch_bills(felicitas, args.cycle, main_types=main_types)
-        save_bills(paths, args.cycle, registry)
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            registry = fetch_bills(felicitas, args.cycle, main_types=main_types)
+            save_bills(paths, args.cycle, registry)
+    finally:
+        felicitas.close()
 
     _write_log(paths, {
         "command": "bills",
@@ -188,6 +199,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="politeness delay between requests (s)")
         sp.add_argument("--retry-count", type=int, default=None)
         sp.add_argument("--proxy", type=str, default=None)
+        sp.add_argument("--ssh-host", default=None,
+                        help="route parlament.hu traffic through this SSH host "
+                             "(needs --ssh-user and --ssh-key)")
+        sp.add_argument("--ssh-port", type=int, default=None,
+                        help="SSH port (default 22)")
+        sp.add_argument("--ssh-user", default=None, help="SSH username")
+        sp.add_argument("--ssh-key", default=None,
+                        help="path to the SSH private key")
+        sp.add_argument("--ssh-known-hosts", default=None,
+                        help="known_hosts file (default: trust on first use)")
         sp.add_argument("--force-lock", action="store_true",
                         help="reclaim the lockfile even if it looks held")
 

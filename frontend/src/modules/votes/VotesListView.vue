@@ -8,14 +8,20 @@ import { api } from '../../api.js'
 import { store } from '../../store.js'
 import { formatDateTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
+import Pagination from '../../components/Pagination.vue'
 
 const route = useRoute()
 const router = useRouter()
+
+const PAGE = 50
 
 const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
 const results = ref([])
+
+const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
+const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
 
 const f = reactive({
   q: route.query.q || '',
@@ -34,7 +40,12 @@ function apply() {
   if (f.result) query.result = f.result
   if (f.period) query.period = f.period
   if (bill.value) query.bill = bill.value
+  // Changing a filter resets to the first page (offset is intentionally dropped).
   router.push({ name: 'votes', query })
+}
+
+function gotoPage(p) {
+  router.push({ name: 'votes', query: { ...route.query, offset: p * PAGE } })
 }
 
 function voteParts(v) {
@@ -54,7 +65,7 @@ async function load() {
   try {
     data.value = await api.votes({
       q: route.query.q, result: route.query.result, period: route.query.period,
-      bill: route.query.bill, limit: 200,
+      bill: route.query.bill, limit: PAGE, offset: route.query.offset || 0,
     })
   } catch { error.value = true } finally { loading.value = false }
 }
@@ -129,6 +140,7 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
           </div>
         </li>
       </ul>
+      <Pagination :page="page" :total-pages="totalPages" @goto="gotoPage" />
     </div>
   </StateBlock>
 </template>

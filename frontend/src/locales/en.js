@@ -12,6 +12,12 @@ export default {
     source: 'Source',
     sourceNote: 'Data is sourced from parlament.hu; processing by Parlamonitor.',
     openData: 'Open data',
+    pager: {
+      nav: 'Pagination',
+      prev: 'Previous page',
+      next: 'Next page',
+      status: 'Page {page} of {total}',
+    },
   },
   nav: { home: 'Home', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', factions: 'Factions', bills: 'Bills', documents: 'Other documents', votes: 'Votes', about: 'About' },
   home: {

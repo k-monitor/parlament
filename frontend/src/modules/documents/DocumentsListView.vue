@@ -12,15 +12,21 @@ import { store } from '../../store.js'
 import { formatDate } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
+import Pagination from '../../components/Pagination.vue'
 
 const route = useRoute()
 const router = useRouter()
+
+const PAGE = 50
 
 const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
 const types = ref([])      // distinct iromány categories (excl. törvényjavaslat)
 const statuses = ref([])
+
+const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
+const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
 
 const f = reactive({
   q: route.query.q || '',
@@ -39,7 +45,12 @@ function apply() {
   if (f.status) query.status = f.status
   if (f.period) query.period = f.period
   if (f.sort && f.sort !== 'number') query.sort = f.sort
+  // Changing a filter resets to the first page (offset is intentionally dropped).
   router.push({ name: 'documents', query })
+}
+
+function gotoPage(p) {
+  router.push({ name: 'documents', query: { ...route.query, offset: p * PAGE } })
 }
 
 async function loadFacets() {
@@ -56,7 +67,7 @@ async function load() {
     data.value = await api.bills({
       q: route.query.q, type: route.query.type, status: route.query.status,
       period: route.query.period, sort: route.query.sort || 'number',
-      main_type_not: 'T', limit: 200,
+      main_type_not: 'T', limit: PAGE, offset: route.query.offset || 0,
     })
   } catch { error.value = true } finally { loading.value = false }
 }
@@ -137,6 +148,7 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
           </div>
         </li>
       </ul>
+      <Pagination :page="page" :total-pages="totalPages" @goto="gotoPage" />
     </div>
   </StateBlock>
 </template>

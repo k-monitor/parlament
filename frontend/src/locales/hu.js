@@ -12,6 +12,12 @@ export default {
     source: 'Forrás',
     sourceNote: 'Az adatok forrása a parlament.hu; a feldolgozást a Parlamonitor végzi.',
     openData: 'Nyílt adat',
+    pager: {
+      nav: 'Lapozás',
+      prev: 'Előző oldal',
+      next: 'Következő oldal',
+      status: '{page}. / {total} oldal',
+    },
   },
   nav: {
     home: 'Főoldal',

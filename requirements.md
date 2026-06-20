@@ -394,6 +394,23 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   speech has not been ingested keeps the plain speech-number chip with no link
   (graceful degradation, SCR-5).
 
+- **BILL-10 (SHOULD).** Where a bill's event history (BILL-7) brackets a plenary
+  **debate** — a debate-opening event paired with its closing event, e.g.
+  *általános vita megkezdve* … *általános vita lezárva* (also *összevont vita*) —
+  the detail view surfaces a **debate panel**: the run of plenary **speeches
+  between the two anchor speeches**, in proceedings order. Each bracket event is
+  already tied to the plenary speech that announced it (BILL-8, via the shared
+  speech UUID); the speeches in between are recovered by their global proceedings
+  order (sitting date, then per-session speech index — so a debate adjourned and
+  resumed on a later day still reads end to end). Each listed speech links **into
+  this site's own viewer** (VIE-5) and each speaker who is a known MP links to
+  their profile through the shared `person` entity (EXT-2); a speech with no
+  transcript is still listed and flagged (VIE-8). Only debate kinds whose events
+  actually resolve to plenary speeches are bracketed — committee-phase
+  *részletes vita* events carry no speech link and produce no panel (graceful
+  degradation, SCR-5). The panel is **derived at query time** from the stored
+  events and proceedings speeches; it adds no new tables and no new scraping.
+
 ---
 
 ## 6B. Functional Requirements — Module: Votes (Szavazások)
@@ -499,6 +516,12 @@ rework of existing features.
 > MP-linked submitters) was layered on the same way — `bill_motion` +
 > `bill_motion_sponsor` child tables, a `motions` array on the detail API, and a
 > motions section in the detail view — once more touching no other module.
+> The **debate-speeches panel** (BILL-10) was lighter still — *no new tables and
+> no new scraping at all*: it is derived at query time by pairing the stored
+> debate-opening/closing events and selecting the proceedings speeches between
+> their two anchor speeches, joined to the shared `person`/`session` entities
+> (EXT-2). A new `debates` array on `/api/v1/bills/{id}` and a panel in the
+> detail view were the only additions.
 > Extending coverage to **all iromány types** (BILL-9) was lighter still — *no
 > new tables at all*: the scraper now fetches every `fotipus` into the existing
 > `bill` tables (tagging each row's `main_type` from its number prefix), the

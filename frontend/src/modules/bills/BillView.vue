@@ -23,6 +23,16 @@ const docRevealed = ref(false)
 const motionOpen = reactive({})
 function toggleMotion(i) { motionOpen[i] = !motionOpen[i] }
 
+// Long lists (a debate's speeches, the non-self-standing motions) are collapsed
+// to a preview so the page stays scannable; a toggle reveals the rest.
+const COLLAPSE_LIMIT = 8
+const debateOpen = reactive({})            // per-debate "show all speeches"
+function toggleDebate(i) { debateOpen[i] = !debateOpen[i] }
+const motionsExpanded = ref(false)
+function shown(list, expanded) {
+  return expanded ? list : list.slice(0, COLLAPSE_LIMIT)
+}
+
 // Header key/value pairs, only those the bill actually carries.
 const meta = computed(() => {
   const b = bill.value
@@ -66,6 +76,8 @@ const backLink = computed(() => (isBill.value
 async function load() {
   loading.value = true; error.value = false; bill.value = null; docRevealed.value = false
   Object.keys(motionOpen).forEach((k) => delete motionOpen[k])
+  Object.keys(debateOpen).forEach((k) => delete debateOpen[k])
+  motionsExpanded.value = false
   try { bill.value = await api.bill(props.id) } catch { error.value = true }
   finally { loading.value = false }
 }
@@ -179,6 +191,38 @@ watch(() => props.id, load)
         </ol>
       </section>
 
+      <!-- Debate speeches: the plenary speeches between a debate's opening and
+           closing events, each linking into the proceedings viewer (EXT-2). -->
+      <section v-if="bill.debates && bill.debates.length" class="card pad">
+        <h2>{{ $t('bills.debates') }}</h2>
+        <p class="muted small">{{ $t('bills.debatesNote') }}</p>
+        <div v-for="(d, di) in bill.debates" :key="di" class="debate">
+          <h3 class="dbtitle">
+            {{ d.label }}
+            <span class="muted small">· {{ d.speeches.length }} {{ $t('bills.debateSpeechCount') }}</span>
+          </h3>
+          <ol class="dbspeeches">
+            <li v-for="(sp, si) in shown(d.speeches, debateOpen[di])" :key="si" class="dbspeech">
+              <router-link class="dbplay" :to="{ name: 'viewer', params: { uid: sp.uid } }"
+                :title="$t('bills.viewSpeech')" aria-hidden="true">▶</router-link>
+              <div class="dbinfo">
+                <router-link v-if="sp.speaker.person_id" class="dbspeaker"
+                  :to="{ name: 'profile', params: { id: sp.speaker.person_id } }">{{ sp.speaker.label }}</router-link>
+                <span v-else class="dbspeaker">{{ sp.speaker.label }}</span>
+                <FactionBadge v-if="sp.faction" :faction="sp.faction" />
+                <span v-if="!sp.has_text" class="echip">{{ $t('bills.noTranscript') }}</span>
+              </div>
+              <router-link class="dbview small link" :to="{ name: 'viewer', params: { uid: sp.uid } }">{{ $t('bills.viewSpeech') }}</router-link>
+            </li>
+          </ol>
+          <button v-if="d.speeches.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+            :aria-expanded="!!debateOpen[di]" @click="toggleDebate(di)">
+            {{ debateOpen[di] ? $t('bills.showLess')
+                              : $t('bills.showAllSpeeches', { n: d.speeches.length }) }}
+          </button>
+        </div>
+      </section>
+
       <!-- Committee events -->
       <section v-if="bill.committee_events && bill.committee_events.length" class="card pad">
         <h2>{{ $t('bills.committeeEvents') }}</h2>
@@ -267,7 +311,7 @@ watch(() => props.id, load)
       <section v-if="bill.motions && bill.motions.length" class="card pad">
         <h2>{{ $t('bills.motions') }}</h2>
         <ul class="plain motions">
-          <li v-for="(m, i) in bill.motions" :key="i" class="motion">
+          <li v-for="(m, i) in shown(bill.motions, motionsExpanded)" :key="i" class="motion">
             <div class="motion-head">
               <span class="mnum">{{ m.bill_number }}</span>
               <span class="mtype">{{ m.type }}</span>
@@ -293,6 +337,11 @@ watch(() => props.id, load)
             </div>
           </li>
         </ul>
+        <button v-if="bill.motions.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+          :aria-expanded="motionsExpanded" @click="motionsExpanded = !motionsExpanded">
+          {{ motionsExpanded ? $t('bills.showLess')
+                             : $t('bills.showAllMotions', { n: bill.motions.length }) }}
+        </button>
       </section>
 
       <!-- Documents: justifications + background materials -->
@@ -440,6 +489,40 @@ watch(() => props.id, load)
 .evdate { color: var(--ink-faint); font-size: .82rem; padding-top: .12rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .evbody { display: flex; flex-wrap: wrap; gap: .35rem .55rem; align-items: baseline; }
 .ename { font-weight: 500; }
+
+/* Debate speeches — a compact, scannable list of the run of speeches that make
+   up a plenary debate; each row links into the proceedings viewer. */
+.debate + .debate { margin-top: 1.2rem; }
+.dbtitle { margin: .4rem 0 .6rem; font-size: 1rem; font-weight: 700; text-transform: capitalize; }
+.dbtitle .muted { text-transform: none; font-weight: 400; }
+.dbspeeches { list-style: none; margin: 0; padding: 0; }
+.dbspeech {
+  display: flex; gap: .6rem; align-items: center; flex-wrap: wrap;
+  padding: .4rem 0; border-top: 1px solid var(--line);
+}
+.dbspeech:first-child { border-top: 0; }
+.dbplay {
+  flex: none; width: 1.5rem; height: 1.5rem; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-soft); color: var(--accent); font-size: .65rem;
+  text-decoration: none;
+}
+.dbplay:hover { background: var(--accent); color: #fff; }
+.dbinfo { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; flex: 1 1 auto; }
+.dbspeaker { font-weight: 600; }
+.dbview { margin-left: auto; white-space: nowrap; }
+.dbview.link { color: var(--accent); text-decoration: none; }
+.dbview.link:hover { text-decoration: underline; }
+
+/* "show all / show less" toggle under a collapsed long list. Deliberately a
+   quiet, full-width secondary control so it never reads as one of the red
+   "show document" action buttons it sits near. */
+.showmore {
+  display: block; width: 100%; margin-top: .9rem; padding: .5rem;
+  background: transparent; color: var(--ink-soft);
+  border: 1px solid var(--line); border-radius: 8px; font-weight: 600;
+}
+.showmore:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-soft); }
 
 /* small inline chips (event speech/vote tags + document kind) */
 .echip {

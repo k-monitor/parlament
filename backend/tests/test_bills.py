@@ -226,3 +226,61 @@ def test_promulgated_bill_has_kozlony_links(client):
     assert d["mk_number"] == 44
     assert d["kozlony_url"] == "https://magyarkozlony.hu/?year=2026&month=&serial=44"
     assert d["kozlony_doc_url"] == "https://magyarkozlony.hu/dokumentumok/abc123/megtekintes"
+
+
+# --- debate speeches (BILL-10) -------------------------------------------
+
+def _seed_debate(db_path):
+    """Add a run of plenary speeches to the test sitting and bracket them with a
+    pair of debate events on bill-uuid-1, so the debate panel has data. Each
+    test gets its own freshly-built DB file, so this is isolated."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    # Four speeches (index 10..13) in the existing sitting (43001, 2026-05-09),
+    # each with its own Felicitas UUID so the bracket events can resolve to them.
+    for i in range(10, 14):
+        c.execute(
+            """INSERT INTO speech (uid, origin_id, speech_uuid, session_id,
+                   period_number, speech_index, person_id, speaker_label,
+                   time_start, time_end, duration, has_text)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (f"43001-{i}", f"43-1-{i}", f"uuid-deb-{i}", "43001", 43, i,
+             "k001" if i % 2 else "n002", "Kovács Béla" if i % 2 else "Nagy Anna",
+             100.0 + i, 110.0 + i, 10.0, 1 if i != 13 else 0))
+    # Opening event -> first speech, closing -> last; the speeches in between are
+    # the debate. ord places them after the bill's existing events.
+    c.execute("""INSERT INTO bill_event (bill_id, ord, event_date, name, speech_id)
+                 VALUES ('bill-uuid-1', 50, '2026-05-09T09:00:00Z',
+                         'általános vita megkezdve', 'uuid-deb-10')""")
+    c.execute("""INSERT INTO bill_event (bill_id, ord, event_date, name, speech_id)
+                 VALUES ('bill-uuid-1', 51, '2026-05-09T10:00:00Z',
+                         'általános vita lezárva', 'uuid-deb-13')""")
+    c.commit(); c.close()
+
+
+def test_bill_debate_speeches(client, db_path):
+    """A debate bracket (általános vita megkezdve … lezárva) yields a panel of the
+    plenary speeches between its two anchor speeches, in order, each linkable to
+    the viewer (BILL-10 / EXT-2)."""
+    _seed_debate(db_path)
+    d = client.get("/api/v1/bills/bill-uuid-1").json()
+    assert len(d["debates"]) == 1
+    deb = d["debates"][0]
+    assert deb["label"] == "általános vita"
+    assert deb["start_speech_uid"] == "43001-10"
+    assert deb["end_speech_uid"] == "43001-13"
+    # all four speeches in the bracket, in proceedings order (inclusive of anchors)
+    assert [s["uid"] for s in deb["speeches"]] == [
+        "43001-10", "43001-11", "43001-12", "43001-13"]
+    # speakers resolve through the shared person entity (EXT-2)
+    assert deb["speeches"][0]["speaker"]["person_id"] == "n002"
+    assert deb["speeches"][1]["speaker"]["person_id"] == "k001"
+    # the no-transcript speech is flagged for the UI (VIE-8)
+    assert deb["speeches"][-1]["has_text"] is False
+
+
+def test_bill_without_debate_has_empty_panel(client):
+    """A bill whose events carry no resolvable debate bracket returns no debates
+    (graceful, SCR-5) — bill-uuid-1's seeded detail has only 'részletes vita'."""
+    d = client.get("/api/v1/bills/bill-uuid-1").json()
+    assert d["debates"] == []

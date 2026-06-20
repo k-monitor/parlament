@@ -19,6 +19,17 @@ from ...db import get_db
 
 router = APIRouter(prefix="/bills", tags=["bills"])
 
+# Debate brackets: a plenary debate is opened and closed by a pair of bill
+# events, each tied (via the shared speech UUID, EXT-2) to the plenary speech
+# that announced it. The speeches *between* those two anchors are the debate
+# itself, surfaced as a panel on the bill page. Only the two debate kinds whose
+# events actually resolve to plenary speeches are bracketed here (általános /
+# összevont vita); committee-phase "részletes vita" events carry no speech link.
+_DEBATE_STARTS = {
+    "általános vita megkezdve": {"end": "általános vita lezárva", "label": "általános vita"},
+    "összevont vita megkezdve": {"end": "összevont vita lezárva", "label": "összevont vita"},
+}
+
 
 def _stages(stages_json: Optional[str]) -> list[dict]:
     """Parse the stored legislative-stage diagram and flag the current stage
@@ -194,6 +205,83 @@ def _motions_for(db: sqlite3.Connection, bill_id: str) -> list[dict]:
     return motions
 
 
+def _debate_speeches(db: sqlite3.Connection, start: sqlite3.Row,
+                     end: sqlite3.Row) -> list[dict]:
+    """The plenary speeches from the debate-opening anchor through the closing
+    one (inclusive), in proceedings order. Ordering is global by sitting date
+    then per-session speech index, so a debate adjourned and resumed on another
+    day still reads end to end. Each speaker who is a known MP links to their
+    profile via the shared `person` entity (EXT-2)."""
+    rows = db.execute(
+        """SELECT sp.uid, sp.speech_index, sp.speaker_label, sp.person_id,
+                  sp.speaker_status, sp.duration, sp.has_text,
+                  p.label AS person_label, p.photo_uri,
+                  f.label AS faction_label, f.color AS faction_color,
+                  ss.date AS session_date, ss.sitting
+           FROM speech sp
+           JOIN session ss ON ss.id = sp.session_id
+           LEFT JOIN person p ON p.person_id = sp.person_id
+           LEFT JOIN faction f ON f.id = sp.faction_id
+           WHERE (ss.date > :d1 OR (ss.date = :d1 AND sp.speech_index >= :i1))
+             AND (ss.date < :d2 OR (ss.date = :d2 AND sp.speech_index <= :i2))
+           ORDER BY ss.date, sp.speech_index""",
+        {"d1": start["sdate"], "i1": start["speech_index"],
+         "d2": end["sdate"], "i2": end["speech_index"]}).fetchall()
+    return [{
+        "uid": r["uid"],
+        "speaker": {"person_id": r["person_id"],
+                    "label": r["person_label"] or r["speaker_label"],
+                    "photo_uri": r["photo_uri"], "status": r["speaker_status"]},
+        "faction": {"label": r["faction_label"], "color": r["faction_color"]}
+                   if r["faction_label"] else None,
+        "duration": r["duration"], "has_text": bool(r["has_text"]),
+        "date": r["session_date"], "sitting": r["sitting"],
+    } for r in rows]
+
+
+def _debates_for(db: sqlite3.Connection, bill_id: str) -> list[dict]:
+    """Reconstruct each plenary debate as the run of speeches between its
+    opening and closing events (BILL-10). Events come in chronological order;
+    a debate start is matched to the next event with its paired closing name.
+    A bracket whose anchors don't both resolve to ingested speeches is skipped
+    (graceful degradation, SCR-5)."""
+    evs = db.execute(
+        """SELECT e.ord, e.name, e.event_date, e.speech_number,
+                  s.uid AS speech_uid, s.speech_index, ss.date AS sdate
+           FROM bill_event e
+           LEFT JOIN speech s ON s.uid = (
+               SELECT s2.uid FROM speech s2 WHERE s2.speech_uuid = e.speech_id
+               ORDER BY s2.speech_index LIMIT 1)
+           LEFT JOIN session ss ON ss.id = s.session_id
+           WHERE e.bill_id = ? ORDER BY e.ord""", (bill_id,)).fetchall()
+
+    pending: dict[str, tuple] = {}   # closing-event name -> (start row, label, start name)
+    debates: list[dict] = []
+    for e in evs:
+        info = _DEBATE_STARTS.get(e["name"])
+        if info:
+            pending[info["end"]] = (e, info["label"], e["name"])
+            continue
+        match = pending.pop(e["name"], None)
+        if not match:
+            continue
+        start, label, start_name = match
+        if start["speech_uid"] is None or e["speech_uid"] is None:
+            continue
+        speeches = _debate_speeches(db, start, e)
+        if not speeches:
+            continue
+        debates.append({
+            "label": label,
+            "start_event": start_name, "end_event": e["name"],
+            "start_date": start["event_date"], "end_date": e["event_date"],
+            "start_speech_uid": start["speech_uid"],
+            "end_speech_uid": e["speech_uid"],
+            "speeches": speeches,
+        })
+    return debates
+
+
 @router.get("/{bill_id}")
 def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     """A single bill with its full sponsor list and detail sections (events,
@@ -237,6 +325,7 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "SELECT type, valid, withdrawn, total FROM bill_motion_summary "
         "WHERE bill_id = ? ORDER BY ord", bill_id)
     motions = _motions_for(db, bill_id)
+    debates = _debates_for(db, bill_id)
 
     return {
         "id": b["id"], "bill_number": b["bill_number"], "title": b["title"],
@@ -258,4 +347,5 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "events": events, "committee_events": committee_events, "votes": votes,
         "deadlines": deadlines, "committees": committees, "documents": documents,
         "motion_summary": motion_summary, "motions": motions,
+        "debates": debates,
     }

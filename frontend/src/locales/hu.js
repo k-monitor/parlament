@@ -124,6 +124,8 @@ export default {
     sessionsCovered: 'feldolgozott ülésnap',
     noSpeeches: 'Nincs rögzített felszólalás.',
     viewSpeech: 'Megtekintés',
+    showMore: 'Továbbiak megjelenítése',
+    showLess: 'Kevesebb megjelenítése',
     showTable: 'Adatok táblázatként',
     hideTable: 'Táblázat elrejtése',
     present: 'jelenleg',

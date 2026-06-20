@@ -62,6 +62,7 @@ export default {
     billsUnavailable: 'Bills-submitted data will be available once the Bills module ships.',
     speechesOverTime: 'Speeches per sitting', methodology: 'Methodology', scope: 'Data scope',
     sessionsCovered: 'sittings covered', noSpeeches: 'No speeches on record.', viewSpeech: 'View',
+    showMore: 'Show more', showLess: 'Show less',
     showTable: 'Show data as table', hideTable: 'Hide table', present: 'present',
     votes: 'Votes', votesNote: "The representative's recorded roll-call votes in processed divisions.",
     noVotes: 'No recorded roll-call votes.', viewVote: 'View vote', allVotes: 'View all votes',

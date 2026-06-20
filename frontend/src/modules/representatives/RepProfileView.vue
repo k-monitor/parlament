@@ -2,7 +2,7 @@
 // Representative profile (REP-2/REP-3/REP-5). Shows bio + faction history, the
 // precomputed statistics (with explicit scope + methodology), an accessible
 // trend chart, and a reverse-chronological speech list linking into the viewer.
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { api } from '../../api.js'
 import { store } from '../../store.js'
 import { formatDate, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
@@ -32,6 +32,14 @@ const docFilter = ref('')   // '' = all types; else a main_type code
 const showBills = computed(() => store.moduleEnabled('bills'))
 const showVotes = computed(() => store.moduleEnabled('votes'))
 
+// Long lists (bills, votes, speeches) are collapsed to a preview so the profile
+// stays scannable; a per-section toggle reveals the rest of what's loaded.
+const COLLAPSE_LIMIT = 8
+const expanded = reactive({ bills: false, votes: false, speeches: false })
+function shown(list, key) {
+  return expanded[key] ? list : list.slice(0, COLLAPSE_LIMIT)
+}
+
 const PLACEHOLDER =
   'data:image/svg+xml;utf8,' + encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="110"><rect width="110" height="110" fill="%23e7e5df"/><circle cx="55" cy="44" r="22" fill="%23bdb9af"/><rect x="18" y="74" width="74" height="40" rx="20" fill="%23bdb9af"/></svg>')
@@ -55,12 +63,14 @@ async function loadBills() {
   const params = { sponsor: props.id, limit: 100 }
   if (docFilter.value) params.main_type = docFilter.value
   bills.value = await api.bills(params).catch(() => null)
+  expanded.bills = false
 }
 
 async function load() {
   loading.value = true; error.value = false
   profile.value = stats.value = speeches.value = bills.value = votes.value = null
   docFilter.value = ''; docTypes.value = []
+  expanded.bills = expanded.votes = expanded.speeches = false
   try {
     // A feature-module failure must not break the profile, so each resolves to
     // null on error (and is skipped entirely when its module is disabled).
@@ -187,7 +197,7 @@ watch(docFilter, loadBills)
             </div>
             <p v-if="!bills.total" class="small muted">{{ $t('documents.noResults') }}</p>
             <ul class="billmini">
-              <li v-for="b in bills.bills" :key="b.id">
+              <li v-for="b in shown(bills.bills, 'bills')" :key="b.id">
                 <router-link :to="{ name: 'bill', params: { id: b.id } }" class="billitem">
                   <span class="billitem-head">
                     <span class="bnum">{{ b.bill_number }}</span>
@@ -197,13 +207,17 @@ watch(docFilter, loadBills)
                 </router-link>
               </li>
             </ul>
+            <button v-if="bills.bills.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+              :aria-expanded="expanded.bills" @click="expanded.bills = !expanded.bills">
+              {{ expanded.bills ? $t('profile.showLess') : $t('profile.showMore') }}
+            </button>
           </section>
 
           <section class="card pad" v-if="showVotes && votes && votes.total">
             <h2>{{ $t('profile.votes') }} <span class="muted small">({{ votes.total }})</span></h2>
             <p class="small muted">{{ $t('profile.votesNote') }}</p>
             <ul class="votemini">
-              <li v-for="v in votes.votes" :key="v.id">
+              <li v-for="v in shown(votes.votes, 'votes')" :key="v.id">
                 <router-link :to="{ name: 'vote', params: { id: v.id } }" class="voteitem">
                   <span class="vchip" :class="VOTE_CLASS[v.value_code] || 'other'">{{ $t('votes.' + v.value_code) }}</span>
                   <span class="vmeta">
@@ -216,13 +230,17 @@ watch(docFilter, loadBills)
                 </router-link>
               </li>
             </ul>
+            <button v-if="votes.votes.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+              :aria-expanded="expanded.votes" @click="expanded.votes = !expanded.votes">
+              {{ expanded.votes ? $t('profile.showLess') : $t('profile.showMore') }}
+            </button>
           </section>
 
           <section class="card pad">
             <h2>{{ $t('profile.speeches') }} <span class="muted small" v-if="speeches">({{ speeches.total }})</span></h2>
             <p v-if="speeches && speeches.total === 0" class="muted">{{ $t('profile.noSpeeches') }}</p>
             <ul v-else-if="speeches" class="speechlist">
-              <li v-for="s in speeches.speeches" :key="s.uid">
+              <li v-for="s in shown(speeches.speeches, 'speeches')" :key="s.uid">
                 <router-link :to="{ name: 'viewer', params: { uid: s.uid } }" class="speechitem">
                   <div class="row small" style="gap:.6rem;">
                     <strong>{{ formatDate(s.date) }}</strong>
@@ -233,6 +251,10 @@ watch(docFilter, loadBills)
                 </router-link>
               </li>
             </ul>
+            <button v-if="speeches && speeches.speeches.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+              :aria-expanded="expanded.speeches" @click="expanded.speeches = !expanded.speeches">
+              {{ expanded.speeches ? $t('profile.showLess') : $t('profile.showMore') }}
+            </button>
           </section>
         </div>
       </div>
@@ -277,5 +299,12 @@ watch(docFilter, loadBills)
 .speechitem { display: block; padding: .6rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
 .speechitem:hover { background: var(--accent-soft); text-decoration: none; }
 .excerpt { margin: .3rem 0 0; color: var(--ink-soft); font-size: .9rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* quiet, full-width "show more / less" toggle for a collapsed long list */
+.showmore {
+  display: block; width: 100%; margin-top: .7rem; padding: .5rem;
+  background: transparent; color: var(--ink-soft);
+  border: 1px solid var(--line); border-radius: 8px; font-weight: 600;
+}
+.showmore:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-soft); }
 @media (max-width: 820px) { .pgrid { grid-template-columns: 1fr; } }
 </style>

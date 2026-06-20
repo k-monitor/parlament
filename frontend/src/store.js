@@ -1,18 +1,66 @@
 // Minimal global store (Vue reactive) holding the site manifest from /api/v1/meta.
 // The enabled-module list drives which nav entries show and which module routes
 // are reachable (EXT-4/EXT-6) — a module disabled in the backend simply vanishes.
+//
+// It also owns the **global electoral cycle** (period scope). One header control
+// sets it for the whole site; every period-aware view reads `store.cycle` instead
+// of carrying its own period filter. `null` means "all cycles"; a number is an
+// electoral-period number. The choice is persisted so it survives a reload, and
+// defaults to the latest cycle on first visit.
 import { reactive } from 'vue'
 import { api } from './api.js'
+
+const CYCLE_KEY = 'parlamonitor.cycle'
 
 export const store = reactive({
   meta: null,
   loaded: false,
   failed: false,
+  cycle: null, // null = all cycles; otherwise an electoral-period number
   moduleEnabled(name) {
     if (!this.meta) return true // optimistic before load
     return this.meta.modules.some((m) => m.name === name)
   },
 })
+
+// Read the saved cycle: `undefined` = nothing saved, `null` = explicit "all",
+// otherwise the saved period number.
+function savedCycle() {
+  try {
+    const raw = localStorage.getItem(CYCLE_KEY)
+    if (raw === null) return undefined
+    if (raw === 'all') return null
+    const n = Number(raw)
+    return Number.isFinite(n) ? n : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Set the global cycle (number = a period, null = all) and persist it.
+export function setCycle(value) {
+  store.cycle = value
+  try {
+    localStorage.setItem(CYCLE_KEY, value === null ? 'all' : String(value))
+  } catch {
+    /* localStorage unavailable (private mode) — in-memory state still works */
+  }
+}
+
+// Initialise the global cycle once the available periods are known: honour a
+// valid saved choice, otherwise default to the latest cycle (periods are sorted
+// newest-first by /meta).
+function initCycle(meta) {
+  const periods = meta.periods || []
+  const saved = savedCycle()
+  if (saved === null) {
+    store.cycle = null // explicit "all"
+  } else if (saved !== undefined && periods.some((p) => p.number === saved)) {
+    store.cycle = saved
+  } else {
+    store.cycle = periods.length ? periods[0].number : null
+  }
+}
 
 let inflight = null
 export function loadMeta() {
@@ -22,6 +70,7 @@ export function loadMeta() {
     .meta()
     .then((m) => {
       store.meta = m
+      initCycle(m)
       store.loaded = true
       return m
     })

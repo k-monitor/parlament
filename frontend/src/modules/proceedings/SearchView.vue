@@ -6,7 +6,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
-import { store } from '../../store.js'
+import { store, loadMeta } from '../../store.js'
 import { agendaLabel, formatDate } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -22,8 +22,9 @@ const AGENDA_TYPES = ['opening', 'procedural', 'regular', 'oath', 'voting',
   'rules_of_procedure', 'questioning_of_the_government', 'qa', 'condolence']
 
 const input = ref(route.query.q || '')
+// The electoral cycle is a *global* scope set from the header (store.cycle), not
+// a per-search filter — so it is no longer part of the URL query here.
 const filters = reactive({
-  period: route.query.period || '',
   date_from: route.query.date_from || '',
   date_to: route.query.date_to || '',
   faction_id: route.query.faction_id || '',
@@ -36,21 +37,26 @@ const trend = ref(null)
 const loading = ref(false)
 const error = ref(false)
 
-const periods = computed(() => (store.meta && store.meta.periods) || [])
 const factions = ref([])
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() =>
   data.value ? Math.ceil(Math.min(data.value.total, 1000) / PAGE) : 0)
 
 onMounted(async () => {
+  // Ensure the global cycle is initialised before the first search so results
+  // are scoped to the selected cycle (not briefly to "all").
+  await loadMeta().catch(() => {})
   try { factions.value = (await api.factions()).factions } catch {}
   if (route.query.q) runFromRoute()
 })
 
+// Re-run the active search when the global cycle changes.
+watch(() => store.cycle, () => { if (route.query.q) runFromRoute() })
+
 // Push the current form state into the URL (this triggers the watcher → fetch).
 function submit(resetPage = true) {
   const query = { q: input.value.trim() }
-  for (const k of ['period', 'date_from', 'date_to', 'faction_id', 'agenda_type']) {
+  for (const k of ['date_from', 'date_to', 'faction_id', 'agenda_type']) {
     if (filters[k]) query[k] = filters[k]
   }
   if (!resetPage && route.query.offset) query.offset = route.query.offset
@@ -58,7 +64,7 @@ function submit(resetPage = true) {
 }
 
 function clearFilters() {
-  filters.period = filters.date_from = filters.date_to = ''
+  filters.date_from = filters.date_to = ''
   filters.faction_id = filters.agenda_type = ''
   submit()
 }
@@ -72,7 +78,7 @@ async function runFromRoute() {
   loading.value = true; error.value = false
   const filterArgs = {
     q: route.query.q,
-    period: route.query.period,
+    period: store.cycle, // global cycle scope (null = all)
     date_from: route.query.date_from,
     date_to: route.query.date_to,
     faction_id: route.query.faction_id,
@@ -94,7 +100,6 @@ async function runFromRoute() {
 // Keep the form synced when navigating via back/forward, and re-run on any change.
 watch(() => route.query, (q) => {
   input.value = q.q || ''
-  filters.period = q.period || ''
   filters.date_from = q.date_from || ''
   filters.date_to = q.date_to || ''
   filters.faction_id = q.faction_id || ''
@@ -126,13 +131,6 @@ function viewerLink(r) {
     <fieldset v-show="showFilters" class="filters">
       <legend class="visually-hidden">{{ $t('search.filters') }}</legend>
       <div class="filter-grid">
-        <div>
-          <label for="f-period">{{ $t('search.period') }}</label>
-          <select id="f-period" v-model="filters.period" @change="submit()">
-            <option value="">{{ $t('search.all') }}</option>
-            <option v-for="p in periods" :key="p.number" :value="p.number">{{ p.label || p.number }}</option>
-          </select>
-        </div>
         <div>
           <label for="f-faction">{{ $t('search.faction') }}</label>
           <select id="f-faction" v-model="filters.faction_id" @change="submit()">

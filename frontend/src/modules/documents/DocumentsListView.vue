@@ -8,7 +8,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
-import { store } from '../../store.js'
+import { store, loadMeta } from '../../store.js'
 import { formatDate } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -32,18 +32,14 @@ const f = reactive({
   q: route.query.q || '',
   type: route.query.type || '',
   status: route.query.status || '',
-  period: route.query.period || '',
   sort: route.query.sort || 'number',
 })
-
-const periods = computed(() => (store.meta && store.meta.periods) || [])
 
 function apply() {
   const query = {}
   if (f.q) query.q = f.q
   if (f.type) query.type = f.type
   if (f.status) query.status = f.status
-  if (f.period) query.period = f.period
   if (f.sort && f.sort !== 'number') query.sort = f.sort
   // Changing a filter resets to the first page (offset is intentionally dropped).
   router.push({ name: 'documents', query })
@@ -55,7 +51,7 @@ function gotoPage(p) {
 
 async function loadFacets() {
   try {
-    const r = await api.billFacets({ period: route.query.period, main_type_not: 'T' })
+    const r = await api.billFacets({ period: store.cycle, main_type_not: 'T' })
     types.value = r.types.map((t) => t.type)
     statuses.value = r.statuses
   } catch { types.value = []; statuses.value = [] }
@@ -64,20 +60,23 @@ async function loadFacets() {
 async function load() {
   loading.value = true; error.value = false
   try {
+    // `period` comes from the global cycle chooser (store.cycle; null = all).
     data.value = await api.bills({
       q: route.query.q, type: route.query.type, status: route.query.status,
-      period: route.query.period, sort: route.query.sort || 'number',
+      period: store.cycle, sort: route.query.sort || 'number',
       main_type_not: 'T', limit: PAGE, offset: route.query.offset || 0,
     })
   } catch { error.value = true } finally { loading.value = false }
 }
 
-onMounted(() => { loadFacets(); load() })
+onMounted(() => { loadMeta().catch(() => {}).finally(() => { loadFacets(); load() }) })
 watch(() => route.query, (q) => {
   f.q = q.q || ''; f.type = q.type || ''; f.status = q.status || ''
-  f.period = q.period || ''; f.sort = q.sort || 'number'
+  f.sort = q.sort || 'number'
   loadFacets(); load()
 })
+// Re-fetch when the global cycle changes.
+watch(() => store.cycle, () => { loadFacets(); load() })
 let t = null
 function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
 </script>
@@ -96,13 +95,6 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
       <select id="d-type" v-model="f.type" @change="apply">
         <option value="">{{ $t('search.all') }}</option>
         <option v-for="ty in types" :key="ty" :value="ty">{{ ty }}</option>
-      </select>
-    </div>
-    <div v-if="periods.length">
-      <label for="d-period">{{ $t('documents.period') }}</label>
-      <select id="d-period" v-model="f.period" @change="apply">
-        <option value="">{{ $t('search.all') }}</option>
-        <option v-for="p in periods" :key="p.number" :value="p.number">{{ p.label || p.number }}</option>
       </select>
     </div>
     <div>
@@ -154,7 +146,7 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
 </template>
 
 <style scoped>
-.toolbar { display: grid; grid-template-columns: 2fr 1.4fr 1fr 1.4fr 1fr; gap: .8rem; align-items: end; margin: 1rem 0; }
+.toolbar { display: grid; grid-template-columns: 2fr 1.4fr 1.4fr 1fr; gap: .8rem; align-items: end; margin: 1rem 0; }
 .billlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
 .billcard { display: flex; flex-direction: column; gap: .4rem; }
 .billhead { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }

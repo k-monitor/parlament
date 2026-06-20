@@ -1,8 +1,9 @@
 <script setup>
 // Faction-level aggregate statistics (REP-4) with consistent colours and an
 // accessible chart + table.
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { api } from '../../api.js'
+import { store, loadMeta } from '../../store.js'
 import { formatSpeakingTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import BarChart from '../../components/BarChart.vue'
@@ -13,9 +14,12 @@ const error = ref(false)
 
 async function load() {
   loading.value = true; error.value = false
-  try { data.value = await api.factions() } catch { error.value = true } finally { loading.value = false }
+  // Scoped to the global cycle chooser (store.cycle; null = all cycles).
+  try { data.value = await api.factions(store.cycle) } catch { error.value = true } finally { loading.value = false }
 }
-onMounted(load)
+onMounted(() => { loadMeta().catch(() => {}).finally(load) })
+// Re-fetch when the global cycle changes.
+watch(() => store.cycle, load)
 
 const chartItems = computed(() =>
   (data.value ? data.value.factions : [])

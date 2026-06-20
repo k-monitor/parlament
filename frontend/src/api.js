@@ -34,7 +34,7 @@ export const api = {
   repStatistics: (id) => get(`/representatives/${id}/statistics`),
   repSpeeches: (id, params) => get(`/representatives/${id}/speeches`, params),
   repVotes: (id, params) => get(`/representatives/${id}/votes`, params),
-  factions: () => get('/representatives/factions'),
+  factions: (period) => get('/representatives/factions', { period }),
   // bills
   bills: (params) => get('/bills', params),
   bill: (id) => get(`/bills/${id}`),

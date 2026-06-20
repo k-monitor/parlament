@@ -1,10 +1,10 @@
 <script setup>
 // Browsable, filterable representative list (REP-1). Filter/sort state is in the
 // URL so a filtered list is shareable.
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
-import { store } from '../../store.js'
+import { store, loadMeta } from '../../store.js'
 import { formatSpeakingTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -24,8 +24,6 @@ const f = reactive({
   sort: route.query.sort || 'speaking_time',
 })
 
-const periods = computed(() => (store.meta && store.meta.periods) || [])
-
 function apply() {
   const query = {}
   if (f.q) query.q = f.q
@@ -37,14 +35,17 @@ function apply() {
 async function load() {
   loading.value = true; error.value = false
   try {
+    // `period` comes from the global cycle chooser (store.cycle; null = all) —
+    // it scopes the list to MPs serving in that cycle.
     data.value = await api.representatives({
-      q: route.query.q, faction_id: route.query.faction_id,
+      q: route.query.q, faction_id: route.query.faction_id, period: store.cycle,
       sort: route.query.sort || 'speaking_time', limit: 300,
     })
   } catch { error.value = true } finally { loading.value = false }
 }
 
 onMounted(async () => {
+  await loadMeta().catch(() => {})
   try { factions.value = (await api.factions()).factions } catch {}
   load()
 })
@@ -52,6 +53,8 @@ watch(() => route.query, (q) => {
   f.q = q.q || ''; f.faction_id = q.faction_id || ''; f.sort = q.sort || 'speaking_time'
   load()
 })
+// Re-fetch when the global cycle changes.
+watch(() => store.cycle, load)
 let t = null
 function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
 </script>

@@ -196,6 +196,34 @@ Primary use cases:
 
 ---
 
+## 4A. Cross-cutting: Global Electoral-Cycle Scope
+
+The corpus spans many electoral cycles (§PERF-3). Rather than each module
+carrying its own electoral-period filter, the site exposes **one global cycle
+selector** that scopes every period-aware view at once.
+
+- **CYC-1 (MUST).** A **cycle selector lives in the site header** and is visible
+  on every page. It lists each electoral period plus an **"all cycles"** option,
+  and **defaults to the latest cycle** on a first visit.
+- **CYC-2 (MUST).** The chosen cycle is the **single source of period scope**
+  across all period-aware modules — proceedings search, sittings, representatives,
+  bills, other irományok and votes all honour it. Selecting a cycle (or "all")
+  **immediately re-scopes the current view** and carries over as the user
+  navigates between modules; modules no longer present their own redundant
+  period filter.
+- **CYC-3 (MUST).** The selection is **persisted** (e.g. `localStorage`) so it
+  survives reloads and return visits; an invalid/stale saved value falls back to
+  the latest cycle.
+- **CYC-4.** "All cycles" simply **drops the period constraint** site-wide
+  (no period parameter is sent); a numeric cycle constrains every query to that
+  electoral period.
+- **CYC-5.** The remaining, module-specific filters (free-text query, status,
+  type, faction, date range, sort, etc.) stay **per-page URL state** so a
+  filtered/searched view is still deep-linkable and citable (§SEA-6); only the
+  electoral period moved out of the per-page URL into the global selector.
+
+---
+
 ## 5. Functional Requirements — Module: Proceedings Search & Viewer
 
 ### 5.1 Search
@@ -205,8 +233,9 @@ Primary use cases:
 - **SEA-2 (MUST).** Hungarian-aware matching: case- and accent-insensitive,
   handles Hungarian morphology at least via prefix/stemming-friendly tokenization;
   exact-phrase ("…") supported.
-- **SEA-3.** Filters: by **date range**, **electoral period**, **speaker**,
-  **faction**, **agenda-item type**. Filters are combinable.
+- **SEA-3.** Filters: by **date range**, **speaker**, **faction**,
+  **agenda-item type**. Filters are combinable. The **electoral period** is set
+  by the global cycle selector (§4A), not a per-search filter.
 - **SEA-4.** Each result shows: matched sentence with **highlighted** terms,
   surrounding snippet, speaker (linked to profile), faction, date, agenda title,
   and a thumbnail/affordance to play.
@@ -274,7 +303,8 @@ Primary use cases:
 ## 6. Functional Requirements — Module: Representatives & Statistics
 
 - **REP-1 (MUST).** A browsable, searchable **list of representatives**, filterable
-  by faction, electoral period, and constituency; each links to a profile.
+  by faction and constituency, and scoped to the **electoral period** chosen in
+  the global cycle selector (§4A); each links to a profile.
 - **REP-2 (MUST).** A **representative profile** shows: name, photo (if available),
   current/past faction(s) with dates, constituency, Wikidata link, a
   reverse-chronological **list of their speeches** (each linking into the viewer),
@@ -309,10 +339,11 @@ iromány type** (határozati javaslatok, interpellációk, kérdések, beszámol
 is surfaced on a separate browse page (BILL-9) over the same data layer.
 
 - **BILL-1 (MUST).** A **browsable, filterable list of bills**, paginated and
-  filterable by **electoral period**, **status**, **type**, **sponsor**, and
-  **title text**; filters combine. List/filter state is in the **URL query**
-  (deep-linkable, shareable) — including the sponsor filter so a link like
-  `/bills?sponsor=<personID>` reopens the list scoped to that representative.
+  filterable by **status**, **type**, **sponsor**, and **title text**; filters
+  combine. List/filter state is in the **URL query** (deep-linkable, shareable) —
+  including the sponsor filter so a link like `/bills?sponsor=<personID>` reopens
+  the list scoped to that representative. The **electoral period** is set by the
+  global cycle selector (§4A).
 - **BILL-2 (MUST).** A **bill detail** view shows the bill number, title, type,
   status, submission date, and its sponsors. It links to the **official bill
   text on parlament.hu** (LEGAL-1); the PDF is **embedded inline but loaded on
@@ -373,10 +404,11 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   links into it — VOTE-6.)
 - **BILL-9 (MUST).** The non-bill irományok have their own **browsable,
   filterable list page** ("Egyéb irományok"), separate from the
-  törvényjavaslatok page, paginated and filterable by **electoral period**,
+  törvényjavaslatok page, paginated and filterable by
   **document type** (interpelláció, kérdés, határozati javaslat, …), **status**
   and **title text**; filters combine and live in the **URL query**
-  (deep-linkable). It shares the Bills module's data layer and `/api/v1/bills`
+  (deep-linkable). The **electoral period** is set by the global cycle selector
+  (§4A). It shares the Bills module's data layer and `/api/v1/bills`
   routes (scoped by `main_type`: `= T` for bills, `!= T` for this page) and the
   **same detail view** (BILL-2/BILL-7) — only the browse page is distinct, so no
   data, table or detail logic is duplicated. Each MP submitter links to their
@@ -425,8 +457,9 @@ per-vote `szavazat-by-szavazas-and-tipus-list-query` roll call,
 header).
 
 - **VOTE-1 (MUST).** A **browsable, filterable list of votes**, paginated and
-  filterable by **electoral period**, **result** (elfogadva/elutasítva/…) and
-  **subject/iromány-number text**; filters combine. List/filter state is in the
+  filterable by **result** (elfogadva/elutasítva/…) and
+  **subject/iromány-number text**; filters combine. The **electoral period** is
+  set by the global cycle selector (§4A). List/filter state is in the
   **URL query** (deep-linkable, shareable), including a `bill` scope so a link
   like `/votes?bill=<iromanyId>` reopens the list scoped to one bill's votes.
   Each row shows the datetime, subject, result, the igen/nem/tartózkodás tally

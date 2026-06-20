@@ -21,6 +21,8 @@ export default {
   },
   nav: {
     home: 'Főoldal',
+    menu: 'Főmenü',
+    submenu: 'almenü',
     search: 'Keresés',
     sessions: 'Ülésnapok',
     representatives: 'Képviselők',
@@ -29,6 +31,10 @@ export default {
     documents: 'Egyéb irományok',
     votes: 'Szavazások',
     about: 'A projektről',
+  },
+  cycle: {
+    label: 'Ciklus',
+    all: 'Összes ciklus',
   },
   home: {
     searchPlaceholder: 'Keressen egy kifejezésre a felszólalásokban…',

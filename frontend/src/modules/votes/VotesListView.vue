@@ -5,7 +5,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
-import { store } from '../../store.js'
+import { store, loadMeta } from '../../store.js'
 import { formatDateTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import Pagination from '../../components/Pagination.vue'
@@ -26,10 +26,7 @@ const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAG
 const f = reactive({
   q: route.query.q || '',
   result: route.query.result || '',
-  period: route.query.period || '',
 })
-
-const periods = computed(() => (store.meta && store.meta.periods) || [])
 
 // `bill` is not an interactive filter — it arrives via a link from a bill page.
 const bill = computed(() => route.query.bill || '')
@@ -38,7 +35,6 @@ function apply() {
   const query = {}
   if (f.q) query.q = f.q
   if (f.result) query.result = f.result
-  if (f.period) query.period = f.period
   if (bill.value) query.bill = bill.value
   // Changing a filter resets to the first page (offset is intentionally dropped).
   router.push({ name: 'votes', query })
@@ -56,25 +52,28 @@ function voteParts(v) {
 
 async function loadFacets() {
   try {
-    results.value = (await api.voteFacets({ period: route.query.period })).results
+    results.value = (await api.voteFacets({ period: store.cycle })).results
   } catch { results.value = [] }
 }
 
 async function load() {
   loading.value = true; error.value = false
   try {
+    // `period` comes from the global cycle chooser (store.cycle; null = all).
     data.value = await api.votes({
-      q: route.query.q, result: route.query.result, period: route.query.period,
+      q: route.query.q, result: route.query.result, period: store.cycle,
       bill: route.query.bill, limit: PAGE, offset: route.query.offset || 0,
     })
   } catch { error.value = true } finally { loading.value = false }
 }
 
-onMounted(() => { loadFacets(); load() })
+onMounted(() => { loadMeta().catch(() => {}).finally(() => { loadFacets(); load() }) })
 watch(() => route.query, (q) => {
-  f.q = q.q || ''; f.result = q.result || ''; f.period = q.period || ''
+  f.q = q.q || ''; f.result = q.result || ''
   loadFacets(); load()
 })
+// Re-fetch when the global cycle changes.
+watch(() => store.cycle, () => { loadFacets(); load() })
 let t = null
 function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
 </script>
@@ -87,13 +86,6 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
     <div>
       <label for="v-q">{{ $t('votes.searchPlaceholder') }}</label>
       <input id="v-q" type="search" v-model="f.q" :placeholder="$t('votes.searchPlaceholder')" @input="onSearchInput" />
-    </div>
-    <div v-if="periods.length">
-      <label for="v-period">{{ $t('votes.period') }}</label>
-      <select id="v-period" v-model="f.period" @change="apply">
-        <option value="">{{ $t('votes.all') }}</option>
-        <option v-for="p in periods" :key="p.number" :value="p.number">{{ p.label || p.number }}</option>
-      </select>
     </div>
     <div>
       <label for="v-result">{{ $t('votes.result') }}</label>
@@ -146,7 +138,7 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
 </template>
 
 <style scoped>
-.toolbar { display: grid; grid-template-columns: 2fr 1fr 1.4fr; gap: .8rem; align-items: end; margin: 1rem 0; }
+.toolbar { display: grid; grid-template-columns: 2fr 1.4fr; gap: .8rem; align-items: end; margin: 1rem 0; }
 .votelist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
 .votecard { display: flex; flex-direction: column; gap: .45rem; }
 .vhead { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }

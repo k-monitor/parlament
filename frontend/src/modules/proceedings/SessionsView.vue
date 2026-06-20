@@ -1,6 +1,7 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { api } from '../../api.js'
+import { store, loadMeta } from '../../store.js'
 import { formatDate, formatDuration } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 
@@ -10,9 +11,12 @@ const error = ref(false)
 
 async function load() {
   loading.value = true; error.value = false
-  try { data.value = await api.sessions() } catch { error.value = true } finally { loading.value = false }
+  // Scoped to the global cycle chooser (store.cycle; null = all cycles).
+  try { data.value = await api.sessions(store.cycle) } catch { error.value = true } finally { loading.value = false }
 }
-onMounted(load)
+onMounted(() => { loadMeta().catch(() => {}).finally(load) })
+// Re-fetch when the global cycle changes.
+watch(() => store.cycle, load)
 </script>
 
 <template>

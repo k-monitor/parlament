@@ -85,16 +85,26 @@ def list_representatives(
 
 
 @router.get("/factions")
-def list_factions(db: sqlite3.Connection = Depends(get_db)):
-    """Factions with aggregate stats and consistent colours (REP-4)."""
+def list_factions(period: Optional[int] = None,
+                  db: sqlite3.Connection = Depends(get_db)):
+    """Factions with aggregate stats and consistent colours (REP-4).
+
+    Scoped to the global cycle (§4A): with ``period`` set, the per-period
+    aggregate row is used; otherwise the all-periods row (``period_number IS NULL``)."""
+    if period is not None:
+        join = "fs.faction_id=f.id AND fs.period_number = :per"
+        params = {"per": period}
+    else:
+        join = "fs.faction_id=f.id AND fs.period_number IS NULL"
+        params = {}
     rows = db.execute(
-        """SELECT f.id, f.label, f.color,
+        f"""SELECT f.id, f.label, f.color,
                   COALESCE(fs.speech_count, 0) AS speech_count,
                   COALESCE(fs.speaking_seconds, 0) AS speaking_seconds,
                   COALESCE(fs.mp_count, 0) AS mp_count
            FROM faction f
-           LEFT JOIN faction_stats fs ON fs.faction_id=f.id AND fs.period_number IS NULL
-           ORDER BY fs.speaking_seconds DESC""").fetchall()
+           LEFT JOIN faction_stats fs ON {join}
+           ORDER BY fs.speaking_seconds DESC""", params).fetchall()
     factions = []
     for r in rows:
         mp = r["mp_count"] or 0

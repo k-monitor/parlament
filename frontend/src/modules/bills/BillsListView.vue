@@ -5,7 +5,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
-import { store } from '../../store.js'
+import { store, loadMeta } from '../../store.js'
 import { formatDate } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -27,11 +27,8 @@ const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAG
 const f = reactive({
   q: route.query.q || '',
   status: route.query.status || '',
-  period: route.query.period || '',
   sort: route.query.sort || 'number',
 })
-
-const periods = computed(() => (store.meta && store.meta.periods) || [])
 
 // `sponsor` is not an interactive filter — it arrives via a link from an MP
 // (the headline stat / profile bills section). It's carried in the URL and
@@ -52,7 +49,6 @@ function apply() {
   const query = {}
   if (f.q) query.q = f.q
   if (f.status) query.status = f.status
-  if (f.period) query.period = f.period
   if (f.sort && f.sort !== 'number') query.sort = f.sort
   if (sponsor.value) query.sponsor = sponsor.value
   // Changing a filter resets to the first page (offset is intentionally dropped).
@@ -66,7 +62,7 @@ function gotoPage(p) {
 async function loadFacets() {
   try {
     statuses.value = (await api.billFacets({
-      period: route.query.period, main_type: 'T',
+      period: store.cycle, main_type: 'T',
     })).statuses
   } catch { statuses.value = [] }
 }
@@ -76,20 +72,23 @@ async function load() {
   try {
     // This page is the bills (törvényjavaslat) view; the other iromány types
     // live on the separate "Egyéb irományok" page (main_type=T scopes here).
+    // `period` comes from the global cycle chooser (store.cycle; null = all).
     data.value = await api.bills({
-      q: route.query.q, status: route.query.status, period: route.query.period,
+      q: route.query.q, status: route.query.status, period: store.cycle,
       sponsor: route.query.sponsor, sort: route.query.sort || 'number',
       main_type: 'T', limit: PAGE, offset: route.query.offset || 0,
     })
   } catch { error.value = true } finally { loading.value = false }
 }
 
-onMounted(() => { loadFacets(); load() })
+onMounted(() => { loadMeta().catch(() => {}).finally(() => { loadFacets(); load() }) })
 watch(() => route.query, (q) => {
-  f.q = q.q || ''; f.status = q.status || ''; f.period = q.period || ''
+  f.q = q.q || ''; f.status = q.status || ''
   f.sort = q.sort || 'number'
   loadFacets(); load()
 })
+// Re-fetch when the global cycle changes.
+watch(() => store.cycle, () => { loadFacets(); load() })
 let t = null
 function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
 </script>
@@ -102,13 +101,6 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
     <div>
       <label for="b-q">{{ $t('bills.searchPlaceholder') }}</label>
       <input id="b-q" type="search" v-model="f.q" :placeholder="$t('bills.searchPlaceholder')" @input="onSearchInput" />
-    </div>
-    <div v-if="periods.length">
-      <label for="b-period">{{ $t('bills.period') }}</label>
-      <select id="b-period" v-model="f.period" @change="apply">
-        <option value="">{{ $t('search.all') }}</option>
-        <option v-for="p in periods" :key="p.number" :value="p.number">{{ p.label || p.number }}</option>
-      </select>
     </div>
     <div>
       <label for="b-status">{{ $t('bills.status') }}</label>
@@ -164,7 +156,7 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
 </template>
 
 <style scoped>
-.toolbar { display: grid; grid-template-columns: 2fr 1fr 1.4fr 1fr; gap: .8rem; align-items: end; margin: 1rem 0; }
+.toolbar { display: grid; grid-template-columns: 2fr 1.4fr 1fr; gap: .8rem; align-items: end; margin: 1rem 0; }
 .sponsorfilter { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; background: var(--accent-soft); }
 .sponsorfilter .clear { margin-left: auto; }
 .billlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }

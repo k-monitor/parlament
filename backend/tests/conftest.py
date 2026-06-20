@@ -91,11 +91,13 @@ def _registry():
 
 
 def _bills_registry():
-    """Two bills: one with a known-MP sponsor (links to k001), one government
-    bill (no MP link, kept with its label)."""
+    """Three irományok: two törvényjavaslatok (mainType T) — one with a known-MP
+    sponsor (links to k001), one government bill (no MP link) — and one non-bill
+    document (an interpelláció, mainType I) for the "Egyéb irományok" page, so the
+    main_type / main_type_not / type filters are exercised (BILL-9)."""
     return {
-        "meta": {"cycle": 43, "mainTypes": ["T"], "source": "felicitas-iromany-api",
-                 "scrapedAt": "2026-06-18T00:00:00+00:00", "count": 2},
+        "meta": {"cycle": 43, "mainTypes": "all", "source": "felicitas-iromany-api",
+                 "scrapedAt": "2026-06-18T00:00:00+00:00", "count": 3},
         "data": [
             {"billId": "bill-uuid-1", "billNumber": "T/100", "billNumberSort": 100,
              "title": "A költségvetésről szóló törvényjavaslat", "type": "törvényjavaslat",
@@ -174,6 +176,13 @@ def _bills_registry():
              "textUrl": None, "textCaption": None, "noText": True,
              "sponsors": [{"personID": None, "factionId": None, "committeeId": None,
                            "label": "kormány (pénzügyminiszter)"}]},
+            {"billId": "doc-uuid-3", "billNumber": "I/5", "billNumberSort": 5,
+             "title": "Interpelláció a közlekedésről", "type": "interpelláció",
+             "mainType": "I", "status": "benyújtva",
+             "submittedDate": "2026-06-01T09:00:00Z",
+             "textUrl": None, "textCaption": None, "noText": True,
+             "sponsors": [{"personID": "k001", "factionId": 7, "committeeId": None,
+                           "label": "Kovács Béla"}]},
         ],
     }
 

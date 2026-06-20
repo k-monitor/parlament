@@ -67,6 +67,8 @@ def list_bills(
     q: Optional[str] = None,
     period: Optional[int] = None,
     main_type: Optional[str] = None,
+    main_type_not: Optional[str] = None,     # exclude a fotipus, e.g. T (bills)
+    type: Optional[str] = None,              # exact iromány type (category)
     status: Optional[str] = None,
     sponsor: Optional[str] = None,           # person_id — bills by this MP
     sort: str = Query("number", pattern="^(number|date)$"),
@@ -83,6 +85,11 @@ def list_bills(
         where.append("b.period_number = :per"); params["per"] = period
     if main_type:
         where.append("b.main_type = :mt"); params["mt"] = main_type
+    if main_type_not:
+        where.append("(b.main_type IS NULL OR b.main_type != :mtn)")
+        params["mtn"] = main_type_not
+    if type:
+        where.append("b.type = :ty"); params["ty"] = type
     if status:
         where.append("b.status = :st"); params["st"] = status
     if sponsor:
@@ -118,15 +125,31 @@ def list_bills(
 
 @router.get("/facets")
 def bill_facets(period: Optional[int] = None,
+                main_type: Optional[str] = None,
+                main_type_not: Optional[str] = None,
+                sponsor: Optional[str] = None,       # restrict to one MP's irományok
                 db: sqlite3.Connection = Depends(get_db)):
-    """Distinct statuses and types for filter controls (within a period)."""
-    where, params = ("WHERE period_number = ?", (period,)) if period is not None else ("", ())
+    """Distinct statuses and types for filter controls (optionally scoped to a
+    period, a fotipus include/exclude — e.g. ``main_type=T`` for the bills page,
+    ``main_type_not=T`` for the other-irományok page — and a sponsor, so a
+    profile can list only the document types that MP actually submitted)."""
+    where, params = ["1=1"], []
+    if period is not None:
+        where.append("b.period_number = ?"); params.append(period)
+    if main_type:
+        where.append("b.main_type = ?"); params.append(main_type)
+    if main_type_not:
+        where.append("(b.main_type IS NULL OR b.main_type != ?)"); params.append(main_type_not)
+    if sponsor:
+        where.append("EXISTS (SELECT 1 FROM bill_sponsor bs "
+                     "WHERE bs.bill_id=b.id AND bs.person_id=?)"); params.append(sponsor)
+    where_sql = "WHERE " + " AND ".join(where)
     statuses = [r["status"] for r in db.execute(
-        f"SELECT DISTINCT status FROM bill {where} "
-        f"{'AND' if where else 'WHERE'} status IS NOT NULL ORDER BY status",
-        params)]
+        f"SELECT DISTINCT b.status FROM bill b {where_sql} "
+        f"AND b.status IS NOT NULL ORDER BY b.status", params)]
     types = [{"main_type": r["main_type"], "type": r["type"]} for r in db.execute(
-        f"SELECT DISTINCT main_type, type FROM bill {where} ORDER BY type", params)]
+        f"SELECT DISTINCT b.main_type, b.type FROM bill b {where_sql} "
+        f"ORDER BY b.main_type, b.type", params)]
     return {"statuses": statuses, "types": types}
 
 

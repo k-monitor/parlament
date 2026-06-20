@@ -50,6 +50,17 @@ const routes = [
     component: () => import('./modules/bills/BillView.vue'), props: true,
   },
 
+  // --- other irományok (part of the bills module: same data layer + detail
+  // view, separate browse page for the non-törvényjavaslat document types) ---
+  {
+    path: '/documents', name: 'documents', meta: { module: 'bills' },
+    component: () => import('./modules/documents/DocumentsListView.vue'),
+  },
+  {
+    path: '/documents/:id', name: 'document', meta: { module: 'bills' },
+    component: () => import('./modules/bills/BillView.vue'), props: true,
+  },
+
   // --- votes module ---
   {
     path: '/votes', name: 'votes', meta: { module: 'votes' },

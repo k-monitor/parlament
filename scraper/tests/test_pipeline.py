@@ -199,3 +199,26 @@ def test_transform_degraded_speech_flagged():
 
 def test_sitting_number_from_felirat():
     assert sitting_number({"datum_felirat": "2026.06.23.(11)"}) == 11
+
+
+# --- bills / irományok -----------------------------------------------------
+
+def test_bills_main_type_from_number_prefix():
+    """Fetching every iromány type at once still tags each row with the correct
+    ``mainType``, derived from the iromány-number prefix (BILL-9) rather than the
+    query param (which is empty when all types are fetched)."""
+    from parlamonitor.felicitas import FelicitasClient
+
+    rows = [
+        {"iromanyId": "a", "iromanyszam": "T/253", "cim": "bill",
+         "iromanytipus": "törvényjavaslat"},
+        {"iromanyId": "b", "iromanyszam": "I/12", "cim": "interpelláció",
+         "iromanytipus": "interpelláció"},
+        {"iromanyId": "c", "iromanyszam": "H/9", "cim": "határozat",
+         "iromanytipus": "határozati javaslat"},
+    ]
+    fc = FelicitasClient.__new__(FelicitasClient)
+    fc.select_all = lambda *a, **k: rows  # no network
+    out = fc.bills(43)  # main_type="" → all types
+    assert [b["mainType"] for b in out] == ["T", "I", "H"]
+    assert out[0]["type"] == "törvényjavaslat"

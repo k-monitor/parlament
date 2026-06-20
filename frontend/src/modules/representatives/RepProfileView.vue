@@ -20,6 +20,13 @@ const votes = ref(null)
 const loading = ref(false)
 const error = ref(false)
 
+// The submitted-irományok section lists every document type the MP submitted; a
+// filter narrows it to one main type (the iromány-number prefix), e.g. T to see
+// only their bills (törvényjavaslatok). `docTypes` holds the codes this MP
+// actually has, so the dropdown only offers relevant options.
+const docTypes = ref([])
+const docFilter = ref('')   // '' = all types; else a main_type code
+
 // The bills/votes sections are only meaningful when their module is live (EXT-6);
 // a disabled module simply means no section, not an error.
 const showBills = computed(() => store.moduleEnabled('bills'))
@@ -42,30 +49,46 @@ const overTimeItems = computed(() => {
 // Vote-value chip colour by normalized code, matching the Votes module palette.
 const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote', absent: 'absent' }
 
+// Fetch (or re-fetch) the submitted irományok with the current type filter.
+async function loadBills() {
+  if (!showBills.value) { bills.value = null; return }
+  const params = { sponsor: props.id, limit: 100 }
+  if (docFilter.value) params.main_type = docFilter.value
+  bills.value = await api.bills(params).catch(() => null)
+}
+
 async function load() {
   loading.value = true; error.value = false
   profile.value = stats.value = speeches.value = bills.value = votes.value = null
+  docFilter.value = ''; docTypes.value = []
   try {
     // A feature-module failure must not break the profile, so each resolves to
     // null on error (and is skipped entirely when its module is disabled).
     const billsReq = showBills.value
       ? api.bills({ sponsor: props.id, limit: 100 }).catch(() => null)
       : Promise.resolve(null)
+    const facetsReq = showBills.value
+      ? api.billFacets({ sponsor: props.id }).catch(() => null)
+      : Promise.resolve(null)
     const votesReq = showVotes.value
       ? api.repVotes(props.id, { limit: 20 }).catch(() => null)
       : Promise.resolve(null)
-    const [p, s, sp, b, v] = await Promise.all([
+    const [p, s, sp, b, fac, v] = await Promise.all([
       api.representative(props.id),
       api.repStatistics(props.id),
       api.repSpeeches(props.id, { limit: 50 }),
       billsReq,
+      facetsReq,
       votesReq,
     ])
     profile.value = p; stats.value = s; speeches.value = sp; bills.value = b; votes.value = v
+    docTypes.value = fac ? [...new Set(fac.types.map((x) => x.main_type).filter(Boolean))] : []
   } catch { error.value = true } finally { loading.value = false }
 }
 onMounted(load)
 watch(() => props.id, load)
+// Re-fetch only the bills section when the user changes the type filter.
+watch(docFilter, loadBills)
 </script>
 
 <template>
@@ -151,8 +174,18 @@ watch(() => props.id, load)
 
         <!-- right: bills + speeches -->
         <div class="pcol">
-          <section class="card pad" v-if="showBills && bills && bills.total">
-            <h2>{{ $t('profile.bills') }} <span class="muted small">({{ bills.total }})</span></h2>
+          <section class="card pad" v-if="showBills && bills && (bills.total || docFilter)">
+            <div class="billhead">
+              <h2>{{ $t('profile.documents') }} <span class="muted small">({{ bills.total }})</span></h2>
+              <label v-if="docTypes.length > 1" class="docfilter">
+                <span class="visually-hidden">{{ $t('profile.documentType') }}</span>
+                <select v-model="docFilter">
+                  <option value="">{{ $t('profile.allDocuments') }}</option>
+                  <option v-for="c in docTypes" :key="c" :value="c">{{ $t('documents.mainType.' + c) }}</option>
+                </select>
+              </label>
+            </div>
+            <p v-if="!bills.total" class="small muted">{{ $t('documents.noResults') }}</p>
             <ul class="billmini">
               <li v-for="b in bills.bills" :key="b.id">
                 <router-link :to="{ name: 'bill', params: { id: b.id } }" class="billitem">
@@ -222,6 +255,9 @@ watch(() => props.id, load)
 .methodology summary { cursor: pointer; font-size: .85rem; color: var(--ink-soft); font-weight: 600; }
 .timeline, .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
 .timeline li { display: flex; gap: .6rem; align-items: center; }
+.billhead { display: flex; gap: .6rem; align-items: baseline; justify-content: space-between; flex-wrap: wrap; margin-bottom: .6rem; }
+.billhead h2 { margin: 0; }
+.docfilter select { font-size: .85rem; padding: .15rem .4rem; }
 .billmini { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
 .billitem { display: flex; flex-direction: column; gap: .3rem; padding: .5rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
 .billitem:hover { background: var(--accent-soft); text-decoration: none; }

@@ -52,6 +52,13 @@ function voteParts(v) {
   }
 }
 
+// A document is shown by both the bills page (törvényjavaslat) and the other
+// irományok page; the back link returns to whichever list it belongs to.
+const isBill = computed(() => bill.value?.main_type === 'T')
+const backLink = computed(() => (isBill.value
+  ? { to: { name: 'bills' }, label: 'bills.title' }
+  : { to: { name: 'documents' }, label: 'documents.title' }))
+
 async function load() {
   loading.value = true; error.value = false; bill.value = null; docRevealed.value = false
   Object.keys(motionOpen).forEach((k) => delete motionOpen[k])
@@ -65,7 +72,7 @@ watch(() => props.id, load)
 <template>
   <StateBlock :loading="loading" :error="error" @retry="load">
     <article v-if="bill" class="bill">
-      <router-link :to="{ name: 'bills' }" class="small back">‹ {{ $t('bills.title') }}</router-link>
+      <router-link :to="backLink.to" class="small back">‹ {{ $t(backLink.label) }}</router-link>
 
       <header class="card pad bhead">
         <div class="row" style="gap:.5rem; align-items:center; flex-wrap:wrap;">

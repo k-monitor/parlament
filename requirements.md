@@ -301,8 +301,12 @@ Primary use cases:
 ## 6A. Functional Requirements — Module: Bills (Irományok)
 
 The first additive feature module beyond proceedings and representatives, built
-to validate the module architecture (§7). It surfaces the bills (*irományok*)
-submitted to the Assembly, sourced from the Felicitas `iromany` API.
+to validate the module architecture (§7). It surfaces the *irományok* — the
+parliamentary documents submitted to the Assembly — sourced from the Felicitas
+`iromany` API. **Törvényjavaslatok** (bills, `fotipus = T`) are the flagship
+case with their own page and the rich detail sheet (BILL-7); **every other
+iromány type** (határozati javaslatok, interpellációk, kérdések, beszámolók, …)
+is surfaced on a separate browse page (BILL-9) over the same data layer.
 
 - **BILL-1 (MUST).** A **browsable, filterable list of bills**, paginated and
   filterable by **electoral period**, **status**, **type**, **sponsor**, and
@@ -351,11 +355,26 @@ submitted to the Assembly, sourced from the Felicitas `iromany` API.
   an early-stage bill with empty sections) degrades to empty sections, never an
   error (SCR-5). Detail fetching is a separately-skippable scraper step
   (`--no-detail`) for a fast list-only refresh.
-- **BILL-6 (scope).** v1 covers **törvényjavaslatok** (Felicitas `fotipus = T`)
-  for the current cycle, with the per-bill detail sheet of BILL-7. Remaining
-  future work: **other iromány types**. (The per-bill vote here is the aggregate
-  tally; the **per-MP roll-call** is now provided by the Votes module, §6B, and
-  each bill-detail vote links into it — VOTE-6.)
+- **BILL-6 (scope).** v1 covers **all iromány types** for the current cycle —
+  törvényjavaslatok (Felicitas `fotipus = T`) with the full per-bill detail
+  sheet of BILL-7, plus every other type (BILL-9). The scraper fetches the whole
+  cycle's irományok in one list query, tagging each with its `main_type` from the
+  iromány-number prefix (e.g. `T/253` → `T`); the per-document detail sheet
+  (BILL-7) is fetched for all types and degrades to empty sections where a type
+  has none (SCR-5). (The per-bill vote here is the aggregate tally; the **per-MP
+  roll-call** is provided by the Votes module, §6B, and each bill-detail vote
+  links into it — VOTE-6.)
+- **BILL-9 (MUST).** The non-bill irományok have their own **browsable,
+  filterable list page** ("Egyéb irományok"), separate from the
+  törvényjavaslatok page, paginated and filterable by **electoral period**,
+  **document type** (interpelláció, kérdés, határozati javaslat, …), **status**
+  and **title text**; filters combine and live in the **URL query**
+  (deep-linkable). It shares the Bills module's data layer and `/api/v1/bills`
+  routes (scoped by `main_type`: `= T` for bills, `!= T` for this page) and the
+  **same detail view** (BILL-2/BILL-7) — only the browse page is distinct, so no
+  data, table or detail logic is duplicated. Each MP submitter links to their
+  profile through the shared `person` entity (EXT-2), exactly as on bills
+  (BILL-3).
 - **BILL-8 (SHOULD).** Where a bill event references a plenary **speech** (as
   parlament.hu's adatlap does), the event links **into this site's own speech
   viewer** (VIE-5), not out to parlament.hu. The link is resolved through the
@@ -473,6 +492,12 @@ rework of existing features.
 > MP-linked submitters) was layered on the same way — `bill_motion` +
 > `bill_motion_sponsor` child tables, a `motions` array on the detail API, and a
 > motions section in the detail view — once more touching no other module.
+> Extending coverage to **all iromány types** (BILL-9) was lighter still — *no
+> new tables at all*: the scraper now fetches every `fotipus` into the existing
+> `bill` tables (tagging each row's `main_type` from its number prefix), the
+> `/api/v1/bills` list gained `main_type`/`main_type_not` filters, and a new
+> "Egyéb irományok" browse page reuses the existing bill detail view. The bills
+> page scopes itself to `main_type = T`, the new page to `!= T`.
 >
 > The **Votes module (§6B)** is the second worked example, added the same purely
 > additive way: a new scraper stage and `votes-<cycle>.json` output, `vote` +
@@ -561,10 +586,15 @@ rework of existing features.
 - User accounts, saved searches, alerts/notifications on topics or speakers.
 - **Bills** are implemented as the first additive module (§6A), including the
   full per-bill detail sheet (BILL-7: event history, aggregate votes, committee
-  timelines, deadlines, documents, motions). **Votes** are now implemented as the
+  timelines, deadlines, documents, motions). The module now covers **all iromány
+  types** — törvényjavaslatok on their own page and every other type on the
+  "Egyéb irományok" page (BILL-9) — so document-level coverage of irományok is
+  complete. **Votes** are now implemented as the
   second additive module (§6B): the roll-call list, per-MP breakdown, per-faction
-  breakdown, and bidirectional links to bills and representatives. **Committees,
-  interpellations** remain planned future **modules** (§7); the architecture
+  breakdown, and bidirectional links to bills and representatives. **Committees**
+  and a richer dedicated **interpellations** module (linking interpelláció →
+  answer → debate speech, beyond the document-level listing already provided by
+  §6A) remain planned future **modules** (§7); the architecture
   already accommodates them, with Bills and Votes as the worked examples.
   Within Votes, the **hemicycle seating chart** and **vote-based statistics**
   (cohesion, attendance, defection rates) remain future work (VOTE-8).

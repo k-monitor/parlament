@@ -326,14 +326,18 @@ class FelicitasClient:
 
     # ---- bills (irományok) ----------------------------------------------
 
-    def bills(self, cycle: int, *, main_type: str = "T") -> list[dict]:
-        """The bills (irományok) of ``cycle`` from ``iromany-query``, paged.
+    def bills(self, cycle: int, *, main_type: str = "") -> list[dict]:
+        """The irományok (parliamentary documents) of ``cycle`` from
+        ``iromany-query``, paged.
 
-        ``main_type`` is the Felicitas ``fotipus`` filter; ``"T"`` selects
-        törvényjavaslatok (law proposals), the basic-support default. Each
-        returned dict carries the bill's number, title, type, status, submission
-        date, the PDF text link, and its **submitters** — each with the
-        ``personID`` (kepviseloId) that joins to an MP profile (EXT-2).
+        ``main_type`` is the Felicitas ``fotipus`` filter (the iromány-number
+        prefix): ``"T"`` selects törvényjavaslatok (bills), ``"H"`` határozati
+        javaslatok, etc.; the **default empty string fetches every type**. Each
+        returned dict carries the document's number, title, type, status,
+        submission date, the PDF text link, and its **submitters** — each with
+        the ``personID`` (kepviseloId) that joins to an MP profile (EXT-2). Its
+        ``mainType`` is taken from the iromány-number prefix (e.g. ``T/253`` →
+        ``"T"``) so it is correct per row even when all types are fetched at once.
         """
         body = {
             "pMultiCiklus": [int(cycle)],
@@ -346,13 +350,15 @@ class FelicitasClient:
         for r in self.select_all(IROMANY_PROVIDER, "iromany-query", body):
             text = _first_subrow(r.get("iromanyszoveg"))
             link = (text or {}).get("iromanyszovegLink")
+            num = r.get("iromanyszam") or ""
+            prefix = num.split("/", 1)[0] if "/" in num else ""
             out.append({
                 "billId": r.get("iromanyId"),
                 "billNumber": r.get("iromanyszam"),
                 "billNumberSort": r.get("iromanyszamSorrendezeshez"),
                 "title": r.get("cim"),
                 "type": r.get("iromanytipus"),
-                "mainType": main_type,
+                "mainType": prefix or (main_type or None),
                 "status": r.get("iromanyAllapot"),
                 "stages": _parse_stages(r.get("diagram")) if r.get("kellDiagram") else [],
                 "submittedDate": r.get("benyujtasDatuma"),

@@ -182,7 +182,7 @@ def cmd_bills(args) -> None:
         "command": "bills",
         "cycle": args.cycle,
         "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "mainTypes": list(main_types),
+        "mainTypes": list(main_types) if main_types else "all",
         "count": registry["meta"]["count"],
     })
 
@@ -259,13 +259,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="cap number of MPs (for testing)")
     sp.set_defaults(func=cmd_representatives)
 
-    sp = sub.add_parser("bills", help="scrape the cycle's bills (irományok)")
+    sp = sub.add_parser("bills", help="scrape the cycle's irományok (all document types)")
     _common(sp)
     sp.add_argument("--main-types", default=None,
-                    help="comma-separated Felicitas fotipus codes "
-                         "(default: T = törvényjavaslat)")
+                    help="comma-separated Felicitas fotipus codes to restrict to "
+                         "(e.g. T,H); default: all iromány types")
     sp.add_argument("--no-detail", action="store_true",
-                    help="skip per-bill detail (events/votes/committees/…) "
+                    help="skip per-document detail (events/votes/committees/…) "
                          "for a fast list-only refresh")
     sp.set_defaults(func=cmd_bills)
 

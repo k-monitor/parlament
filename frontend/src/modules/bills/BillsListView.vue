@@ -54,16 +54,21 @@ function apply() {
 
 async function loadFacets() {
   try {
-    statuses.value = (await api.billFacets({ period: route.query.period })).statuses
+    statuses.value = (await api.billFacets({
+      period: route.query.period, main_type: 'T',
+    })).statuses
   } catch { statuses.value = [] }
 }
 
 async function load() {
   loading.value = true; error.value = false
   try {
+    // This page is the bills (törvényjavaslat) view; the other iromány types
+    // live on the separate "Egyéb irományok" page (main_type=T scopes here).
     data.value = await api.bills({
       q: route.query.q, status: route.query.status, period: route.query.period,
-      sponsor: route.query.sponsor, sort: route.query.sort || 'number', limit: 200,
+      sponsor: route.query.sponsor, sort: route.query.sort || 'number',
+      main_type: 'T', limit: 200,
     })
   } catch { error.value = true } finally { loading.value = false }
 }

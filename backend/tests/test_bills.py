@@ -8,8 +8,11 @@ from app import loader
 # --- loader ---------------------------------------------------------------
 
 def test_bills_and_sponsors_loaded(conn):
-    assert conn.execute("SELECT COUNT(*) FROM bill").fetchone()[0] == 2
-    assert conn.execute("SELECT COUNT(*) FROM bill_sponsor").fetchone()[0] == 2
+    # All iromány types share the bill table (BILL-9): 2 törvényjavaslat + 1 interpelláció.
+    assert conn.execute("SELECT COUNT(*) FROM bill").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM bill_sponsor").fetchone()[0] == 3
+    assert conn.execute(
+        "SELECT main_type FROM bill WHERE id='doc-uuid-3'").fetchone()[0] == "I"
 
 
 def test_sponsor_links_known_mp_only(conn):
@@ -49,8 +52,8 @@ def test_reingest_bills_is_idempotent(conn, db_path):
     c = loader.connect(db_path)
     loader.load_bills(c, _bills_registry())
     loader.load_bills(c, _bills_registry())
-    assert c.execute("SELECT COUNT(*) FROM bill").fetchone()[0] == 2
-    assert c.execute("SELECT COUNT(*) FROM bill_sponsor").fetchone()[0] == 2
+    assert c.execute("SELECT COUNT(*) FROM bill").fetchone()[0] == 3
+    assert c.execute("SELECT COUNT(*) FROM bill_sponsor").fetchone()[0] == 3
     c.close()
 
 
@@ -58,13 +61,39 @@ def test_reingest_bills_is_idempotent(conn, db_path):
 
 def test_list_bills(client):
     d = client.get("/api/v1/bills").json()
-    assert d["total"] == 2
+    assert d["total"] == 3
     # Default sort is by number, descending.
     assert d["bills"][0]["bill_number"] == "T/101"
 
 
+def test_list_bills_scoped_to_bills(client):
+    """The bills page passes main_type=T, so it sees only törvényjavaslatok."""
+    d = client.get("/api/v1/bills", params={"main_type": "T"}).json()
+    assert d["total"] == 2
+    assert {b["bill_number"] for b in d["bills"]} == {"T/100", "T/101"}
+
+
+def test_list_other_documents(client):
+    """The "Egyéb irományok" page passes main_type_not=T, so it excludes bills
+    and surfaces the other iromány types (BILL-9)."""
+    d = client.get("/api/v1/bills", params={"main_type_not": "T"}).json()
+    assert d["total"] == 1
+    assert d["bills"][0]["bill_number"] == "I/5"
+    assert d["bills"][0]["type"] == "interpelláció"
+
+
+def test_list_documents_filter_by_type(client):
+    d = client.get("/api/v1/bills", params={"type": "interpelláció"}).json()
+    assert d["total"] == 1 and d["bills"][0]["bill_number"] == "I/5"
+    # a type that exists only among bills is excluded by main_type_not=T
+    assert client.get("/api/v1/bills",
+                      params={"main_type_not": "T", "type": "törvényjavaslat"}).json()["total"] == 0
+
+
 def test_list_bills_filter_by_sponsor(client):
-    d = client.get("/api/v1/bills", params={"sponsor": "k001"}).json()
+    # The profile "bills submitted" link points at the bills page (main_type=T);
+    # k001 also sponsors a non-bill document, which that scoped view excludes.
+    d = client.get("/api/v1/bills", params={"sponsor": "k001", "main_type": "T"}).json()
     assert d["total"] == 1
     bill = d["bills"][0]
     assert bill["bill_number"] == "T/100"
@@ -83,6 +112,23 @@ def test_bill_facets(client):
     d = client.get("/api/v1/bills/facets").json()
     assert "tárgysorozatban" in d["statuses"]
     assert any(t["main_type"] == "T" for t in d["types"])
+
+
+def test_bill_facets_scoped_by_main_type(client):
+    """Facets honor the include/exclude used by each browse page: the bills page
+    (main_type=T) sees only bill types; the other-irományok page (main_type_not=T)
+    sees only the rest (BILL-9)."""
+    bills = client.get("/api/v1/bills/facets", params={"main_type": "T"}).json()
+    assert {t["type"] for t in bills["types"]} == {"törvényjavaslat"}
+    other = client.get("/api/v1/bills/facets", params={"main_type_not": "T"}).json()
+    assert {t["type"] for t in other["types"]} == {"interpelláció"}
+
+
+def test_bill_facets_scoped_by_sponsor(client):
+    """A profile lists only the document types an MP actually submitted: k001
+    sponsors a törvényjavaslat and an interpelláció, so both main_types appear."""
+    d = client.get("/api/v1/bills/facets", params={"sponsor": "k001"}).json()
+    assert {t["main_type"] for t in d["types"]} == {"T", "I"}
 
 
 def test_get_bill_detail(client):

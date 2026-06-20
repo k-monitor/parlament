@@ -13,7 +13,7 @@ export default {
     sourceNote: 'Data is sourced from parlament.hu; processing by Parlamonitor.',
     openData: 'Open data',
   },
-  nav: { home: 'Home', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', factions: 'Factions', bills: 'Bills', votes: 'Votes', about: 'About' },
+  nav: { home: 'Home', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', factions: 'Factions', bills: 'Bills', documents: 'Other documents', votes: 'Votes', about: 'About' },
   home: {
     searchPlaceholder: 'Search for a phrase in the proceedings…',
     searchButton: 'Search',
@@ -53,7 +53,9 @@ export default {
     sortSpeeches: 'By speeches', sortSpeakingTime: 'By speaking time', noResults: 'No matching representatives.', profile: 'Profile',
   },
   profile: {
-    speeches: 'Speeches', bills: 'Submitted bills', statistics: 'Statistics', biography: 'Details', constituency: 'Constituency',
+    speeches: 'Speeches', bills: 'Submitted bills', documents: 'Submitted documents',
+    documentType: 'Document type', allDocuments: 'All types',
+    statistics: 'Statistics', biography: 'Details', constituency: 'Constituency',
     education: 'Highest education', email: 'Email', website: 'Website', committees: 'Committee memberships',
     factionHistory: 'Faction history', wikidata: 'Wikidata', totalSpeeches: 'Number of speeches',
     totalSpeakingTime: 'Total speaking time', billsSubmitted: 'Bills submitted',
@@ -105,6 +107,19 @@ export default {
       lastModifier: 'Last amending bill no.', remark: 'Remark',
     },
     docKind: { justification: 'Justification', background: 'Background' },
+  },
+  documents: {
+    title: 'Other documents',
+    subtitle: 'Other documents (irományok) submitted to the National Assembly (resolution proposals, interpellations, questions, reports…) — bills have their own page.',
+    searchPlaceholder: 'Search in the title…',
+    type: 'Type', period: 'Cycle', status: 'Status',
+    sortNumber: 'By document number', sortDate: 'By submission', count: 'documents',
+    noResults: 'No matching documents.', submitters: 'Submitters',
+    mainType: {
+      T: 'Bills', H: 'Resolution proposals', I: 'Interpellations',
+      K: 'Questions', A: 'Immediate questions', B: 'Reports',
+      S: 'Personnel decisions', Y: 'Briefings',
+    },
   },
   votes: {
     title: 'Votes',

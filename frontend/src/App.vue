@@ -32,6 +32,7 @@ function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
         <router-link v-if="showReps" :to="{ name: 'representatives' }">{{ $t('nav.representatives') }}</router-link>
         <router-link v-if="showReps" :to="{ name: 'factions' }">{{ $t('nav.factions') }}</router-link>
         <router-link v-if="showBills" :to="{ name: 'bills' }">{{ $t('nav.bills') }}</router-link>
+        <router-link v-if="showBills" :to="{ name: 'documents' }">{{ $t('nav.documents') }}</router-link>
         <router-link v-if="showVotes" :to="{ name: 'votes' }">{{ $t('nav.votes') }}</router-link>
         <router-link :to="{ name: 'about' }">{{ $t('nav.about') }}</router-link>
         <button class="lang" @click="toggleLang" :aria-label="'Language: ' + locale">

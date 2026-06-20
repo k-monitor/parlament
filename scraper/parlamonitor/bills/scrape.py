@@ -1,15 +1,19 @@
-"""Scrape the cycle's bills from the Felicitas ``iromany`` API.
+"""Scrape the cycle's irományok (parliamentary documents) from the Felicitas
+``iromany`` API.
 
-A browsable list of a cycle's bills with their number, title, type, status,
-submission date, text PDF link and submitters, **plus per-bill detail**: the
-legislative event history, committee events, votes, deadlines, negotiating
-committees, justification/background documents and the non-self-standing motion
-summary. The submitters carry the ``personID`` that joins straight to an MP
-profile (EXT-2) — no name matching needed.
+A browsable list of a cycle's irományok — törvényjavaslatok (bills) **and every
+other type** (határozati javaslatok, interpellációk, kérdések, beszámolók, …) —
+with their number, title, type, status, submission date, text PDF link and
+submitters, **plus per-document detail**: the legislative event history,
+committee events, votes, deadlines, negotiating committees,
+justification/background documents and the non-self-standing motion summary.
+The submitters carry the ``personID`` that joins straight to an MP profile
+(EXT-2) — no name matching needed.
 
-One paged list query yields the bills; each bill then gets ~9 small detail
-sub-queries (``bill_detail``), all politely throttled (SCR-4). Detail fetching
-can be skipped (``with_detail=False``) for a fast list-only refresh.
+One paged list query yields every document (each tagged with its ``mainType``
+from the iromány-number prefix); each then gets ~9 small detail sub-queries
+(``bill_detail``), all politely throttled (SCR-4). Detail fetching can be
+skipped (``with_detail=False``) for a fast list-only refresh.
 """
 
 from __future__ import annotations
@@ -23,10 +27,12 @@ from ..felicitas import FelicitasClient
 
 logger = logging.getLogger(__name__)
 
-# Felicitas ``fotipus`` codes worth scraping for basic support. "T" =
-# törvényjavaslat (law proposals); "H" = határozati javaslat (resolution
-# proposals). Default to "T" — the bills people mean by "törvényjavaslat".
-DEFAULT_MAIN_TYPES = ("T",)
+# Felicitas ``fotipus`` codes (the iromány-number prefix): "T" =
+# törvényjavaslat (bills), "H" = határozati javaslat, "I" = interpelláció,
+# "K" = kérdés, "A" = azonnali kérdés, "B" = beszámoló/jelentés, etc. The
+# default (``None``) fetches **every** type in one query; pass a tuple to
+# restrict to specific prefixes.
+DEFAULT_MAIN_TYPES = None
 
 
 def _now_iso() -> str:
@@ -34,18 +40,24 @@ def _now_iso() -> str:
 
 
 def fetch_bills(felicitas: FelicitasClient, cycle: int, *,
-                main_types: tuple[str, ...] = DEFAULT_MAIN_TYPES,
+                main_types: tuple[str, ...] | None = DEFAULT_MAIN_TYPES,
                 with_detail: bool = True) -> dict:
-    """Build the bills registry for ``cycle`` across ``main_types``.
+    """Build the irományok registry for ``cycle``.
 
-    When ``with_detail`` is set (the default) each bill is enriched with its
-    full ``adatlap`` detail (events, votes, committees, deadlines, documents,
-    motion summary) under ``rec["detail"]``."""
+    With ``main_types`` ``None`` (the default) **all** iromány types are fetched
+    in one query; pass a tuple of ``fotipus`` prefixes to restrict it. When
+    ``with_detail`` is set (the default) each document is enriched with its full
+    ``adatlap`` detail (events, votes, committees, deadlines, documents, motion
+    summary) under ``rec["detail"]``."""
     records: list[dict] = []
-    for mt in main_types:
-        chunk = felicitas.bills(cycle, main_type=mt)
-        logger.info("Cycle %s bills (fotipus=%s): %d", cycle, mt, len(chunk))
-        records.extend(chunk)
+    if main_types:
+        for mt in main_types:
+            chunk = felicitas.bills(cycle, main_type=mt)
+            logger.info("Cycle %s irományok (fotipus=%s): %d", cycle, mt, len(chunk))
+            records.extend(chunk)
+    else:
+        records = felicitas.bills(cycle)  # every type in one query
+        logger.info("Cycle %s irományok (all types): %d", cycle, len(records))
     # Most-recent first, like the portal's default ordering.
     records.sort(key=lambda r: r.get("billNumberSort") or 0, reverse=True)
 
@@ -66,7 +78,7 @@ def fetch_bills(felicitas: FelicitasClient, cycle: int, *,
     return {
         "meta": {
             "cycle": cycle,
-            "mainTypes": list(main_types),
+            "mainTypes": list(main_types) if main_types else "all",
             "scrapedAt": _now_iso(),
             "source": "felicitas-iromany-api",
             "count": len(records),

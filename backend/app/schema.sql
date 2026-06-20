@@ -203,7 +203,11 @@ CREATE TABLE bill (
     mk_number         INTEGER,           -- Magyar Közlöny szám
     promulgation_date TEXT,              -- kihirdetesDatuma
     remark            TEXT,              -- megjegyzes
-    last_modifier     TEXT               -- utolsoModositoIromanySzam
+    last_modifier     TEXT,              -- utolsoModositoIromanySzam
+    -- Magyar Közlöny (gazette) links for a promulgated bill, resolved from
+    -- magyarkozlony.hu: the issue-listing page and the direct PDF-viewer URL.
+    kozlony_url       TEXT,              -- issue listing page (fallback)
+    kozlony_doc_url   TEXT               -- direct gazette PDF viewer (preferred)
 );
 CREATE INDEX idx_bill_period ON bill(period_number);
 CREATE INDEX idx_bill_number_sort ON bill(number_sort);

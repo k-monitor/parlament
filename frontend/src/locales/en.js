@@ -105,7 +105,9 @@ export default {
       currentEvent: 'Current event', promulgationNumber: 'Promulgation no.',
       mkNumber: 'Official Gazette no.', promulgationDate: 'Promulgation date',
       lastModifier: 'Last amending bill no.', remark: 'Remark',
+      kozlony: 'Official Gazette',
     },
+    kozlonyLink: 'View in the Magyar Közlöny',
     docKind: { justification: 'Justification', background: 'Background' },
   },
   documents: {

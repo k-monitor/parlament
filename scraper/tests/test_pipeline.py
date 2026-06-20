@@ -10,7 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from parlamonitor import agenda
+from parlamonitor import agenda, magyarkozlony
+from parlamonitor.http_client import HttpError
 from parlamonitor.names import build_person, split_name, split_speaker
 from parlamonitor.segment import html_to_text, split_sentences
 from parlamonitor.timing import apply_timing, smil_span_seconds
@@ -46,6 +47,54 @@ def test_build_person_links_id():
     assert p["personID"] == "a011"
     assert p["faction"]["label"] == "Fidesz"
     assert p["type"] == "memberOfParliament"
+
+
+# --- magyarkozlony (promulgated-bill gazette link) -------------------------
+
+# The schema.org meta tag on a real magyarkozlony.hu issue-listing page.
+_MK_HTML = (
+    '<div class="row" itemscope itemtype="http://schema.org/Newspaper">'
+    '<meta itemprop="url" '
+    'content="https://magyarkozlony.hu/dokumentumok/7f841dfae11a76776f555462bc09e8741289997a/megtekintes">'
+    '<a href="https://magyarkozlony.hu/dokumentumok/7f841dfae11a76776f555462bc09e8741289997a/megtekintes">'
+    '<b>Magyar Közlöny 2026. évi 44. szám</b></a></div>'
+)
+
+
+class _FakeHttp:
+    def __init__(self, text=None, fail=False):
+        self._text, self._fail, self.calls = text, fail, []
+
+    def get_text(self, url, **kw):
+        self.calls.append(url)
+        if self._fail:
+            raise HttpError("boom")
+        return self._text
+
+
+def test_kozlony_resolves_direct_link():
+    http = _FakeHttp(text=_MK_HTML)
+    out = magyarkozlony.resolve(http, 44, "2026-05-09")
+    assert out["url"] == "https://magyarkozlony.hu/?year=2026&month=&serial=44"
+    assert out["docUrl"] == (
+        "https://magyarkozlony.hu/dokumentumok/"
+        "7f841dfae11a76776f555462bc09e8741289997a/megtekintes")
+    assert http.calls == [out["url"]]
+
+
+def test_kozlony_degrades_when_fetch_fails():
+    """A failed fetch still yields the listing URL (SCR-5), docUrl is None."""
+    out = magyarkozlony.resolve(_FakeHttp(fail=True), 44, "2026-05-09")
+    assert out["url"].endswith("serial=44")
+    assert out["docUrl"] is None
+
+
+def test_kozlony_none_without_inputs():
+    """No issue number or no date → no gazette link at all (not promulgated)."""
+    http = _FakeHttp(text=_MK_HTML)
+    assert magyarkozlony.resolve(http, None, "2026-05-09") is None
+    assert magyarkozlony.resolve(http, 44, None) is None
+    assert http.calls == []  # never fetched
 
 
 # --- agenda ----------------------------------------------------------------

@@ -171,11 +171,16 @@ def _bills_registry():
              }},
             {"billId": "bill-uuid-2", "billNumber": "T/101", "billNumberSort": 101,
              "title": "A kormány javaslata", "type": "törvényjavaslat",
-             "mainType": "T", "status": "elfogadva",
+             "mainType": "T", "status": "kihirdetve",
              "submittedDate": "2026-05-12T09:00:00Z",
              "textUrl": None, "textCaption": None, "noText": True,
              "sponsors": [{"personID": None, "factionId": None, "committeeId": None,
-                           "label": "kormány (pénzügyminiszter)"}]},
+                           "label": "kormány (pénzügyminiszter)"}],
+             # A promulgated bill carries its Magyar Közlöny links (kihirdetve).
+             "detail": {
+                 "header": {"mkNumber": 44, "promulgationDate": "2026-05-09",
+                            "kozlonyUrl": "https://magyarkozlony.hu/?year=2026&month=&serial=44",
+                            "kozlonyDocUrl": "https://magyarkozlony.hu/dokumentumok/abc123/megtekintes"}}},
             {"billId": "doc-uuid-3", "billNumber": "I/5", "billNumberSort": 5,
              "title": "Interpelláció a közlekedésről", "type": "interpelláció",
              "mainType": "I", "status": "benyújtva",

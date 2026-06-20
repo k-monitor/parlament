@@ -271,8 +271,9 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
                    text_caption, source_url, no_text, stages_json,
                    subtype, character, negotiation_mode, status_type,
                    current_event, promulgation_number, mk_number,
-                   promulgation_date, remark, last_modifier)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   promulgation_date, remark, last_modifier,
+                   kozlony_url, kozlony_doc_url)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                    bill_number=excluded.bill_number, number_sort=excluded.number_sort,
                    period_number=excluded.period_number, title=excluded.title,
@@ -286,7 +287,9 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
                    status_type=excluded.status_type, current_event=excluded.current_event,
                    promulgation_number=excluded.promulgation_number,
                    mk_number=excluded.mk_number, promulgation_date=excluded.promulgation_date,
-                   remark=excluded.remark, last_modifier=excluded.last_modifier""",
+                   remark=excluded.remark, last_modifier=excluded.last_modifier,
+                   kozlony_url=excluded.kozlony_url,
+                   kozlony_doc_url=excluded.kozlony_doc_url""",
             (bid, rec.get("billNumber"), rec.get("billNumberSort"), period,
              rec.get("title"), rec.get("type"), rec.get("mainType"),
              rec.get("status"), rec.get("submittedDate"), text_url,
@@ -295,7 +298,7 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
              h.get("subtype"), h.get("character"), h.get("negotiationMode"),
              h.get("statusType"), h.get("currentEvent"), h.get("promulgationNumber"),
              h.get("mkNumber"), h.get("promulgationDate"), h.get("remark"),
-             h.get("lastModifier")))
+             h.get("lastModifier"), h.get("kozlonyUrl"), h.get("kozlonyDocUrl")))
 
         for i, sp in enumerate(rec.get("sponsors") or []):
             pid = _person(sp.get("personID"))

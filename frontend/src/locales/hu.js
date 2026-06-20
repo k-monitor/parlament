@@ -190,7 +190,9 @@ export default {
       currentEvent: 'Aktuális iromány esemény', promulgationNumber: 'Kihirdetés száma',
       mkNumber: 'Magyar Közlöny szám', promulgationDate: 'Kihirdetés dátuma',
       lastModifier: 'Utolsó módosító irományszáma', remark: 'Megjegyzés',
+      kozlony: 'Magyar Közlöny',
     },
+    kozlonyLink: 'Megtekintés a Magyar Közlönyben',
     docKind: { justification: 'Indokolás', background: 'Háttéranyag' },
   },
   documents: {

@@ -253,6 +253,7 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "promulgation_number": b["promulgation_number"], "mk_number": b["mk_number"],
         "promulgation_date": b["promulgation_date"], "remark": b["remark"],
         "last_modifier": b["last_modifier"],
+        "kozlony_url": b["kozlony_url"], "kozlony_doc_url": b["kozlony_doc_url"],
         # detail sections
         "events": events, "committee_events": committee_events, "votes": votes,
         "deadlines": deadlines, "committees": committees, "documents": documents,

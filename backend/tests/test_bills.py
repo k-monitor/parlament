@@ -105,7 +105,7 @@ def test_list_bills_filter_by_sponsor(client):
 
 def test_list_bills_search_and_status(client):
     assert client.get("/api/v1/bills", params={"q": "költségvetés"}).json()["total"] == 1
-    assert client.get("/api/v1/bills", params={"status": "elfogadva"}).json()["total"] == 1
+    assert client.get("/api/v1/bills", params={"status": "kihirdetve"}).json()["total"] == 1
 
 
 def test_bill_facets(client):
@@ -217,3 +217,12 @@ def test_bill_detail_absent_is_empty(client):
     assert d["events"] == [] and d["votes"] == [] and d["documents"] == []
     assert d["motions"] == []
     assert d["subtype"] is None
+
+
+def test_promulgated_bill_has_kozlony_links(client):
+    """A promulgated (kihirdetve) bill exposes its Magyar Közlöny links: the
+    direct gazette PDF (preferred) and the issue-listing page (fallback)."""
+    d = client.get("/api/v1/bills/bill-uuid-2").json()
+    assert d["mk_number"] == 44
+    assert d["kozlony_url"] == "https://magyarkozlony.hu/?year=2026&month=&serial=44"
+    assert d["kozlony_doc_url"] == "https://magyarkozlony.hu/dokumentumok/abc123/megtekintes"

@@ -41,6 +41,10 @@ const meta = computed(() => {
   return rows.filter(([, v]) => v != null && v !== '')
 })
 
+// A promulgated bill links to its Magyar Közlöny issue: prefer the direct
+// gazette PDF, fall back to the issue-listing page.
+const kozlonyHref = computed(() => bill.value?.kozlony_doc_url || bill.value?.kozlony_url || null)
+
 function voteParts(v) {
   const yes = v.yes || 0, no = v.no || 0, abstain = v.abstain || 0
   const total = yes + no + abstain || 1
@@ -84,10 +88,14 @@ watch(() => props.id, load)
         <p class="muted small" v-if="bill.submitted_date">
           {{ $t('bills.submittedDate') }}: {{ formatDate(bill.submitted_date) }}
         </p>
-        <dl v-if="meta.length" class="meta">
+        <dl v-if="meta.length || kozlonyHref" class="meta">
           <template v-for="[k, v] in meta" :key="k">
             <dt>{{ $t('bills.meta.' + k) }}</dt>
             <dd>{{ v }}</dd>
+          </template>
+          <template v-if="kozlonyHref">
+            <dt>{{ $t('bills.meta.kozlony') }}</dt>
+            <dd><a :href="kozlonyHref" target="_blank" rel="noopener">{{ $t('bills.kozlonyLink') }}</a></dd>
           </template>
         </dl>
       </header>

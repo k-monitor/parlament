@@ -348,7 +348,14 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   and a **downloadable PDF/text viewable from the bill page** (revealed on
   demand, like the bill's own text — BILL-2), alongside their per-type **summary
   counts** — and extra header fields (subtype,
-  character, negotiation mode, promulgation/Magyar Közlöny number & date). Event,
+  character, negotiation mode, promulgation/Magyar Közlöny number & date).
+  **When a bill is *kihirdetve* (promulgated)** and carries a Magyar Közlöny
+  issue number and promulgation date, the detail view links to the **official
+  gazette issue** on `magyarkozlony.hu`. The scraper resolves the link from the
+  issue-listing page (`?year=<year>&serial=<issue>`), preferring the **direct
+  gazette PDF-viewer URL** (`/dokumentumok/<hash>/megtekintes`) extracted from
+  that page and falling back to the listing page itself when the direct link
+  can't be extracted (SCR-5). Event,
   committee-event **and motion-submitter** references to an MP link to that
   representative's profile through the shared `person` entity (EXT-2);
   committee/government submitters keep their label but no link (BILL-3). A bill scraped without detail (or

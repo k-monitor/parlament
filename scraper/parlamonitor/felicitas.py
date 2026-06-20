@@ -37,6 +37,7 @@ from __future__ import annotations
 import logging
 import re
 
+from . import magyarkozlony
 from .http_client import HttpClient
 
 logger = logging.getLogger(__name__)
@@ -516,6 +517,14 @@ class FelicitasClient:
                 "remark": h.get("megjegyzes"),
                 "lastModifier": h.get("utolsoModositoIromanySzam"),
             }
+            # Once promulgated, the bill has a Magyar Közlöny issue number and
+            # date but no link to the gazette itself; resolve the gazette's own
+            # PDF link from magyarkozlony.hu (degrades to the listing URL).
+            kozlony = magyarkozlony.resolve(self.http, h.get("mkSzama"),
+                                            h.get("kihirdetesDatuma"))
+            if kozlony:
+                header["kozlonyUrl"] = kozlony["url"]
+                header["kozlonyDocUrl"] = kozlony["docUrl"]
 
         return {
             "header": header,

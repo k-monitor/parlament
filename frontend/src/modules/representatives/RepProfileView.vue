@@ -3,14 +3,23 @@
 // precomputed statistics (with explicit scope + methodology), an accessible
 // trend chart, and a reverse-chronological speech list linking into the viewer.
 import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
-import { store } from '../../store.js'
+import { store, loadMeta, currentCycleLabel } from '../../store.js'
 import { formatDate, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import BarChart from '../../components/BarChart.vue'
 
 const props = defineProps({ id: String })
+const { t } = useI18n()
+
+// Explicit scope label: the whole profile (stats, speeches, votes, documents)
+// covers only the globally selected cycle.
+const scopeText = computed(() => {
+  const c = currentCycleLabel()
+  return c ? t('cycle.scope', { cycle: c }) : t('cycle.scopeAll')
+})
 
 const profile = ref(null)
 const stats = ref(null)
@@ -60,7 +69,7 @@ const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote',
 // Fetch (or re-fetch) the submitted irományok with the current type filter.
 async function loadBills() {
   if (!showBills.value) { bills.value = null; return }
-  const params = { sponsor: props.id, limit: 100 }
+  const params = { sponsor: props.id, limit: 100, period: store.cycle }
   if (docFilter.value) params.main_type = docFilter.value
   bills.value = await api.bills(params).catch(() => null)
   expanded.bills = false
@@ -72,21 +81,24 @@ async function load() {
   docFilter.value = ''; docTypes.value = []
   expanded.bills = expanded.votes = expanded.speeches = false
   try {
+    // Everything on the profile is scoped to the global cycle (store.cycle; null
+    // = all cycles), so the page never mixes in a previous cycle's data (§4A).
+    const period = store.cycle
     // A feature-module failure must not break the profile, so each resolves to
     // null on error (and is skipped entirely when its module is disabled).
     const billsReq = showBills.value
-      ? api.bills({ sponsor: props.id, limit: 100 }).catch(() => null)
+      ? api.bills({ sponsor: props.id, limit: 100, period }).catch(() => null)
       : Promise.resolve(null)
     const facetsReq = showBills.value
-      ? api.billFacets({ sponsor: props.id }).catch(() => null)
+      ? api.billFacets({ sponsor: props.id, period }).catch(() => null)
       : Promise.resolve(null)
     const votesReq = showVotes.value
-      ? api.repVotes(props.id, { limit: 20 }).catch(() => null)
+      ? api.repVotes(props.id, { limit: 20, period }).catch(() => null)
       : Promise.resolve(null)
     const [p, s, sp, b, fac, v] = await Promise.all([
-      api.representative(props.id),
-      api.repStatistics(props.id),
-      api.repSpeeches(props.id, { limit: 50 }),
+      api.representative(props.id, period),
+      api.repStatistics(props.id, period),
+      api.repSpeeches(props.id, { limit: 50, period }),
       billsReq,
       facetsReq,
       votesReq,
@@ -95,10 +107,13 @@ async function load() {
     docTypes.value = fac ? [...new Set(fac.types.map((x) => x.main_type).filter(Boolean))] : []
   } catch { error.value = true } finally { loading.value = false }
 }
-onMounted(load)
+// Gate the first fetch on the manifest so store.cycle is resolved to the latest
+// cycle before we query (otherwise the profile would briefly be scoped to "all").
+onMounted(async () => { await loadMeta().catch(() => {}); load() })
 watch(() => props.id, load)
-// Re-fetch only the bills section when the user changes the type filter.
+// Re-fetch when the user switches the type filter or the global cycle.
 watch(docFilter, loadBills)
+watch(() => store.cycle, load)
 </script>
 
 <template>
@@ -127,6 +142,7 @@ watch(docFilter, loadBills)
         <div class="pcol">
           <section class="card pad">
             <h2>{{ $t('profile.statistics') }}</h2>
+            <p class="muted small scopenote">📅 {{ scopeText }}</p>
             <div class="bignums">
               <div><span class="num">{{ stats.totals.speech_count }}</span><span class="lbl">{{ $t('profile.totalSpeeches') }}</span></div>
               <div><span class="num">{{ formatSpeakingTime(stats.totals.speaking_seconds) }}</span><span class="lbl">{{ $t('profile.totalSpeakingTime') }}</span></div>
@@ -273,6 +289,7 @@ watch(docFilter, loadBills)
 .bignums .biglink { text-decoration: none; }
 .bignums .biglink:hover { text-decoration: underline; }
 .bills-note { margin-top: .8rem; }
+.scopenote { margin: -.2rem 0 .8rem; }
 .methodology { margin-top: 1rem; }
 .methodology summary { cursor: pointer; font-size: .85rem; color: var(--ink-soft); font-weight: 600; }
 .timeline, .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }

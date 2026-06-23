@@ -88,6 +88,44 @@ def test_representative_speeches_list(client):
     assert d["speeches"][0]["excerpt"]
 
 
+def test_representative_statistics_scoped_to_selected_cycle(client):
+    """§4A: stats are scoped to `period`. The test DB only has cycle 43, so the
+    cycle-43 totals match the all-cycles totals, while cycle 42 (no data) is
+    zeroed — proving previous-cycle data never leaks into another cycle."""
+    cyc43 = client.get("/api/v1/representatives/k001/statistics",
+                       params={"period": 43}).json()
+    assert cyc43["scope"]["period"] == 43
+    assert "43" in cyc43["scope"]["description"]
+    assert cyc43["totals"]["speech_count"] == 1
+    assert cyc43["totals"]["bills_submitted"] == 3      # own bills in cycle 43
+
+    cyc42 = client.get("/api/v1/representatives/k001/statistics",
+                       params={"period": 42}).json()
+    assert cyc42["totals"]["speech_count"] == 0
+    assert cyc42["totals"]["speaking_seconds"] == 0
+    assert cyc42["over_time"] == []
+    assert cyc42["scope"]["sessions_covered"] == 0
+    assert cyc42["totals"]["bills_submitted"] is None   # no cycle-42 bills
+
+
+def test_representative_speeches_scoped_to_selected_cycle(client):
+    """§4A: an MP's speech list only covers the selected cycle's sittings."""
+    assert client.get("/api/v1/representatives/k001/speeches",
+                      params={"period": 43}).json()["total"] == 1
+    assert client.get("/api/v1/representatives/k001/speeches",
+                      params={"period": 42}).json()["total"] == 0
+
+
+def test_representatives_list_scoped_to_selected_cycle(client):
+    """§4A: the list shows only MPs serving in the cycle, with that cycle's stats."""
+    cyc43 = client.get("/api/v1/representatives", params={"period": 43}).json()
+    assert cyc43["total"] == 2
+    kovacs = next(r for r in cyc43["representatives"] if r["person_id"] == "k001")
+    assert kovacs["speech_count"] == 1
+    # No MPs served in the (empty) cycle 42, so the list is empty there.
+    assert client.get("/api/v1/representatives", params={"period": 42}).json()["total"] == 0
+
+
 def test_representatives_list_filters_and_sorts(client):
     everyone = client.get("/api/v1/representatives").json()
     assert everyone["total"] == 2

@@ -37,6 +37,15 @@ function savedCycle() {
   }
 }
 
+// Human label for the currently selected cycle, or null when scope is "all
+// cycles" (the caller supplies its own "all" wording). Used to make the active
+// scope explicit on period-aware pages.
+export function currentCycleLabel() {
+  if (store.cycle === null) return null
+  const p = (store.meta && store.meta.periods || []).find((x) => x.number === store.cycle)
+  return p ? (p.label || String(p.number)) : String(store.cycle)
+}
+
 // Set the global cycle (number = a period, null = all) and persist it.
 export function setCycle(value) {
   store.cycle = value

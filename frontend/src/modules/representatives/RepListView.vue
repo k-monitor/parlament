@@ -1,10 +1,11 @@
 <script setup>
 // Browsable, filterable representative list (REP-1). Filter/sort state is in the
 // URL so a filtered list is shareable.
-import { ref, reactive, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
-import { store, loadMeta } from '../../store.js'
+import { store, loadMeta, currentCycleLabel } from '../../store.js'
 import { formatSpeakingTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -12,6 +13,14 @@ import SpeakerLink from '../../components/SpeakerLink.vue'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
+
+// Explicit scope label so it's clear the list (and its stats) cover only the
+// globally selected cycle, not all cycles.
+const scopeText = computed(() => {
+  const c = currentCycleLabel()
+  return c ? t('cycle.scope', { cycle: c }) : t('cycle.scopeAll')
+})
 
 const data = ref(null)
 const loading = ref(false)
@@ -55,8 +64,8 @@ watch(() => route.query, (q) => {
 })
 // Re-fetch when the global cycle changes.
 watch(() => store.cycle, load)
-let t = null
-function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
+let searchTimer = null
+function onSearchInput() { clearTimeout(searchTimer); searchTimer = setTimeout(apply, 300) }
 </script>
 
 <template>
@@ -90,7 +99,7 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
     @retry="load"
   >
     <div v-if="data">
-      <p class="muted small">{{ data.total }} {{ $t('home.stats.representatives') }}</p>
+      <p class="muted small">{{ data.total }} {{ $t('home.stats.representatives') }} · {{ scopeText }}</p>
       <ul class="replist grid">
         <li v-for="r in data.representatives" :key="r.person_id" class="card pad repcard">
           <SpeakerLink :speaker="{ person_id: r.person_id, label: r.label, photo_uri: r.photo_uri }" />

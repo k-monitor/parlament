@@ -35,6 +35,8 @@ export default {
   cycle: {
     label: 'Ciklus',
     all: 'Összes ciklus',
+    scope: '{cycle} adatai',
+    scopeAll: 'Összes ciklus adatai',
   },
   home: {
     searchPlaceholder: 'Keressen egy kifejezésre a felszólalásokban…',

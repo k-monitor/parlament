@@ -20,7 +20,8 @@ export default {
     },
   },
   nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', factions: 'Factions', bills: 'Bills', documents: 'Other documents', votes: 'Votes', about: 'About' },
-  cycle: { label: 'Cycle', all: 'All cycles' },
+  cycle: { label: 'Cycle', all: 'All cycles',
+           scope: '{cycle} data', scopeAll: 'All-cycles data' },
   home: {
     searchPlaceholder: 'Search for a phrase in the proceedings…',
     searchButton: 'Search',

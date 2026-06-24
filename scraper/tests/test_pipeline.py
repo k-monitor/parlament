@@ -271,3 +271,83 @@ def test_bills_main_type_from_number_prefix():
     out = fc.bills(43)  # main_type="" → all types
     assert [b["mainType"] for b in out] == ["T", "I", "H"]
     assert out[0]["type"] == "törvényjavaslat"
+
+
+# --- incremental detail cache ----------------------------------------------
+
+def test_fill_details_reuses_unchanged_and_fetches_new(tmp_path):
+    """A second run reuses cached detail for items whose fingerprint is
+    unchanged and only fetches new/changed ones (SCR-2)."""
+    import json as _json
+    from parlamonitor.detail_cache import fill_details, load_cache
+
+    fp = lambda r: r.get("status")
+    prior = {"data": [
+        {"voteId": "v1", "status": "done", "detail": {"records": ["cached"]}},
+        {"voteId": "v2", "status": "open", "detail": {"records": ["stale"]}},
+    ]}
+    path = tmp_path / "votes-43.json"
+    path.write_text(_json.dumps(prior))
+    cache = load_cache(path, "voteId", fp)
+
+    calls = []
+    def fetch(k):
+        calls.append(k)
+        return {"records": [f"fresh-{k}"]}
+
+    records = [
+        {"voteId": "v1", "status": "done"},   # unchanged → reuse
+        {"voteId": "v2", "status": "closed"},  # fingerprint changed → fetch
+        {"voteId": "v3", "status": "done"},    # new → fetch
+    ]
+    fetched, reused = fill_details(records, key="voteId", fingerprint=fp,
+                                   fetch=fetch, cache=cache, label="Vote")
+    assert (fetched, reused) == (2, 1)
+    assert calls == ["v2", "v3"]
+    assert records[0]["detail"] == {"records": ["cached"]}
+    assert records[1]["detail"] == {"records": ["fresh-v2"]}
+
+
+def test_fill_details_force_ignores_cache(tmp_path):
+    from parlamonitor.detail_cache import fill_details
+
+    cache = {"v1": ({"records": ["cached"]}, "done")}
+    records = [{"voteId": "v1", "status": "done"}]
+    calls = []
+    fill_details(records, key="voteId", fingerprint=lambda r: r.get("status"),
+                 fetch=lambda k: calls.append(k) or {"x": 1}, cache=cache,
+                 force=True, label="Vote")
+    assert calls == ["v1"]  # forced re-fetch despite a cache hit
+
+
+def test_fill_details_fetch_failure_degrades(tmp_path):
+    """A failing detail fetch degrades that item to None, never aborts (SCR-5)."""
+    from parlamonitor.detail_cache import fill_details
+
+    def boom(k):
+        raise RuntimeError("network down")
+
+    records = [{"voteId": "v1", "status": "open"}]
+    fetched, reused = fill_details(records, key="voteId",
+                                   fingerprint=lambda r: r.get("status"),
+                                   fetch=boom, cache={}, label="Vote")
+    assert (fetched, reused) == (1, 0)
+    assert records[0]["detail"] is None
+
+
+def test_load_cache_missing_file_is_empty(tmp_path):
+    from parlamonitor.detail_cache import load_cache
+    assert load_cache(tmp_path / "nope.json", "voteId", lambda r: None) == {}
+
+
+def test_load_cache_skips_records_without_detail(tmp_path):
+    import json as _json
+    from parlamonitor.detail_cache import load_cache
+    path = tmp_path / "bills-43.json"
+    path.write_text(_json.dumps({"data": [
+        {"billId": "b1", "detail": {"events": []}, "status": "x"},
+        {"billId": "b2", "detail": None, "status": "y"},  # not cached
+        {"billId": "b3", "status": "z"},                  # no detail key
+    ]}))
+    cache = load_cache(path, "billId", lambda r: r.get("status"))
+    assert set(cache) == {"b1"}

@@ -23,6 +23,7 @@ import logging
 from datetime import datetime, timezone
 
 from ..config import Paths
+from ..detail_cache import fill_details, load_cache
 from ..felicitas import FelicitasClient
 
 logger = logging.getLogger(__name__)
@@ -39,16 +40,37 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _bill_fingerprint(rec: dict) -> tuple:
+    """Cache key for a bill's detail, taken from its cheap list row.
+
+    A bill's detail only changes as the document advances, which is reflected in
+    its status and the legislative-stage diagram; so once those are frozen
+    (finished or dormant bill) the cached detail is reused, while any progression
+    busts the cache and re-fetches the adatlap."""
+    return (
+        rec.get("status"),
+        tuple((s.get("key"), s.get("done")) for s in (rec.get("stages") or [])),
+        rec.get("submittedDate"),
+        len(rec.get("sponsors") or []),
+    )
+
+
 def fetch_bills(felicitas: FelicitasClient, cycle: int, *,
                 main_types: tuple[str, ...] | None = DEFAULT_MAIN_TYPES,
-                with_detail: bool = True) -> dict:
+                with_detail: bool = True, cache_path=None,
+                force: bool = False) -> dict:
     """Build the irományok registry for ``cycle``.
 
     With ``main_types`` ``None`` (the default) **all** iromány types are fetched
     in one query; pass a tuple of ``fotipus`` prefixes to restrict it. When
     ``with_detail`` is set (the default) each document is enriched with its full
     ``adatlap`` detail (events, votes, committees, deadlines, documents, motion
-    summary) under ``rec["detail"]``."""
+    summary) under ``rec["detail"]``.
+
+    ``cache_path`` (the previously-written ``bills-<cycle>.json``) enables
+    **incremental** detail fetching: a bill whose status/stage diagram is
+    unchanged reuses its cached detail, so a frequent re-run only fetches new or
+    advanced bills (SCR-2). ``force`` re-fetches every detail regardless."""
     records: list[dict] = []
     if main_types:
         for mt in main_types:
@@ -61,19 +83,12 @@ def fetch_bills(felicitas: FelicitasClient, cycle: int, *,
     # Most-recent first, like the portal's default ordering.
     records.sort(key=lambda r: r.get("billNumberSort") or 0, reverse=True)
 
+    fetched = reused = 0
     if with_detail:
-        for i, rec in enumerate(records, 1):
-            bid = rec.get("billId")
-            if not bid:
-                continue
-            try:
-                rec["detail"] = felicitas.bill_detail(bid)
-            except Exception:  # one bad bill must not abort the whole cycle (SCR-5)
-                logger.exception("Detail fetch failed for bill %s (%s)",
-                                 rec.get("billNumber"), bid)
-                rec["detail"] = None
-            logger.info("Bill detail %d/%d (%s)", i, len(records),
-                        rec.get("billNumber"))
+        cache = load_cache(cache_path, "billId", _bill_fingerprint) if cache_path else {}
+        fetched, reused = fill_details(
+            records, key="billId", fingerprint=_bill_fingerprint,
+            fetch=felicitas.bill_detail, cache=cache, force=force, label="Bill")
 
     return {
         "meta": {
@@ -83,6 +98,8 @@ def fetch_bills(felicitas: FelicitasClient, cycle: int, *,
             "source": "felicitas-iromany-api",
             "count": len(records),
             "withDetail": with_detail,
+            "detailFetched": fetched,
+            "detailReused": reused,
         },
         "data": records,
     }

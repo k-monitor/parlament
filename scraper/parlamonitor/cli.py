@@ -173,7 +173,9 @@ def cmd_bills(args) -> None:
     try:
         with acquire(paths.lockfile, force=args.force_lock):
             registry = fetch_bills(felicitas, args.cycle, main_types=main_types,
-                                   with_detail=not args.no_detail)
+                                   with_detail=not args.no_detail,
+                                   cache_path=paths.bills_file(args.cycle),
+                                   force=args.force)
             save_bills(paths, args.cycle, registry)
     finally:
         felicitas.close()
@@ -184,6 +186,8 @@ def cmd_bills(args) -> None:
         "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "mainTypes": list(main_types) if main_types else "all",
         "count": registry["meta"]["count"],
+        "detailFetched": registry["meta"].get("detailFetched"),
+        "detailReused": registry["meta"].get("detailReused"),
     })
 
 
@@ -196,7 +200,9 @@ def cmd_votes(args) -> None:
         with acquire(paths.lockfile, force=args.force_lock):
             start, end = _resolve_range(felicitas, args.cycle, args)
             registry = fetch_votes(felicitas, args.cycle, start, end,
-                                   with_detail=not args.no_detail)
+                                   with_detail=not args.no_detail,
+                                   cache_path=paths.votes_file(args.cycle),
+                                   force=args.force)
             save_votes(paths, args.cycle, registry)
     finally:
         felicitas.close()
@@ -206,6 +212,8 @@ def cmd_votes(args) -> None:
         "cycle": args.cycle,
         "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "count": registry["meta"]["count"],
+        "detailFetched": registry["meta"].get("detailFetched"),
+        "detailReused": registry["meta"].get("detailReused"),
     })
 
 
@@ -267,6 +275,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-detail", action="store_true",
                     help="skip per-document detail (events/votes/committees/…) "
                          "for a fast list-only refresh")
+    sp.add_argument("--force", action="store_true",
+                    help="re-fetch every bill's detail, ignoring the cache "
+                         "(default: reuse cached detail for unchanged bills)")
     sp.set_defaults(func=cmd_bills)
 
     sp = sub.add_parser("votes", help="scrape the cycle's roll-call votes (szavazások)")
@@ -278,6 +289,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-detail", action="store_true",
                     help="skip per-vote detail (per-MP roll call + faction "
                          "breakdown) for a fast list-only refresh")
+    sp.add_argument("--force", action="store_true",
+                    help="re-fetch every vote's detail, ignoring the cache "
+                         "(default: only new votes are fetched)")
     sp.set_defaults(func=cmd_votes)
     return p
 

@@ -19,6 +19,7 @@ import logging
 from datetime import datetime, timezone
 
 from ..config import Paths
+from ..detail_cache import fill_details, load_cache
 from ..felicitas import FelicitasClient
 
 logger = logging.getLogger(__name__)
@@ -28,30 +29,39 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _vote_fingerprint(rec: dict) -> tuple:
+    """Cache key for a vote's detail. A roll-call vote is immutable once
+    recorded — its result, tallies and per-MP records never change — so the
+    fingerprint is frozen and each vote's detail is fetched exactly once."""
+    return (rec.get("result"), rec.get("yes"), rec.get("no"),
+            rec.get("abstain"), bool(rec.get("hasPerMp")))
+
+
 def fetch_votes(felicitas: FelicitasClient, cycle: int, date_from: str,
-                date_to: str, *, with_detail: bool = True) -> dict:
+                date_to: str, *, with_detail: bool = True, cache_path=None,
+                force: bool = False) -> dict:
     """Build the votes registry for ``cycle`` over ``[date_from, date_to]``.
 
     When ``with_detail`` is set (the default) each vote is enriched with its
     per-MP roll call and per-faction breakdown under ``rec["detail"]``. A vote
     with no per-MP roll call (``hasPerMp`` false — e.g. an open/voice vote) still
-    gets its header but an empty record list (SCR-5)."""
+    gets its header but an empty record list (SCR-5).
+
+    ``cache_path`` (the previously-written ``votes-<cycle>.json``) enables
+    **incremental** detail fetching: because a recorded vote never changes, only
+    votes new since the last run get their detail fetched (SCR-2). ``force``
+    re-fetches every detail regardless."""
     records = felicitas.votes(cycle, date_from, date_to)
     logger.info("Cycle %s votes: %d", cycle, len(records))
     # Most-recent first, like the portal's default ordering.
     records.sort(key=lambda r: r.get("datetime") or "", reverse=True)
 
+    fetched = reused = 0
     if with_detail:
-        for i, rec in enumerate(records, 1):
-            vid = rec.get("voteId")
-            if not vid:
-                continue
-            try:
-                rec["detail"] = felicitas.vote_detail(vid)
-            except Exception:  # one bad vote must not abort the whole cycle (SCR-5)
-                logger.exception("Detail fetch failed for vote %s", vid)
-                rec["detail"] = None
-            logger.info("Vote detail %d/%d", i, len(records))
+        cache = load_cache(cache_path, "voteId", _vote_fingerprint) if cache_path else {}
+        fetched, reused = fill_details(
+            records, key="voteId", fingerprint=_vote_fingerprint,
+            fetch=felicitas.vote_detail, cache=cache, force=force, label="Vote")
 
     return {
         "meta": {
@@ -62,6 +72,8 @@ def fetch_votes(felicitas: FelicitasClient, cycle: int, date_from: str,
             "source": "felicitas-szavazas-api",
             "count": len(records),
             "withDetail": with_detail,
+            "detailFetched": fetched,
+            "detailReused": reused,
         },
         "data": records,
     }

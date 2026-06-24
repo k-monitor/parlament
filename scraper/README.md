@@ -126,6 +126,24 @@ or `--force` is given. A sitting with no resolvable recording or no transcript
 is still written in degraded form and flagged (`confidence`, `confidence_reason`,
 `align-method`), never silently dropped (SCR-5).
 
+### Incremental detail caching (cheap frequent re-runs — SCR-2)
+
+The expensive part of the `bills` and `votes` stages is the **per-item detail**
+(≈9 sub-queries per bill, 3 per vote). To let the scraper run often without
+re-fetching everything, both stages **reuse the detail already saved** in the
+previous `bills-<cycle>.json` / `votes-<cycle>.json` for items whose cheap list
+row is unchanged (`parlamonitor/detail_cache.py`):
+
+- a **vote** is immutable once recorded, so its detail is fetched **exactly
+  once** — a re-run only fetches votes new since last time;
+- a **bill** is keyed on its status + legislative-stage diagram, so a finished
+  or dormant bill is skipped while any progression re-fetches its `adatlap`.
+
+So a nightly re-run spends network only on new/changed items. Pass `--force`
+(bills/votes) to ignore the cache and re-fetch every detail — e.g. for a full
+re-import after a schema change (SCR-2). `--no-detail` still skips detail
+entirely for a fast list-only refresh.
+
 Schedule it from cron/systemd (OPS-2); each run appends an ingestion log under
 `data/logs/` (SCR-3).
 
@@ -142,11 +160,16 @@ parlamonitor/
   agenda.py            HU agenda-type classification (+ bill-code extraction)
   segment.py           HTML cleanup + Hungarian sentence segmentation
   timing.py            v1 positional/character timing stage
+  detail_cache.py      incremental per-item detail caching (bills/votes)
   proceedings/
     scrape.py          download stage → raw-<session>-day.json
     transform.py       parse + classify + time → <session>-session.json
   representatives/
     scrape.py          roster + per-MP detail → representatives-<cycle>.json
+  bills/
+    scrape.py          irományok list + per-bill detail → bills-<cycle>.json
+  votes/
+    scrape.py          szavazások list + per-vote detail → votes-<cycle>.json
   cli.py               workflow orchestration (stages, lockfile, ingest log)
 tests/
   test_pipeline.py     offline tests: transform, timing, names, agenda, segment

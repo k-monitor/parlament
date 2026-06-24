@@ -77,3 +77,26 @@ def test_faction_colors_assigned(conn):
     rows = dict(conn.execute("SELECT label, color FROM faction"))
     assert rows["Fidesz"] == "#FF6A13"
     assert rows["TISZA"] == "#00A6A6"
+
+
+def test_membership_kept_per_cycle_for_returning_mp(db_path):
+    """Loading a later cycle's registry must NOT wipe an MP's earlier-cycle
+    membership: a returning MP needs a row per cycle so the per-cycle list and
+    faction scope (§4A) include them in every cycle they served."""
+    c = loader.connect(db_path)
+    reg42 = {"meta": {"cycle": 42, "cycleStart": "2022-05-02"},
+             "data": [{"personID": "k001", "label": "Kovács Béla",
+                       "faction": {"label": "Fidesz", "id": 7, "position": "tag"}}]}
+    reg43 = {"meta": {"cycle": 43, "cycleStart": "2026-05-09"},
+             "data": [{"personID": "k001", "label": "Kovács Béla",
+                       "faction": {"label": "Fidesz", "id": 7, "position": "tag"}}]}
+    loader.load_representatives(c, reg42)
+    loader.load_representatives(c, reg43)   # must not delete the cycle-42 row
+    periods = {r[0] for r in c.execute(
+        "SELECT period_number FROM membership WHERE person_id='k001'")}
+    assert periods == {42, 43}
+    # Re-loading a cycle replaces only that cycle's row (idempotent, no dupes).
+    loader.load_representatives(c, reg43)
+    assert c.execute("SELECT COUNT(*) FROM membership WHERE person_id='k001'"
+                     ).fetchone()[0] == 2
+    c.close()

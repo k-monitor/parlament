@@ -197,14 +197,22 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
             },
         )
 
-        # Rebuild this MP's membership rows. The registry's factionHistory `cycle`
-        # is a date-range *string* ("2026-"), not a period number, so it can't
-        # drive integer period filters. We therefore store ONE canonical
-        # membership row keyed on the registry's electoral period (current
-        # faction); the richer, display-only history lives in faction_history_json
-        # (surfaced by the profile endpoint). We still register every historical
-        # faction in the faction table so its colour is known (REP-4).
-        conn.execute("DELETE FROM membership WHERE person_id = ?", (pid,))
+        # Rebuild this MP's membership row FOR THIS REGISTRY'S CYCLE only. The
+        # registry's factionHistory `cycle` is a date-range *string* ("2026-"),
+        # not a period number, so it can't drive integer period filters. We
+        # therefore store ONE canonical membership row per cycle, keyed on the
+        # registry's electoral period (the MP's faction in that cycle); the
+        # richer, display-only history lives in faction_history_json (surfaced by
+        # the profile endpoint). We still register every historical faction in
+        # the faction table so its colour is known (REP-4).
+        #
+        # The delete MUST be period-scoped: an MP serving in several cycles has a
+        # membership row per cycle (loaded from each cycle's registry), and a
+        # blanket delete-by-person would wipe the other cycles' rows when this
+        # registry is loaded — leaving the per-cycle list/faction scope (§4A)
+        # showing only MPs unique to the last-loaded cycle.
+        conn.execute("DELETE FROM membership WHERE person_id = ? AND period_number IS ?",
+                     (pid, period))
         for h in rec.get("factionHistory") or []:
             _get_or_create_faction(conn, h.get("label"))
         if fac.get("label"):

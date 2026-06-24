@@ -113,11 +113,12 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
           <router-link :to="{ name: 'vote', params: { id: v.id } }" class="vsubject">{{ v.subject }}</router-link>
           <div v-if="v.subjects.length" class="vbills small">
             <span class="muted">{{ $t('votes.decidedBills') }}:</span>
-            <template v-for="(s, i) in v.subjects" :key="i">
-              <router-link v-if="s.bill_id" :to="{ name: 'bill', params: { id: s.bill_id } }">{{ s.bill_number }}</router-link>
-              <span v-else>{{ s.bill_number }}</span>
-              <span v-if="i < v.subjects.length - 1" aria-hidden="true">·</span>
-            </template>
+            <span v-for="(s, i) in v.subjects" :key="i" class="vbill">
+              <router-link v-if="s.bill_id" :to="{ name: 'bill', params: { id: s.bill_id } }">
+                <strong>{{ s.bill_number }}</strong><template v-if="s.title"> — {{ s.title }}</template>
+              </router-link>
+              <span v-else><strong>{{ s.bill_number }}</strong><template v-if="s.title"> — {{ s.title }}</template></span>
+            </span>
           </div>
           <div class="vbar" role="img"
                :aria-label="`${$t('votes.yes')} ${v.yes ?? 0}, ${$t('votes.no')} ${v.no ?? 0}, ${$t('votes.abstain')} ${v.abstain ?? 0}`">
@@ -147,7 +148,8 @@ function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
 .vsubject:hover { color: var(--accent); }
 .badge.ok { background: #eef6ee; color: #2e7d32; }
 .badge.rollcall { background: var(--accent-soft); color: var(--accent); }
-.vbills { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
+.vbills { display: flex; flex-direction: column; gap: .2rem; }
+.vbills .vbill strong { font-variant-numeric: tabular-nums; }
 .vbar { display: flex; height: .7rem; border-radius: 999px; overflow: hidden; background: var(--line); box-shadow: inset 0 0 0 1px rgba(0,0,0,.04); }
 .vbar .seg.yes { background: #2e7d32; }
 .vbar .seg.no { background: #c62828; }

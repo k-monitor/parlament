@@ -50,6 +50,7 @@ export default {
     estimatedTimingTip: 'Video timing is a positional estimate (by character position), so it is approximate.',
     viewOnParlament: 'View original on parlament.hu', license: 'License', agenda: 'Agenda item', speaker: 'Speaker',
     copyLink: 'Copy link', linkCopied: 'Link copied to clipboard', sittingDay: 'sitting', backToSession: 'Back to sitting',
+    speechType: 'Speech type',
   },
   sessions: {
     title: 'Sittings', date: 'Date', sitting: 'Sitting', speeches: 'speeches', agendaItems: 'agenda items',

@@ -117,6 +117,12 @@ CREATE TABLE speech (
     person_id      TEXT REFERENCES person(person_id),
     speaker_label  TEXT,
     speaker_status TEXT,
+    -- upstream per-speech type (felszólalás típusa, e.g. "ülésvezetés"); drives
+    -- the `procedural` flag below.
+    felszolalas_tipus TEXT,
+    -- 1 = chairing / session-management speech, kept and shown in the viewer but
+    -- excluded from all representative/faction statistics (STAT-1).
+    procedural     INTEGER DEFAULT 0,
     faction_id     INTEGER REFERENCES faction(id),
     -- timing (day-absolute seconds into the whole-day stream — TIM-2):
     time_start     REAL,

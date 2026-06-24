@@ -15,6 +15,13 @@ from pathlib import Path
 # which reads /api/v1/meta, hides its nav entry (EXT-6).
 ALL_MODULES = ("proceedings", "representatives", "bills", "votes")
 
+# Per-speech types (felszólalás típusa) whose speeches are procedural/chairing
+# and therefore excluded from representative/faction statistics (STAT-1). Kept
+# configurable (OPS-4) so related chairing/ügyrendi types can be added without a
+# code change. Primarily "ülésvezetés" — the chair's interjections that would
+# otherwise inflate the presiding officer's totals.
+DEFAULT_PROCEDURAL_SPEECH_TYPES = ("ülésvezetés",)
+
 
 @dataclass
 class Settings:
@@ -32,9 +39,25 @@ class Settings:
         os.environ.get("PARLAMONITOR_FRONTEND_DIST") or None)
     # Cap on reported search totals so a pathological query can't scan forever.
     max_search_total: int = int(os.environ.get("PARLAMONITOR_MAX_SEARCH_TOTAL", "5000"))
+    # Folded set of speech types excluded from statistics (STAT-1).
+    procedural_speech_types: frozenset = field(default_factory=lambda: _procedural_speech_types())
 
     def module_enabled(self, name: str) -> bool:
         return name in self.enabled_modules
+
+    def is_procedural_type(self, speech_type: str | None) -> bool:
+        """Whether a per-speech type is a statistics-excluded chairing type
+        (STAT-1). Case/whitespace-insensitive."""
+        return bool(speech_type) and speech_type.strip().casefold() in self.procedural_speech_types
+
+
+def _procedural_speech_types() -> frozenset:
+    raw = os.environ.get("PARLAMONITOR_PROCEDURAL_SPEECH_TYPES")
+    if raw is None:
+        types = DEFAULT_PROCEDURAL_SPEECH_TYPES
+    else:
+        types = [t.strip() for t in raw.split(",") if t.strip()]
+    return frozenset(t.casefold() for t in types)
 
 
 def _enabled_modules() -> list[str]:

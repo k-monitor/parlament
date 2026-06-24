@@ -38,9 +38,10 @@ watch(() => props.id, load)
         </h2>
         <ul class="speeches">
           <li v-for="sp in a.speeches" :key="sp.uid">
-            <router-link :to="{ name: 'viewer', params: { uid: sp.uid } }" class="speech-row">
+            <router-link :to="{ name: 'viewer', params: { uid: sp.uid } }" class="speech-row" :class="{ procedural: sp.procedural }">
               <SpeakerLink :speaker="sp.speaker" />
               <FactionBadge :faction="sp.faction" />
+              <span class="badge subtle" v-if="sp.speech_type">{{ sp.speech_type }}</span>
               <span class="grow"></span>
               <span class="muted small" v-if="!sp.has_text">📼 {{ $t('viewer.videoOnly') }}</span>
               <TimingBadge :timing="sp.timing" />
@@ -60,6 +61,8 @@ watch(() => props.id, load)
 .speeches { list-style: none; margin: 0; padding: .3rem; }
 .speech-row { display: flex; align-items: center; gap: .8rem; padding: .5rem .7rem; border-radius: 8px; color: var(--ink); }
 .speech-row:hover { background: var(--accent-soft); text-decoration: none; }
+.speech-row.procedural { opacity: .72; }
+.badge.subtle { background: var(--line); color: var(--muted); font-weight: 400; }
 .grow { flex: 1; }
 .play-affordance { color: var(--accent); }
 </style>

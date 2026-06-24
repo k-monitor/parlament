@@ -314,6 +314,7 @@ onBeforeUnmount(() => {
           <FactionBadge :faction="speech.faction" />
           <span class="muted" v-if="session">{{ formatDate(session.date) }} · {{ session.sitting }}. {{ $t('viewer.sittingDay') }}</span>
           <span class="badge" v-if="speech.agenda && speech.agenda.type">{{ speech.agenda.title || agendaLabel(speech.agenda.type) }}</span>
+          <span class="badge subtle" v-if="speech.speech_type">{{ $t('viewer.speechType') }}: {{ speech.speech_type }}</span>
           <TimingBadge :timing="speech.timing" />
         </div>
       </div>
@@ -396,6 +397,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .vhead { margin-bottom: 1rem; }
 .vhead h1 { margin: .4rem 0; font-size: 1.3rem; }
+.badge.subtle { background: var(--line); color: var(--muted); font-weight: 400; }
 .vgrid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
 .vcol-video { position: sticky; top: 70px; }
 .player { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; aspect-ratio: 16 / 9; }

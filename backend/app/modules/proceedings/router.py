@@ -271,7 +271,8 @@ def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
     ).fetchall()
     speeches = db.execute(
         """SELECT sp.uid, sp.origin_id, sp.agenda_item_id, sp.speech_index,
-                  sp.speaker_label, sp.person_id, sp.speaker_status, sp.time_start,
+                  sp.speaker_label, sp.person_id, sp.speaker_status,
+                  sp.felszolalas_tipus, sp.procedural, sp.time_start,
                   sp.time_end, sp.duration, sp.has_text, sp.confidence,
                   sp.align_method, p.label AS person_label, p.photo_uri,
                   f.label AS faction_label, f.color AS faction_color
@@ -375,6 +376,8 @@ def _speech_brief(sp) -> dict:
                     "photo_uri": sp["photo_uri"], "status": sp["speaker_status"]},
         "faction": {"label": sp["faction_label"], "color": sp["faction_color"]}
                    if sp["faction_label"] else None,
+        "speech_type": sp["felszolalas_tipus"],
+        "procedural": bool(sp["procedural"]),
         "time_start": sp["time_start"], "time_end": sp["time_end"],
         "duration": sp["duration"], "has_text": bool(sp["has_text"]),
         "timing": {"confidence": sp["confidence"], "align_method": sp["align_method"],
@@ -394,6 +397,8 @@ def _speech_full(sp) -> dict:
                     "photo_uri": sp["photo_uri"], "status": sp["speaker_status"]},
         "faction": {"label": sp["faction_label"], "color": sp["faction_color"]}
                    if sp["faction_label"] else None,
+        "speech_type": sp["felszolalas_tipus"],
+        "procedural": bool(sp["procedural"]),
         "time_start": sp["time_start"], "time_end": sp["time_end"],
         "video_start": sp["video_start"], "video_end": sp["video_end"],
         "duration": sp["duration"], "has_text": bool(sp["has_text"]),

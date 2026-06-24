@@ -73,6 +73,53 @@ def test_reingest_is_idempotent(conn, db_path, tmp_path):
     c.close()
 
 
+def test_procedural_speech_excluded_from_stats_but_stored(db_path):
+    """STAT-1: an ülésvezetés speech is kept and flagged `procedural`, but does
+    not count toward the speaker's statistics — only toward the transcript."""
+    c = loader.connect(db_path)
+    rec = {
+        "meta": {"session": "43009", "electoralPeriod": 43, "sitting": 9,
+                 "date": "2026-05-20", "dayVideoURI": "https://example/p.m3u8",
+                 "timingMethod": "estimated-day-offset"},
+        "data": [
+            {"originID": "43-9-1", "speechIndex": 1,
+             "agendaItem": {"title": "Vita", "type": "regular"},
+             "people": [{"label": "Kovács Béla", "context": "main-speaker",
+                         "personID": "k001", "faction": {"label": "Fidesz", "id": 7}}],
+             "media": {"videoFileURI": "https://example/p.m3u8", "duration": 7200},
+             "textContents": [{"textBody": [{"sentences": [
+                 {"text": "Egy érdemi mondat.", "timeStart": 0.0, "timeEnd": 30.0}]}]}],
+             "debug": {"confidence": 0.7, "align-method": "estimated-day-offset",
+                       "felszolalasTipusa": "napirend előtti felszólalás"}},
+            {"originID": "43-9-2", "speechIndex": 2,
+             "agendaItem": {"title": "Vita", "type": "regular"},
+             "people": [{"label": "Kovács Béla", "context": "chair",
+                         "personID": "k001", "faction": {"label": "Fidesz", "id": 7}}],
+             "media": {"videoFileURI": "https://example/p.m3u8", "duration": 7200,
+                       "videoStart": 100.0, "videoEnd": 130.0},
+             "textContents": [{"textBody": [{"sentences": [
+                 {"text": "Megadom a szót.", "timeStart": 100.0, "timeEnd": 130.0}]}]}],
+             "debug": {"confidence": 0.7, "align-method": "estimated-day-offset",
+                       "felszolalasTipusa": "ülésvezetés"}},
+        ],
+    }
+    loader.load_session(c, rec)
+    loader.rebuild_aggregates(c)
+    # Both speeches are stored; only the ülésvezetés one is flagged procedural,
+    # and the raw type is retained for the viewer label.
+    flags = dict(c.execute(
+        "SELECT speech_index, procedural FROM speech WHERE session_id='43009'"))
+    assert flags == {1: 0, 2: 1}
+    assert c.execute("SELECT felszolalas_tipus FROM speech WHERE uid='43009-2'"
+                     ).fetchone()[0] == "ülésvezetés"
+    # The sitting's per-person stat counts only the one non-procedural speech.
+    pss = c.execute(
+        "SELECT speech_count, speaking_seconds FROM person_session_stats "
+        "WHERE person_id='k001' AND session_id='43009'").fetchone()
+    assert pss["speech_count"] == 1 and pss["speaking_seconds"] == 30.0
+    c.close()
+
+
 def test_faction_colors_assigned(conn):
     rows = dict(conn.execute("SELECT label, color FROM faction"))
     assert rows["Fidesz"] == "#FF6A13"

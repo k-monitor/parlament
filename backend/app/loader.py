@@ -31,6 +31,8 @@ import os
 import sqlite3
 from pathlib import Path
 
+from .config import settings
+
 logger = logging.getLogger("parlamonitor.loader")
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
@@ -643,16 +645,22 @@ def _load_speech(conn, sid, period, sp, agenda_cache) -> None:
     origin_id = sp.get("originID")
     speech_index = sp.get("speechIndex")
     uid = f"{sid}-{speech_index}"
+    # Per-speech type (felszólalás típusa); a chairing type marks the speech
+    # procedural so it is excluded from statistics but still stored/shown (STAT-1).
+    speech_type = debug.get("felszolalasTipusa")
+    procedural = 1 if settings.is_procedural_type(speech_type) else 0
     conn.execute(
         """INSERT INTO speech(uid, origin_id, speech_uuid, session_id, agenda_item_id,
                period_number, speech_index, person_id, speaker_label,
-               speaker_status, faction_id, time_start, time_end, video_start,
+               speaker_status, felszolalas_tipus, procedural, faction_id,
+               time_start, time_end, video_start,
                video_end, duration, confidence, align_method, has_text,
                source_uri, source_page)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (uid, origin_id, debug.get("speechUUID"), sid, agenda_id, period,
          speech_index, pid,
-         speaker.get("label"), speaker.get("context"), faction_id,
+         speaker.get("label"), speaker.get("context"), speech_type, procedural,
+         faction_id,
          time_start, time_end, media.get("videoStart"), media.get("videoEnd"),
          duration, debug.get("confidence"), debug.get("align-method"),
          has_text, source_uri, media.get("sourcePage")))
@@ -673,6 +681,10 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM faction_stats")
     conn.execute("DELETE FROM person_session_stats")
 
+    # All aggregates count only statistics-eligible speeches: procedural/chairing
+    # speeches (s.procedural = 1) are stored and shown in the viewer but never
+    # counted toward a representative's or faction's totals (STAT-1).
+
     # Per person, per period + an all-periods row (period_number IS NULL).
     conn.execute(
         """INSERT INTO person_stats(person_id, period_number, speech_count,
@@ -681,7 +693,7 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
                   COALESCE(SUM(s.duration), 0),
                   COALESCE(SUM((SELECT COUNT(*) FROM sentence se
                                WHERE se.speech_id = s.uid)), 0)
-           FROM speech s WHERE s.person_id IS NOT NULL
+           FROM speech s WHERE s.person_id IS NOT NULL AND s.procedural = 0
            GROUP BY s.person_id, s.period_number""")
     conn.execute(
         """INSERT INTO person_stats(person_id, period_number, speech_count,
@@ -689,14 +701,15 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
            SELECT s.person_id, NULL, COUNT(*), COALESCE(SUM(s.duration), 0),
                   COALESCE(SUM((SELECT COUNT(*) FROM sentence se
                                WHERE se.speech_id = s.uid)), 0)
-           FROM speech s WHERE s.person_id IS NOT NULL GROUP BY s.person_id""")
+           FROM speech s WHERE s.person_id IS NOT NULL AND s.procedural = 0
+           GROUP BY s.person_id""")
 
     conn.execute(
         """INSERT INTO faction_stats(faction_id, period_number, speech_count,
                speaking_seconds, mp_count)
            SELECT s.faction_id, s.period_number, COUNT(*),
                   COALESCE(SUM(s.duration), 0), COUNT(DISTINCT s.person_id)
-           FROM speech s WHERE s.faction_id IS NOT NULL
+           FROM speech s WHERE s.faction_id IS NOT NULL AND s.procedural = 0
            GROUP BY s.faction_id, s.period_number""")
     # All-periods row (period_number IS NULL) consumed by the factions endpoint.
     conn.execute(
@@ -704,7 +717,8 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
                speaking_seconds, mp_count)
            SELECT s.faction_id, NULL, COUNT(*), COALESCE(SUM(s.duration), 0),
                   COUNT(DISTINCT s.person_id)
-           FROM speech s WHERE s.faction_id IS NOT NULL GROUP BY s.faction_id""")
+           FROM speech s WHERE s.faction_id IS NOT NULL AND s.procedural = 0
+           GROUP BY s.faction_id""")
 
     conn.execute(
         """INSERT INTO person_session_stats(person_id, session_id, date,
@@ -712,7 +726,7 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
            SELECT s.person_id, s.session_id, ss.date, COUNT(*),
                   COALESCE(SUM(s.duration), 0)
            FROM speech s JOIN session ss ON ss.id = s.session_id
-           WHERE s.person_id IS NOT NULL
+           WHERE s.person_id IS NOT NULL AND s.procedural = 0
            GROUP BY s.person_id, s.session_id""")
     conn.commit()
     logger.info("Rebuilt aggregate tables")

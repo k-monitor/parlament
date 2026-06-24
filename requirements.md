@@ -88,9 +88,11 @@ Primary use cases:
     `media` (whole-day HLS `videoFileURI`, `duration`, license),
     `textContents[].textBody[]` (the speech text split into **`sentences[]` with
     `timeStart`/`timeEnd`** day-absolute seconds, estimated per §3.4), and a
-    `debug` block (`confidence`, `align-method`, source URIs). *(Per-speech
+    `debug` block (`confidence`, `align-method`, the upstream per-speech type
+    `felszolalasTipusa`, source URIs). *(Per-speech
     `media.videoStart`/`videoEnd` offsets exist in the reference shape but are
-    not populated in v1 — see §3.4/§10.)*
+    not populated in v1 — see §3.4/§10.)* The per-speech type drives the
+    statistics-exclusion of chairing speeches (STAT-1).
 
 ### 3.2 Scrapers (periodic jobs)
 
@@ -176,8 +178,12 @@ Primary use cases:
   taxonomy, e.g. `CORE_OPENING`, `CORE_VOTING`, `CORE_QA`, …), order within session.
 - **speech** — `originID`, Felicitas speech UUID (`speech_uuid`, for
   cross-module links such as BILL-8), session, agenda item, order, speaker
-  reference, speaker status/context (e.g. `main-speaker`, chair), media
-  reference, start/end, confidence, align-method.
+  reference, speaker status/context (e.g. `main-speaker`, chair), the upstream
+  **per-speech type** (*felszólalás típusa*, `felszolalas_tipus`, e.g.
+  `napirend előtti felszólalás`, `ülésvezetés`), a derived boolean
+  **`procedural`** flag (true for chairing/session-management speeches that are
+  excluded from statistics — STAT-1), media reference, start/end, confidence,
+  align-method.
 - **sentence** — speech reference, order, **text**, `timeStart`, `timeEnd`
   (day-absolute seconds). This is the unit of search and of video seeking.
 - **media** — per session day: HLS `videoFileURI`, duration, license, creator.
@@ -256,7 +262,12 @@ selector** that scopes every period-aware view at once.
 ### 5.2 Proceedings viewer (sentence ↔ video sync)
 
 - **VIE-1 (MUST).** Opening a speech/sitting shows the transcript segmented by
-  **agenda item → speech → sentence**, with speaker labels.
+  **agenda item → speech → sentence**, with speaker labels. Each speech is
+  labelled with its **type** (*felszólalás típusa*, e.g.
+  `napirend előtti felszólalás`, `ülésvezetés`). Procedural/chairing speeches
+  (STAT-1) are **kept and rendered in full** here — they are only excluded from
+  statistics, never from the sitting-day viewer — and their type label makes
+  clear why they do not count toward a representative's totals.
 - **VIE-2 (MUST).** The viewer embeds an **HLS video player** (the day stream
   `videoFileURI`) able to play in modern browsers (e.g. `hls.js` where the
   browser lacks native HLS).
@@ -310,21 +321,39 @@ selector** that scopes every period-aware view at once.
   reverse-chronological **list of their speeches** (each linking into the viewer),
   and — when the Bills module (§6A) is enabled — a **list of the bills they
   submitted**, each linking to the bill (the reciprocal of BILL-3's sponsor links).
-- **REP-3 (MUST).** Per-representative **statistics**, including at least:
+- **REP-3 (MUST).** Per-representative **statistics**, computed over the
+  **statistics-eligible speeches only** (procedural/chairing speeches excluded
+  per STAT-1), including at least:
   - total **speaking time** (sum of speech durations) and number of speeches;
   - speeches per sitting / over time (trend chart);
   - **number of bills submitted** — now provided by the Bills module (§6A). When
     that module is disabled (EXT-6) the metric is hidden, not faked. The headline
     count links to the bills filtered by that representative as sponsor.
 - **REP-4.** **Faction-level** aggregate statistics (totals and averages per MP),
-  with each faction rendered in a consistent color.
+  with each faction rendered in a consistent color. Like REP-3, these are
+  computed over statistics-eligible speeches only (STAT-1).
 - **REP-5.** Statistics MUST state their **time scope** (which period/date range)
   and **how they are computed** (a short methodology note), and be consistent with
   the underlying speech records a user can click through to verify.
 - **REP-6.** Charts MUST have accessible text/table equivalents (§8 accessibility).
 - **REP-7.** Statistics are served from **precomputed aggregates** (§4.2) and
   recomputed on each ingest; they must never block on live aggregation of the
-  full corpus.
+  full corpus. The aggregates are built over statistics-eligible speeches only,
+  per STAT-1.
+
+- **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
+  representative and faction statistics** (speaking time, speech counts, trends —
+  REP-3/REP-4/REP-7), but are **never dropped from storage or from the
+  sitting-day viewer**. The signal is the upstream per-speech type
+  (*felszólalás típusa*, §3.1/§4.1): a speech whose type is a session-management
+  type — primarily **`ülésvezetés`**, the chair's procedural interjections
+  (calling the next speaker, timekeeping) that would otherwise inflate the
+  presiding officer's totals — is marked `procedural` and omitted from the
+  aggregates. Such speeches remain fully searchable (§5.1) and are still shown
+  in the proceedings viewer with their type label (VIE-1), so the record stays
+  complete and the exclusion is transparent (TRUST-1). The set of
+  statistics-excluded types is **configurable, not hard-coded** (OPS-4), so
+  related chairing/ügyrendi types can be added without code changes.
 
 ---
 

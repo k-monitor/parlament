@@ -89,6 +89,7 @@ export default {
     linkCopied: 'Hivatkozás vágólapra másolva',
     sittingDay: 'ülésnap',
     backToSession: 'Vissza az ülésnaphoz',
+    speechType: 'Felszólalás típusa',
   },
   sessions: {
     title: 'Ülésnapok',

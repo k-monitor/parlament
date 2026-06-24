@@ -230,6 +230,39 @@ selector** that scopes every period-aware view at once.
 
 ---
 
+## 4B. Cross-cutting: Accent-Insensitive Text Search
+
+Hungarian text is heavily accented (á, é, í, ó, ö, ő, ú, ü, ű). Users routinely
+type names and terms **without diacritics** — "dora" for *Dóra*, "ulesvezetes"
+for *ülésvezetés*. Every user-facing text search/filter box on the site must
+match regardless of accents, so a query never silently returns "no results"
+merely because an accent was omitted (or added).
+
+- **FOLD-1 (MUST).** **Every** user-facing free-text search/filter box matches
+  **accent-insensitively and case-insensitively**. Typing an unaccented query
+  matches accented content and vice versa (`dora` ↔ *Dóra*, `Dóra` ↔ *dora*).
+  This is a site-wide rule, not a per-module feature.
+- **FOLD-2 (MUST).** It applies to **all** such boxes, not only proceedings
+  search — at minimum: the **representatives** name search (REP-1), the **bills**
+  title-text filter (BILL-1), the **other irományok** title-text filter (BILL-9),
+  and the **votes** subject/iromány-number filter (VOTE-1). Any text box added by
+  a future module inherits the rule by default.
+- **FOLD-3.** Folding is **symmetric and total**: the comparison normalizes both
+  the query and the stored text to an accent-folded, case-folded form before
+  matching, covering the full Hungarian accented set (including `ő`/`ű`, which
+  naïve ASCII folding misses).
+- **FOLD-4.** The full-text **proceedings search** already satisfies this via
+  FTS5 accent folding (SEA-2, DB-2); FOLD-1 generalizes the same guarantee to the
+  simpler `LIKE`-style name/title/subject filters in the other modules, which
+  otherwise compare accent-sensitively. Where SQLite's default `LIKE`/`NOCASE`
+  cannot fold accents, the loader/query layer MUST supply folding (e.g. a stored
+  normalized column or a custom collation/function), not rely on the engine
+  default.
+- **FOLD-5.** Accent folding affects **matching only** — results, highlights,
+  and labels are always shown with their **original accented text** intact.
+
+---
+
 ## 5. Functional Requirements — Module: Proceedings Search & Viewer
 
 ### 5.1 Search
@@ -315,7 +348,8 @@ selector** that scopes every period-aware view at once.
 
 - **REP-1 (MUST).** A browsable, searchable **list of representatives**, filterable
   by faction and constituency, and scoped to the **electoral period** chosen in
-  the global cycle selector (§4A); each links to a profile.
+  the global cycle selector (§4A); each links to a profile. The name search is
+  **accent-insensitive** (§4B FOLD-1): `dora` matches *Dóra*.
 - **REP-2 (MUST).** A **representative profile** shows: name, photo (if available),
   current/past faction(s) with dates, constituency, Wikidata link, a
   reverse-chronological **list of their speeches** (each linking into the viewer),
@@ -372,7 +406,8 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   combine. List/filter state is in the **URL query** (deep-linkable, shareable) —
   including the sponsor filter so a link like `/bills?sponsor=<personID>` reopens
   the list scoped to that representative. The **electoral period** is set by the
-  global cycle selector (§4A).
+  global cycle selector (§4A). The title-text filter is **accent-insensitive**
+  (§4B FOLD-1).
 - **BILL-2 (MUST).** A **bill detail** view shows the bill number, title, type,
   status, submission date, and its sponsors. It links to the **official bill
   text on parlament.hu** (LEGAL-1); the PDF is **embedded inline but loaded on
@@ -437,7 +472,8 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   **document type** (interpelláció, kérdés, határozati javaslat, …), **status**
   and **title text**; filters combine and live in the **URL query**
   (deep-linkable). The **electoral period** is set by the global cycle selector
-  (§4A). It shares the Bills module's data layer and `/api/v1/bills`
+  (§4A). The title-text filter is **accent-insensitive** (§4B FOLD-1). It shares
+  the Bills module's data layer and `/api/v1/bills`
   routes (scoped by `main_type`: `= T` for bills, `!= T` for this page) and the
   **same detail view** (BILL-2/BILL-7) — only the browse page is distinct, so no
   data, table or detail logic is duplicated. Each MP submitter links to their
@@ -487,7 +523,8 @@ header).
 
 - **VOTE-1 (MUST).** A **browsable, filterable list of votes**, paginated and
   filterable by **result** (elfogadva/elutasítva/…) and
-  **subject/iromány-number text**; filters combine. The **electoral period** is
+  **subject/iromány-number text**; filters combine. The subject/iromány-number
+  filter is **accent-insensitive** (§4B FOLD-1). The **electoral period** is
   set by the global cycle selector (§4A). List/filter state is in the
   **URL query** (deep-linkable, shareable), including a `bill` scope so a link
   like `/votes?bill=<iromanyId>` reopens the list scoped to one bill's votes.

@@ -135,6 +135,18 @@ def test_representatives_list_filters_and_sorts(client):
     assert by_time["representatives"][0]["person_id"] == "k001"
 
 
+def test_representatives_name_search_is_accent_insensitive(client):
+    """§4B FOLD-1: an unaccented query matches accented names (`kovacs` → Kovács)."""
+    # Accent-stripped query matches.
+    r = client.get("/api/v1/representatives", params={"q": "kovacs"}).json()
+    assert [x["person_id"] for x in r["representatives"]] == ["k001"]
+    # Case-insensitive too, and the accented form still matches itself.
+    assert client.get("/api/v1/representatives",
+                      params={"q": "KOVÁCS"}).json()["total"] == 1
+    # Display text keeps its original accents (FOLD-5).
+    assert r["representatives"][0]["label"] == "Kovács Béla"
+
+
 def test_factions_endpoint_has_averages(client):
     d = client.get("/api/v1/representatives/factions").json()
     fidesz = next(f for f in d["factions"] if f["label"] == "Fidesz")

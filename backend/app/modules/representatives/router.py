@@ -34,9 +34,9 @@ def list_representatives(
     where = ["p.is_mp = 1"]
     params: dict = {}
     if q:
-        where.append("p.label LIKE :q"); params["q"] = f"%{q.strip()}%"
+        where.append("fold(p.label) LIKE fold(:q)"); params["q"] = f"%{q.strip()}%"
     if constituency:
-        where.append("p.constituency LIKE :con"); params["con"] = f"%{constituency}%"
+        where.append("fold(p.constituency) LIKE fold(:con)"); params["con"] = f"%{constituency}%"
     if faction_id is not None:
         where.append("EXISTS (SELECT 1 FROM membership m WHERE m.person_id=p.person_id "
                      "AND m.faction_id=:fid)"); params["fid"] = faction_id

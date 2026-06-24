@@ -65,9 +65,9 @@ def list_votes(
     where = ["1=1"]
     params: dict = {}
     if q:
-        where.append("(v.subject LIKE :q OR EXISTS (SELECT 1 FROM vote_subject vs "
-                     "WHERE vs.vote_id=v.id AND (vs.bill_number LIKE :q "
-                     "OR vs.title LIKE :q)))")
+        where.append("(fold(v.subject) LIKE fold(:q) OR EXISTS (SELECT 1 FROM vote_subject vs "
+                     "WHERE vs.vote_id=v.id AND (fold(vs.bill_number) LIKE fold(:q) "
+                     "OR fold(vs.title) LIKE fold(:q))))")
         params["q"] = f"%{q.strip()}%"
     if period is not None:
         where.append("v.period_number = :per"); params["per"] = period

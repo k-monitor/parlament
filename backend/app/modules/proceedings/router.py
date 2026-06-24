@@ -227,11 +227,11 @@ def suggest(q: str = Query(..., min_length=1), limit: int = Query(8, ge=1, le=20
     people = db.execute(
         """SELECT p.person_id, p.label, p.photo_uri,
                   (SELECT COUNT(*) FROM speech s WHERE s.person_id=p.person_id) AS speeches
-           FROM person p WHERE p.is_mp = 1 AND p.label LIKE :like
+           FROM person p WHERE p.is_mp = 1 AND fold(p.label) LIKE fold(:like)
            ORDER BY speeches DESC LIMIT :limit""",
         {"like": like, "limit": limit}).fetchall()
     factions = db.execute(
-        "SELECT id, label, color FROM faction WHERE label LIKE :like LIMIT :limit",
+        "SELECT id, label, color FROM faction WHERE fold(label) LIKE fold(:like) LIMIT :limit",
         {"like": like, "limit": limit}).fetchall()
     return {
         "speakers": [dict(r) for r in people],

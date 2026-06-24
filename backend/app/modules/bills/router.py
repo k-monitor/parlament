@@ -91,7 +91,7 @@ def list_bills(
     where = ["1=1"]
     params: dict = {}
     if q:
-        where.append("b.title LIKE :q"); params["q"] = f"%{q.strip()}%"
+        where.append("fold(b.title) LIKE fold(:q)"); params["q"] = f"%{q.strip()}%"
     if period is not None:
         where.append("b.period_number = :per"); params["per"] = period
     if main_type:

@@ -138,3 +138,25 @@ def test_representative_votes(client):
     v = d["votes"][0]
     assert v["id"] == "v-1" and v["value_code"] == "yes"
     assert v["subjects"][0]["bill_number"] == "T/100"
+
+
+def test_representative_absence_stats(client, db_path):
+    """REP-3 attendance: the statistics endpoint reports how many roll-call
+    votes the MP was absent from, nominally and as a percentage of the votes
+    they could have cast. k001 has one Igen record; we add two absences across
+    two further votes so the share is 2/3 ≈ 66.7%."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    for vid in ("v-3", "v-4"):
+        c.execute("INSERT INTO vote (id, period_number, vote_datetime, result) "
+                  "VALUES (?, 43, '2026-05-28T10:00:00Z', 'Elfogadva')", (vid,))
+        c.execute("INSERT INTO vote_record (vote_id, person_id, name, value, value_code) "
+                  "VALUES (?, 'k001', 'Kovács Béla', 'Előre bejelentett hiányzó', 'absent')",
+                  (vid,))
+    c.commit(); c.close()
+
+    t = client.get("/api/v1/representatives/k001/statistics").json()["totals"]
+    assert t["votes_available"] is True
+    assert t["votes_total"] == 3
+    assert t["votes_absent"] == 2
+    assert t["votes_absent_pct"] == 66.7

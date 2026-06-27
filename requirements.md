@@ -363,6 +363,14 @@ merely because an accent was omitted (or added).
   - **number of bills submitted** — now provided by the Bills module (§6A). When
     that module is disabled (EXT-6) the metric is hidden, not faked. The headline
     count links to the bills filtered by that representative as sponsor.
+  - **vote absences** — how many roll-call votes the representative was absent
+    from, **both nominally and as a percentage**, provided by the Votes module
+    (§6B). The absence signal is the upstream *„előre bejelentett hiányzó”* vote
+    value (normalized `value_code = absent`, VOTE-3); the percentage is that
+    count over **all roll-call votes the MP could have cast in scope** (every
+    vote they have a roll-call record for, present or not). Like the other
+    metrics it is scoped to the global cycle (§4A). When the Votes module is
+    disabled (EXT-6) the metric is hidden, not faked.
 - **REP-4.** **Faction-level** aggregate statistics (totals and averages per MP),
   with each faction rendered in a consistent color. Like REP-3, these are
   computed over statistics-eligible speeches only (STAT-1).
@@ -573,8 +581,10 @@ header).
 - **VOTE-8 (scope).** v1 covers the current cycle's votes with their per-MP roll
   call, per-faction breakdown and bill links. Remaining future work: **the
   hemicycle seating chart** (the Felicitas `szavazas-patko-query` returns per-seat
-  SVG geometry + each MP's vote — out of scope for v1), and **vote-based
-  statistics** (party cohesion, attendance, defection rates).
+  SVG geometry + each MP's vote — out of scope for v1), and the remaining
+  **vote-based statistics** (party cohesion, defection rates). A first such
+  statistic is already shipped: the **per-MP vote-absence count and percentage**
+  on the representative profile (REP-3).
 
 ---
 

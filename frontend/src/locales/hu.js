@@ -132,6 +132,7 @@ export default {
     totalSpeeches: 'Felszólalások száma',
     totalSpeakingTime: 'Összes beszédidő',
     billsSubmitted: 'Benyújtott önálló indítványok',
+    votesAbsent: 'Hiányzás a szavazásokról',
     billsUnavailable: 'A benyújtott indítványok adatai a Törvényjavaslatok modul bevezetése után lesznek elérhetők.',
     speechesOverTime: 'Felszólalások ülésnaponként',
     methodology: 'Módszertan',

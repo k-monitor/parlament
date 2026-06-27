@@ -150,6 +150,11 @@ watch(() => store.cycle, load)
                 <router-link :to="{ name: 'bills', query: { sponsor: id } }" class="num biglink">{{ stats.totals.bills_submitted }}</router-link>
                 <span class="lbl">{{ $t('profile.billsSubmitted') }}</span>
               </div>
+              <!-- Attendance (REP-3): absences from roll-call votes, nominal + % -->
+              <div v-if="stats.totals.votes_available && stats.totals.votes_total">
+                <span class="num">{{ stats.totals.votes_absent }}<span class="pct" v-if="stats.totals.votes_absent_pct !== null"> · {{ stats.totals.votes_absent_pct }}%</span></span>
+                <span class="lbl">{{ $t('profile.votesAbsent') }}</span>
+              </div>
             </div>
             <!-- REP-3: bills metric hidden, not faked, until the Bills module ships -->
             <p v-if="!stats.totals.bills_available" class="small muted bills-note">ⓘ {{ $t('profile.billsUnavailable') }}</p>
@@ -287,6 +292,7 @@ watch(() => store.cycle, load)
 .bignums .num { font-size: 1.8rem; font-weight: 800; color: var(--accent); display: block; }
 .bignums .lbl { font-size: .82rem; color: var(--ink-faint); }
 .bignums .biglink { text-decoration: none; }
+.bignums .pct { font-size: 1rem; font-weight: 700; color: var(--ink-soft); }
 .bignums .biglink:hover { text-decoration: underline; }
 .bills-note { margin-top: .8rem; }
 .scopenote { margin: -.2rem 0 .8rem; }

@@ -241,6 +241,30 @@ def get_statistics(person_id: str, period: Optional[int] = None,
         bills_submitted = (_own_bills_for_cycle(bills_by_cycle, period)
                            if period is not None else _latest_own_bills(bills_by_cycle))
 
+    # Attendance (REP-3): how many roll-call votes the MP was absent from, both
+    # nominally and as a share of the votes they could have cast in scope. The
+    # absence signal is the upstream "Előre bejelentett hiányzó" value, normalized
+    # to `value_code = 'absent'`; the denominator is every vote the MP has a
+    # roll-call record for in scope (each MP has one record per vote, present or
+    # not). Only meaningful — and only queried — when the Votes module is live
+    # (EXT-6); its tables may not exist otherwise.
+    votes_available = settings.module_enabled("votes")
+    votes_total = votes_absent = 0
+    votes_absent_pct = None
+    if votes_available:
+        extra = " AND v.period_number = :per" if period is not None else ""
+        vparams: dict = {"pid": person_id}
+        if period is not None:
+            vparams["per"] = period
+        vrow = db.execute(
+            f"""SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN vr.value_code = 'absent' THEN 1 ELSE 0 END) AS absent
+                FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
+                WHERE vr.person_id = :pid{extra}""", vparams).fetchone()
+        votes_total = vrow["total"] or 0
+        votes_absent = vrow["absent"] or 0
+        votes_absent_pct = round(100.0 * votes_absent / votes_total, 1) if votes_total else None
+
     if period is not None:
         ep = db.execute("SELECT label FROM electoral_period WHERE number=?",
                         (period,)).fetchone()
@@ -262,6 +286,10 @@ def get_statistics(person_id: str, period: Optional[int] = None,
             "bills_submitted": bills_submitted,  # null while Bills module is off
             "bills_available": bills_available,
             "bills_by_cycle": bills_by_cycle,
+            "votes_available": votes_available,  # false while Votes module is off
+            "votes_total": votes_total,          # roll-call votes in scope
+            "votes_absent": votes_absent,        # of those, "előre bejelentett hiányzó"
+            "votes_absent_pct": votes_absent_pct,  # null when no votes in scope
         },
         "by_period": [dict(r) for r in by_period],
         "over_time": [dict(r) for r in over_time],
@@ -392,7 +420,10 @@ _MP_METHODOLOGY = (
     "időtartamainak összege. A felszólalások száma a feldolgozott ülésnapokon "
     "elhangzott, e képviselőhöz kötött felszólalások darabszáma. A v1-es "
     "időbecslés pozícióalapú (karakterarányos), ezért közelítő — minden "
-    "felszólalásnál átkattintva ellenőrizhető."
+    "felszólalásnál átkattintva ellenőrizhető. A hiányzások a név szerinti "
+    "szavazásokon „előre bejelentett hiányzó” jelöléssel rögzített esetek; a "
+    "százalék ezek aránya a képviselő által leadható összes (a vizsgált körbe "
+    "eső) szavazathoz képest."
 )
 _FACTION_METHODOLOGY = (
     "A frakciószintű összesítések a frakcióhoz rendelt felszólalások alapján "

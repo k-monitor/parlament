@@ -68,6 +68,7 @@ export default {
     education: 'Highest education', email: 'Email', website: 'Website', committees: 'Committee memberships',
     factionHistory: 'Faction history', wikidata: 'Wikidata', totalSpeeches: 'Number of speeches',
     totalSpeakingTime: 'Total speaking time', billsSubmitted: 'Bills submitted',
+    votesAbsent: 'Absences from votes',
     billsUnavailable: 'Bills-submitted data will be available once the Bills module ships.',
     speechesOverTime: 'Speeches per sitting', methodology: 'Methodology', scope: 'Data scope',
     sessionsCovered: 'sittings covered', noSpeeches: 'No speeches on record.', viewSpeech: 'View',

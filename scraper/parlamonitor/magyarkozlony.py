@@ -21,9 +21,15 @@ from __future__ import annotations
 import logging
 import re
 
+import urllib3
+
 from .http_client import HttpClient, HttpError
 
 logger = logging.getLogger(__name__)
+
+# We deliberately skip TLS verification for magyarkozlony.hu (see resolve()),
+# so silence the per-request InsecureRequestWarning it would otherwise emit.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE = "https://magyarkozlony.hu"
 # The schema.org Newspaper item on the listing page carries the canonical PDF
@@ -54,7 +60,10 @@ def resolve(http: HttpClient, mk_number, promulgation_date) -> dict | None:
     url = listing_url(ym.group(1), mk_number)
     doc_url = None
     try:
-        html = http.get_text(url)
+        # magyarkozlony.hu serves an incomplete/misconfigured certificate chain,
+        # so we skip TLS verification for this host (the content is a public
+        # gazette listing — no secrets cross this connection).
+        html = http.get_text(url, verify=False)
         m = _DOC_RE.search(html)
         if m:
             doc_url = m.group(0)

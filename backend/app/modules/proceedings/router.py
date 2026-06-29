@@ -15,6 +15,7 @@ from ...config import settings
 from ...db import get_db
 from ...media import per_speech_clip
 from ...search import build_match
+from ...wordfreq import count_words, tfidf_scores
 
 router = APIRouter(prefix="/proceedings", tags=["proceedings"])
 
@@ -291,6 +292,86 @@ def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
             for a in agenda
         ],
     }
+
+
+# A word must be said at least this often on the day to qualify, so a single
+# rare token (a name, a typo) cannot top the cloud on IDF alone.
+_WORDCLOUD_MIN_TF = 2
+
+
+@router.get("/sessions/{session_id}/wordcloud")
+def session_wordcloud(session_id: str, limit: int = Query(80, ge=1, le=200),
+                      db: sqlite3.Connection = Depends(get_db)):
+    """Word cloud for a sitting day, ranked by what is *distinctive* to it (WCLOUD).
+
+    Computed over the sitting's non-procedural sentence text with Hungarian
+    stop-words and very short tokens removed (WCLOUD-2). Words are scored by
+    TF·IDF against the rest of the electoral cycle (precomputed `word_doc_freq`),
+    so a word frequent on this day but rare on other days ranks high, while the
+    ubiquitous parliamentary vocabulary that appears every day is suppressed —
+    surfacing the day's actual topics. `count` is the raw occurrences (shown to
+    the user); `weight` is the TF·IDF score the cloud sizes by. A separate,
+    lightweight request so it never slows the sitting-day load (WCLOUD-5)."""
+    s = db.execute("SELECT id, date, period_number FROM session WHERE id = ?",
+                   (session_id,)).fetchone()
+    if not s:
+        raise HTTPException(404, "Session not found")
+    rows = db.execute(
+        """SELECT se.text
+           FROM sentence se
+           JOIN speech sp ON sp.uid = se.speech_id
+           WHERE sp.session_id = ? AND sp.procedural = 0""",
+        (session_id,)).fetchall()
+    tf = count_words(r["text"] for r in rows)
+    if not tf:
+        return {"session_id": session_id, "date": s["date"], "words": []}
+
+    # Candidates: words said at least twice; relax to all words on a sparse day
+    # so a short sitting still yields a cloud.
+    candidates = [w for w, c in tf.items() if c >= _WORDCLOUD_MIN_TF]
+    if len(candidates) < limit:
+        candidates = list(tf.keys())
+
+    df, n_docs = _doc_freqs(db, s["period_number"], candidates)
+    if n_docs and df:                       # TF·IDF: distinctive-to-this-day
+        scores = tfidf_scores({w: tf[w] for w in candidates}, df, n_docs)
+    else:                                   # no corpus stats → raw frequency
+        scores = {w: float(tf[w]) for w in candidates}
+
+    top = sorted(candidates, key=lambda w: (-scores[w], w))[:limit]
+    return {
+        "session_id": session_id,
+        "date": s["date"],
+        "words": [{"text": w, "count": tf[w], "weight": round(scores[w], 4)}
+                  for w in top],
+    }
+
+
+def _doc_freqs(db, period, words):
+    """Per-period document frequencies for ``words`` + the period's day count.
+
+    Returns ``({}, 0)`` when the corpus table is absent (older DB) or the period
+    has no precomputed stats, so the endpoint falls back to raw frequency."""
+    if period is None:
+        return {}, 0
+    try:
+        tot = db.execute("SELECT n_docs FROM word_doc_total WHERE period_number = ?",
+                         (period,)).fetchone()
+    except sqlite3.OperationalError:
+        return {}, 0          # table not in this (pre-migration) DB
+    if not tot:
+        return {}, 0
+    df: dict = {}
+    words = list(words)
+    for i in range(0, len(words), 800):     # stay well under SQLite's var limit
+        chunk = words[i:i + 800]
+        ph = ",".join("?" * len(chunk))
+        for r in db.execute(
+                f"SELECT word, doc_count FROM word_doc_freq "
+                f"WHERE period_number = ? AND word IN ({ph})",
+                (period, *chunk)):
+            df[r["word"]] = r["doc_count"]
+    return df, tot["n_docs"]
 
 
 # ---------------------------------------------------------------------------

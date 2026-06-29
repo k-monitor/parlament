@@ -482,3 +482,21 @@ CREATE TABLE build_meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- Per-cycle word document-frequency for the sitting-day word cloud (WCLOUD-2):
+-- how many sitting days in a period contain a given (folded, stop-word-filtered)
+-- word. Lets the word cloud rank by TF·IDF — words frequent on one day but rare
+-- across the cycle — rather than raw frequency, so each day's cloud surfaces what
+-- is *distinctive* about that day. Rebuilt with the other aggregates (REP-7).
+CREATE TABLE word_doc_freq (
+    period_number INTEGER NOT NULL,
+    word          TEXT NOT NULL,
+    doc_count     INTEGER NOT NULL,   -- # of sitting days in the period with the word
+    PRIMARY KEY (period_number, word)
+) WITHOUT ROWID;
+
+-- N for the IDF: number of sitting days per period that contributed any words.
+CREATE TABLE word_doc_total (
+    period_number INTEGER PRIMARY KEY,
+    n_docs        INTEGER NOT NULL
+);

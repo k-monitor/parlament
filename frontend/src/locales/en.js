@@ -55,6 +55,9 @@ export default {
   sessions: {
     title: 'Sittings', date: 'Date', sitting: 'Sitting', speeches: 'speeches', agendaItems: 'agenda items',
     open: 'Open', agenda: 'Agenda', duration: 'Duration',
+    wordcloud: 'What was discussed on this day?',
+    wordcloudCaption: 'Words most characteristic of this day: frequent here but rare on the cycle\'s other sitting days (TF·IDF). Chairing and common filler words excluded. Click a word to search that day.',
+    wordcloudCount: 'occurrences',
   },
   reps: {
     title: 'Representatives', searchPlaceholder: 'Search representatives by name…', faction: 'Faction',

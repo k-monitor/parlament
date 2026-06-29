@@ -31,7 +31,10 @@ import os
 import sqlite3
 from pathlib import Path
 
+from collections import Counter
+
 from .config import settings
+from .wordfreq import MIN_LENGTH, STOPWORDS, tokenize
 
 logger = logging.getLogger("parlamonitor.loader")
 
@@ -729,7 +732,51 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
            WHERE s.person_id IS NOT NULL AND s.procedural = 0
            GROUP BY s.person_id, s.session_id""")
     conn.commit()
+    rebuild_word_doc_freq(conn)
     logger.info("Rebuilt aggregate tables")
+
+
+def rebuild_word_doc_freq(conn: sqlite3.Connection) -> None:
+    """Per-cycle word document-frequencies for the word cloud's TF·IDF (WCLOUD-2).
+
+    For each period, count on how many sitting days each topical word appears
+    (once per day, regardless of how often), over the *same* non-procedural
+    sentence text and stop-word rules the cloud endpoint uses. This is the corpus
+    side of TF·IDF; the per-day term frequency is computed live at query time.
+    """
+    conn.execute("DELETE FROM word_doc_freq")
+    conn.execute("DELETE FROM word_doc_total")
+    periods = [r[0] for r in conn.execute(
+        "SELECT DISTINCT period_number FROM session "
+        "WHERE period_number IS NOT NULL")]
+    for period in periods:
+        sids = [r[0] for r in conn.execute(
+            "SELECT id FROM session WHERE period_number = ?", (period,))]
+        df: Counter = Counter()
+        n_docs = 0
+        for sid in sids:
+            seen: set[str] = set()
+            for (text,) in conn.execute(
+                    "SELECT se.text FROM sentence se "
+                    "JOIN speech sp ON sp.uid = se.speech_id "
+                    "WHERE sp.session_id = ? AND sp.procedural = 0", (sid,)):
+                if not text:
+                    continue
+                for tok in tokenize(text):
+                    if len(tok) >= MIN_LENGTH and tok not in STOPWORDS:
+                        seen.add(tok)
+            if seen:
+                n_docs += 1
+                df.update(seen)
+        conn.executemany(
+            "INSERT INTO word_doc_freq(period_number, word, doc_count) "
+            "VALUES (?, ?, ?)", [(period, w, c) for w, c in df.items()])
+        conn.execute(
+            "INSERT INTO word_doc_total(period_number, n_docs) VALUES (?, ?)",
+            (period, n_docs))
+        logger.info("word_doc_freq period %s: %d words over %d days",
+                    period, len(df), n_docs)
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------

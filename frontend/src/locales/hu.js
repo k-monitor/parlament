@@ -100,6 +100,9 @@ export default {
     open: 'Megnyitás',
     agenda: 'Napirend',
     duration: 'Időtartam',
+    wordcloud: 'Miről volt szó ezen a napon?',
+    wordcloudCaption: 'A napra leginkább jellemző szavak: amelyek ezen a napon gyakoriak, de a ciklus többi ülésnapján ritkák (TF·IDF). Az ülésvezetés és a gyakori töltelékszavak kihagyva. Kattintásra rákeres az adott napra.',
+    wordcloudCount: 'előfordulás',
   },
   reps: {
     title: 'Képviselők',

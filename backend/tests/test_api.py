@@ -44,6 +44,23 @@ def test_session_browse_groups_by_agenda(client):
     assert first["speeches"][0]["uid"] == "43001-1"
 
 
+def test_session_wordcloud(client):
+    """WCLOUD-1/2: the sitting word cloud returns frequency-ranked topical words,
+    stop-words and short tokens dropped."""
+    d = client.get("/api/v1/proceedings/sessions/43001/wordcloud").json()
+    assert d["session_id"] == "43001" and d["date"] == "2026-05-09"
+    words = {w["text"]: w["count"] for w in d["words"]}
+    # content words survive (folded to lowercase)
+    assert "költségvetés" in words and "ágazati" in words and "fejlesztés" in words
+    # stop-word ("kérdés") and short token ("ügye", < 4 chars is "az"/"a") dropped
+    assert "kérdés" not in words
+    assert all(len(w) >= 4 for w in words)
+
+
+def test_session_wordcloud_missing_session(client):
+    assert client.get("/api/v1/proceedings/sessions/99999/wordcloud").status_code == 404
+
+
 def test_degraded_speech_renders(client):
     """VIE-8: video-only speech still returns with metadata + no-text flag."""
     d = client.get("/api/v1/proceedings/speeches/43001-2").json()

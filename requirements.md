@@ -342,6 +342,39 @@ merely because an accent was omitted (or added).
   VOD is generated on demand, so its activation endpoint is pinged before the
   playlist is requested.
 
+### 5.3 Sitting-day word cloud
+
+- **WCLOUD-1 (SHOULD).** A **sitting day's page** (use case 2, the
+  browse-a-sitting view) carries a **word-cloud visualization** summarizing what
+  was talked about that day, sized so the words **most characteristic of that
+  day** stand out. It gives a citizen an at-a-glance sense of a day's themes
+  before reading the transcript.
+- **WCLOUD-2.** The cloud is computed over the **sitting's sentence text**, with
+  **Hungarian stop-words removed** (function words, pronouns, conjunctions, …)
+  and very short tokens / pure numbers dropped, so it surfaces topical words, not
+  grammatical filler. Procedural/chairing speeches (STAT-1) are **excluded** so
+  the cloud reflects substantive debate, not the chair's "a következő
+  felszólaló…" boilerplate. Words are ranked not by raw frequency but by
+  **distinctiveness to the day** — a **TF·IDF** weighting against the rest of the
+  electoral cycle, so words frequent on this day yet rare on the cycle's other
+  sitting days rank high while the ubiquitous parliamentary vocabulary that
+  recurs every day (and would otherwise dominate every day's cloud identically)
+  is suppressed. The document-frequency side is a **precomputed per-cycle
+  aggregate** (rebuilt with the other statistics, REP-7); the per-day term
+  frequency is computed at request time. The stop-word set is **configurable, not
+  hard-coded** (OPS-4).
+- **WCLOUD-3.** The visualization MUST have an **accessible text/table
+  equivalent** (REP-6 / A11Y-1) — the same word→count data as a table — and word
+  sizing alone must not be the only carrier of meaning.
+- **WCLOUD-4 (SHOULD).** A word in the cloud is a **link into proceedings search
+  (SEA-6)** scoped to that sitting day (the query plus the day's date range), so a
+  click moves from "what was discussed" to "where exactly it was said".
+- **WCLOUD-5.** The cloud is served from a **dedicated, paginated-free aggregate
+  endpoint** (a top-N word list) computed per sitting; it is a separate request
+  from the transcript so it never slows the sitting-day load (cf. SEA-8). Like all
+  derived views it states its **methodology** briefly (stop-words removed,
+  frequency-ranked) so the user knows what they are seeing (REP-5 / TRUST-1).
+
 ---
 
 ## 6. Functional Requirements — Module: Representatives & Statistics

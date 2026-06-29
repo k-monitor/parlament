@@ -9,8 +9,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: 'http://localhost:8000', changeOrigin: true },
-      '/media': { target: 'http://localhost:8000', changeOrigin: true },
+      // Use 127.0.0.1 (not "localhost"): on dual-stack hosts Node resolves
+      // localhost to IPv6 ::1 first, but uvicorn binds IPv4 127.0.0.1 — the
+      // proxy would then get ECONNREFUSED on every /api call.
+      '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/media': { target: 'http://127.0.0.1:8000', changeOrigin: true },
     },
   },
   build: {

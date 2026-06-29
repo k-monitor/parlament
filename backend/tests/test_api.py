@@ -61,6 +61,25 @@ def test_session_wordcloud_missing_session(client):
     assert client.get("/api/v1/proceedings/sessions/99999/wordcloud").status_code == 404
 
 
+def test_session_top_speakers(client):
+    """TOPSPK-1/2: the sitting toplist ranks known representatives by total
+    speaking time, excluding procedural speeches and unattributed speakers."""
+    d = client.get("/api/v1/proceedings/sessions/43001/top-speakers").json()
+    assert d["session_id"] == "43001" and d["date"] == "2026-05-09"
+    speakers = d["speakers"]
+    # Both speeches are non-procedural and attributed (k001, n002); ranked by time.
+    assert [s["person_id"] for s in speakers] == ["k001", "n002"]
+    top = speakers[0]
+    assert top["label"] == "Kovács Béla" and top["speeches"] == 1
+    assert top["seconds"] == 30 and top["faction"]["label"] == "Fidesz"
+    # Sorted by speaking time descending.
+    assert speakers[0]["seconds"] >= speakers[1]["seconds"]
+
+
+def test_session_top_speakers_missing_session(client):
+    assert client.get("/api/v1/proceedings/sessions/99999/top-speakers").status_code == 404
+
+
 def test_degraded_speech_renders(client):
     """VIE-8: video-only speech still returns with metadata + no-text flag."""
     d = client.get("/api/v1/proceedings/speeches/43001-2").json()

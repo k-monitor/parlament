@@ -103,6 +103,8 @@ export default {
     wordcloud: 'Miről volt szó ezen a napon?',
     wordcloudCaption: 'A napra leginkább jellemző szavak: amelyek ezen a napon gyakoriak, de a ciklus többi ülésnapján ritkák (TF·IDF). Az ülésvezetés és a gyakori töltelékszavak kihagyva. Kattintásra rákeres az adott napra.',
     wordcloudCount: 'előfordulás',
+    topSpeakers: 'Ki beszélt a legtöbbet ezen a napon?',
+    topSpeakersCaption: 'A képviselők összes felszólalási ideje szerint ezen az ülésnapon (az ülésvezetői és rendészeti felszólalások nélkül). A névre kattintva a képviselő profilja nyílik meg.',
   },
   reps: {
     title: 'Képviselők',

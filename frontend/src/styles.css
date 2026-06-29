@@ -123,6 +123,7 @@ table.data th { color: var(--ink-soft); }
   background: #e7e5df; flex: none; border: 1px solid var(--line);
 }
 .avatar.lg { width: 110px; height: 110px; border-radius: 12px; }
+.avatar.sm { width: 28px; height: 28px; }
 
 @media (max-width: 640px) {
   h1 { font-size: 1.4rem; }

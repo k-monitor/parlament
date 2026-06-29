@@ -347,6 +347,55 @@ def session_wordcloud(session_id: str, limit: int = Query(80, ge=1, le=200),
     }
 
 
+@router.get("/sessions/{session_id}/top-speakers")
+def session_top_speakers(session_id: str, limit: int = Query(10, ge=1, le=50),
+                         db: sqlite3.Connection = Depends(get_db)):
+    """Representatives who spoke the most on a sitting day (TOPSPK).
+
+    Ranked by total speaking time (sum of speech durations), with the speech
+    count alongside. Only statistics-eligible speeches count — procedural /
+    chairing speeches (STAT-1) are excluded, like the per-MP statistics and the
+    word cloud — and only known representatives (resolved ``person_id``) are
+    listed (TOPSPK-2). A separate, lightweight request so it never slows the
+    sitting-day load (TOPSPK-5)."""
+    s = db.execute("SELECT id, date FROM session WHERE id = ?",
+                   (session_id,)).fetchone()
+    if not s:
+        raise HTTPException(404, "Session not found")
+    rows = db.execute(
+        """SELECT sp.person_id, sp.speaker_status,
+                  p.label AS person_label, p.photo_uri,
+                  f.label AS faction_label, f.color AS faction_color,
+                  COUNT(*) AS speeches,
+                  COALESCE(SUM(sp.duration), 0) AS seconds
+           FROM speech sp
+           LEFT JOIN person p ON p.person_id = sp.person_id
+           LEFT JOIN faction f ON f.id = sp.faction_id
+           WHERE sp.session_id = ? AND sp.procedural = 0
+                 AND sp.person_id IS NOT NULL
+           GROUP BY sp.person_id
+           ORDER BY seconds DESC, speeches DESC, person_label
+           LIMIT ?""",
+        (session_id, limit)).fetchall()
+    return {
+        "session_id": session_id,
+        "date": s["date"],
+        "speakers": [
+            {
+                "person_id": r["person_id"],
+                "label": r["person_label"],
+                "photo_uri": r["photo_uri"],
+                "status": r["speaker_status"],
+                "faction": {"label": r["faction_label"], "color": r["faction_color"]}
+                           if r["faction_label"] else None,
+                "speeches": r["speeches"],
+                "seconds": r["seconds"],
+            }
+            for r in rows
+        ],
+    }
+
+
 def _doc_freqs(db, period, words):
     """Per-period document frequencies for ``words`` + the period's day count.
 

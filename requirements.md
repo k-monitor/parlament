@@ -375,6 +375,29 @@ merely because an accent was omitted (or added).
   derived views it states its **methodology** briefly (stop-words removed,
   frequency-ranked) so the user knows what they are seeing (REP-5 / TRUST-1).
 
+### 5.4 Sitting-day speaker toplist
+
+- **TOPSPK-1 (SHOULD).** A **sitting day's page** (use case 2) carries a
+  **toplist of the representatives who spoke the most that day**, so a citizen
+  sees at a glance who dominated the day's debate before reading the transcript
+  (a companion to the day's word cloud, §5.3).
+- **TOPSPK-2.** "Spoke the most" is ranked by **total speaking time** on the day
+  (the sum of the speaker's speech durations), with the **number of speeches**
+  shown alongside. Only **statistics-eligible speeches count**: procedural /
+  chairing speeches (STAT-1) are **excluded**, exactly as for the per-MP
+  statistics and the word cloud, so the list reflects substantive debate, not the
+  chair's turn-management. Only **known representatives** (resolved `person_id`)
+  are listed; unattributed or guest speakers are omitted.
+- **TOPSPK-3.** Each entry **links to the representative's profile** (REP-1) and
+  shows the speaker's **faction** (colour/label). The list is a **top-N**
+  (default ~10) so it stays a glanceable summary, not a second transcript.
+- **TOPSPK-4.** The visualization MUST have an **accessible text/table
+  equivalent** (REP-6 / A11Y-1) — the same representative→time/count data as a
+  table — and bar length alone must not be the only carrier of meaning.
+- **TOPSPK-5.** The toplist is served from a **dedicated aggregate endpoint**
+  computed per sitting; it is a **separate request** from the transcript so it
+  never slows the sitting-day load (cf. WCLOUD-5 / SEA-8).
+
 ---
 
 ## 6. Functional Requirements — Module: Representatives & Statistics

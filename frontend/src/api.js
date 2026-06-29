@@ -28,6 +28,7 @@ export const api = {
   sessions: (period) => get('/proceedings/sessions', { period }),
   session: (id) => get(`/proceedings/sessions/${id}`),
   sessionWordcloud: (id) => get(`/proceedings/sessions/${id}/wordcloud`),
+  sessionTopSpeakers: (id) => get(`/proceedings/sessions/${id}/top-speakers`),
   speech: (uid) => get(`/proceedings/speeches/${uid}`),
   // representatives
   representatives: (params) => get('/representatives', params),

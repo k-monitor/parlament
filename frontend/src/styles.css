@@ -13,6 +13,7 @@
   --mark-ink: #5c4400;
   --radius: 10px;
   --maxw: 1100px;
+  --gutter: 1.5rem;      /* page side-margin (was 1rem — too tight against text on mobile) */
   --shadow: 0 1px 3px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.05);
   --font: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
 }
@@ -37,8 +38,10 @@ a:hover { text-decoration: underline; }
   border-radius: 4px;
 }
 
-.container { max-width: var(--maxw); margin: 0 auto; padding: 0 1rem; }
-.page { padding: 1.5rem 0 4rem; }
+.container { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--gutter); }
+/* Only vertical padding here — horizontal is the container's --gutter. Using the
+   `padding` shorthand would reset left/right to 0 and override that gutter. */
+.page { padding-top: 1.5rem; padding-bottom: 4rem; }
 
 h1 { font-size: 1.75rem; margin: .2rem 0 1rem; }
 h2 { font-size: 1.3rem; margin: 1.6rem 0 .8rem; }

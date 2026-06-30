@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { store, loadMeta, setCycle } from './store.js'
 import { setLocale } from './i18n.js'
@@ -53,6 +53,11 @@ function onCycleChange(e) {
 }
 
 function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
+
+// Mobile: the main nav collapses behind a hamburger toggle. Any navigation
+// closes the panel so it never lingers over the new page.
+const menuOpen = ref(false)
+watch(() => route.fullPath, () => { menuOpen.value = false })
 </script>
 
 <template>
@@ -63,7 +68,13 @@ function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
         <span class="brand-mark" aria-hidden="true">⬢</span>
         <span class="brand-text">Parlamonitor</span>
       </router-link>
-      <nav class="mainnav" :aria-label="$t('nav.menu')">
+      <button
+        class="navtoggle" :class="{ open: menuOpen }" @click="menuOpen = !menuOpen"
+        :aria-label="$t('nav.menu')" :aria-expanded="menuOpen ? 'true' : 'false'"
+      >
+        <span class="navtoggle-bars" aria-hidden="true"><span></span><span></span><span></span></span>
+      </button>
+      <nav class="mainnav" :class="{ open: menuOpen }" :aria-label="$t('nav.menu')">
         <router-link v-if="showProceedings" :to="{ name: 'search' }">{{ $t('nav.search') }}</router-link>
         <router-link v-if="showProceedings" :to="{ name: 'sessions' }">{{ $t('nav.sessions') }}</router-link>
         <router-link v-if="showReps" :to="{ name: 'representatives' }"
@@ -134,7 +145,7 @@ function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
 /* Three zones: brand (left), nav (flexes + wraps), controls (pinned right). The
    bar itself never wraps, so the cycle/lang controls stay in the top-right
    corner even when the nav links wrap onto a second line. */
-.header-bar { display: flex; align-items: center; gap: 1rem; flex-wrap: nowrap; }
+.header-bar { display: flex; align-items: center; gap: 1rem; flex-wrap: nowrap; position: relative; }
 .brand { display: inline-flex; align-items: center; gap: .5rem; color: #fff; font-weight: 800; font-size: 1.15rem; flex-shrink: 0; }
 .brand:hover { text-decoration: none; }
 .brand-mark { font-size: 1.3rem; }
@@ -175,7 +186,44 @@ function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
   font-weight: 700; font-size: .8rem;
 }
 .site-footer { border-top: 1px solid var(--line); padding: 1.5rem 0; margin-top: 2rem; background: var(--surface); }
-@media (max-width: 700px) {
+
+/* Hamburger toggle: hidden on desktop, revealed at the mobile breakpoint where
+   the five nav links no longer fit on one row. */
+.navtoggle {
+  display: none; box-sizing: border-box; height: 34px; width: 38px;
+  align-items: center; justify-content: center; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.15);
+  border-radius: 8px; color: #fff; padding: 0;
+}
+.navtoggle:hover { background: rgba(255,255,255,.28); }
+.navtoggle-bars, .navtoggle-bars span { display: block; }
+.navtoggle-bars { width: 18px; height: 14px; position: relative; }
+.navtoggle-bars span {
+  position: absolute; left: 0; width: 100%; height: 2px; background: #fff; border-radius: 2px;
+  transition: transform .2s ease, opacity .2s ease, top .2s ease;
+}
+.navtoggle-bars span:nth-child(1) { top: 0; }
+.navtoggle-bars span:nth-child(2) { top: 6px; }
+.navtoggle-bars span:nth-child(3) { top: 12px; }
+.navtoggle.open .navtoggle-bars span:nth-child(1) { top: 6px; transform: rotate(45deg); }
+.navtoggle.open .navtoggle-bars span:nth-child(2) { opacity: 0; }
+.navtoggle.open .navtoggle-bars span:nth-child(3) { top: 6px; transform: rotate(-45deg); }
+@media (prefers-reduced-motion: reduce) { .navtoggle-bars span { transition: none; } }
+
+@media (max-width: 760px) {
   .brand-text { display: none; }
+  .navtoggle { display: inline-flex; order: 3; }
+  .header-controls { order: 2; }
+  /* The nav drops out of the bar into a full-width panel beneath the header,
+     toggled by the hamburger. The bar itself stays a single tidy row. */
+  .mainnav {
+    display: none; position: absolute; top: 100%;
+    left: calc(-1 * var(--gutter)); right: calc(-1 * var(--gutter));
+    flex-direction: column; align-items: stretch; gap: .15rem;
+    background: var(--accent); padding: .5rem var(--gutter) .75rem;
+    box-shadow: 0 8px 16px rgba(0,0,0,.18); border-top: 1px solid rgba(255,255,255,.18);
+  }
+  .mainnav.open { display: flex; }
+  .mainnav a { padding: .65rem .75rem; font-size: 1rem; }
 }
 </style>

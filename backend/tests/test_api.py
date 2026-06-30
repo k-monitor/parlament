@@ -187,6 +187,33 @@ def test_representative_speeches_scoped_to_selected_cycle(client):
                       params={"period": 42}).json()["total"] == 0
 
 
+def test_representative_speech_days(client):
+    """The grouped-by-day view: one row per sitting, with a per-day count whose
+    sum equals the flat speech total."""
+    d = client.get("/api/v1/representatives/k001/speeches").json()
+    days = client.get("/api/v1/representatives/k001/speech-days").json()
+    assert days["total"] == d["total"]
+    assert sum(x["count"] for x in days["days"]) == days["total"]
+    assert all({"session_id", "date", "sitting", "count"} <= x.keys()
+               for x in days["days"])
+    # cycle scoping (§4A): cycle 42 has no sittings for this MP
+    assert client.get("/api/v1/representatives/k001/speech-days",
+                      params={"period": 42}).json()["days"] == []
+
+
+def test_representative_speeches_filtered_by_session(client):
+    """The lazy-loaded day spoiler fetches only that day's speeches."""
+    days = client.get("/api/v1/representatives/k001/speech-days").json()["days"]
+    sid = days[0]["session_id"]
+    d = client.get("/api/v1/representatives/k001/speeches",
+                   params={"session_id": sid}).json()
+    assert d["total"] == days[0]["count"]
+    assert all(s["session_id"] == sid for s in d["speeches"])
+    # a session the MP didn't speak in yields nothing
+    assert client.get("/api/v1/representatives/k001/speeches",
+                      params={"session_id": "99999"}).json()["total"] == 0
+
+
 def test_representatives_list_scoped_to_selected_cycle(client):
     """§4A: the list shows only MPs serving in the cycle, with that cycle's stats."""
     cyc43 = client.get("/api/v1/representatives", params={"period": 43}).json()

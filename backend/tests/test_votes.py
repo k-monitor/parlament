@@ -140,6 +140,30 @@ def test_representative_votes(client):
     assert v["subjects"][0]["bill_number"] == "T/100"
 
 
+def test_representative_vote_days(client):
+    """The grouped-by-day view: one row per sitting, with a per-day count whose
+    sum equals the flat vote total (EXT-2)."""
+    flat = client.get("/api/v1/representatives/k001/votes").json()
+    days = client.get("/api/v1/representatives/k001/vote-days").json()
+    assert days["available"] is True
+    assert days["total"] == flat["total"]
+    assert sum(x["count"] for x in days["days"]) == days["total"]
+    assert days["days"][0]["date"] == "2026-05-26"
+
+
+def test_representative_votes_filtered_by_date(client):
+    """The lazy-loaded day spoiler fetches only that day's votes."""
+    days = client.get("/api/v1/representatives/k001/vote-days").json()["days"]
+    date = days[0]["date"]
+    d = client.get("/api/v1/representatives/k001/votes",
+                   params={"date": date}).json()
+    assert d["total"] == days[0]["count"]
+    assert all(v["vote_datetime"].startswith(date) for v in d["votes"])
+    # a day the MP didn't vote on yields nothing
+    assert client.get("/api/v1/representatives/k001/votes",
+                      params={"date": "1999-01-01"}).json()["total"] == 0
+
+
 def test_representative_absence_stats(client, db_path):
     """REP-3 attendance: the statistics endpoint reports how many roll-call
     votes the MP was absent from, nominally and as a percentage of the votes

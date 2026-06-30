@@ -25,9 +25,19 @@ const cycleStart = computed(() => {
 const profile = ref(null)
 const stats = ref(null)
 const activity = ref(null)
-const speeches = ref(null)
+// Speeches are grouped by sitting day: `speechDays` holds the day rows (count
+// per day, reverse-chronological), and each day's speeches are fetched on demand
+// when the user expands it — see `dayCache`/`toggleDay`.
+const speechDays = ref(null)
+const dayCache = reactive({})   // session_id -> { loading, error, list }
+const openDays = reactive({})   // session_id -> bool (expanded?)
 const bills = ref(null)
-const votes = ref(null)
+// Votes are grouped by sitting day too (same lazy-load pattern as speeches):
+// `voteDays` holds the day rows (count per day), each day's votes fetched on
+// demand via `voteDayCache`/`toggleVoteDay`. Days are keyed by date (YYYY-MM-DD).
+const voteDays = ref(null)
+const voteDayCache = reactive({})   // date -> { loading, error, list }
+const openVoteDays = reactive({})   // date -> bool
 const loading = ref(false)
 const error = ref(false)
 
@@ -46,9 +56,35 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 // Long lists (bills, votes, speeches) are collapsed to a preview so the profile
 // stays scannable; a per-section toggle reveals the rest of what's loaded.
 const COLLAPSE_LIMIT = 8
-const expanded = reactive({ bills: false, votes: false, speeches: false })
+const expanded = reactive({ bills: false, votes: false, days: false })
 function shown(list, key) {
   return expanded[key] ? list : list.slice(0, COLLAPSE_LIMIT)
+}
+
+// Expand/collapse a sitting day; on first expand, lazily fetch that day's items
+// (cached so re-opening doesn't refetch). `open`/`cache` are the per-section
+// reactive maps; `fetcher(key)` returns the day's list. Shared by the speeches
+// (keyed by session_id) and votes (keyed by date) lists.
+async function toggleDayWith(open, cache, key, fetcher) {
+  open[key] = !open[key]
+  if (!open[key]) return
+  if (cache[key] && (cache[key].list || cache[key].loading)) return
+  cache[key] = { loading: true, error: false, list: null }
+  try {
+    cache[key] = { loading: false, error: false, list: await fetcher(key) }
+  } catch {
+    cache[key] = { loading: false, error: true, list: null }
+  }
+}
+function toggleDay(day) {
+  toggleDayWith(openDays, dayCache, day.session_id, (sid) =>
+    api.repSpeeches(props.id, { session_id: sid, period: store.cycle, limit: 200 })
+      .then((r) => r.speeches))
+}
+function toggleVoteDay(day) {
+  toggleDayWith(openVoteDays, voteDayCache, day.date, (date) =>
+    api.repVotes(props.id, { date, period: store.cycle, limit: 200 })
+      .then((r) => r.votes))
 }
 
 const PLACEHOLDER =
@@ -79,9 +115,11 @@ async function loadBills() {
 
 async function load() {
   loading.value = true; error.value = false
-  profile.value = stats.value = activity.value = speeches.value = bills.value = votes.value = null
+  profile.value = stats.value = activity.value = speechDays.value = bills.value = voteDays.value = null
+  for (const m of [dayCache, openDays, voteDayCache, openVoteDays])
+    for (const k of Object.keys(m)) delete m[k]
   docFilter.value = ''; docTypes.value = []
-  expanded.bills = expanded.votes = expanded.speeches = false
+  expanded.bills = expanded.votes = expanded.days = false
   try {
     // Everything on the profile is scoped to the global cycle (store.cycle; null
     // = all cycles), so the page never mixes in a previous cycle's data (§4A).
@@ -95,22 +133,22 @@ async function load() {
       ? api.billFacets({ sponsor: props.id, period }).catch(() => null)
       : Promise.resolve(null)
     const votesReq = showVotes.value
-      ? api.repVotes(props.id, { limit: 20, period }).catch(() => null)
+      ? api.repVoteDays(props.id, period).catch(() => null)
       : Promise.resolve(null)
     // The activity board is part of the representatives module (always on); a
     // failure must not break the profile, so it resolves to null on error.
     const activityReq = api.repActivity(props.id, period).catch(() => null)
-    const [p, s, act, sp, b, fac, v] = await Promise.all([
+    const [p, s, act, days, b, fac, v] = await Promise.all([
       api.representative(props.id, period),
       api.repStatistics(props.id, period),
       activityReq,
-      api.repSpeeches(props.id, { limit: 50, period }),
+      api.repSpeechDays(props.id, period),
       billsReq,
       facetsReq,
       votesReq,
     ])
     profile.value = p; stats.value = s; activity.value = act
-    speeches.value = sp; bills.value = b; votes.value = v
+    speechDays.value = days; bills.value = b; voteDays.value = v
     docTypes.value = fac ? [...new Set(fac.types.map((x) => x.main_type).filter(Boolean))] : []
   } catch { error.value = true } finally { loading.value = false }
 }
@@ -246,51 +284,84 @@ watch(() => store.cycle, load)
             </button>
           </section>
 
-          <section class="card pad" v-if="showVotes && votes && votes.total">
+          <!-- Votes grouped by sitting day; each day is a spoiler that lazily
+               loads its roll-call votes on first expand (EXT-2). -->
+          <section class="card pad" v-if="showVotes && voteDays && voteDays.total">
             <div class="sechead">
-              <h2>{{ $t('profile.votes') }} <span class="muted small">({{ votes.total }})</span></h2>
+              <h2>{{ $t('profile.votes') }} <span class="muted small">({{ voteDays.total }})</span></h2>
               <HelpTip :label="$t('profile.votes')">
                 <p>{{ $t('profile.votesNote') }}</p>
               </HelpTip>
             </div>
-            <ul class="votemini">
-              <li v-for="v in shown(votes.votes, 'votes')" :key="v.id">
-                <router-link :to="{ name: 'vote', params: { id: v.id } }" class="voteitem">
-                  <span class="vchip" :class="VOTE_CLASS[v.value_code] || 'other'">{{ $t('votes.' + v.value_code) }}</span>
-                  <span class="vmeta">
-                    <span class="vsub">{{ v.subject }}</span>
-                    <span class="muted small">
-                      {{ formatDate(v.vote_datetime) }}
-                      <template v-for="(s, i) in v.subjects" :key="i"> · {{ s.bill_number }}</template>
-                    </span>
-                  </span>
-                </router-link>
+            <ul class="daylist">
+              <li v-for="d in shown(voteDays.days, 'votes')" :key="d.date" class="dayitem">
+                <button type="button" class="dayhead" :aria-expanded="!!openVoteDays[d.date]" @click="toggleVoteDay(d)">
+                  <span class="caret" aria-hidden="true">{{ openVoteDays[d.date] ? '▾' : '▸' }}</span>
+                  <strong>{{ formatDate(d.date) }}</strong>
+                  <span class="muted small daycount">{{ d.count }} {{ $t('profile.votesDayCount') }}</span>
+                </button>
+                <div v-if="openVoteDays[d.date]" class="daybody">
+                  <p v-if="voteDayCache[d.date] && voteDayCache[d.date].loading" class="muted small">…</p>
+                  <p v-else-if="voteDayCache[d.date] && voteDayCache[d.date].error" class="muted small">
+                    {{ $t('profile.votesLoadError') }}
+                  </p>
+                  <ul v-else-if="voteDayCache[d.date]" class="votemini">
+                    <li v-for="v in voteDayCache[d.date].list" :key="v.id">
+                      <router-link :to="{ name: 'vote', params: { id: v.id } }" class="voteitem">
+                        <span class="vchip" :class="VOTE_CLASS[v.value_code] || 'other'">{{ $t('votes.' + v.value_code) }}</span>
+                        <span class="vmeta">
+                          <span class="vsub">{{ v.subject }}</span>
+                          <span class="muted small" v-if="v.subjects.length">
+                            <template v-for="(s, i) in v.subjects" :key="i">{{ i ? ' · ' : '' }}{{ s.bill_number }}</template>
+                          </span>
+                        </span>
+                      </router-link>
+                    </li>
+                  </ul>
+                </div>
               </li>
             </ul>
-            <button v-if="votes.votes.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+            <button v-if="voteDays.days.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
               :aria-expanded="expanded.votes" @click="expanded.votes = !expanded.votes">
               {{ expanded.votes ? $t('profile.showLess') : $t('profile.showMore') }}
             </button>
           </section>
 
+          <!-- Speeches grouped by sitting day; each day is a spoiler that lazily
+               loads its speeches on first expand (REP-2). -->
           <section class="card pad">
-            <h2>{{ $t('profile.speeches') }} <span class="muted small" v-if="speeches">({{ speeches.total }})</span></h2>
-            <p v-if="speeches && speeches.total === 0" class="muted">{{ $t('profile.noSpeeches') }}</p>
-            <ul v-else-if="speeches" class="speechlist">
-              <li v-for="s in shown(speeches.speeches, 'speeches')" :key="s.uid">
-                <router-link :to="{ name: 'viewer', params: { uid: s.uid } }" class="speechitem">
-                  <div class="row small" style="gap:.6rem;">
-                    <strong>{{ formatDate(s.date) }}</strong>
-                    <span class="badge" v-if="s.agenda_type">{{ agendaLabel(s.agenda_type) }}</span>
-                    <span class="muted" v-if="s.duration">⏱ {{ formatDuration(s.duration) }}</span>
-                  </div>
-                  <p class="excerpt">{{ s.excerpt || (s.has_text ? '' : $t('viewer.videoOnly')) }}</p>
-                </router-link>
+            <h2>{{ $t('profile.speeches') }} <span class="muted small" v-if="speechDays">({{ speechDays.total }})</span></h2>
+            <p v-if="speechDays && speechDays.total === 0" class="muted">{{ $t('profile.noSpeeches') }}</p>
+            <ul v-else-if="speechDays" class="daylist">
+              <li v-for="d in shown(speechDays.days, 'days')" :key="d.session_id" class="dayitem">
+                <button type="button" class="dayhead" :aria-expanded="!!openDays[d.session_id]" @click="toggleDay(d)">
+                  <span class="caret" aria-hidden="true">{{ openDays[d.session_id] ? '▾' : '▸' }}</span>
+                  <strong>{{ formatDate(d.date) }}</strong>
+                  <span class="muted small daycount">{{ d.count }} {{ $t('profile.speechesDayCount') }}</span>
+                  <span class="muted small" v-if="d.seconds">⏱ {{ formatSpeakingTime(d.seconds) }}</span>
+                </button>
+                <div v-if="openDays[d.session_id]" class="daybody">
+                  <p v-if="dayCache[d.session_id] && dayCache[d.session_id].loading" class="muted small">…</p>
+                  <p v-else-if="dayCache[d.session_id] && dayCache[d.session_id].error" class="muted small">
+                    {{ $t('profile.speechesLoadError') }}
+                  </p>
+                  <ul v-else-if="dayCache[d.session_id]" class="speechlist">
+                    <li v-for="s in dayCache[d.session_id].list" :key="s.uid">
+                      <router-link :to="{ name: 'viewer', params: { uid: s.uid } }" class="speechitem">
+                        <div class="row small" style="gap:.6rem;">
+                          <span class="badge" v-if="s.agenda_type">{{ agendaLabel(s.agenda_type) }}</span>
+                          <span class="muted" v-if="s.duration">⏱ {{ formatDuration(s.duration) }}</span>
+                        </div>
+                        <p class="excerpt">{{ s.excerpt || (s.has_text ? '' : $t('viewer.videoOnly')) }}</p>
+                      </router-link>
+                    </li>
+                  </ul>
+                </div>
               </li>
             </ul>
-            <button v-if="speeches && speeches.speeches.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
-              :aria-expanded="expanded.speeches" @click="expanded.speeches = !expanded.speeches">
-              {{ expanded.speeches ? $t('profile.showLess') : $t('profile.showMore') }}
+            <button v-if="speechDays && speechDays.days.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+              :aria-expanded="expanded.days" @click="expanded.days = !expanded.days">
+              {{ expanded.days ? $t('profile.showLess') : $t('profile.showMore') }}
             </button>
           </section>
         </div>
@@ -328,14 +399,29 @@ watch(() => store.cycle, load)
 .billitem .bnum { font-weight: 800; color: var(--accent); }
 .billitem .btitle { color: var(--ink); }
 .votemini { list-style: none; padding: 0; margin: .5rem 0 0; display: flex; flex-direction: column; gap: .4rem; }
-.voteitem { display: flex; gap: .6rem; align-items: flex-start; padding: .5rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
+/* the vote chip sits in a bottom-right gutter (absolute) so its varying width
+   (Igen / Tartózkodás …) never shifts the subject text's left edge */
+.voteitem { position: relative; display: block; padding: .5rem 5.5rem .5rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
 .voteitem:hover { background: var(--accent-soft); text-decoration: none; }
 .vmeta { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
 .vsub { font-weight: 600; }
-.vchip { flex: none; font-size: .72rem; font-weight: 700; line-height: 1.6; padding: 0 .5rem; border-radius: 999px; color: #fff; white-space: nowrap; }
+.vchip { position: absolute; right: .7rem; bottom: .5rem; font-size: .72rem; font-weight: 700; line-height: 1.6; padding: 0 .5rem; border-radius: 999px; color: #fff; white-space: nowrap; }
 .vchip.yes { background: #2e7d32; } .vchip.no { background: #c62828; }
 .vchip.abstain { background: #8a8780; } .vchip.novote { background: #c79a2e; }
 .vchip.absent { background: #7c8288; } .vchip.other { background: #777; }
+/* sitting-day spoilers: a clickable header row, body revealed on expand */
+.daylist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .5rem; }
+.dayitem { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.dayhead {
+  display: flex; align-items: center; gap: .6rem; width: 100%; text-align: left;
+  padding: .6rem .7rem; background: transparent; border: 0; cursor: pointer; color: var(--ink);
+}
+.dayhead:hover { background: var(--accent-soft); }
+.dayhead .caret { color: var(--ink-faint); font-size: .8rem; }
+.dayhead .daycount { margin-right: auto; }
+.daybody { padding: 0 .7rem .6rem; }
+.daybody .speechlist { margin-top: .2rem; }
+.daybody .speechitem { border-color: var(--line); }
 .speechlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .5rem; }
 .speechitem { display: block; padding: .6rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
 .speechitem:hover { background: var(--accent-soft); text-decoration: none; }

@@ -87,9 +87,11 @@ export default {
     activityDocs: 'documents', activityLess: 'less', activityMore: 'more',
     methodology: 'Methodology', scope: 'Data scope',
     sessionsCovered: 'sittings covered', noSpeeches: 'No speeches on record.', viewSpeech: 'View',
+    speechesDayCount: 'speeches', speechesLoadError: 'Could not load speeches.',
     showMore: 'Show more', showLess: 'Show less',
     present: 'present',
-    votes: 'Votes', votesNote: "The representative's recorded roll-call votes in processed divisions.",
+    votes: 'Votes', votesDayCount: 'votes', votesLoadError: 'Could not load votes.',
+    votesNote: "The representative's recorded roll-call votes in processed divisions.",
     noVotes: 'No recorded roll-call votes.', viewVote: 'View vote', allVotes: 'View all votes',
   },
   factions: {

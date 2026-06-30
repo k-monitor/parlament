@@ -370,17 +370,53 @@ def get_activity(person_id: str, period: Optional[int] = None,
     }
 
 
-@router.get("/{person_id}/speeches")
-def get_speeches(person_id: str, period: Optional[int] = None,
-                 limit: int = Query(50, ge=1, le=200),
-                 offset: int = Query(0, ge=0),
-                 db: sqlite3.Connection = Depends(get_db)):
-    """Reverse-chronological list of an MP's speeches (REP-2), scoped to the
-    selected cycle (§4A) when ``period`` is set."""
+@router.get("/{person_id}/speech-days")
+def get_speech_days(person_id: str, period: Optional[int] = None,
+                    db: sqlite3.Connection = Depends(get_db)):
+    """The sitting days an MP spoke on, reverse-chronological, with a speech
+    count per day (REP-2). Drives the grouped, lazy-loaded speech list on the
+    profile: the speeches of a day are fetched on demand via ``/speeches``
+    filtered by ``session_id``. Scoped to the selected cycle (§4A) when
+    ``period`` is set. Counts cover ALL speeches (procedural included), matching
+    what ``/speeches`` returns — not the procedural-excluded statistics."""
     extra = " AND ss.period_number = :per" if period is not None else ""
     params: dict = {"pid": person_id}
     if period is not None:
         params["per"] = period
+    rows = db.execute(
+        f"""SELECT ss.id AS session_id, ss.date, ss.sitting,
+                   COUNT(*) AS count, SUM(sp.duration) AS seconds
+            FROM speech sp
+            JOIN session ss ON ss.id = sp.session_id
+            WHERE sp.person_id = :pid{extra}
+            GROUP BY ss.id
+            ORDER BY ss.date DESC, ss.sitting DESC""", params).fetchall()
+    return {
+        "total": sum(r["count"] for r in rows),
+        "days": [
+            {"session_id": r["session_id"], "date": r["date"],
+             "sitting": r["sitting"], "count": r["count"],
+             "seconds": r["seconds"] or 0}
+            for r in rows],
+    }
+
+
+@router.get("/{person_id}/speeches")
+def get_speeches(person_id: str, period: Optional[int] = None,
+                 session_id: Optional[str] = None,
+                 limit: int = Query(50, ge=1, le=200),
+                 offset: int = Query(0, ge=0),
+                 db: sqlite3.Connection = Depends(get_db)):
+    """Reverse-chronological list of an MP's speeches (REP-2), scoped to the
+    selected cycle (§4A) when ``period`` is set, and to a single sitting day
+    when ``session_id`` is set (used by the grouped, lazy-loaded list)."""
+    extra = " AND ss.period_number = :per" if period is not None else ""
+    params: dict = {"pid": person_id}
+    if period is not None:
+        params["per"] = period
+    if session_id is not None:
+        extra += " AND sp.session_id = :sid"
+        params["sid"] = session_id
     total = db.execute(
         f"""SELECT COUNT(*) AS c FROM speech sp
             JOIN session ss ON ss.id = sp.session_id
@@ -410,15 +446,42 @@ def get_speeches(person_id: str, period: Optional[int] = None,
     }
 
 
+@router.get("/{person_id}/vote-days")
+def get_vote_days(person_id: str, period: Optional[int] = None,
+                  db: sqlite3.Connection = Depends(get_db)):
+    """The sitting days an MP voted on, reverse-chronological, with a roll-call
+    count per day (EXT-2). Drives the grouped, lazy-loaded vote list on the
+    profile: a day's votes are fetched on demand via ``/votes`` filtered by
+    ``date``. Scoped to the selected cycle (§4A) when ``period`` is set. Empty
+    when the Votes module is disabled (EXT-6) — guard before querying."""
+    if not settings.module_enabled("votes"):
+        return {"total": 0, "days": [], "available": False}
+    extra = " AND v.period_number = :per" if period is not None else ""
+    params: dict = {"pid": person_id}
+    if period is not None:
+        params["per"] = period
+    rows = db.execute(
+        f"""SELECT substr(v.vote_datetime, 1, 10) AS date, COUNT(*) AS count
+            FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
+            WHERE vr.person_id = :pid{extra}
+            GROUP BY date ORDER BY date DESC""", params).fetchall()
+    return {
+        "total": sum(r["count"] for r in rows), "available": True,
+        "days": [{"date": r["date"], "count": r["count"]} for r in rows],
+    }
+
+
 @router.get("/{person_id}/votes")
 def get_votes(person_id: str, period: Optional[int] = None,
+              date: Optional[str] = None,
               limit: int = Query(50, ge=1, le=200),
               offset: int = Query(0, ge=0),
               db: sqlite3.Connection = Depends(get_db)):
     """How an MP voted, reverse-chronologically (the reciprocal of the Votes
     module's per-MP roll call, EXT-2), scoped to the selected cycle (§4A) when
-    ``period`` is set. Empty when the Votes module is disabled (EXT-6) — its
-    tables may not exist, so guard before querying."""
+    ``period`` is set, and to a single sitting day when ``date`` (YYYY-MM-DD) is
+    set (used by the grouped, lazy-loaded list). Empty when the Votes module is
+    disabled (EXT-6) — its tables may not exist, so guard before querying."""
     if not settings.module_enabled("votes"):
         return {"total": 0, "limit": limit, "offset": offset, "votes": [],
                 "available": False}
@@ -426,6 +489,9 @@ def get_votes(person_id: str, period: Optional[int] = None,
     params: dict = {"pid": person_id}
     if period is not None:
         params["per"] = period
+    if date is not None:
+        extra += " AND substr(v.vote_datetime, 1, 10) = :date"
+        params["date"] = date
     total = db.execute(
         f"""SELECT COUNT(*) AS c FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
             WHERE vr.person_id = :pid{extra}""", params).fetchone()["c"]

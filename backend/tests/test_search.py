@@ -70,7 +70,7 @@ def test_search_trend_buckets_hits_over_time(client):
     r = client.get("/api/v1/proceedings/search/trend", params={"q": "koltsegvetes"})
     assert r.status_code == 200
     data = r.json()
-    assert data["granularity"] in ("month", "year")
+    assert data["granularity"] in ("day", "week", "month")
     assert sum(b["hits"] for b in data["buckets"]) >= 1
     assert all(b["period"] and b["hits"] >= 1 for b in data["buckets"])
     # Same faction filter as the result list → same emptiness.

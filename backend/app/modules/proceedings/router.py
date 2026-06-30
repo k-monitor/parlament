@@ -7,6 +7,7 @@ proceedings tables plus the shared core entities (person, faction, session).
 from __future__ import annotations
 
 import sqlite3
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -173,10 +174,11 @@ def search_trend(
     by calendar period, honouring the *same* filters as `/search` so the chart
     describes the very result set being browsed.
 
-    Granularity adapts to the span — monthly for a few years, yearly for the full
-    historical corpus (PERF-3) — so the timeline stays readable. Buckets are the
-    ones that actually have hits; the client fills the gaps with zeros so the
-    timeline is continuous and honest."""
+    The interval adapts to the span so the chart always has enough thin bars to
+    read as a histogram — daily for a few months, weekly for a couple of years,
+    monthly across the full multi-decade corpus. Only the periods that actually
+    have hits are returned; the client fills the gaps with zeros so the timeline
+    is continuous and honest."""
     where_sql, params = _search_where(q, date_from, date_to, period,
                                       person_id, faction_id, agenda_type)
 
@@ -194,15 +196,22 @@ def search_trend(
     if not span or not span["lo"]:
         return {"query": q, "granularity": "month", "buckets": []}
 
-    # Roughly how many months the hits span (dates are ISO 'YYYY-MM-DD').
-    lo_y, lo_m = int(span["lo"][:4]), int(span["lo"][5:7])
-    hi_y, hi_m = int(span["hi"][:4]), int(span["hi"][5:7])
-    months = (hi_y - lo_y) * 12 + (hi_m - lo_m) + 1
-    granularity = "year" if months > 36 else "month"
-    fmt = "%Y" if granularity == "year" else "%Y-%m"
+    # Pick the interval from the span so the histogram stays dense at every
+    # zoom: daily up to a few months, weekly up to a couple of years, monthly
+    # beyond. Each `period_expr` yields a sortable key the client can step over.
+    days = (date.fromisoformat(span["hi"]) - date.fromisoformat(span["lo"])).days + 1
+    if days <= 120:
+        granularity = "day"
+        period_expr = "strftime('%Y-%m-%d', ss.date)"
+    elif days <= 900:
+        granularity = "week"  # key = the Monday of each week
+        period_expr = "date(ss.date, '-' || ((strftime('%w', ss.date) + 6) % 7) || ' days')"
+    else:
+        granularity = "month"
+        period_expr = "strftime('%Y-%m', ss.date)"
 
     rows = db.execute(
-        f"""SELECT strftime('{fmt}', ss.date) AS period, COUNT(*) AS hits
+        f"""SELECT {period_expr} AS period, COUNT(*) AS hits
             {base_from} WHERE {where_sql}
             GROUP BY period ORDER BY period""",
         params).fetchall()

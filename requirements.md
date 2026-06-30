@@ -291,6 +291,17 @@ merely because an accent was omitted (or added).
   is a separate aggregate from the paginated results (so it never slows the
   result list) and, like all charts, has an accessible table equivalent
   (REP-6 / A11Y-1). Quiet periods render as zero, not as gaps.
+- **SEA-9 (SHOULD).** A **result-breakdown chart** accompanies a query: the
+  number of matching sentences grouped **by faction** and **by representative**,
+  so a user sees at a glance *who* and *which side of the house* a term comes
+  from. Like the popularity chart (SEA-8) it describes the **same result set** —
+  it honors all active filters (§SEA-3) and is computed over **all** matches, not
+  just the current page — and is a **separate aggregate** from the paginated
+  results so it never slows the result list. Each group is a **top-N** (the
+  busiest factions/speakers) to stay glanceable; factions render in their
+  consistent colour (§4.1) and each representative links to their profile
+  (REP-1). Like all charts it has an accessible table equivalent (REP-6 /
+  A11Y-1), and matching honours the site-wide accent folding (§4B).
 
 ### 5.2 Proceedings viewer (sentence ↔ video sync)
 

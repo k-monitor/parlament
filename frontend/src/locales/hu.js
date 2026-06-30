@@ -69,6 +69,8 @@ export default {
     watch: 'Megtekintés',
     on: '·',
     trendCaption: 'A(z) „{q}” előfordulása az időben',
+    breakdownFactions: 'A(z) „{q}” találatok frakciónként',
+    breakdownSpeakers: 'A(z) „{q}” találatok felszólalónként',
   },
   viewer: {
     transcript: 'Jegyzőkönyv',

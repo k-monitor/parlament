@@ -1,6 +1,7 @@
 <script setup>
 // Dependency-free SVG bar chart with a built-in accessible table equivalent
-// (REP-6 / A11Y-1). `items` = [{ label, value, color?, sub? }].
+// (REP-6 / A11Y-1). `items` = [{ label, value, color?, sub?, to? }]; when an
+// item carries `to` (a vue-router location) its label renders as a link.
 import { ref, computed } from 'vue'
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -17,7 +18,8 @@ const max = computed(() => Math.max(1, ...props.items.map((i) => i.value || 0)))
     <figcaption v-if="caption" class="small soft" style="margin-bottom:.4rem;">{{ caption }}</figcaption>
     <div class="bars" role="img" :aria-label="caption">
       <div v-for="(it, i) in items" :key="i" class="bar-row">
-        <span class="bar-label" :title="it.label">{{ it.label }}</span>
+        <router-link v-if="it.to" :to="it.to" class="bar-label" :title="it.label">{{ it.label }}</router-link>
+        <span v-else class="bar-label" :title="it.label">{{ it.label }}</span>
         <span class="bar-track">
           <span class="bar-fill" :style="{ width: ((it.value / max) * 100) + '%', background: it.color || 'var(--accent)' }"></span>
         </span>
@@ -31,7 +33,13 @@ const max = computed(() => Math.max(1, ...props.items.map((i) => i.value || 0)))
       <caption class="visually-hidden">{{ caption }}</caption>
       <thead><tr><th scope="col">#</th><th scope="col">{{ unit }}</th></tr></thead>
       <tbody>
-        <tr v-for="(it, i) in items" :key="i"><th scope="row">{{ it.label }}</th><td>{{ valueFormat(it.value) }}</td></tr>
+        <tr v-for="(it, i) in items" :key="i">
+          <th scope="row">
+            <router-link v-if="it.to" :to="it.to">{{ it.label }}</router-link>
+            <template v-else>{{ it.label }}</template>
+          </th>
+          <td>{{ valueFormat(it.value) }}</td>
+        </tr>
       </tbody>
     </table>
   </figure>

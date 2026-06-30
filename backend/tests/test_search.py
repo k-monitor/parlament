@@ -81,6 +81,25 @@ def test_search_trend_buckets_hits_over_time(client):
     assert empty["buckets"] == []
 
 
+def test_search_breakdown_groups_by_faction_and_speaker(client):
+    # SEA-9: the breakdown counts matching sentences per faction and per
+    # representative, honouring the same filters as /search.
+    r = client.get("/api/v1/proceedings/search/breakdown", params={"q": "koltsegvetes"})
+    assert r.status_code == 200
+    data = r.json()
+    # Kovács Béla (Fidesz) is the one who said it in the fixture corpus.
+    assert any(s["label"] == "Kovács Béla" and s["hits"] >= 1 for s in data["speakers"])
+    assert all(s["person_id"] for s in data["speakers"])      # only resolved MPs
+    assert any(f["label"] == "Fidesz" and f["hits"] >= 1 for f in data["factions"])
+    assert all(f["color"] for f in data["factions"])          # colour for charts
+    # Same faction filter as the result list → same emptiness.
+    fac = client.get("/api/v1/representatives/factions").json()["factions"]
+    tisza = next(f for f in fac if f["label"] == "TISZA")["id"]
+    empty = client.get("/api/v1/proceedings/search/breakdown",
+                       params={"q": "koltsegvetes", "faction_id": tisza}).json()
+    assert empty["factions"] == [] and empty["speakers"] == []
+
+
 def test_filter_by_faction_and_agenda(client):
     # Filter to a faction with no costing-related hit.
     fac = client.get("/api/v1/representatives/factions").json()["factions"]

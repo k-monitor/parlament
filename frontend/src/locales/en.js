@@ -40,6 +40,8 @@ export default {
     filters: 'Filters', clearFilters: 'Clear filters', period: 'Term', dateFrom: 'From', dateTo: 'To',
     speaker: 'Speaker', faction: 'Faction', agendaType: 'Agenda type', all: 'All', watch: 'Watch', on: '·',
     trendCaption: 'Occurrences of “{q}” over time',
+    breakdownFactions: 'Matches for “{q}” by faction',
+    breakdownSpeakers: 'Matches for “{q}” by representative',
   },
   viewer: {
     transcript: 'Transcript', noTranscript: 'No transcript text is available for this speech.',

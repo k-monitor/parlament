@@ -33,6 +33,33 @@ def _is_estimated(align_method: str | None) -> bool:
 # Search (SEA-*)
 # ---------------------------------------------------------------------------
 
+def _search_where(q, date_from, date_to, period, person_id, faction_id, agenda_type):
+    """Build the shared FTS-match + filter clause for the search endpoints.
+
+    `/search`, `/search/trend` (SEA-8) and `/search/breakdown` (SEA-9) all
+    describe the *same* result set, so they apply an identical WHERE — only the
+    projection/grouping differs. Returns ``(where_sql, params)``; raises 400 when
+    the query holds no searchable terms."""
+    match = build_match(q)
+    if not match:
+        raise HTTPException(400, "Query contains no searchable terms")
+    where = ["sentence_fts MATCH :match"]
+    params: dict = {"match": match}
+    if date_from:
+        where.append("ss.date >= :date_from"); params["date_from"] = date_from
+    if date_to:
+        where.append("ss.date <= :date_to"); params["date_to"] = date_to
+    if period is not None:
+        where.append("sp.period_number = :period"); params["period"] = period
+    if person_id:
+        where.append("sp.person_id = :person_id"); params["person_id"] = person_id
+    if faction_id is not None:
+        where.append("sp.faction_id = :faction_id"); params["faction_id"] = faction_id
+    if agenda_type:
+        where.append("ai.type = :agenda_type"); params["agenda_type"] = agenda_type
+    return " AND ".join(where), params
+
+
 @router.get("/search")
 def search(
     q: str = Query(..., min_length=1, description="Free-text query; \"…\" = exact phrase"),
@@ -51,25 +78,8 @@ def search(
     Each hit carries the matched sentence (with `<mark>` highlights), a context
     snippet, speaker/faction/date/agenda metadata, and the timing needed to open
     the viewer at that moment (SEA-4)."""
-    match = build_match(q)
-    if not match:
-        raise HTTPException(400, "Query contains no searchable terms")
-
-    where = ["sentence_fts MATCH :match"]
-    params: dict = {"match": match}
-    if date_from:
-        where.append("ss.date >= :date_from"); params["date_from"] = date_from
-    if date_to:
-        where.append("ss.date <= :date_to"); params["date_to"] = date_to
-    if period is not None:
-        where.append("sp.period_number = :period"); params["period"] = period
-    if person_id:
-        where.append("sp.person_id = :person_id"); params["person_id"] = person_id
-    if faction_id is not None:
-        where.append("sp.faction_id = :faction_id"); params["faction_id"] = faction_id
-    if agenda_type:
-        where.append("ai.type = :agenda_type"); params["agenda_type"] = agenda_type
-    where_sql = " AND ".join(where)
+    where_sql, params = _search_where(q, date_from, date_to, period,
+                                      person_id, faction_id, agenda_type)
 
     base_from = """
         FROM sentence_fts
@@ -109,7 +119,7 @@ def search(
 
     return {
         "query": q,
-        "match": match,
+        "match": params["match"],
         "total": min(total, settings.max_search_total),
         "total_is_capped": capped,
         "limit": limit,
@@ -167,25 +177,8 @@ def search_trend(
     historical corpus (PERF-3) — so the timeline stays readable. Buckets are the
     ones that actually have hits; the client fills the gaps with zeros so the
     timeline is continuous and honest."""
-    match = build_match(q)
-    if not match:
-        raise HTTPException(400, "Query contains no searchable terms")
-
-    where = ["sentence_fts MATCH :match"]
-    params: dict = {"match": match}
-    if date_from:
-        where.append("ss.date >= :date_from"); params["date_from"] = date_from
-    if date_to:
-        where.append("ss.date <= :date_to"); params["date_to"] = date_to
-    if period is not None:
-        where.append("sp.period_number = :period"); params["period"] = period
-    if person_id:
-        where.append("sp.person_id = :person_id"); params["person_id"] = person_id
-    if faction_id is not None:
-        where.append("sp.faction_id = :faction_id"); params["faction_id"] = faction_id
-    if agenda_type:
-        where.append("ai.type = :agenda_type"); params["agenda_type"] = agenda_type
-    where_sql = " AND ".join(where)
+    where_sql, params = _search_where(q, date_from, date_to, period,
+                                      person_id, faction_id, agenda_type)
 
     base_from = """
         FROM sentence_fts
@@ -217,6 +210,68 @@ def search_trend(
         "query": q,
         "granularity": granularity,
         "buckets": [{"period": r["period"], "hits": r["hits"]} for r in rows],
+    }
+
+
+@router.get("/search/breakdown")
+def search_breakdown(
+    q: str = Query(..., min_length=1, description="Free-text query; \"…\" = exact phrase"),
+    date_from: Optional[str] = Query(None, description="ISO date lower bound"),
+    date_to: Optional[str] = Query(None, description="ISO date upper bound"),
+    period: Optional[int] = Query(None, description="Electoral period number"),
+    person_id: Optional[str] = None,
+    faction_id: Optional[int] = None,
+    agenda_type: Optional[str] = None,
+    limit: int = Query(12, ge=1, le=50, description="Top-N rows per group"),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Who a query's matches come from (SEA-9): matching-sentence counts grouped
+    by faction and by representative, honouring the *same* filters as `/search`
+    so the chart describes the very result set being browsed.
+
+    Each group is a top-N (the busiest factions/speakers) computed over **all**
+    matches, not just the current page; it is a separate aggregate so it never
+    slows the result list. Factions carry their consistent colour and each
+    representative its `person_id` so the UI can link to the profile (REP-1).
+    Speeches with no resolved representative are not attributed to a person row;
+    those with no faction are not attributed to a faction row."""
+    where_sql, params = _search_where(q, date_from, date_to, period,
+                                      person_id, faction_id, agenda_type)
+
+    base_from = """
+        FROM sentence_fts
+        JOIN sentence se ON se.id = sentence_fts.rowid
+        JOIN speech sp ON sp.uid = se.speech_id
+        JOIN session ss ON ss.id = sp.session_id
+        LEFT JOIN agenda_item ai ON ai.id = sp.agenda_item_id
+        LEFT JOIN person p ON p.person_id = sp.person_id
+        LEFT JOIN faction f ON f.id = sp.faction_id
+    """
+
+    factions = db.execute(
+        f"""SELECT f.id AS faction_id, f.label, f.color, COUNT(*) AS hits
+            {base_from} WHERE {where_sql} AND sp.faction_id IS NOT NULL
+            GROUP BY f.id ORDER BY hits DESC, f.label LIMIT :limit""",
+        {**params, "limit": limit}).fetchall()
+
+    speakers = db.execute(
+        f"""SELECT sp.person_id, p.label, p.photo_uri, COUNT(*) AS hits
+            {base_from} WHERE {where_sql} AND sp.person_id IS NOT NULL
+            GROUP BY sp.person_id ORDER BY hits DESC, p.label LIMIT :limit""",
+        {**params, "limit": limit}).fetchall()
+
+    return {
+        "query": q,
+        "factions": [
+            {"faction_id": r["faction_id"], "label": r["label"],
+             "color": r["color"], "hits": r["hits"]}
+            for r in factions
+        ],
+        "speakers": [
+            {"person_id": r["person_id"], "label": r["label"],
+             "photo_uri": r["photo_uri"], "hits": r["hits"]}
+            for r in speakers
+        ],
     }
 
 

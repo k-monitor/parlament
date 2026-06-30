@@ -13,6 +13,7 @@ import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
 import TrendChart from '../../components/TrendChart.vue'
+import BarChart from '../../components/BarChart.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,6 +35,7 @@ const showFilters = ref(false)
 
 const data = ref(null)
 const trend = ref(null)
+const breakdown = ref(null)
 const loading = ref(false)
 const error = ref(false)
 
@@ -74,7 +76,7 @@ function gotoPage(p) {
 }
 
 async function runFromRoute() {
-  if (!route.query.q) { data.value = null; trend.value = null; return }
+  if (!route.query.q) { data.value = null; trend.value = null; breakdown.value = null; return }
   loading.value = true; error.value = false
   const filterArgs = {
     q: route.query.q,
@@ -84,10 +86,11 @@ async function runFromRoute() {
     faction_id: route.query.faction_id,
     agenda_type: route.query.agenda_type,
   }
-  // The over-time popularity chart (SEA-8) is an independent aggregate over the
-  // whole result set (not just this page), so it runs alongside and its failure
-  // must never break the results list.
+  // The over-time popularity chart (SEA-8) and the who-said-it breakdown (SEA-9)
+  // are independent aggregates over the whole result set (not just this page),
+  // so they run alongside and their failure must never break the results list.
   api.searchTrend(filterArgs).then((t) => { trend.value = t }).catch(() => { trend.value = null })
+  api.searchBreakdown(filterArgs).then((b) => { breakdown.value = b }).catch(() => { breakdown.value = null })
   try {
     data.value = await api.search({
       ...filterArgs,
@@ -110,6 +113,20 @@ watch(() => route.query, (q) => {
 function viewerLink(r) {
   return { name: 'viewer', params: { uid: r.speech_uid }, query: { s: r.sentence_ord } }
 }
+
+// SEA-9 breakdown → BarChart rows. Factions keep their colour; each
+// representative links to their profile (REP-1).
+const factionItems = computed(() =>
+  (breakdown.value?.factions || []).map((f) => ({
+    label: f.label, value: f.hits, color: f.color,
+  })))
+const speakerItems = computed(() =>
+  (breakdown.value?.speakers || []).map((s) => ({
+    label: s.label, value: s.hits,
+    to: { name: 'profile', params: { id: s.person_id } },
+  })))
+const hasBreakdown = computed(() =>
+  factionItems.value.length > 0 || speakerItems.value.length > 0)
 </script>
 
 <template>
@@ -180,6 +197,25 @@ function viewerLink(r) {
         />
       </section>
 
+      <section v-if="hasBreakdown" class="card pad breakdowncard">
+        <div class="breakdown-grid">
+          <BarChart
+            v-if="factionItems.length"
+            :items="factionItems"
+            :caption="$t('search.breakdownFactions', { q: data.query })"
+            :unit="$t('search.results')"
+            :value-format="(v) => v.toLocaleString('hu-HU')"
+          />
+          <BarChart
+            v-if="speakerItems.length"
+            :items="speakerItems"
+            :caption="$t('search.breakdownSpeakers', { q: data.query })"
+            :unit="$t('search.results')"
+            :value-format="(v) => v.toLocaleString('hu-HU')"
+          />
+        </div>
+      </section>
+
       <ol class="results">
         <li v-for="r in data.results" :key="r.sentence_id" class="card pad result">
           <router-link :to="viewerLink(r)" class="result-sentence">
@@ -209,6 +245,8 @@ function viewerLink(r) {
 .filters { border: none; border-top: 1px solid var(--line); margin-top: .8rem; padding: .8rem 0 0; }
 .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .7rem; }
 .trendcard { margin: 0 0 .9rem; }
+.breakdowncard { margin: 0 0 .9rem; }
+.breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; }
 .results { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .7rem; }
 .result-sentence { display: block; font-size: 1.12rem; color: var(--ink); line-height: 1.5; }
 .result-sentence:hover { text-decoration: none; color: var(--accent); }

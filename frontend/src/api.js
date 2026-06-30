@@ -24,6 +24,7 @@ export const api = {
   // proceedings
   search: (params) => get('/proceedings/search', params),
   searchTrend: (params) => get('/proceedings/search/trend', params),
+  searchBreakdown: (params) => get('/proceedings/search/breakdown', params),
   suggest: (q) => get('/proceedings/suggest', { q }),
   sessions: (period) => get('/proceedings/sessions', { period }),
   session: (id) => get(`/proceedings/sessions/${id}`),

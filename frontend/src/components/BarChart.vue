@@ -1,15 +1,13 @@
 <script setup>
-// Dependency-free SVG bar chart with a built-in accessible table equivalent
-// (REP-6 / A11Y-1). `items` = [{ label, value, color?, sub?, to? }]; when an
-// item carries `to` (a vue-router location) its label renders as a link.
-import { ref, computed } from 'vue'
+// Dependency-free SVG bar chart. `items` = [{ label, value, color?, sub?, to? }];
+// when an item carries `to` (a vue-router location) its label renders as a link.
+import { computed } from 'vue'
 const props = defineProps({
   items: { type: Array, default: () => [] },
   unit: { type: String, default: '' },
   caption: { type: String, default: '' },
   valueFormat: { type: Function, default: (v) => String(v) },
 })
-const showTable = ref(false)
 const max = computed(() => Math.max(1, ...props.items.map((i) => i.value || 0)))
 </script>
 
@@ -26,22 +24,6 @@ const max = computed(() => Math.max(1, ...props.items.map((i) => i.value || 0)))
         <span class="bar-val">{{ valueFormat(it.value) }}</span>
       </div>
     </div>
-    <button class="btn secondary small" style="margin-top:.6rem;padding:.3rem .7rem;" @click="showTable = !showTable">
-      {{ showTable ? $t('profile.hideTable') : $t('profile.showTable') }}
-    </button>
-    <table v-if="showTable" class="data" style="margin-top:.6rem;">
-      <caption class="visually-hidden">{{ caption }}</caption>
-      <thead><tr><th scope="col">#</th><th scope="col">{{ unit }}</th></tr></thead>
-      <tbody>
-        <tr v-for="(it, i) in items" :key="i">
-          <th scope="row">
-            <router-link v-if="it.to" :to="it.to">{{ it.label }}</router-link>
-            <template v-else>{{ it.label }}</template>
-          </th>
-          <td>{{ valueFormat(it.value) }}</td>
-        </tr>
-      </tbody>
-    </table>
   </figure>
 </template>
 

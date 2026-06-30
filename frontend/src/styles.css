@@ -82,6 +82,8 @@ label { font-weight: 600; font-size: .85rem; color: var(--ink-soft); display: bl
   border-radius: var(--radius); box-shadow: var(--shadow);
 }
 .pad { padding: 1rem 1.2rem; }
+/* A heading that opens a card carries no extra top margin, so sections stay compact. */
+.card > h2:first-child, .card > h3:first-child { margin-top: 0; }
 
 mark { background: var(--mark); color: var(--mark-ink); padding: 0 .1em; border-radius: 3px; }
 

@@ -3,24 +3,16 @@
 // precomputed statistics (with explicit scope + methodology), an accessible
 // trend chart, and a reverse-chronological speech list linking into the viewer.
 import { ref, reactive, computed, watch, onMounted } from 'vue'
-import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
-import { store, loadMeta, currentCycleLabel } from '../../store.js'
+import { store, loadMeta } from '../../store.js'
 import { formatDate, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import BarChart from '../../components/BarChart.vue'
 import ActivityBoard from '../../components/ActivityBoard.vue'
+import HelpTip from '../../components/HelpTip.vue'
 
 const props = defineProps({ id: String })
-const { t } = useI18n()
-
-// Explicit scope label: the whole profile (stats, speeches, votes, documents)
-// covers only the globally selected cycle.
-const scopeText = computed(() => {
-  const c = currentCycleLabel()
-  return c ? t('cycle.scope', { cycle: c }) : t('cycle.scopeAll')
-})
 
 // First day of the selected cycle, so the activity board always starts there
 // (null under "all cycles" → the board starts at the MP's first active day).
@@ -162,8 +154,13 @@ watch(() => store.cycle, load)
         <!-- left: stats + bio -->
         <div class="pcol">
           <section class="card pad">
-            <h2>{{ $t('profile.statistics') }}</h2>
-            <p class="muted small scopenote">📅 {{ scopeText }}</p>
+            <div class="sechead">
+              <h2>{{ $t('profile.statistics') }}</h2>
+              <HelpTip :label="$t('profile.methodology') + ' · ' + $t('profile.scope')">
+                <p>{{ stats.scope.description }} ({{ stats.scope.sessions_covered }} {{ $t('profile.sessionsCovered') }})</p>
+                <p>{{ stats.methodology }}</p>
+              </HelpTip>
+            </div>
             <div class="bignums">
               <div><span class="num">{{ stats.totals.speech_count }}</span><span class="lbl">{{ $t('profile.totalSpeeches') }}</span></div>
               <div><span class="num">{{ formatSpeakingTime(stats.totals.speaking_seconds) }}</span><span class="lbl">{{ $t('profile.totalSpeakingTime') }}</span></div>
@@ -187,12 +184,6 @@ watch(() => store.cycle, load)
                 :unit="$t('reps.speeches')"
               />
             </div>
-
-            <details class="methodology">
-              <summary>{{ $t('profile.methodology') }} · {{ $t('profile.scope') }}</summary>
-              <p class="small muted">{{ stats.scope.description }} ({{ stats.scope.sessions_covered }} {{ $t('profile.sessionsCovered') }})</p>
-              <p class="small muted">{{ stats.methodology }}</p>
-            </details>
           </section>
 
           <section class="card pad" v-if="profile.faction_history && profile.faction_history.length">
@@ -256,8 +247,12 @@ watch(() => store.cycle, load)
           </section>
 
           <section class="card pad" v-if="showVotes && votes && votes.total">
-            <h2>{{ $t('profile.votes') }} <span class="muted small">({{ votes.total }})</span></h2>
-            <p class="small muted">{{ $t('profile.votesNote') }}</p>
+            <div class="sechead">
+              <h2>{{ $t('profile.votes') }} <span class="muted small">({{ votes.total }})</span></h2>
+              <HelpTip :label="$t('profile.votes')">
+                <p>{{ $t('profile.votesNote') }}</p>
+              </HelpTip>
+            </div>
             <ul class="votemini">
               <li v-for="v in shown(votes.votes, 'votes')" :key="v.id">
                 <router-link :to="{ name: 'vote', params: { id: v.id } }" class="voteitem">
@@ -318,9 +313,9 @@ watch(() => store.cycle, load)
 .bignums .pct { font-size: 1rem; font-weight: 700; color: var(--ink-soft); }
 .bignums .biglink:hover { text-decoration: underline; }
 .bills-note { margin-top: .8rem; }
-.scopenote { margin: -.2rem 0 .8rem; }
-.methodology { margin-top: 1rem; }
-.methodology summary { cursor: pointer; font-size: .85rem; color: var(--ink-soft); font-weight: 600; }
+/* heading + help-icon row; the icon carries the section's description (REP-5) */
+.sechead { display: flex; align-items: center; gap: .35rem; margin-bottom: .6rem; }
+.sechead h2 { margin: 0; }
 .timeline, .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
 .timeline li { display: flex; gap: .6rem; align-items: center; }
 .billhead { display: flex; gap: .6rem; align-items: baseline; justify-content: space-between; flex-wrap: wrap; margin-bottom: .6rem; }

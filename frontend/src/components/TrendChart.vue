@@ -1,6 +1,5 @@
 <script setup>
-// Dependency-free SVG bar histogram for a value over time (SEA-8), with the same
-// built-in accessible table equivalent as BarChart (REP-6 / A11Y-1).
+// Dependency-free SVG bar histogram for a value over time (SEA-8).
 // `buckets` = [{ period, hits }]; the server picks the interval from the span
 // (day / week / month / year) and the client fills the zero gaps so the timeline
 // is continuous. Rendered as a dense histogram of thin bars — one slot per
@@ -13,7 +12,6 @@ const props = defineProps({
   caption: { type: String, default: '' },
   unit: { type: String, default: '' },
 })
-const showTable = ref(false)
 
 const MONTHS = ['', 'jan', 'feb', 'márc', 'ápr', 'máj', 'jún',
   'júl', 'aug', 'szept', 'okt', 'nov', 'dec']
@@ -155,17 +153,6 @@ const tipPct = computed(() => (hoverBar.value
       <span v-for="t in ticks" :key="t.i" class="axis-lbl"
             :style="{ left: ((t.i * slotW + slotW / 2) / w * 100) + '%' }">{{ t.text }}</span>
     </div>
-
-    <button class="btn secondary small" style="margin-top:.6rem;padding:.3rem .7rem;" @click="showTable = !showTable">
-      {{ showTable ? $t('profile.hideTable') : $t('profile.showTable') }}
-    </button>
-    <table v-if="showTable" class="data" style="margin-top:.6rem;">
-      <caption class="visually-hidden">{{ caption }}</caption>
-      <thead><tr><th scope="col">#</th><th scope="col">{{ unit }}</th></tr></thead>
-      <tbody>
-        <tr v-for="b in filled" :key="b.period"><th scope="row">{{ b.label }}</th><td>{{ b.hits }}</td></tr>
-      </tbody>
-    </table>
   </figure>
 </template>
 

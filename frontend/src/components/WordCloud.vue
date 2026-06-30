@@ -16,7 +16,6 @@ const props = defineProps({
   caption: { type: String, default: '' },
 })
 defineEmits(['pick'])
-const showTable = ref(false)
 
 const cloudEl = ref(null)
 const placed = ref([])        // laid-out words: { ...word, left, top, size, rot, fw, op }
@@ -155,19 +154,6 @@ watch(() => props.words, relayout)
         @click="$emit('pick', p.text)"
       >{{ p.text }}</button>
     </div>
-    <button class="btn secondary small" style="margin-top:.6rem;padding:.3rem .7rem;" @click="showTable = !showTable">
-      {{ showTable ? $t('profile.hideTable') : $t('profile.showTable') }}
-    </button>
-    <table v-if="showTable" class="data" style="margin-top:.6rem;">
-      <caption class="visually-hidden">{{ caption }}</caption>
-      <thead><tr><th scope="col">#</th><th scope="col">{{ $t('sessions.wordcloudCount') }}</th></tr></thead>
-      <tbody>
-        <tr v-for="w in words" :key="w.text">
-          <th scope="row">{{ w.text }}<span v-if="w.kind === 'entity'" class="soft small"> · {{ $t('sessions.wordcloudEntity') }}</span></th>
-          <td>{{ w.count }}</td>
-        </tr>
-      </tbody>
-    </table>
   </figure>
 </template>
 

@@ -291,9 +291,8 @@ merely because an accent was omitted (or added).
   to yearly over a long span), so a user sees when a term was most discussed.
   The chart describes the **same result set** — it honors all active filters
   (§SEA-3) — and is computed over **all** matches, not just the current page. It
-  is a separate aggregate from the paginated results (so it never slows the
-  result list) and, like all charts, has an accessible table equivalent
-  (REP-6 / A11Y-1). Quiet periods render as zero, not as gaps.
+  is a separate aggregate from the paginated results, so it never slows the
+  result list. Quiet periods render as zero, not as gaps.
 - **SEA-9 (SHOULD).** A **result-breakdown chart** accompanies a query: the
   number of matching sentences grouped **by faction** and **by representative**,
   so a user sees at a glance *who* and *which side of the house* a term comes
@@ -303,8 +302,7 @@ merely because an accent was omitted (or added).
   results so it never slows the result list. Each group is a **top-N** (the
   busiest factions/speakers) to stay glanceable; factions render in their
   consistent colour (§4.1) and each representative links to their profile
-  (REP-1). Like all charts it has an accessible table equivalent (REP-6 /
-  A11Y-1), and matching honours the site-wide accent folding (§4B).
+  (REP-1), and matching honours the site-wide accent folding (§4B).
 
 ### 5.2 Proceedings viewer (sentence ↔ video sync)
 
@@ -396,9 +394,8 @@ merely because an accent was omitted (or added).
   detail cache) and the **request path never invokes the model**. When the model
   is **not installed the build degrades** to the dependency-free regex tokenizer
   (raw lowercased forms), so the word cloud still works on a minimal install.
-- **WCLOUD-3.** The visualization MUST have an **accessible text/table
-  equivalent** (REP-6 / A11Y-1) — the same word→count data as a table — and word
-  sizing alone must not be the only carrier of meaning.
+- **WCLOUD-3.** In the visualization, word sizing alone must not be the only
+  carrier of meaning (A11Y-1).
 - **WCLOUD-4 (SHOULD).** A word in the cloud is a **link into proceedings search
   (SEA-6)** scoped to that sitting day (the query plus the day's date range), so a
   click moves from "what was discussed" to "where exactly it was said".
@@ -424,9 +421,8 @@ merely because an accent was omitted (or added).
 - **TOPSPK-3.** Each entry **links to the representative's profile** (REP-1) and
   shows the speaker's **faction** (colour/label). The list is a **top-N**
   (default ~10) so it stays a glanceable summary, not a second transcript.
-- **TOPSPK-4.** The visualization MUST have an **accessible text/table
-  equivalent** (REP-6 / A11Y-1) — the same representative→time/count data as a
-  table — and bar length alone must not be the only carrier of meaning.
+- **TOPSPK-4.** In the visualization, bar length alone must not be the only
+  carrier of meaning (A11Y-1).
 - **TOPSPK-5.** The toplist is served from a **dedicated aggregate endpoint**
   computed per sitting; it is a **separate request** from the transcript so it
   never slows the sitting-day load (cf. WCLOUD-5 / SEA-8).
@@ -466,7 +462,6 @@ merely because an accent was omitted (or added).
 - **REP-5.** Statistics MUST state their **time scope** (which period/date range)
   and **how they are computed** (a short methodology note), and be consistent with
   the underlying speech records a user can click through to verify.
-- **REP-6.** Charts MUST have accessible text/table equivalents (§8 accessibility).
 - **REP-8 (SHOULD).** A representative's profile carries a **GitHub-style activity
   board** — a contribution-calendar heatmap that shows, at a glance, **how much
   the MP did on each day**. Each cell is a calendar day, laid out as week columns
@@ -479,9 +474,8 @@ merely because an accent was omitted (or added).
   board honours the **global cycle selector** (§4A): it covers the selected cycle's
   date span and re-scopes when the cycle changes. It degrades gracefully per EXT-6
   — when the Bills module is disabled the documents contribution is simply absent,
-  never faked. Like all visualizations it has an **accessible text/table
-  equivalent** (REP-6 / A11Y-1): the same day→count data as a table, and cell
-  colour/intensity is never the only carrier of meaning. It is served from a
+  never faked. Cell colour/intensity is never the only carrier of meaning
+  (A11Y-1). It is served from a
   **dedicated aggregate endpoint** (REP-7) so it never blocks on live aggregation.
 - **REP-7.** Statistics are served from **precomputed aggregates** (§4.2) and
   recomputed on each ingest; they must never block on live aggregation of the

@@ -4,7 +4,7 @@
 // columns × weekday rows, each cell shaded by the day's total activity. It is
 // dependency-free (CSS grid of <div>s) and ships an accessible table equivalent
 // (REP-6 / A11Y-1) — colour/intensity is never the only carrier of meaning.
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatDate } from '../format.js'
 
@@ -110,9 +110,7 @@ function cellTitle(c) {
   return s
 }
 
-// Accessible table equivalent: the active days within the shown window, so the
-// table never lists days the board (capped to MAX_SPAN_DAYS) doesn't show.
-const showTable = ref(false)
+// The active days within the shown window — drives the board's summary count.
 const activeDays = computed(() => {
   if (!range.value) return []
   const startKey = key(range.value.start)
@@ -171,27 +169,6 @@ const summary = computed(() =>
         </div>
       </div>
     </div>
-
-    <button class="btn secondary small tabletoggle" @click="showTable = !showTable">
-      {{ showTable ? $t('profile.hideTable') : $t('profile.showTable') }}
-    </button>
-    <table v-if="showTable" class="data">
-      <caption class="visually-hidden">{{ $t('profile.activityCaption') }}</caption>
-      <thead>
-        <tr>
-          <th scope="col">{{ $t('profile.activityDay') }}</th>
-          <th scope="col">{{ $t('reps.speeches') }}</th>
-          <th scope="col" v-if="documentsAvailable">{{ $t('profile.activityDocs') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="d in activeDays" :key="d.date">
-          <th scope="row">{{ formatDate(d.date) }}</th>
-          <td>{{ d.speeches }}</td>
-          <td v-if="documentsAvailable">{{ d.documents }}</td>
-        </tr>
-      </tbody>
-    </table>
   </figure>
 </template>
 
@@ -224,6 +201,4 @@ const summary = computed(() =>
 /* vertical legend: "több" at top, cells descending, "kevesebb" at bottom */
 .legend { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: .62rem; }
 .legend .cell { width: 11px; height: 11px; }
-.tabletoggle { margin-top: .6rem; padding: .3rem .7rem; }
-.data { margin-top: .6rem; }
 </style>

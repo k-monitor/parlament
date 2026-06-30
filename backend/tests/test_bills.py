@@ -82,6 +82,21 @@ def test_list_other_documents(client):
     assert d["bills"][0]["type"] == "interpelláció"
 
 
+def test_list_bills_main_type_in_and_not_in(client):
+    """The profile splits an MP's irományok into buckets by main type: questions
+    (K/A/I), bills (T/H), and everything else (main_type_not_in the first two)."""
+    # bills bucket: both törvényjavaslatok
+    bills = client.get("/api/v1/bills", params={"main_type_in": "T,H"}).json()
+    assert bills["total"] == 2
+    assert {b["bill_number"] for b in bills["bills"]} == {"T/100", "T/101"}
+    # questions bucket: the interpelláció
+    questions = client.get("/api/v1/bills", params={"main_type_in": "K,A,I"}).json()
+    assert questions["total"] == 1 and questions["bills"][0]["bill_number"] == "I/5"
+    # "other" bucket excludes both of the above — nothing left in this fixture
+    other = client.get("/api/v1/bills", params={"main_type_not_in": "K,A,I,T,H"}).json()
+    assert other["total"] == 0
+
+
 def test_list_documents_filter_by_type(client):
     d = client.get("/api/v1/bills", params={"type": "interpelláció"}).json()
     assert d["total"] == 1 and d["bills"][0]["bill_number"] == "I/5"

@@ -72,8 +72,10 @@ export default {
     sortSpeeches: 'By speeches', sortSpeakingTime: 'By speaking time', noResults: 'No matching representatives.', profile: 'Profile',
   },
   profile: {
-    speeches: 'Speeches', bills: 'Submitted bills', documents: 'Submitted documents',
-    documentType: 'Document type', allDocuments: 'All types',
+    speeches: 'Speeches',
+    questions: 'Submitted questions & interpellations',
+    bills: 'Submitted bills & resolution proposals',
+    otherDocuments: 'Other submitted documents',
     statistics: 'Statistics', biography: 'Details', constituency: 'Constituency',
     education: 'Highest education', email: 'Email', website: 'Website', committees: 'Committee memberships',
     factionHistory: 'Faction history', wikidata: 'Wikidata', totalSpeeches: 'Number of speeches',

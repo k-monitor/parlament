@@ -79,6 +79,8 @@ def list_bills(
     period: Optional[int] = None,
     main_type: Optional[str] = None,
     main_type_not: Optional[str] = None,     # exclude a fotipus, e.g. T (bills)
+    main_type_in: Optional[str] = None,      # include any of these fotipusok (CSV)
+    main_type_not_in: Optional[str] = None,  # exclude any of these fotipusok (CSV)
     type: Optional[str] = None,              # exact iromány type (category)
     status: Optional[str] = None,
     sponsor: Optional[str] = None,           # person_id — bills by this MP
@@ -99,6 +101,19 @@ def list_bills(
     if main_type_not:
         where.append("(b.main_type IS NULL OR b.main_type != :mtn)")
         params["mtn"] = main_type_not
+    if main_type_in:
+        codes = [c.strip() for c in main_type_in.split(",") if c.strip()]
+        if codes:
+            keys = [f"mti{i}" for i in range(len(codes))]
+            where.append("b.main_type IN (" + ",".join(":" + k for k in keys) + ")")
+            params.update(dict(zip(keys, codes)))
+    if main_type_not_in:
+        codes = [c.strip() for c in main_type_not_in.split(",") if c.strip()]
+        if codes:
+            keys = [f"mtni{i}" for i in range(len(codes))]
+            where.append("(b.main_type IS NULL OR b.main_type NOT IN ("
+                         + ",".join(":" + k for k in keys) + "))")
+            params.update(dict(zip(keys, codes)))
     if type:
         where.append("b.type = :ty"); params["ty"] = type
     if status:

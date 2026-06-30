@@ -126,10 +126,9 @@ export default {
   },
   profile: {
     speeches: 'Felszólalások',
-    bills: 'Benyújtott törvényjavaslatok',
-    documents: 'Benyújtott irományok',
-    documentType: 'Iromány típusa',
-    allDocuments: 'Összes típus',
+    questions: 'Benyújtott kérdések és interpellációk',
+    bills: 'Benyújtott törvény- és határozati javaslatok',
+    otherDocuments: 'Egyéb benyújtott irományok',
     statistics: 'Statisztikák',
     biography: 'Adatok',
     constituency: 'Választókerület',

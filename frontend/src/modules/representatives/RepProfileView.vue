@@ -31,7 +31,14 @@ const activity = ref(null)
 const speechDays = ref(null)
 const dayCache = reactive({})   // session_id -> { loading, error, list }
 const openDays = reactive({})   // session_id -> bool (expanded?)
-const bills = ref(null)
+// Submitted irományok are split into three sections by main type: questions
+// (kérdés/azonnali kérdés/interpelláció — K/A/I), bills (törvényjavaslat +
+// határozati javaslat — T/H), and everything else (rare per-MP types like
+// politikai nyilatkozat/vita, személyi döntés). Each is fetched separately so
+// its count badge is exact (not capped by a shared page limit).
+const questions = ref(null)
+const lawBills = ref(null)
+const otherDocs = ref(null)
 // Votes are grouped by sitting day too (same lazy-load pattern as speeches):
 // `voteDays` holds the day rows (count per day), each day's votes fetched on
 // demand via `voteDayCache`/`toggleVoteDay`. Days are keyed by date (YYYY-MM-DD).
@@ -41,13 +48,6 @@ const openVoteDays = reactive({})   // date -> bool
 const loading = ref(false)
 const error = ref(false)
 
-// The submitted-irományok section lists every document type the MP submitted; a
-// filter narrows it to one main type (the iromány-number prefix), e.g. T to see
-// only their bills (törvényjavaslatok). `docTypes` holds the codes this MP
-// actually has, so the dropdown only offers relevant options.
-const docTypes = ref([])
-const docFilter = ref('')   // '' = all types; else a main_type code
-
 // The bills/votes sections are only meaningful when their module is live (EXT-6);
 // a disabled module simply means no section, not an error.
 const showBills = computed(() => store.moduleEnabled('bills'))
@@ -56,10 +56,18 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 // Long lists (bills, votes, speeches) are collapsed to a preview so the profile
 // stays scannable; a per-section toggle reveals the rest of what's loaded.
 const COLLAPSE_LIMIT = 8
-const expanded = reactive({ bills: false, votes: false, days: false })
+const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false })
 function shown(list, key) {
   return expanded[key] ? list : list.slice(0, COLLAPSE_LIMIT)
 }
+
+// The submitted-irományok sections, in display order, dropping any the MP has
+// none of in the current scope (so a section never shows an empty "(0)").
+const docSections = computed(() => [
+  { key: 'questions', titleKey: 'profile.questions', data: questions.value },
+  { key: 'lawbills', titleKey: 'profile.bills', data: lawBills.value },
+  { key: 'other', titleKey: 'profile.otherDocuments', data: otherDocs.value },
+].filter((s) => s.data && s.data.total))
 
 // Expand/collapse a sitting day; on first expand, lazily fetch that day's items
 // (cached so re-opening doesn't refetch). `open`/`cache` are the per-section
@@ -104,60 +112,53 @@ const overTimeItems = computed(() => {
 // Vote-value chip colour by normalized code, matching the Votes module palette.
 const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote', absent: 'absent' }
 
-// Fetch (or re-fetch) the submitted irományok with the current type filter.
-async function loadBills() {
-  if (!showBills.value) { bills.value = null; return }
-  const params = { sponsor: props.id, limit: 100, period: store.cycle }
-  if (docFilter.value) params.main_type = docFilter.value
-  bills.value = await api.bills(params).catch(() => null)
-  expanded.bills = false
-}
-
 async function load() {
   loading.value = true; error.value = false
-  profile.value = stats.value = activity.value = speechDays.value = bills.value = voteDays.value = null
+  profile.value = stats.value = activity.value = speechDays.value = voteDays.value = null
+  questions.value = lawBills.value = otherDocs.value = null
   for (const m of [dayCache, openDays, voteDayCache, openVoteDays])
     for (const k of Object.keys(m)) delete m[k]
-  docFilter.value = ''; docTypes.value = []
-  expanded.bills = expanded.votes = expanded.days = false
+  expanded.questions = expanded.lawbills = expanded.other = expanded.votes = expanded.days = false
   try {
     // Everything on the profile is scoped to the global cycle (store.cycle; null
     // = all cycles), so the page never mixes in a previous cycle's data (§4A).
     const period = store.cycle
     // A feature-module failure must not break the profile, so each resolves to
     // null on error (and is skipped entirely when its module is disabled).
-    const billsReq = showBills.value
-      ? api.bills({ sponsor: props.id, limit: 100, period }).catch(() => null)
+    // Submitted irományok are fetched in three buckets by main type so each
+    // section's count is exact: questions (K/A/I), bills (T/H), everything else.
+    const docReq = (filter) => showBills.value
+      ? api.bills({ sponsor: props.id, limit: 100, period, ...filter }).catch(() => null)
       : Promise.resolve(null)
-    const facetsReq = showBills.value
-      ? api.billFacets({ sponsor: props.id, period }).catch(() => null)
-      : Promise.resolve(null)
+    const questionsReq = docReq({ main_type_in: 'K,A,I' })
+    const lawBillsReq = docReq({ main_type_in: 'T,H' })
+    const otherReq = docReq({ main_type_not_in: 'K,A,I,T,H' })
     const votesReq = showVotes.value
       ? api.repVoteDays(props.id, period).catch(() => null)
       : Promise.resolve(null)
     // The activity board is part of the representatives module (always on); a
     // failure must not break the profile, so it resolves to null on error.
     const activityReq = api.repActivity(props.id, period).catch(() => null)
-    const [p, s, act, days, b, fac, v] = await Promise.all([
+    const [p, s, act, days, qd, lb, od, v] = await Promise.all([
       api.representative(props.id, period),
       api.repStatistics(props.id, period),
       activityReq,
       api.repSpeechDays(props.id, period),
-      billsReq,
-      facetsReq,
+      questionsReq,
+      lawBillsReq,
+      otherReq,
       votesReq,
     ])
     profile.value = p; stats.value = s; activity.value = act
-    speechDays.value = days; bills.value = b; voteDays.value = v
-    docTypes.value = fac ? [...new Set(fac.types.map((x) => x.main_type).filter(Boolean))] : []
+    speechDays.value = days; voteDays.value = v
+    questions.value = qd; lawBills.value = lb; otherDocs.value = od
   } catch { error.value = true } finally { loading.value = false }
 }
 // Gate the first fetch on the manifest so store.cycle is resolved to the latest
 // cycle before we query (otherwise the profile would briefly be scoped to "all").
 onMounted(async () => { await loadMeta().catch(() => {}); load() })
 watch(() => props.id, load)
-// Re-fetch when the user switches the type filter or the global cycle.
-watch(docFilter, loadBills)
+// Re-fetch when the user switches the global cycle.
 watch(() => store.cycle, load)
 </script>
 
@@ -255,20 +256,12 @@ watch(() => store.cycle, load)
 
         <!-- right: bills + speeches -->
         <div class="pcol">
-          <section class="card pad" v-if="showBills && bills && (bills.total || docFilter)">
-            <div class="billhead">
-              <h2>{{ $t('profile.documents') }} <span class="muted small">({{ bills.total }})</span></h2>
-              <label v-if="docTypes.length > 1" class="docfilter">
-                <span class="visually-hidden">{{ $t('profile.documentType') }}</span>
-                <select v-model="docFilter">
-                  <option value="">{{ $t('profile.allDocuments') }}</option>
-                  <option v-for="c in docTypes" :key="c" :value="c">{{ $t('documents.mainType.' + c) }}</option>
-                </select>
-              </label>
-            </div>
-            <p v-if="!bills.total" class="small muted">{{ $t('documents.noResults') }}</p>
+          <!-- Submitted irományok, split by main type: questions (K/A/I), bills
+               (T/H), and everything else — each its own section (BILL-9). -->
+          <section class="card pad" v-for="sec in docSections" :key="sec.key">
+            <h2>{{ $t(sec.titleKey) }} <span class="muted small">({{ sec.data.total }})</span></h2>
             <ul class="billmini">
-              <li v-for="b in shown(bills.bills, 'bills')" :key="b.id">
+              <li v-for="b in shown(sec.data.bills, sec.key)" :key="b.id">
                 <router-link :to="{ name: 'bill', params: { id: b.id } }" class="billitem">
                   <span class="billitem-head">
                     <span class="bnum">{{ b.bill_number }}</span>
@@ -278,9 +271,9 @@ watch(() => store.cycle, load)
                 </router-link>
               </li>
             </ul>
-            <button v-if="bills.bills.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
-              :aria-expanded="expanded.bills" @click="expanded.bills = !expanded.bills">
-              {{ expanded.bills ? $t('profile.showLess') : $t('profile.showMore') }}
+            <button v-if="sec.data.bills.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+              :aria-expanded="expanded[sec.key]" @click="expanded[sec.key] = !expanded[sec.key]">
+              {{ expanded[sec.key] ? $t('profile.showLess') : $t('profile.showMore') }}
             </button>
           </section>
 
@@ -389,9 +382,6 @@ watch(() => store.cycle, load)
 .sechead h2 { margin: 0; }
 .timeline, .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
 .timeline li { display: flex; gap: .6rem; align-items: center; }
-.billhead { display: flex; gap: .6rem; align-items: baseline; justify-content: space-between; flex-wrap: wrap; margin-bottom: .6rem; }
-.billhead h2 { margin: 0; }
-.docfilter select { font-size: .85rem; padding: .15rem .4rem; }
 .billmini { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
 .billitem { display: flex; flex-direction: column; gap: .3rem; padding: .5rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
 .billitem:hover { background: var(--accent-soft); text-decoration: none; }

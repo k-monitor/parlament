@@ -37,13 +37,25 @@ function savedCycle() {
   }
 }
 
+// Display label for an electoral period: its start–end years (e.g. "2018–2024")
+// rather than its ordinal number, since the year span is what users recognise.
+// An ongoing cycle (no end date) shows its start year with a trailing dash
+// ("2026–"). Falls back to the upstream label / number when dates are missing.
+export function periodLabel(p) {
+  if (!p) return ''
+  const start = p.date_start ? String(p.date_start).slice(0, 4) : null
+  const end = p.date_end ? String(p.date_end).slice(0, 4) : null
+  if (start) return end ? `${start}–${end}` : `${start}–`
+  return p.label || String(p.number)
+}
+
 // Human label for the currently selected cycle, or null when scope is "all
 // cycles" (the caller supplies its own "all" wording). Used to make the active
 // scope explicit on period-aware pages.
 export function currentCycleLabel() {
   if (store.cycle === null) return null
   const p = (store.meta && store.meta.periods || []).find((x) => x.number === store.cycle)
-  return p ? (p.label || String(p.number)) : String(store.cycle)
+  return p ? periodLabel(p) : String(store.cycle)
 }
 
 // Set the global cycle (number = a period, null = all) and persist it.

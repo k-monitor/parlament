@@ -210,7 +210,10 @@ selector** that scopes every period-aware view at once.
 
 - **CYC-1 (MUST).** A **cycle selector lives in the site header** and is visible
   on every page. It lists each electoral period plus an **"all cycles"** option,
-  and **defaults to the latest cycle** on a first visit.
+  and **defaults to the latest cycle** on a first visit. Each period is labelled
+  by its **start–end years** (e.g. `2018–2024`), not its ordinal cycle number,
+  since the year span is what users recognise; an ongoing cycle (no end date yet)
+  shows its start year with a trailing dash (`2026–`).
 - **CYC-2 (MUST).** The chosen cycle is the **single source of period scope**
   across all period-aware modules — proceedings search, sittings, representatives,
   bills, other irományok and votes all honour it. Selecting a cycle (or "all")

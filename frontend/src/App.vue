@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { store, loadMeta, setCycle } from './store.js'
+import { store, loadMeta, setCycle, periodLabel } from './store.js'
 import { setLocale } from './i18n.js'
 import { useI18n } from 'vue-i18n'
 
@@ -96,7 +96,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
           :title="$t('cycle.label')" :aria-label="$t('cycle.label')"
         >
           <option value="all">{{ $t('cycle.all') }}</option>
-          <option v-for="p in periods" :key="p.number" :value="p.number">{{ p.label || p.number }}</option>
+          <option v-for="p in periods" :key="p.number" :value="p.number">{{ periodLabel(p) }}</option>
         </select>
         <button class="lang" @click="toggleLang" :aria-label="'Language: ' + locale">
           {{ locale === 'hu' ? 'EN' : 'HU' }}

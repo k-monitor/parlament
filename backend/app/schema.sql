@@ -483,11 +483,26 @@ CREATE TABLE build_meta (
     value TEXT
 );
 
+-- Per-sitting topical term frequencies for the word cloud (WCLOUD-2), precomputed
+-- at load time so the expensive lemmatization / entity extraction never runs at
+-- request time. A `word` is a HuSpaCy lemma (inflected forms collapsed) or a
+-- multi-word named entity; `kind` is 'entity' for recognized named entities, else
+-- 'term'. The endpoint reads these rows as the per-day term frequency, and the
+-- corpus-side `word_doc_freq`/`word_doc_total` below are derived from this table.
+CREATE TABLE session_word_count (
+    session_id TEXT NOT NULL REFERENCES session(id),
+    word       TEXT NOT NULL,
+    count      INTEGER NOT NULL,
+    kind       TEXT NOT NULL DEFAULT 'term',
+    PRIMARY KEY (session_id, word)
+) WITHOUT ROWID;
+
 -- Per-cycle word document-frequency for the sitting-day word cloud (WCLOUD-2):
--- how many sitting days in a period contain a given (folded, stop-word-filtered)
--- word. Lets the word cloud rank by TF·IDF — words frequent on one day but rare
--- across the cycle — rather than raw frequency, so each day's cloud surfaces what
--- is *distinctive* about that day. Rebuilt with the other aggregates (REP-7).
+-- how many sitting days in a period contain a given (lemmatized, stop-word-
+-- filtered) word. Lets the word cloud rank by TF·IDF — words frequent on one day
+-- but rare across the cycle — rather than raw frequency, so each day's cloud
+-- surfaces what is *distinctive* about that day. Derived from session_word_count
+-- and rebuilt with the other aggregates (REP-7).
 CREATE TABLE word_doc_freq (
     period_number INTEGER NOT NULL,
     word          TEXT NOT NULL,

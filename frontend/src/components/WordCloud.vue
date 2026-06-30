@@ -1,10 +1,12 @@
 <script setup>
 // Dependency-free word cloud (WCLOUD-1/3): words sized by frequency, with the
 // same built-in accessible table equivalent as the other charts (REP-6 / A11Y-1).
-// `words` = [{ text, count, weight }] ordered by weight desc. `weight` is the
-// sizing metric (a TF·IDF "distinctiveness" score); `count` is the raw
-// occurrences shown to the user. Each word emits `pick` so the parent can
-// deep-link it into search scoped to the sitting day (WCLOUD-4).
+// `words` = [{ text, count, weight, kind }] ordered by weight desc. `weight` is
+// the sizing metric (a TF·IDF "distinctiveness" score); `count` is the raw
+// occurrences shown to the user. Words are HuSpaCy lemmas; `kind === 'entity'`
+// marks a recognized named entity (person/place/organisation), styled distinctly.
+// Each word emits `pick` so the parent can deep-link it into search scoped to the
+// sitting day (WCLOUD-4).
 import { ref, computed } from 'vue'
 const props = defineProps({
   words: { type: Array, default: () => [] },
@@ -45,8 +47,9 @@ function opacity(w) {
     <div class="cloud" role="img" :aria-label="caption">
       <button
         v-for="w in words" :key="w.text" type="button" class="word"
+        :class="{ 'is-entity': w.kind === 'entity' }"
         :style="{ fontSize: sizeRem(w) + 'rem', fontWeight: fontWeight(w), opacity: opacity(w) }"
-        :title="`${w.text}: ${w.count}`"
+        :title="w.kind === 'entity' ? `${w.text}: ${w.count} · ${$t('sessions.wordcloudEntity')}` : `${w.text}: ${w.count}`"
         @click="$emit('pick', w.text)"
       >{{ w.text }}</button>
     </div>
@@ -57,7 +60,10 @@ function opacity(w) {
       <caption class="visually-hidden">{{ caption }}</caption>
       <thead><tr><th scope="col">#</th><th scope="col">{{ $t('sessions.wordcloudCount') }}</th></tr></thead>
       <tbody>
-        <tr v-for="w in words" :key="w.text"><th scope="row">{{ w.text }}</th><td>{{ w.count }}</td></tr>
+        <tr v-for="w in words" :key="w.text">
+          <th scope="row">{{ w.text }}<span v-if="w.kind === 'entity'" class="soft small"> · {{ $t('sessions.wordcloudEntity') }}</span></th>
+          <td>{{ w.count }}</td>
+        </tr>
       </tbody>
     </table>
   </figure>
@@ -70,4 +76,7 @@ function opacity(w) {
   font-family: inherit; line-height: 1; border-radius: 4px;
 }
 .word:hover, .word:focus-visible { background: var(--accent-soft); color: var(--ink); outline: none; }
+/* Named entities (people/places/organisations) read as a distinct, "tagged"
+   token — italic with a dotted underline — so they stand out from plain lemmas. */
+.word.is-entity { font-style: italic; text-decoration: underline dotted; text-underline-offset: 3px; }
 </style>

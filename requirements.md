@@ -359,10 +359,29 @@ merely because an accent was omitted (or added).
   electoral cycle, so words frequent on this day yet rare on the cycle's other
   sitting days rank high while the ubiquitous parliamentary vocabulary that
   recurs every day (and would otherwise dominate every day's cloud identically)
-  is suppressed. The document-frequency side is a **precomputed per-cycle
-  aggregate** (rebuilt with the other statistics, REP-7); the per-day term
-  frequency is computed at request time. The stop-word set is **configurable, not
-  hard-coded** (OPS-4).
+  is suppressed. Both sides of the TF·IDF are **precomputed aggregates** rebuilt
+  with the other statistics (REP-7): the per-sitting term frequency *and* the
+  per-cycle document frequency are derived from the lemmatized terms (WCLOUD-6) at
+  load time, so the request just reads, scores and ranks them. The stop-word set
+  (and the lemmatizer backend, POS filter and entity labels) are **configurable,
+  not hard-coded** (OPS-4).
+- **WCLOUD-6.** The unit of the cloud is a **lemma, not a surface form**. Because
+  Hungarian is agglutinative, the same concept appears in many inflected forms
+  (*törvény / törvényt / törvényben / törvények*); counting them separately would
+  scatter a day's real theme and weaken the TF·IDF signal. The text is therefore
+  **lemmatized with a HuSpaCy model** (the smallest, `hu_core_news_md`, by
+  default) so inflected forms collapse to their dictionary lemma, and only
+  topical parts of speech (nouns, proper nouns, adjectives) are kept. The model's
+  **named-entity recognition** keeps multi-word entities — people, places,
+  organisations (*"Orbán Viktor"*, *"Európai Unió"*) — together as a **single
+  term** rather than splitting them into low-value fragments; entities are tagged
+  so the visualization can mark them (WCLOUD-3). Because the neural pipeline is
+  expensive, it runs **only at load time** and its per-sitting output is **cached
+  on disk** keyed by a fingerprint of the transcript + method, so a rebuild
+  reprocesses only the sittings whose text actually changed (cf. the scraper's
+  detail cache) and the **request path never invokes the model**. When the model
+  is **not installed the build degrades** to the dependency-free regex tokenizer
+  (raw lowercased forms), so the word cloud still works on a minimal install.
 - **WCLOUD-3.** The visualization MUST have an **accessible text/table
   equivalent** (REP-6 / A11Y-1) — the same word→count data as a table — and word
   sizing alone must not be the only carrier of meaning.
@@ -372,8 +391,8 @@ merely because an accent was omitted (or added).
 - **WCLOUD-5.** The cloud is served from a **dedicated, paginated-free aggregate
   endpoint** (a top-N word list) computed per sitting; it is a separate request
   from the transcript so it never slows the sitting-day load (cf. SEA-8). Like all
-  derived views it states its **methodology** briefly (stop-words removed,
-  frequency-ranked) so the user knows what they are seeing (REP-5 / TRUST-1).
+  derived views it states its **methodology** briefly (lemmatized, stop-words
+  removed, TF·IDF-ranked) so the user knows what they are seeing (REP-5 / TRUST-1).
 
 ### 5.4 Sitting-day speaker toplist
 

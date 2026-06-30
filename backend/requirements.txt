@@ -1,5 +1,12 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
+# Word-cloud lemmatization + entity extraction (WCLOUD-2). HuSpaCy pulls in spaCy;
+# the model itself is a separate ~127 MB wheel, installed once with:
+#   python -c "import huspacy; huspacy.download('hu_core_news_md')"
+# (or pip-install the hu_core_news_md wheel from huggingface.co/huspacy). The word
+# cloud degrades to a regex tokenizer when the model is absent, so this is optional
+# for a minimal build (PARLAMONITOR_WORDCLOUD_BACKEND=regex to force it off).
+huspacy>=0.5
 # stdlib sqlite3 (FTS5) is used directly — no ORM. Tests:
 pytest>=8.0
 httpx>=0.27

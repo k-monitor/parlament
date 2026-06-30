@@ -25,16 +25,16 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import logging
 import os
 import sqlite3
 from pathlib import Path
 
-from collections import Counter
-
+from . import nlp
 from .config import settings
-from .wordfreq import MIN_LENGTH, STOPWORDS, tokenize
+from .wordfreq import count_words
 
 logger = logging.getLogger("parlamonitor.loader")
 
@@ -595,6 +595,7 @@ def _delete_session(conn: sqlite3.Connection, sid: str) -> None:
     # session row can be removed (the global person/faction aggregates are
     # rebuilt wholesale by rebuild_aggregates after loading).
     conn.execute("DELETE FROM person_session_stats WHERE session_id = ?", (sid,))
+    conn.execute("DELETE FROM session_word_count WHERE session_id = ?", (sid,))
     conn.execute("DELETE FROM session WHERE id = ?", (sid,))
 
 
@@ -736,46 +737,138 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
     logger.info("Rebuilt aggregate tables")
 
 
+def _wordcloud_backend() -> str:
+    """Resolve the configured word-cloud backend to a concrete one ("huspacy" or
+    "regex"). "auto" prefers HuSpaCy when its model loads, else regex; an explicit
+    "huspacy" that can't load is logged and degrades to regex so a build on a host
+    without the model still succeeds (OPS-4)."""
+    want = settings.wordcloud_backend or "auto"
+    if want == "regex":
+        return "regex"
+    if nlp.available():
+        return "huspacy"
+    if want == "huspacy":
+        logger.warning("wordcloud_backend=huspacy but the model is unavailable; "
+                       "using the regex tokenizer instead")
+    return "regex"
+
+
+def _wordcloud_cache_path(data_dir: Path) -> Path:
+    return Path(data_dir) / "wordcloud-cache.json"
+
+
+def _session_fingerprint(method: str, texts: list[str]) -> str:
+    """A stable hash of a sitting's text + the extraction method, so the cache is
+    reused only when neither the transcript nor the method has changed."""
+    h = hashlib.sha1(method.encode("utf-8"))
+    for t in texts:
+        h.update(b"\x1f")
+        h.update((t or "").encode("utf-8"))
+    return h.hexdigest()
+
+
+def rebuild_session_word_counts(conn: sqlite3.Connection,
+                                data_dir: str | Path | None = None) -> None:
+    """Precompute per-sitting topical term frequencies for the word cloud (WCLOUD-2).
+
+    For each session, lemmatize its non-procedural sentence text and extract named
+    entities with HuSpaCy (or fall back to the regex tokenizer), storing the
+    term→count map in ``session_word_count``. This is the expensive step, so its
+    output is cached on disk (``wordcloud-cache.json`` beside the data) keyed by a
+    fingerprint of the text + method: a full rebuild reprocesses only the sittings
+    whose transcript actually changed (cf. the scraper's detail cache). The cache
+    is optional — without ``data_dir`` (or if it can't be read/written) everything
+    is simply recomputed.
+    """
+    backend = _wordcloud_backend()
+    method = nlp.method_tag() if backend == "huspacy" else "regex:v1"
+    logger.info("Word-cloud term extraction backend: %s", backend)
+
+    cache_path = _wordcloud_cache_path(data_dir) if data_dir else None
+    cache: dict = {"method": method, "sessions": {}}
+    if cache_path and cache_path.exists():
+        try:
+            loaded = json.loads(cache_path.read_text())
+            if loaded.get("method") == method:        # else stale → start fresh
+                cache = loaded
+        except (OSError, ValueError):
+            logger.warning("Could not read word-cloud cache %s; recomputing", cache_path)
+
+    def _flush_cache():
+        if not cache_path:
+            return
+        try:
+            cache_path.write_text(json.dumps(cache, ensure_ascii=False))
+        except OSError as exc:
+            logger.warning("Could not write word-cloud cache %s (%s)", cache_path, exc)
+
+    conn.execute("DELETE FROM session_word_count")
+    # Latest sittings first (id desc) so the current cycle's clouds are ready
+    # first when a from-scratch lemmatization pass is long.
+    sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id DESC")]
+    reused = recomputed = 0
+    for i, sid in enumerate(sids, 1):
+        texts = [t for (t,) in conn.execute(
+            "SELECT se.text FROM sentence se "
+            "JOIN speech sp ON sp.uid = se.speech_id "
+            "WHERE sp.session_id = ? AND sp.procedural = 0 AND se.text IS NOT NULL",
+            (sid,))]
+        fp = _session_fingerprint(method, texts)
+        entry = cache["sessions"].get(sid)
+        if entry and entry.get("fp") == fp:
+            words = entry["words"]
+            reused += 1
+        else:
+            if backend == "huspacy":
+                counts, entity_words = nlp.analyze_counts(texts)
+            else:
+                counts, entity_words = count_words(texts), set()
+            words = {w: [c, "entity" if w in entity_words else "term"]
+                     for w, c in counts.items()}
+            cache["sessions"][sid] = {"fp": fp, "words": words}
+            recomputed += 1
+        if words:
+            conn.executemany(
+                "INSERT INTO session_word_count(session_id, word, count, kind) "
+                "VALUES (?, ?, ?, ?)",
+                [(sid, w, c, k) for w, (c, k) in words.items()])
+        # Persist progress periodically so a long (HuSpaCy) pass is resumable: the
+        # commit makes processed sittings queryable immediately and the cache lets
+        # a re-run skip them (an interrupted run otherwise loses everything).
+        if i % 10 == 0:
+            conn.commit()
+            _flush_cache()
+            logger.info("session_word_count progress: %d/%d sittings", i, len(sids))
+    conn.commit()
+    _flush_cache()
+    logger.info("session_word_count: %d sittings (%d processed, %d cached)",
+                len(sids), recomputed, reused)
+
+
 def rebuild_word_doc_freq(conn: sqlite3.Connection) -> None:
     """Per-cycle word document-frequencies for the word cloud's TF·IDF (WCLOUD-2).
 
-    For each period, count on how many sitting days each topical word appears
-    (once per day, regardless of how often), over the *same* non-procedural
-    sentence text and stop-word rules the cloud endpoint uses. This is the corpus
-    side of TF·IDF; the per-day term frequency is computed live at query time.
+    The corpus side of TF·IDF, derived purely from the precomputed
+    ``session_word_count``: for each period, on how many sitting days each term
+    appears (once per day) and how many days contributed any term. The per-day
+    term frequency is read from the same table at query time.
     """
     conn.execute("DELETE FROM word_doc_freq")
     conn.execute("DELETE FROM word_doc_total")
-    periods = [r[0] for r in conn.execute(
-        "SELECT DISTINCT period_number FROM session "
-        "WHERE period_number IS NOT NULL")]
-    for period in periods:
-        sids = [r[0] for r in conn.execute(
-            "SELECT id FROM session WHERE period_number = ?", (period,))]
-        df: Counter = Counter()
-        n_docs = 0
-        for sid in sids:
-            seen: set[str] = set()
-            for (text,) in conn.execute(
-                    "SELECT se.text FROM sentence se "
-                    "JOIN speech sp ON sp.uid = se.speech_id "
-                    "WHERE sp.session_id = ? AND sp.procedural = 0", (sid,)):
-                if not text:
-                    continue
-                for tok in tokenize(text):
-                    if len(tok) >= MIN_LENGTH and tok not in STOPWORDS:
-                        seen.add(tok)
-            if seen:
-                n_docs += 1
-                df.update(seen)
-        conn.executemany(
-            "INSERT INTO word_doc_freq(period_number, word, doc_count) "
-            "VALUES (?, ?, ?)", [(period, w, c) for w, c in df.items()])
-        conn.execute(
-            "INSERT INTO word_doc_total(period_number, n_docs) VALUES (?, ?)",
-            (period, n_docs))
-        logger.info("word_doc_freq period %s: %d words over %d days",
-                    period, len(df), n_docs)
+    conn.execute(
+        """INSERT INTO word_doc_freq(period_number, word, doc_count)
+           SELECT ss.period_number, swc.word, COUNT(DISTINCT swc.session_id)
+           FROM session_word_count swc
+           JOIN session ss ON ss.id = swc.session_id
+           WHERE ss.period_number IS NOT NULL
+           GROUP BY ss.period_number, swc.word""")
+    conn.execute(
+        """INSERT INTO word_doc_total(period_number, n_docs)
+           SELECT ss.period_number, COUNT(DISTINCT swc.session_id)
+           FROM session_word_count swc
+           JOIN session ss ON ss.id = swc.session_id
+           WHERE ss.period_number IS NOT NULL
+           GROUP BY ss.period_number""")
     conn.commit()
 
 
@@ -824,6 +917,10 @@ def build_database(data_dir: str | Path, db_path: str | Path, *,
             load_session(conn, record)
             loaded += 1
 
+        # Lemmatize / entity-extract each sitting's text into session_word_count
+        # before the aggregates so word_doc_freq can derive from it (WCLOUD-2);
+        # cached on disk beside the data so unchanged sittings aren't reprocessed.
+        rebuild_session_word_counts(conn, data_dir)
         rebuild_aggregates(conn)
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("sessions_loaded", str(loaded)))

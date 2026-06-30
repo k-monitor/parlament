@@ -7,7 +7,14 @@ production code paths (OPS-3) rather than a stand-in.
 
 from __future__ import annotations
 
+import os
 import sqlite3
+
+# Default the word cloud to the dependency-free regex backend so the shared
+# fixtures are deterministic and don't load the (optional, ~127 MB) HuSpaCy model.
+# The dedicated HuSpaCy tests opt back in explicitly. Must precede the app imports
+# below, which instantiate config.settings from the environment.
+os.environ.setdefault("PARLAMONITOR_WORDCLOUD_BACKEND", "regex")
 
 import pytest
 from fastapi.testclient import TestClient

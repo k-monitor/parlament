@@ -41,6 +41,17 @@ class Settings:
     max_search_total: int = int(os.environ.get("PARLAMONITOR_MAX_SEARCH_TOTAL", "5000"))
     # Folded set of speech types excluded from statistics (STAT-1).
     procedural_speech_types: frozenset = field(default_factory=lambda: _procedural_speech_types())
+    # Word-cloud term-extraction backend (WCLOUD-2). "huspacy" lemmatizes and
+    # extracts named entities with the HuSpaCy model; "regex" uses the
+    # dependency-free tokenizer; "auto" (default) prefers HuSpaCy when its model
+    # is installed and falls back to regex otherwise. The processing runs at load
+    # time and is cached, never at request time (OPS-4).
+    wordcloud_backend: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_WORDCLOUD_BACKEND", "auto").strip().lower())
+    # Which HuSpaCy model to lemmatize with — the smallest (`hu_core_news_md`) by
+    # default; a larger one (`hu_core_news_lg`/`_trf`) can be swapped in via env.
+    huspacy_model: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_HUSPACY_MODEL", "hu_core_news_md").strip())
 
     def module_enabled(self, name: str) -> bool:
         return name in self.enabled_modules

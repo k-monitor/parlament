@@ -304,25 +304,23 @@ def session_wordcloud(session_id: str, limit: int = Query(80, ge=1, le=200),
                       db: sqlite3.Connection = Depends(get_db)):
     """Word cloud for a sitting day, ranked by what is *distinctive* to it (WCLOUD).
 
-    Computed over the sitting's non-procedural sentence text with Hungarian
-    stop-words and very short tokens removed (WCLOUD-2). Words are scored by
-    TF·IDF against the rest of the electoral cycle (precomputed `word_doc_freq`),
-    so a word frequent on this day but rare on other days ranks high, while the
-    ubiquitous parliamentary vocabulary that appears every day is suppressed —
-    surfacing the day's actual topics. `count` is the raw occurrences (shown to
-    the user); `weight` is the TF·IDF score the cloud sizes by. A separate,
+    Built over the sitting's non-procedural sentence text, lemmatized with HuSpaCy
+    (inflected forms collapsed to their dictionary form) and with named entities
+    kept as single multi-word terms — all precomputed at load time into
+    `session_word_count`, with Hungarian stop-words and very short tokens removed
+    (WCLOUD-2). Words are scored by TF·IDF against the rest of the electoral cycle
+    (precomputed `word_doc_freq`), so a word frequent on this day but rare on other
+    days ranks high while the ubiquitous parliamentary vocabulary that appears
+    every day is suppressed — surfacing the day's actual topics. `count` is the raw
+    occurrences (shown to the user); `weight` is the TF·IDF score the cloud sizes
+    by; `kind` is `entity` for a recognized named entity, else `term`. A separate,
     lightweight request so it never slows the sitting-day load (WCLOUD-5)."""
     s = db.execute("SELECT id, date, period_number FROM session WHERE id = ?",
                    (session_id,)).fetchone()
     if not s:
         raise HTTPException(404, "Session not found")
-    rows = db.execute(
-        """SELECT se.text
-           FROM sentence se
-           JOIN speech sp ON sp.uid = se.speech_id
-           WHERE sp.session_id = ? AND sp.procedural = 0""",
-        (session_id,)).fetchall()
-    tf = count_words(r["text"] for r in rows)
+
+    tf, kinds = _session_term_freqs(db, session_id)
     if not tf:
         return {"session_id": session_id, "date": s["date"], "words": []}
 
@@ -342,9 +340,38 @@ def session_wordcloud(session_id: str, limit: int = Query(80, ge=1, le=200),
     return {
         "session_id": session_id,
         "date": s["date"],
-        "words": [{"text": w, "count": tf[w], "weight": round(scores[w], 4)}
+        "words": [{"text": w, "count": tf[w], "weight": round(scores[w], 4),
+                   "kind": kinds.get(w, "term")}
                   for w in top],
     }
+
+
+def _session_term_freqs(db, session_id):
+    """The sitting's precomputed term frequencies + each term's kind.
+
+    Reads ``session_word_count`` (lemmatized / entity-aware, built at load time).
+    Falls back to live regex tokenization of the day's sentences when the table is
+    absent (a pre-migration DB) so the endpoint still works on an old build."""
+    try:
+        rows = db.execute(
+            "SELECT word, count, kind FROM session_word_count WHERE session_id = ?",
+            (session_id,)).fetchall()
+    except sqlite3.OperationalError:
+        rows = None
+    # Use precomputed rows when present. An empty result falls through to live
+    # tokenization: that covers both a pre-migration DB (no table) and a sitting
+    # not yet processed (e.g. a long lemmatization pass still in flight), so the
+    # cloud degrades to raw forms rather than rendering empty.
+    if rows:
+        tf = {r["word"]: r["count"] for r in rows}
+        kinds = {r["word"]: r["kind"] for r in rows}
+        return tf, kinds
+    sents = db.execute(
+        """SELECT se.text FROM sentence se
+           JOIN speech sp ON sp.uid = se.speech_id
+           WHERE sp.session_id = ? AND sp.procedural = 0""",
+        (session_id,)).fetchall()
+    return dict(count_words(r["text"] for r in sents)), {}
 
 
 @router.get("/sessions/{session_id}/top-speakers")

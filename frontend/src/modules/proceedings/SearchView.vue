@@ -6,7 +6,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
-import { store, loadMeta } from '../../store.js'
+import { store, loadMeta, setCycle, currentCycleLabel } from '../../store.js'
 import { agendaLabel, formatDate } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -127,6 +127,10 @@ const speakerItems = computed(() =>
   })))
 const hasBreakdown = computed(() =>
   factionItems.value.length > 0 || speakerItems.value.length > 0)
+
+// When a specific cycle is selected globally, the search is scoped to it; offer a
+// one-click switch back to "all cycles" (null) which re-runs the active search.
+const cycleScopeLabel = computed(() => currentCycleLabel())
 </script>
 
 <template>
@@ -176,6 +180,11 @@ const hasBreakdown = computed(() =>
       </button>
     </fieldset>
   </form>
+
+  <p v-if="cycleScopeLabel" class="muted small cyclenotice">
+    {{ $t('search.cycleScope', { cycle: cycleScopeLabel }) }}
+    <a href="#" @click.prevent="setCycle(null)">{{ $t('search.cycleScopeAll') }}</a>
+  </p>
 
   <StateBlock
     :loading="loading" :error="error"
@@ -244,6 +253,7 @@ const hasBreakdown = computed(() =>
 <style scoped>
 .filters { border: none; border-top: 1px solid var(--line); margin-top: .8rem; padding: .8rem 0 0; }
 .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .7rem; }
+.cyclenotice { margin: .6rem 0 0; }
 .trendcard { margin: 0 0 .9rem; }
 .breakdowncard { margin: 0 0 .9rem; }
 .breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; }

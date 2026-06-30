@@ -42,6 +42,8 @@ export default {
     trendCaption: 'Occurrences of “{q}” over time',
     breakdownFactions: 'Matches for “{q}” by faction',
     breakdownSpeakers: 'Matches for “{q}” by representative',
+    cycleScope: 'Search is limited to speeches from {cycle}.',
+    cycleScopeAll: 'switch to all cycles',
   },
   viewer: {
     transcript: 'Transcript', noTranscript: 'No transcript text is available for this speech.',

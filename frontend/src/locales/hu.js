@@ -71,6 +71,8 @@ export default {
     trendCaption: 'A(z) „{q}” előfordulása az időben',
     breakdownFactions: 'A(z) „{q}” találatok frakciónként',
     breakdownSpeakers: 'A(z) „{q}” találatok felszólalónként',
+    cycleScope: 'A keresés a(z) {cycle} felszólalásaira szűkül.',
+    cycleScopeAll: 'váltás minden ciklusra',
   },
   viewer: {
     transcript: 'Jegyzőkönyv',

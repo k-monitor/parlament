@@ -299,3 +299,43 @@ def test_bill_without_debate_has_empty_panel(client):
     (graceful, SCR-5) — bill-uuid-1's seeded detail has only 'részletes vita'."""
     d = client.get("/api/v1/bills/bill-uuid-1").json()
     assert d["debates"] == []
+
+
+# --- video answer (question-type irományok) ------------------------------
+
+def _seed_answer(db_path):
+    """Add an oral-answer speech to the test sitting and an answer event on
+    bill-uuid-1 pointing at it, so the embedded video answer has data."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute(
+        """INSERT INTO speech (uid, origin_id, speech_uuid, session_id,
+               period_number, speech_index, person_id, speaker_label,
+               speaker_status, video_start, video_end, duration, has_text)
+           VALUES ('43001-90','43-1-90','uuid-answer','43001',43,90,'k001',
+                   'Kovács Béla','memberOfGovernment',100.0,160.0,60.0,1)""")
+    c.execute("""INSERT INTO bill_event (bill_id, ord, event_date, name,
+                     related_label, speech_id)
+                 VALUES ('bill-uuid-1', 60, '2026-05-09T11:00:00Z',
+                         'kérdés megválaszolva',
+                         'Belügyminisztérium államtitkára', 'uuid-answer')""")
+    c.commit(); c.close()
+
+
+def test_bill_video_answer(client, db_path):
+    """A question-type iromány's oral answer event resolves to the answer speech
+    and exposes an embeddable video clip (VIE-9), with the responder labelled."""
+    _seed_answer(db_path)
+    va = client.get("/api/v1/bills/bill-uuid-1").json()["video_answer"]
+    assert va is not None
+    assert va["event_name"] == "kérdés megválaszolva"
+    assert va["speech_uid"] == "43001-90"
+    assert va["responder_label"] == "Belügyminisztérium államtitkára"
+    assert va["speaker"]["label"]            # resolved through the shared person
+    assert va["video_uri"]                   # something to embed (clip or day stream)
+
+
+def test_bill_without_oral_answer_has_no_video(client):
+    """A bill with no oral-answer event (bill-uuid-1's seeded events are only
+    legislative) exposes no video answer (None, graceful)."""
+    assert client.get("/api/v1/bills/bill-uuid-1").json()["video_answer"] is None

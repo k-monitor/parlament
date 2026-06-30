@@ -9,6 +9,8 @@ import { api } from '../../api.js'
 import { formatDate, formatDateTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
+import SpeakerLink from '../../components/SpeakerLink.vue'
+import HlsPlayer from '../../components/HlsPlayer.vue'
 
 const props = defineProps({ id: String })
 
@@ -111,6 +113,24 @@ watch(() => props.id, load)
           </template>
         </dl>
       </header>
+
+      <!-- Oral video answer: for a question-type iromány (kérdés / interpelláció /
+           azonnali kérdés) answered in plenary, embed the answer speech's clip. -->
+      <section v-if="bill.video_answer" class="card pad answer">
+        <h2>{{ $t('bills.videoAnswer') }}</h2>
+        <HlsPlayer :src="bill.video_answer.video_uri" :playseq="bill.video_answer.video_playseq"
+                   :label="bill.video_answer.speaker.label" />
+        <div class="answer-meta">
+          <SpeakerLink :speaker="bill.video_answer.speaker" />
+          <FactionBadge v-if="bill.video_answer.faction" :faction="bill.video_answer.faction" />
+          <span v-if="bill.video_answer.responder_label" class="muted small">{{ bill.video_answer.responder_label }}</span>
+        </div>
+        <p class="small">
+          <router-link :to="{ name: 'viewer', params: { uid: bill.video_answer.speech_uid } }">
+            ↗ {{ $t('bills.openInViewer') }}
+          </router-link>
+        </p>
+      </section>
 
       <section v-if="bill.stages && bill.stages.length" class="card pad">
         <h2>{{ $t('bills.timeline') }}</h2>
@@ -404,6 +424,9 @@ watch(() => props.id, load)
   content: ''; flex: none; width: .28rem; height: 1.05rem;
   background: var(--accent); border-radius: 2px;
 }
+
+/* Oral video answer */
+.answer-meta { display: flex; gap: .8rem; align-items: center; flex-wrap: wrap; margin: .8rem 0 .3rem; }
 
 .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .5rem; }
 .sponsor { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }

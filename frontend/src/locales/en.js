@@ -120,6 +120,8 @@ export default {
     events: 'Bill events',
     speechNumber: 'Speech no.',
     viewSpeech: 'View this speech',
+    videoAnswer: 'Video answer',
+    openInViewer: 'Open the full speech with transcript',
     debates: 'Debate speeches',
     debatesNote: 'The plenary speeches between the opening and closing of the debate, in order. Click a speech to watch it on video.',
     debateSpeechCount: 'speeches',

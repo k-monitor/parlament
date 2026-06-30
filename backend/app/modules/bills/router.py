@@ -16,8 +16,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...db import get_db
+from ...media import per_speech_clip
 
 router = APIRouter(prefix="/bills", tags=["bills"])
+
+# A question-type iromány (kérdés / interpelláció / azonnali kérdés) is answered
+# orally in plenary by the responsible minister or state secretary; that answer
+# is a recorded plenary speech. These event names mark that oral answer (written
+# answers — "kérdés írásban megválaszolva" — carry no speech and are excluded),
+# so the bill page can embed the answer video (VIE-9).
+_ANSWER_EVENTS = ("kérdés megválaszolva", "interpelláció szóban megválaszolva")
 
 # Debate brackets: a plenary debate is opened and closed by a pair of bill
 # events, each tied (via the shared speech UUID, EXT-2) to the plenary speech
@@ -297,6 +305,56 @@ def _debates_for(db: sqlite3.Connection, bill_id: str) -> list[dict]:
     return debates
 
 
+def _video_answer(db: sqlite3.Connection, bill_id: str) -> Optional[dict]:
+    """The oral answer to a question-type iromány, with a per-speech video clip
+    ready to embed (VIE-9). Resolves the first answer event (`_ANSWER_EVENTS`)
+    to its plenary speech via the shared speech UUID, then crops the day stream
+    to that speech. Returns ``None`` for a written-only answer (no speech) or a
+    bill with no answer event — the bill page then shows no player."""
+    ph = ",".join("?" * len(_ANSWER_EVENTS))
+    row = db.execute(
+        f"""SELECT e.name AS event_name, e.related_label, e.event_date,
+                   s.uid, s.speaker_label, s.person_id, s.speaker_status,
+                   s.video_start, s.video_end, s.has_text, s.duration,
+                   p.label AS person_label, p.photo_uri,
+                   f.label AS faction_label, f.color AS faction_color,
+                   ss.video_uri AS day_uri, ss.video_playseq AS day_playseq,
+                   ss.date AS session_date, ss.sitting
+            FROM bill_event e
+            JOIN speech s ON s.uid = (
+                SELECT s2.uid FROM speech s2 WHERE s2.speech_uuid = e.speech_id
+                ORDER BY s2.speech_index LIMIT 1)
+            JOIN session ss ON ss.id = s.session_id
+            LEFT JOIN person p ON p.person_id = s.person_id
+            LEFT JOIN faction f ON f.id = s.faction_id
+            WHERE e.bill_id = ? AND e.name IN ({ph})
+            ORDER BY e.ord LIMIT 1""",
+        (bill_id, *_ANSWER_EVENTS)).fetchone()
+    if not row:
+        return None
+    clip = per_speech_clip(row["day_uri"], row["day_playseq"],
+                           row["video_start"], row["video_end"])
+    video_uri = clip["video_uri"] if clip else row["day_uri"]
+    if not video_uri:
+        return None
+    return {
+        "speech_uid": row["uid"],
+        "event_name": row["event_name"],
+        "responder_label": row["related_label"],
+        "speaker": {"person_id": row["person_id"],
+                    "label": row["person_label"] or row["speaker_label"],
+                    "photo_uri": row["photo_uri"], "status": row["speaker_status"]},
+        "faction": {"label": row["faction_label"], "color": row["faction_color"]}
+                   if row["faction_label"] else None,
+        "video_uri": video_uri,
+        "video_playseq": clip["video_playseq"] if clip else row["day_playseq"],
+        "using_clip": bool(clip),
+        "has_text": bool(row["has_text"]),
+        "duration": row["duration"],
+        "date": row["session_date"], "sitting": row["sitting"],
+    }
+
+
 @router.get("/{bill_id}")
 def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     """A single bill with its full sponsor list and detail sections (events,
@@ -341,6 +399,7 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "WHERE bill_id = ? ORDER BY ord", bill_id)
     motions = _motions_for(db, bill_id)
     debates = _debates_for(db, bill_id)
+    video_answer = _video_answer(db, bill_id)
 
     return {
         "id": b["id"], "bill_number": b["bill_number"], "title": b["title"],
@@ -362,5 +421,5 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "events": events, "committee_events": committee_events, "votes": votes,
         "deadlines": deadlines, "committees": committees, "documents": documents,
         "motion_summary": motion_summary, "motions": motions,
-        "debates": debates,
+        "debates": debates, "video_answer": video_answer,
     }

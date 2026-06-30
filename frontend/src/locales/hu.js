@@ -210,6 +210,8 @@ export default {
     events: 'Iromány eseményei',
     speechNumber: 'Felszólalás száma',
     viewSpeech: 'Felszólalás megtekintése',
+    videoAnswer: 'Videós válasz',
+    openInViewer: 'A teljes felszólalás megnyitása szöveggel',
     debates: 'Vita felszólalásai',
     debatesNote: 'A vita megkezdése és lezárása közötti plenáris felszólalások, sorrendben. Kattintson egy felszólalásra a videós megtekintéshez.',
     debateSpeechCount: 'felszólalás',

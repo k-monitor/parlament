@@ -152,7 +152,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 .mainnav { display: flex; align-items: center; gap: .25rem; flex-wrap: wrap; flex: 1 1 auto; }
 .header-controls { display: flex; align-items: center; gap: .4rem; flex-shrink: 0; margin-left: auto; }
 .mainnav a {
-  color: #fbe9eb; padding: .4rem .7rem; border-radius: 8px; font-weight: 600; font-size: .95rem;
+  color: #f6dcd7; padding: .4rem .7rem; border-radius: 8px; font-weight: 600; font-size: .95rem;
 }
 .mainnav a:hover { background: rgba(255,255,255,.14); text-decoration: none; }
 .mainnav a.router-link-active { background: rgba(255,255,255,.2); color: #fff; }

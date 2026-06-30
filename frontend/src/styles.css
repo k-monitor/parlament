@@ -1,14 +1,14 @@
 :root {
   --bg: #f7f6f3;
   --surface: #ffffff;
-  --ink: #1a1d21;        /* >12:1 on surface */
-  --ink-soft: #4a4f57;   /* ~8:1 on surface — AA for normal text */
-  --ink-faint: #6b7280;  /* ~5:1 — AA for large/secondary text */
+  --ink: #3e3b32;        /* brand dark — >9:1 on surface */
+  --ink-soft: #56524a;   /* ~7:1 on surface — AA for normal text */
+  --ink-faint: #6f6a60;  /* ~5:1 — AA for large/secondary text */
   --line: #e2e0da;
-  --accent: #8a1f2b;     /* parliamentary deep red */
+  --accent: #B22817;     /* brand red */
   --accent-ink: #ffffff;
-  --accent-soft: #f6e9ea;
-  --focus: #1d4ed8;
+  --accent-soft: #f8e7e4;
+  --focus: #0D5F94;      /* brand blue */
   --mark: #fff3bf;
   --mark-ink: #5c4400;
   --radius: 10px;
@@ -66,7 +66,7 @@ p { margin: .5rem 0; }
   border: none; border-radius: var(--radius); padding: .55rem 1rem;
   font-size: 1rem; cursor: pointer; font-weight: 600;
 }
-.btn:hover { background: #71161f; text-decoration: none; }
+.btn:hover { background: #8e2012; text-decoration: none; }
 .btn.secondary { background: var(--surface); color: var(--ink); border: 1px solid var(--line); }
 .btn.secondary:hover { background: #efeee9; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }

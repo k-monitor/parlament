@@ -60,7 +60,8 @@ function searchWord(word) {
         <ol class="top-rows">
           <li v-for="sp in topSpeakers.speakers" :key="sp.person_id" class="top-row">
             <SpeakerLink :speaker="sp" size="sm" />
-            <FactionBadge :faction="sp.faction" />
+            <FactionBadge v-if="sp.faction" :faction="sp.faction" />
+            <span v-else aria-hidden="true"></span>
             <span class="bar-track" aria-hidden="true">
               <span class="bar-fill" :style="{ width: ((sp.seconds / topMax) * 100) + '%', background: sp.faction && sp.faction.color || 'var(--accent)' }"></span>
             </span>
@@ -98,15 +99,15 @@ function searchWord(word) {
 .wcloud { margin-bottom: 1rem; }
 .wcloud-title { font-size: 1.05rem; margin: 0 0 .6rem; }
 .toplist { margin-bottom: 1rem; }
-.top-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.top-row { display: grid; grid-template-columns: minmax(130px, 1.5fr) auto 1fr auto auto; gap: .55rem; align-items: center; padding: .12rem 0; font-size: .9rem; }
+.top-rows { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(130px, 1.5fr) auto 1fr auto auto; row-gap: .24rem; }
+.top-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; column-gap: .55rem; align-items: center; padding: .12rem 0; font-size: .9rem; }
 .top-row :deep(.row span) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .top-row .bar-track { background: #eceae4; border-radius: 5px; height: 9px; overflow: hidden; }
 .top-row .bar-fill { display: block; height: 100%; border-radius: 5px; min-width: 2px; }
 .top-time { font-size: .82rem; font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
 .top-count { white-space: nowrap; }
 @media (max-width: 560px) {
-  .top-row { grid-template-columns: 1fr auto; column-gap: .5rem; }
+  .top-rows { grid-template-columns: 1fr auto; column-gap: .5rem; }
   .top-row .bar-track { grid-column: 1 / -1; }
 }
 .agenda { margin-bottom: 1rem; }

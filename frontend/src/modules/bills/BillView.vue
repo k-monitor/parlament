@@ -202,17 +202,17 @@ watch(() => props.id, load)
             <span class="muted small">· {{ d.speeches.length }} {{ $t('bills.debateSpeechCount') }}</span>
           </h3>
           <ol class="dbspeeches">
-            <li v-for="(sp, si) in shown(d.speeches, debateOpen[di])" :key="si" class="dbspeech">
-              <router-link class="dbplay" :to="{ name: 'viewer', params: { uid: sp.uid } }"
-                :title="$t('bills.viewSpeech')" aria-hidden="true">▶</router-link>
-              <div class="dbinfo">
-                <router-link v-if="sp.speaker.person_id" class="dbspeaker"
-                  :to="{ name: 'profile', params: { id: sp.speaker.person_id } }">{{ sp.speaker.label }}</router-link>
-                <span v-else class="dbspeaker">{{ sp.speaker.label }}</span>
-                <FactionBadge v-if="sp.faction" :faction="sp.faction" />
-                <span v-if="!sp.has_text" class="echip">{{ $t('bills.noTranscript') }}</span>
-              </div>
-              <router-link class="dbview small link" :to="{ name: 'viewer', params: { uid: sp.uid } }">{{ $t('bills.viewSpeech') }}</router-link>
+            <li v-for="(sp, si) in shown(d.speeches, debateOpen[di])" :key="si">
+              <router-link class="dbspeech" :to="{ name: 'viewer', params: { uid: sp.uid } }"
+                :title="$t('bills.viewSpeech')">
+                <span class="dbplay" aria-hidden="true">▶</span>
+                <div class="dbinfo">
+                  <span class="dbspeaker">{{ sp.speaker.label }}</span>
+                  <FactionBadge v-if="sp.faction" :faction="sp.faction" />
+                  <span v-if="!sp.has_text" class="echip">{{ $t('bills.noTranscript') }}</span>
+                </div>
+                <span class="dbview small">{{ $t('bills.viewSpeech') }}<span class="dbarrow" aria-hidden="true">→</span></span>
+              </router-link>
             </li>
           </ol>
           <button v-if="d.speeches.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
@@ -496,23 +496,31 @@ watch(() => props.id, load)
 .dbtitle { margin: .4rem 0 .6rem; font-size: 1rem; font-weight: 700; text-transform: capitalize; }
 .dbtitle .muted { text-transform: none; font-weight: 400; }
 .dbspeeches { list-style: none; margin: 0; padding: 0; }
+.dbspeeches > li { border-top: 1px solid var(--line); }
+.dbspeeches > li:first-child { border-top: 0; }
+/* The whole row is one link to the speech — clicking anywhere opens the video,
+   so there's no competing target (the speaker name used to link to a profile,
+   which read as misleading when the row's action is "view speech"). */
 .dbspeech {
   display: flex; gap: .6rem; align-items: center; flex-wrap: wrap;
-  padding: .4rem 0; border-top: 1px solid var(--line);
+  padding: .5rem .6rem; margin: 0 -.6rem; border-radius: 8px;
+  text-decoration: none; color: inherit; cursor: pointer;
 }
-.dbspeech:first-child { border-top: 0; }
+.dbspeech:hover { background: var(--accent-soft); }
 .dbplay {
   flex: none; width: 1.5rem; height: 1.5rem; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   background: var(--accent-soft); color: var(--accent); font-size: .65rem;
-  text-decoration: none;
 }
-.dbplay:hover { background: var(--accent); color: #fff; }
+.dbspeech:hover .dbplay { background: var(--accent); color: #fff; }
 .dbinfo { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; flex: 1 1 auto; }
 .dbspeaker { font-weight: 600; }
-.dbview { margin-left: auto; white-space: nowrap; }
-.dbview.link { color: var(--accent); text-decoration: none; }
-.dbview.link:hover { text-decoration: underline; }
+.dbview {
+  margin-left: auto; white-space: nowrap; color: var(--accent);
+  display: inline-flex; align-items: center; gap: .3rem;
+}
+.dbarrow { transition: transform .12s ease; }
+.dbspeech:hover .dbarrow { transform: translateX(2px); }
 
 /* "show all / show less" toggle under a collapsed long list. Deliberately a
    quiet, full-width secondary control so it never reads as one of the red

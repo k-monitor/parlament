@@ -10,6 +10,7 @@ import { formatDate, formatSpeakingTime, formatDuration, agendaLabel } from '../
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import BarChart from '../../components/BarChart.vue'
+import ActivityBoard from '../../components/ActivityBoard.vue'
 
 const props = defineProps({ id: String })
 const { t } = useI18n()
@@ -21,8 +22,17 @@ const scopeText = computed(() => {
   return c ? t('cycle.scope', { cycle: c }) : t('cycle.scopeAll')
 })
 
+// First day of the selected cycle, so the activity board always starts there
+// (null under "all cycles" → the board starts at the MP's first active day).
+const cycleStart = computed(() => {
+  if (store.cycle === null) return null
+  const p = (store.meta?.periods || []).find((x) => x.number === store.cycle)
+  return p?.date_start ? String(p.date_start).slice(0, 10) : null
+})
+
 const profile = ref(null)
 const stats = ref(null)
+const activity = ref(null)
 const speeches = ref(null)
 const bills = ref(null)
 const votes = ref(null)
@@ -77,7 +87,7 @@ async function loadBills() {
 
 async function load() {
   loading.value = true; error.value = false
-  profile.value = stats.value = speeches.value = bills.value = votes.value = null
+  profile.value = stats.value = activity.value = speeches.value = bills.value = votes.value = null
   docFilter.value = ''; docTypes.value = []
   expanded.bills = expanded.votes = expanded.speeches = false
   try {
@@ -95,15 +105,20 @@ async function load() {
     const votesReq = showVotes.value
       ? api.repVotes(props.id, { limit: 20, period }).catch(() => null)
       : Promise.resolve(null)
-    const [p, s, sp, b, fac, v] = await Promise.all([
+    // The activity board is part of the representatives module (always on); a
+    // failure must not break the profile, so it resolves to null on error.
+    const activityReq = api.repActivity(props.id, period).catch(() => null)
+    const [p, s, act, sp, b, fac, v] = await Promise.all([
       api.representative(props.id, period),
       api.repStatistics(props.id, period),
+      activityReq,
       api.repSpeeches(props.id, { limit: 50, period }),
       billsReq,
       facetsReq,
       votesReq,
     ])
-    profile.value = p; stats.value = s; speeches.value = sp; bills.value = b; votes.value = v
+    profile.value = p; stats.value = s; activity.value = act
+    speeches.value = sp; bills.value = b; votes.value = v
     docTypes.value = fac ? [...new Set(fac.types.map((x) => x.main_type).filter(Boolean))] : []
   } catch { error.value = true } finally { loading.value = false }
 }
@@ -134,6 +149,12 @@ watch(() => store.cycle, load)
             <a v-if="profile.email" :href="'mailto:' + profile.email">✉ {{ profile.email }}</a>
             <a v-if="profile.wikidata_id" :href="'https://www.wikidata.org/wiki/' + profile.wikidata_id" target="_blank" rel="noopener">Wikidata</a>
           </div>
+        </div>
+
+        <!-- GitHub-style activity board (REP-8) lives in the header, to the right
+             of the bio; shown only when the MP has any activity in scope. -->
+        <div class="pactivity" v-if="activity && activity.totals.active_days">
+          <ActivityBoard :days="activity.days" :documents-available="activity.documents_available" :from="cycleStart" />
         </div>
       </header>
 
@@ -284,8 +305,10 @@ watch(() => store.cycle, load)
 </template>
 
 <style scoped>
-.phead { display: flex; gap: 1.2rem; align-items: center; margin: .8rem 0 1rem; }
+.phead { display: flex; gap: 1.2rem; align-items: center; margin: .8rem 0 1rem; flex-wrap: wrap; }
 .phead h1 { margin: 0 0 .4rem; }
+/* activity board sits in the header corner; can scroll horizontally if wide */
+.pactivity { margin-left: auto; max-width: 100%; min-width: 0; }
 .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; align-items: start; }
 .pcol { display: flex; flex-direction: column; gap: 1.2rem; }
 .bignums { display: flex; gap: 2rem; flex-wrap: wrap; }

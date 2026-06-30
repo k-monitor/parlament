@@ -297,6 +297,79 @@ def get_statistics(person_id: str, period: Optional[int] = None,
     }
 
 
+@router.get("/{person_id}/activity")
+def get_activity(person_id: str, period: Optional[int] = None,
+                 db: sqlite3.Connection = Depends(get_db)):
+    """Per-day activity for the contribution board (REP-8).
+
+    Returns, for every calendar day on which the MP did anything, the count of
+    their **statistics-eligible** speeches (procedural/chairing excluded — STAT-1,
+    via the precomputed ``person_session_stats``) and the **irományok they
+    submitted** that day (all types, via the Bills module). Scoped to the selected
+    cycle (§4A) when ``period`` is set. Served straight from aggregates/indexed
+    columns so it never blocks on live work (REP-7). The documents contribution is
+    only counted when the Bills module is enabled (EXT-6) — its tables may not
+    exist otherwise — and is then flagged ``documents_available`` so the UI can
+    disclose, rather than fake, the metric."""
+    if not db.execute("SELECT 1 FROM person WHERE person_id=?", (person_id,)).fetchone():
+        raise HTTPException(404, "Representative not found")
+
+    days: dict[str, dict] = {}
+
+    def _day(date: str) -> dict:
+        return days.setdefault(date, {"date": date, "speeches": 0,
+                                      "documents": 0, "speaking_seconds": 0.0})
+
+    # Speeches per day. `person_session_stats` already excludes procedural speeches
+    # (STAT-1) and carries the sitting date; join `session` only to scope by cycle.
+    sextra = " AND s.period_number = :per" if period is not None else ""
+    sparams: dict = {"pid": person_id}
+    if period is not None:
+        sparams["per"] = period
+    for r in db.execute(
+        f"""SELECT substr(pss.date, 1, 10) AS day,
+                   SUM(pss.speech_count) AS speeches,
+                   SUM(pss.speaking_seconds) AS seconds
+            FROM person_session_stats pss JOIN session s ON s.id = pss.session_id
+            WHERE pss.person_id = :pid{sextra}
+            GROUP BY day""", sparams).fetchall():
+        d = _day(r["day"])
+        d["speeches"] = r["speeches"] or 0
+        d["speaking_seconds"] = r["seconds"] or 0.0
+
+    # Irományok submitted per day — only when the Bills module is live (EXT-6).
+    # Every iromány type the MP sponsored counts (BILL-9); a bill with several
+    # sponsors is counted once for this MP (DISTINCT).
+    documents_available = settings.module_enabled("bills")
+    if documents_available:
+        bextra = " AND b.period_number = :per" if period is not None else ""
+        bparams = {"pid": person_id}
+        if period is not None:
+            bparams["per"] = period
+        for r in db.execute(
+            f"""SELECT substr(b.submitted_date, 1, 10) AS day,
+                       COUNT(DISTINCT b.id) AS documents
+                FROM bill b JOIN bill_sponsor bs ON bs.bill_id = b.id
+                WHERE bs.person_id = :pid AND b.submitted_date IS NOT NULL{bextra}
+                GROUP BY day""", bparams).fetchall():
+            _day(r["day"])["documents"] = r["documents"] or 0
+
+    out = sorted(days.values(), key=lambda d: d["date"])
+    for d in out:
+        d["total"] = d["speeches"] + d["documents"]
+    return {
+        "person_id": person_id,
+        "scope": {"period": period},
+        "documents_available": documents_available,
+        "days": out,
+        "totals": {
+            "speeches": sum(d["speeches"] for d in out),
+            "documents": sum(d["documents"] for d in out),
+            "active_days": len(out),
+        },
+    }
+
+
 @router.get("/{person_id}/speeches")
 def get_speeches(person_id: str, period: Optional[int] = None,
                  limit: int = Query(50, ge=1, le=200),

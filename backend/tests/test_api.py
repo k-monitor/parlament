@@ -117,6 +117,41 @@ def test_representative_statistics_hides_bills_when_module_disabled(client, monk
     assert d["totals"]["bills_submitted"] is None
 
 
+def test_representative_activity_board(client):
+    """REP-8: per-day activity combines statistics-eligible speeches and submitted
+    irományok. k001 has one speech on the sitting day (2026-05-09) and sponsors two
+    irományok (T/100 @2026-05-10, I/5 @2026-06-01) — three active days in all."""
+    d = client.get("/api/v1/representatives/k001/activity").json()
+    assert d["documents_available"] is True
+    assert d["totals"] == {"speeches": 1, "documents": 2, "active_days": 3}
+    by_day = {x["date"]: x for x in d["days"]}
+    assert by_day["2026-05-09"]["speeches"] == 1
+    assert by_day["2026-05-09"]["documents"] == 0
+    assert by_day["2026-05-09"]["total"] == 1
+    assert by_day["2026-05-10"]["documents"] == 1   # T/100
+    assert by_day["2026-06-01"]["documents"] == 1   # I/5
+    # days are returned in chronological order
+    assert [x["date"] for x in d["days"]] == sorted(x["date"] for x in d["days"])
+
+
+def test_representative_activity_hides_documents_when_bills_disabled(client, monkeypatch):
+    """REP-8/EXT-6: with the Bills module off, the documents contribution is absent
+    (not faked) and the endpoint still works from speeches alone."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "enabled_modules", ["proceedings", "representatives"])
+    d = client.get("/api/v1/representatives/k001/activity").json()
+    assert d["documents_available"] is False
+    assert d["totals"]["documents"] == 0
+    assert d["totals"]["speeches"] == 1
+
+
+def test_representative_activity_scoped_to_selected_cycle(client):
+    """§4A: cycle 42 (no data for k001) yields an empty board."""
+    d = client.get("/api/v1/representatives/k001/activity", params={"period": 42}).json()
+    assert d["days"] == []
+    assert d["totals"] == {"speeches": 0, "documents": 0, "active_days": 0}
+
+
 def test_representative_speeches_list(client):
     d = client.get("/api/v1/representatives/k001/speeches").json()
     assert d["total"] == 1

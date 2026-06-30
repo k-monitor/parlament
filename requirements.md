@@ -467,6 +467,22 @@ merely because an accent was omitted (or added).
   and **how they are computed** (a short methodology note), and be consistent with
   the underlying speech records a user can click through to verify.
 - **REP-6.** Charts MUST have accessible text/table equivalents (§8 accessibility).
+- **REP-8 (SHOULD).** A representative's profile carries a **GitHub-style activity
+  board** — a contribution-calendar heatmap that shows, at a glance, **how much
+  the MP did on each day**. Each cell is a calendar day, laid out as week columns
+  × weekday rows, coloured by the day's **total activity intensity**, so dense and
+  quiet stretches are immediately visible. The activity counted per day combines
+  the MP's **statistics-eligible speeches** (STAT-1 — procedural/chairing speeches
+  excluded, exactly as everywhere else) and the **irományok they submitted that
+  day** (bills + every other writing, via the Bills module). Hovering or focusing
+  a day reveals its exact breakdown (number of speeches, number of documents). The
+  board honours the **global cycle selector** (§4A): it covers the selected cycle's
+  date span and re-scopes when the cycle changes. It degrades gracefully per EXT-6
+  — when the Bills module is disabled the documents contribution is simply absent,
+  never faked. Like all visualizations it has an **accessible text/table
+  equivalent** (REP-6 / A11Y-1): the same day→count data as a table, and cell
+  colour/intensity is never the only carrier of meaning. It is served from a
+  **dedicated aggregate endpoint** (REP-7) so it never blocks on live aggregation.
 - **REP-7.** Statistics are served from **precomputed aggregates** (§4.2) and
   recomputed on each ingest; they must never block on live aggregation of the
   full corpus. The aggregates are built over statistics-eligible speeches only,

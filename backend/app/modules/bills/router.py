@@ -187,6 +187,208 @@ def bill_facets(period: Optional[int] = None,
     return {"statuses": statuses, "types": types}
 
 
+# Question-type irományok (kérdés / interpelláció / azonnali kérdés) and the
+# events that record how each was answered. The Kérdések sub-page (BILL-11) turns
+# these into a Sankey diagram — asker faction → answerer — where the answerer is
+# the responding ministry when the question was answered orally in plenary (the
+# oral-answer event carries the ministry in `related_label`), a single combined
+# node when it was answered in writing (upstream records no ministry there), and
+# an "unanswered" node otherwise.
+_QUESTION_TYPES = ("A", "I", "K")
+_ORAL_ANSWER_EVENTS = ("kérdés megválaszolva", "interpelláció szóban megválaszolva")
+_WRITTEN_ANSWER_EVENT = "kérdés írásban megválaszolva"
+
+
+def _classify_questions(db: sqlite3.Connection, period: Optional[int], top: int):
+    """Shared engine for the Kérdések Sankey and its drill-down: classify every
+    question-type iromány in scope by asker faction and by answerer, applying the
+    same top-``top`` ministry ranking so the diagram and the per-flow list agree.
+
+    Returns ``(order_ids, factions, faction_key, answerer_key)`` where
+    ``order_ids`` is the question bill ids newest-first, ``faction_key(bid)`` is
+    the asker's faction id (or ``None``), and ``answerer_key(bid)`` is a
+    ``(kind, label)`` tuple (``label`` empty for the non-ministry nodes)."""
+    from collections import Counter
+
+    qph = ",".join("?" * len(_QUESTION_TYPES))
+    where = [f"b.main_type IN ({qph})"]
+    params: list = list(_QUESTION_TYPES)
+    if period is not None:
+        where.append("b.period_number = ?"); params.append(period)
+    where_sql = " AND ".join(where)
+
+    order_ids = [r["id"] for r in db.execute(
+        f"SELECT b.id FROM bill b WHERE {where_sql} ORDER BY b.number_sort DESC",
+        params)]
+    factions = {r["id"]: r for r in
+                db.execute("SELECT id, label, color FROM faction")}
+
+    # Asker = the primary (lowest-ord) sponsor's faction, one per question.
+    asker_faction: dict[str, Optional[int]] = {}
+    for r in db.execute(
+        f"""SELECT bs.bill_id, bs.faction_id FROM bill_sponsor bs
+            JOIN bill b ON b.id = bs.bill_id
+            WHERE {where_sql} ORDER BY bs.bill_id, bs.ord""", params):
+        asker_faction.setdefault(r["bill_id"], r["faction_id"])
+
+    # Answer classification from the bill's answer events (oral wins over written
+    # — the oral answer is the substantive one and names the responding ministry).
+    answer_events = _ORAL_ANSWER_EVENTS + (_WRITTEN_ANSWER_EVENT,)
+    aph = ",".join("?" * len(answer_events))
+    oral_ministry: dict[str, Optional[str]] = {}   # bill -> ministry label (or None)
+    written: set[str] = set()
+    for r in db.execute(
+        f"""SELECT e.bill_id, e.name, e.related_label
+            FROM bill_event e JOIN bill b ON b.id = e.bill_id
+            WHERE {where_sql} AND e.name IN ({aph})""",
+        params + list(answer_events)):
+        if r["name"] in _ORAL_ANSWER_EVENTS:
+            # mark the bill as orally answered, keeping the first non-empty
+            # ministry label seen for it (None until/unless one appears)
+            if not oral_ministry.get(r["bill_id"]):
+                oral_ministry[r["bill_id"]] = r["related_label"]
+        else:
+            written.add(r["bill_id"])
+
+    # Rank ministries so only the busiest stay as their own node.
+    ministry_totals: Counter = Counter(
+        m for bid, m in oral_ministry.items() if m)
+    top_ministries = {m for m, _ in ministry_totals.most_common(top)}
+
+    def faction_key(bid: str) -> Optional[int]:
+        fid = asker_faction.get(bid)
+        return fid if (fid is not None and fid in factions) else None
+
+    def answerer_key(bid: str) -> tuple[str, str]:
+        """(kind, label) for the answerer side; label is '' for special nodes."""
+        if bid in oral_ministry:
+            m = oral_ministry[bid]
+            if not m:
+                return ("oral", "")
+            return ("ministry", m) if m in top_ministries else ("other", "")
+        if bid in written:
+            return ("written", "")
+        return ("unanswered", "")
+
+    return order_ids, factions, faction_key, answerer_key
+
+
+@router.get("/questions/sankey")
+def questions_sankey(
+    period: Optional[int] = None,
+    limit: int = Query(12, ge=1, le=40),   # top-N responding ministries, rest pooled
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Sankey data for the Kérdések page (BILL-11): every question-type iromány
+    (kérdés / interpelláció / azonnali kérdés) flows from its asker's faction to
+    whoever answered it — the responding ministry when it was answered orally in
+    plenary, a single "answered in writing" node when it was (the upstream data
+    carries no ministry there), or an "unanswered" node otherwise. Faction
+    colours (§4.1) carry through the ribbons. Derived at query time from the
+    shared bill / bill_event / bill_sponsor data (EXT-2); honours the global
+    cycle (§4A). Only the top-``limit`` ministries stay glanceable — the rest are
+    pooled into one "other" node. Each node carries the identity a click needs to
+    drill into ``/questions/list`` (asker nodes their ``faction_id``, ministry
+    nodes their label)."""
+    from collections import Counter
+
+    bill_ids, factions, faction_key, answerer_key = _classify_questions(
+        db, period, limit)
+    if not bill_ids:
+        return {"period": period, "total": 0, "nodes": [], "links": []}
+
+    flows: Counter = Counter()   # (asker_key, answerer_key) -> count
+    asker_meta: dict[str, dict] = {}
+    for bid in bill_ids:
+        fid = faction_key(bid)
+        if fid is not None:
+            akey = f"f{fid}"
+            asker_meta[akey] = {"kind": "faction", "faction_id": fid,
+                                "label": factions[fid]["label"],
+                                "color": factions[fid]["color"]}
+        else:
+            akey = "__nofaction__"
+            asker_meta[akey] = {"kind": "nofaction", "faction_id": None,
+                                "label": None, "color": None}
+        flows[(akey, answerer_key(bid))] += 1
+
+    # Assemble nodes: askers first (by volume desc), then answerers (by volume
+    # desc). Links reference node indices; a link takes its asker's colour.
+    asker_vol: Counter = Counter()
+    answerer_vol: Counter = Counter()
+    for (ak, ans), n in flows.items():
+        asker_vol[ak] += n
+        answerer_vol[ans] += n
+
+    nodes: list[dict] = []
+    index: dict = {}
+    for ak, _ in asker_vol.most_common():
+        index[ak] = len(nodes)
+        nodes.append({"side": "asker", **asker_meta[ak]})
+    for ans, _ in answerer_vol.most_common():
+        kind, label = ans
+        index[ans] = len(nodes)
+        nodes.append({"side": "answerer", "kind": kind,
+                      "label": label or None, "color": None})
+
+    links = [{
+        "source": index[ak], "target": index[ans], "value": n,
+        "color": asker_meta[ak]["color"],
+    } for (ak, ans), n in flows.items()]
+
+    return {"period": period, "total": len(bill_ids), "nodes": nodes, "links": links}
+
+
+@router.get("/questions/list")
+def questions_list(
+    period: Optional[int] = None,
+    faction: Optional[str] = None,     # asker faction id, or "none" for the no-faction node
+    answerer: Optional[str] = None,    # ministry | written | oral | other | unanswered
+    ministry: Optional[str] = None,    # the ministry label when answerer == "ministry"
+    top: int = Query(12, ge=1, le=40),  # MUST match the Sankey's `limit` so nodes agree
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """The individual questions behind one Sankey flow (BILL-11): the
+    question-type irományok whose asker faction is ``faction`` and whose answerer
+    is ``answerer`` (a specific ``ministry`` when ``answerer == "ministry"``).
+    Uses the same classification as the diagram (same ``top`` ranking) so a
+    clicked ribbon lists exactly its questions. Paginated, newest-first; each
+    links back to its detail view. Omitting the filters lists every question."""
+    order_ids, _factions, faction_key, answerer_key = _classify_questions(
+        db, period, top)
+
+    want = (answerer, ministry or "") if answerer == "ministry" else (answerer, "")
+
+    def fmatch(bid: str) -> bool:
+        fk = faction_key(bid)
+        if faction == "none":
+            return fk is None
+        if faction is None:
+            return True
+        return fk is not None and str(fk) == str(faction)
+
+    matched = [bid for bid in order_ids
+               if fmatch(bid) and (answerer is None or answerer_key(bid) == want)]
+    total = len(matched)
+    page_ids = matched[offset:offset + limit]
+    if not page_ids:
+        return {"total": total, "limit": limit, "offset": offset, "bills": []}
+
+    ph = ",".join("?" * len(page_ids))
+    rows = {r["id"]: r for r in db.execute(
+        f"""SELECT id, bill_number, title, type, main_type, status, submitted_date
+            FROM bill WHERE id IN ({ph})""", page_ids)}
+    sponsors = _sponsors_for(db, page_ids)
+    bills = [{
+        "id": r["id"], "bill_number": r["bill_number"], "title": r["title"],
+        "type": r["type"], "main_type": r["main_type"], "status": r["status"],
+        "submitted_date": r["submitted_date"], "sponsors": sponsors.get(bid, []),
+    } for bid in page_ids if (r := rows.get(bid))]
+    return {"total": total, "limit": limit, "offset": offset, "bills": bills}
+
+
 def _rows(db: sqlite3.Connection, sql: str, bill_id: str) -> list[dict]:
     return [dict(r) for r in db.execute(sql, (bill_id,)).fetchall()]
 

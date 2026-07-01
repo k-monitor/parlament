@@ -339,3 +339,93 @@ def test_bill_without_oral_answer_has_no_video(client):
     """A bill with no oral-answer event (bill-uuid-1's seeded events are only
     legislative) exposes no video answer (None, graceful)."""
     assert client.get("/api/v1/bills/bill-uuid-1").json()["video_answer"] is None
+
+
+# --- Kérdések Sankey (BILL-11) --------------------------------------------
+
+def _seed_question_answer(db_path, name, related_label=None):
+    """Add an answer event of `name` to the interpelláció doc-uuid-3 (a K/I/A
+    question-type iromány) so the Sankey has an answerer to route it to."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("""INSERT INTO bill_event (bill_id, ord, event_date, name, related_label)
+                 VALUES ('doc-uuid-3', 10, '2026-06-02T11:00:00Z', ?, ?)""",
+              (name, related_label))
+    c.commit(); c.close()
+
+
+def test_questions_sankey_excludes_bills_and_defaults_unanswered(client):
+    """Only question-type irományok (A/I/K) count — the two törvényjavaslatok are
+    excluded — and a question with no answer event flows to the unanswered node."""
+    j = client.get("/api/v1/bills/questions/sankey").json()
+    assert j["total"] == 1                              # only doc-uuid-3 (interpelláció)
+    askers = [n for n in j["nodes"] if n["side"] == "asker"]
+    answerers = [n for n in j["nodes"] if n["side"] == "answerer"]
+    assert any(n["label"] == "Fidesz" for n in askers)  # asker's faction
+    assert answerers and answerers[0]["kind"] == "unanswered"
+    # one flow, asker -> answerer, value 1, carrying the faction colour
+    assert len(j["links"]) == 1 and j["links"][0]["value"] == 1
+    assert j["links"][0]["color"]
+
+
+def test_questions_sankey_oral_answer_routes_to_ministry(client, db_path):
+    """An oral-answer event routes the question to its responding ministry node,
+    named from the event's related_label."""
+    _seed_question_answer(db_path, "interpelláció szóban megválaszolva",
+                          "Belügyminisztérium államtitkára")
+    j = client.get("/api/v1/bills/questions/sankey").json()
+    ministries = [n for n in j["nodes"]
+                  if n["side"] == "answerer" and n["kind"] == "ministry"]
+    assert any(n["label"] == "Belügyminisztérium államtitkára" for n in ministries)
+
+
+def test_questions_sankey_written_answer_routes_to_written_node(client, db_path):
+    """A written-answer event (no ministry upstream) routes to the combined
+    'answered in writing' node."""
+    _seed_question_answer(db_path, "kérdés írásban megválaszolva")
+    j = client.get("/api/v1/bills/questions/sankey").json()
+    assert any(n["kind"] == "written"
+               for n in j["nodes"] if n["side"] == "answerer")
+
+
+def test_questions_list_drills_into_a_flow(client, db_path):
+    """A clicked flow lists exactly its questions: the interpelláció doc-uuid-3
+    (asker faction Fidesz) answered orally by a ministry. The faction node's id
+    (as the diagram returns it) is what the drill-down filters by."""
+    _seed_question_answer(db_path, "interpelláció szóban megválaszolva",
+                          "Belügyminisztérium államtitkára")
+    sk = client.get("/api/v1/bills/questions/sankey").json()
+    fac = next(n["faction_id"] for n in sk["nodes"]
+               if n["side"] == "asker" and n["label"] == "Fidesz")
+    r = client.get("/api/v1/bills/questions/list", params={
+        "faction": fac, "answerer": "ministry",
+        "ministry": "Belügyminisztérium államtitkára"}).json()
+    assert r["total"] == 1
+    assert r["bills"][0]["bill_number"] == "I/5"
+    # a non-matching answerer for the same faction is empty
+    empty = client.get("/api/v1/bills/questions/list", params={
+        "faction": fac, "answerer": "written"}).json()
+    assert empty["total"] == 0
+
+
+def test_questions_list_unfiltered_lists_all_questions(client):
+    """With no flow filters the list is every question-type iromány (only
+    doc-uuid-3 here — the two törvényjavaslatok are excluded)."""
+    r = client.get("/api/v1/bills/questions/list").json()
+    assert r["total"] == 1 and r["bills"][0]["main_type"] == "I"
+
+
+def test_questions_list_faction_none_matches_unfactioned(client, db_path):
+    """The `none` faction bucket matches questions whose asker has no faction."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    # a question submitted by a government/committee actor (no faction)
+    c.execute("""INSERT INTO bill (id, bill_number, number_sort, period_number,
+                     title, type, main_type, status)
+                 VALUES ('q-nofac','K/9',9,43,'Kérdés kormánytól','kérdés','K','benyújtva')""")
+    c.execute("""INSERT INTO bill_sponsor (bill_id, person_id, faction_id, label, ord)
+                 VALUES ('q-nofac', NULL, NULL, 'kormány', 0)""")
+    c.commit(); c.close()
+    r = client.get("/api/v1/bills/questions/list",
+                   params={"faction": "none", "answerer": "unanswered"}).json()
+    assert any(b["bill_number"] == "K/9" for b in r["bills"])

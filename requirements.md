@@ -615,6 +615,29 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   degradation, SCR-5). The panel is **derived at query time** from the stored
   events and proceedings speeches; it adds no new tables and no new scraping.
 
+- **BILL-11 (SHOULD).** A **Kérdések** ("Questions") sub-page of the
+  Törvényjavaslatok section visualizes the flow of parliamentary questions —
+  *kérdés*, *interpelláció* and *azonnali kérdés* (Felicitas `main_type`
+  A/I/K) — as a **Sankey diagram**: **who asked → who answered**. The **asker**
+  side groups questions by the **asking MP's faction** (§4.1 colours carry
+  through the ribbons); the **answerer** side is, for a question answered **in
+  speech**, the **responding ministry** (the minister / state secretary named on
+  the oral-answer event), and for a question answered **in writing** a single
+  combined node (the upstream data records no responding ministry there), with a
+  further node for questions still **unanswered**. Only the busiest ministries
+  stay as their own node — the remainder pool into one "other ministry" node so
+  the diagram stays glanceable. **Each flow (ribbon) is clickable** — selecting
+  it lists the individual questions behind it at the bottom of the page,
+  paginated and newest-first, each linking to its detail view and showing its
+  submitter(s) (EXT-2); the accessible table fallback offers the same drill-down
+  by keyboard. It **honours the global cycle selector** (§4A) and is **derived at
+  query time** from the shared `bill` / `bill_event` / `bill_sponsor` data
+  (EXT-2) — no new tables, no new scraping. Like every other visualization the
+  diagram carries an **accessible table fallback** (A11Y-1) and a short
+  methodology note (TRUST-1). It is part of the Bills module's vertical slice
+  (BILL-5): new `/api/v1/bills/questions/sankey` and `/api/v1/bills/questions/list`
+  routes and a new frontend sub-tab, disabled with the rest of the module (EXT-6).
+
 ---
 
 ## 6B. Functional Requirements — Module: Votes (Szavazások)
@@ -730,6 +753,11 @@ rework of existing features.
 > their two anchor speeches, joined to the shared `person`/`session` entities
 > (EXT-2). A new `debates` array on `/api/v1/bills/{id}` and a panel in the
 > detail view were the only additions.
+> The **Kérdések Sankey** (BILL-11) was in the same spirit — *no new tables and
+> no new scraping*: a new `/api/v1/bills/questions/sankey` aggregate derives the
+> asker-faction → answerer flows at query time from the stored
+> `bill`/`bill_event`/`bill_sponsor` rows, and a new "Kérdések" sub-tab renders
+> it with a dependency-free SVG Sankey component — touching no other module.
 > Extending coverage to **all iromány types** (BILL-9) was lighter still — *no
 > new tables at all*: the scraper now fetches every `fotipus` into the existing
 > `bill` tables (tagging each row's `main_type` from its number prefix), the

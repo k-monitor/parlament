@@ -46,6 +46,12 @@ const routes = [
     component: () => import('./modules/bills/BillsListView.vue'),
   },
   {
+    // Kérdések — Sankey of who asked a question and who answered (BILL-11).
+    // Part of the bills module; declared before /bills/:id so it isn't shadowed.
+    path: '/questions', name: 'questions', meta: { module: 'bills' },
+    component: () => import('./modules/bills/QuestionsView.vue'),
+  },
+  {
     path: '/bills/:id', name: 'bill', meta: { module: 'bills' },
     component: () => import('./modules/bills/BillView.vue'), props: true,
   },

@@ -29,9 +29,10 @@ const NAV_SECTIONS = {
     ],
   },
   bills: {
-    match: ['bills', 'documents', 'bill', 'document'],
+    match: ['bills', 'documents', 'questions', 'bill', 'document'],
     tabs: [
       { name: 'bills', key: 'bills', detail: ['bill'] },
+      { name: 'questions', key: 'questions' },
       { name: 'documents', key: 'documents', detail: ['document'] },
     ],
   },

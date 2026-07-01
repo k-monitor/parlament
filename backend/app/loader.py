@@ -754,8 +754,8 @@ def _wordcloud_backend() -> str:
     return "regex"
 
 
-def _wordcloud_cache_path(data_dir: Path) -> Path:
-    return Path(data_dir) / "wordcloud-cache.json"
+def _wordcloud_cache_path(cache_dir: Path) -> Path:
+    return Path(cache_dir) / "wordcloud-cache.json"
 
 
 def _session_fingerprint(method: str, texts: list[str]) -> str:
@@ -769,23 +769,24 @@ def _session_fingerprint(method: str, texts: list[str]) -> str:
 
 
 def rebuild_session_word_counts(conn: sqlite3.Connection,
-                                data_dir: str | Path | None = None) -> None:
+                                cache_dir: str | Path | None = None) -> None:
     """Precompute per-sitting topical term frequencies for the word cloud (WCLOUD-2).
 
     For each session, lemmatize its non-procedural sentence text and extract named
     entities with HuSpaCy (or fall back to the regex tokenizer), storing the
     term→count map in ``session_word_count``. This is the expensive step, so its
-    output is cached on disk (``wordcloud-cache.json`` beside the data) keyed by a
+    output is cached on disk (``wordcloud-cache.json`` in ``cache_dir``) keyed by a
     fingerprint of the text + method: a full rebuild reprocesses only the sittings
     whose transcript actually changed (cf. the scraper's detail cache). The cache
-    is optional — without ``data_dir`` (or if it can't be read/written) everything
-    is simply recomputed.
+    is optional — without ``cache_dir`` (or if it can't be read/written) everything
+    is simply recomputed, so it must point at a writable location (the source data
+    dir is mounted read-only in the container; use the DB's dir instead).
     """
     backend = _wordcloud_backend()
     method = nlp.method_tag() if backend == "huspacy" else "regex:v1"
     logger.info("Word-cloud term extraction backend: %s", backend)
 
-    cache_path = _wordcloud_cache_path(data_dir) if data_dir else None
+    cache_path = _wordcloud_cache_path(cache_dir) if cache_dir else None
     cache: dict = {"method": method, "sessions": {}}
     if cache_path and cache_path.exists():
         try:
@@ -943,8 +944,9 @@ def build_database(data_dir: str | Path, db_path: str | Path, *,
 
         # Lemmatize / entity-extract each sitting's text into session_word_count
         # before the aggregates so word_doc_freq can derive from it (WCLOUD-2);
-        # cached on disk beside the data so unchanged sittings aren't reprocessed.
-        rebuild_session_word_counts(conn, data_dir)
+        # cached on disk in the DB's dir (writable + persisted; the source data
+        # dir is mounted read-only) so unchanged sittings aren't reprocessed.
+        rebuild_session_word_counts(conn, db_path.parent)
         rebuild_aggregates(conn)
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("sessions_loaded", str(loaded)))

@@ -65,7 +65,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
   <header class="site-header">
     <div class="container header-bar">
       <router-link :to="{ name: 'home' }" class="brand" aria-label="Parlamonitor">
-        <span class="brand-mark" aria-hidden="true">⬢</span>
+        <img class="brand-mark" src="/parlamonitor.png" alt="" aria-hidden="true" />
         <span class="brand-text">Parlamonitor</span>
       </router-link>
       <button
@@ -148,7 +148,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 .header-bar { display: flex; align-items: center; gap: 1rem; flex-wrap: nowrap; position: relative; }
 .brand { display: inline-flex; align-items: center; gap: .5rem; color: #fff; font-weight: 800; font-size: 1.15rem; flex-shrink: 0; }
 .brand:hover { text-decoration: none; }
-.brand-mark { font-size: 1.3rem; }
+.brand-mark { width: 2rem; height: 2rem; object-fit: contain; display: block; border-radius: .4rem; background: #fff; padding: .2rem; box-sizing: border-box; }
 .mainnav { display: flex; align-items: center; gap: .25rem; flex-wrap: wrap; flex: 1 1 auto; }
 .header-controls { display: flex; align-items: center; gap: .4rem; flex-shrink: 0; margin-left: auto; }
 .mainnav a {

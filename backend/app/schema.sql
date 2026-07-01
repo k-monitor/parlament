@@ -515,3 +515,19 @@ CREATE TABLE word_doc_total (
     period_number INTEGER PRIMARY KEY,
     n_docs        INTEGER NOT NULL
 );
+
+-- The first sitting day, chronologically and across ALL electoral cycles, on
+-- which each lemmatized word / named entity was ever spoken in the chamber
+-- (NEW-1). Derived purely from session_word_count + session dates: one row per
+-- distinct word, pointing at the earliest session (by date, then id for a
+-- same-day tie) that contains it. Lets each sitting-day page surface the words
+-- that *debuted* there — never said before in parliament, previous cycles
+-- included. No FK to session (like word_doc_freq): it is rebuilt wholesale, so
+-- it never blocks an idempotent per-session re-ingest.
+CREATE TABLE word_first_seen (
+    word       TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    kind       TEXT NOT NULL DEFAULT 'term'
+) WITHOUT ROWID;
+CREATE INDEX idx_word_first_seen_session ON word_first_seen(session_id);

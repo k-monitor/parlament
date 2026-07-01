@@ -30,6 +30,7 @@ export const api = {
   session: (id) => get(`/proceedings/sessions/${id}`),
   sessionWordcloud: (id) => get(`/proceedings/sessions/${id}/wordcloud`),
   sessionTopSpeakers: (id) => get(`/proceedings/sessions/${id}/top-speakers`),
+  sessionNewWords: (id) => get(`/proceedings/sessions/${id}/new-words`),
   speech: (uid) => get(`/proceedings/speeches/${uid}`),
   // representatives
   representatives: (params) => get('/representatives', params),

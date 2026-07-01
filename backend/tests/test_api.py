@@ -61,6 +61,55 @@ def test_session_wordcloud_missing_session(client):
     assert client.get("/api/v1/proceedings/sessions/99999/wordcloud").status_code == 404
 
 
+def test_session_new_words(client):
+    """NEW-1: the endpoint returns this day's debut words (lemmatized), each with
+    its same-day count and kind, ranked by count."""
+    d = client.get("/api/v1/proceedings/sessions/43001/new-words").json()
+    assert d["session_id"] == "43001" and d["date"] == "2026-05-09"
+    words = {w["text"]: w for w in d["words"]}
+    # content lemmas from the transcript debut on the corpus's first day
+    assert "költségvetés" in words
+    assert all(len(w) >= 4 for w in words)                 # stop/short tokens dropped
+    assert all(set(w.keys()) == {"text", "count", "kind"} for w in d["words"])
+    counts = [w["count"] for w in d["words"]]
+    assert counts == sorted(counts, reverse=True)          # ranked by count desc
+    # Names/entities, capitalized lemmas and punctuated tokens are excluded.
+    assert all(w["kind"] != "entity" for w in d["words"])
+    assert all(not w["text"][:1].isupper() for w in d["words"])
+    assert all(not (set("/-.'’‘‑–—") & set(w["text"])) for w in d["words"])
+
+
+def test_session_new_words_excludes_entities_and_capitalized(client, db_path):
+    """The endpoint drops named entities, any capitalized lemma (incl. Hungarian
+    accented capitals) and punctuated tokens (`/ - . '` + typographic variants),
+    keeping only clean lower-case common terms."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    for word, kind, count in [("zöldátállásfoo", "term", 9),   # lower-case → kept
+                              ("Budapestibar", "term", 8),      # capitalized → dropped
+                              ("Árvízbaz", "term", 7),          # accented capital → dropped
+                              ("Teszt Entitás", "entity", 6),   # entity → dropped
+                              ("rtl-es", "term", 5),            # hyphen → dropped
+                              ("dr.foo", "term", 5),            # dot → dropped
+                              ("elmesélte‑e", "term", 5),       # NB hyphen → dropped
+                              ("van't", "term", 5)]:            # apostrophe → dropped
+        c.execute("INSERT INTO session_word_count(session_id, word, count, kind) "
+                  "VALUES ('43001', ?, ?, ?)", (word, count, kind))
+        c.execute("INSERT INTO word_first_seen(word, session_id, date, kind) "
+                  "VALUES (?, '43001', '2026-05-09', ?)", (word, kind))
+    c.commit(); c.close()
+
+    words = {w["text"] for w in
+             client.get("/api/v1/proceedings/sessions/43001/new-words").json()["words"]}
+    assert "zöldátállásfoo" in words
+    assert {"Budapestibar", "Árvízbaz", "Teszt Entitás",
+            "rtl-es", "dr.foo", "elmesélte‑e", "van't"}.isdisjoint(words)
+
+
+def test_session_new_words_missing_session(client):
+    assert client.get("/api/v1/proceedings/sessions/99999/new-words").status_code == 404
+
+
 def test_session_top_speakers(client):
     """TOPSPK-1/2: the sitting toplist ranks known representatives by total
     speaking time, excluding procedural speeches and unattributed speakers."""

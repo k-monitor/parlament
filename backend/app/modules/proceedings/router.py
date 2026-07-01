@@ -487,6 +487,63 @@ def session_top_speakers(session_id: str, limit: int = Query(10, ge=1, le=50),
     }
 
 
+# A "new word" must be a single clean lexical token: any of these punctuation
+# marks makes it a compound / abbreviation / hyphenated artefact (`rtl-es`, `dr.`,
+# `elmesélte‑e`) rather than a genuine new word. Covers the ASCII forms the user
+# named (`/ - . '`) plus the typographic hyphen/dash/apostrophe variants HuSpaCy
+# lemmas actually contain.
+_NEW_WORD_BANNED_CHARS = frozenset("/-.'’‘‑–—")
+
+
+@router.get("/sessions/{session_id}/new-words")
+def session_new_words(session_id: str, limit: int = Query(80, ge=1, le=400),
+                      db: sqlite3.Connection = Depends(get_db)):
+    """Words that *debuted* on a sitting day — never spoken before in parliament
+    (NEW-1).
+
+    A word counts as new on this day when this is the earliest sitting day (by
+    date) on which it was ever said, across **all** electoral cycles, previous
+    ones included. The unit is a HuSpaCy lemma (inflected forms collapsed), taken
+    from the same precomputed, stop-word-filtered `session_word_count` as the word
+    cloud and restricted to non-procedural speeches (STAT-1); first-appearance is
+    precomputed into `word_first_seen`. **Named entities, capitalized words and
+    words containing punctuation (`/ - . '` and typographic variants) are
+    excluded** — a "new" proper noun is almost always just a name/place that
+    happens not to have come up before, and a punctuated token (`rtl-es`,
+    `elmesélte‑e`, `dr.`) is a compound/abbreviation artefact rather than a genuine
+    new word — so only clean lower-case common terms remain. `count` is how many
+    times the word was said on its debut day; ranked by count so words that
+    arrived and were actually discussed lead over one-off mentions. A separate,
+    lightweight request so it never slows the sitting-day load.
+
+    Note the novelty is only ever relative to the transcripts loaded: the very
+    earliest sitting in the corpus will show almost all of its words as "new"."""
+    s = db.execute("SELECT id, date FROM session WHERE id = ?",
+                   (session_id,)).fetchone()
+    if not s:
+        raise HTTPException(404, "Session not found")
+    try:
+        # Drop named entities here; drop capitalized / punctuated lemmas in Python
+        # (SQLite's upper/lower is ASCII-only and would misjudge Hungarian accented
+        # capitals like "Á"/"Ő"). Fetch all qualifying rows (a day has at most a
+        # couple thousand) so the limit applies *after* those filters.
+        rows = db.execute(
+            """SELECT w.word, w.kind, swc.count
+               FROM word_first_seen w
+               JOIN session_word_count swc
+                 ON swc.session_id = w.session_id AND swc.word = w.word
+               WHERE w.session_id = ? AND w.kind != 'entity'
+               ORDER BY swc.count DESC, w.word""",
+            (session_id,)).fetchall()
+    except sqlite3.OperationalError:
+        rows = []          # pre-migration DB without word_first_seen
+    words = [{"text": r["word"], "count": r["count"], "kind": r["kind"]}
+             for r in rows
+             if not r["word"][:1].isupper()
+             and not (_NEW_WORD_BANNED_CHARS & set(r["word"]))][:limit]
+    return {"session_id": session_id, "date": s["date"], "words": words}
+
+
 def _doc_freqs(db, period, words):
     """Per-period document frequencies for ``words`` + the period's day count.
 

@@ -87,3 +87,31 @@ def test_distinctive_word_tops_the_cloud(wc_client):
     # …but the day-distinctive word outweighs the every-day one and ranks first.
     assert words["klímavédelem"]["weight"] > words["magyarország"]["weight"]
     assert d["words"][0]["text"] == "klímavédelem"
+
+
+def test_new_words_are_first_ever_occurrences(wc_client):
+    """NEW-1: a word is 'new' only on the earliest sitting day (by date) that ever
+    said it. Day 1 (2026-05-09) is the corpus's first day, so both its words
+    debut there; 'magyarország' recurs on days 2 and 3 but is not new again."""
+    d1 = wc_client.get("/api/v1/proceedings/sessions/43001/new-words").json()
+    day1 = {w["text"]: w for w in d1["words"]}
+    assert "klímavédelem" in day1 and "magyarország" in day1
+    assert day1["klímavédelem"]["count"] == 4
+
+    # Day 2/3 only repeat 'magyarország' (already said on day 1) → nothing new.
+    d2 = wc_client.get("/api/v1/proceedings/sessions/43002/new-words").json()
+    assert [w["text"] for w in d2["words"]] == []
+    d3 = wc_client.get("/api/v1/proceedings/sessions/43003/new-words").json()
+    assert "magyarország" not in {w["text"] for w in d3["words"]}
+
+
+def test_word_first_seen_table_picks_earliest_day(wc_client):
+    import sqlite3
+    from app.config import settings
+    c = sqlite3.connect(settings.db_path); c.row_factory = sqlite3.Row
+    rows = {r["word"]: r["session_id"]
+            for r in c.execute("SELECT word, session_id FROM word_first_seen")}
+    c.close()
+    # 'magyarország' is said on all three days but first-seen is the earliest one.
+    assert rows["magyarország"] == "43001"
+    assert rows["klímavédelem"] == "43001"

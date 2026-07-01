@@ -734,6 +734,7 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
            GROUP BY s.person_id, s.session_id""")
     conn.commit()
     rebuild_word_doc_freq(conn)
+    rebuild_word_first_seen(conn)
     logger.info("Rebuilt aggregate tables")
 
 
@@ -869,6 +870,29 @@ def rebuild_word_doc_freq(conn: sqlite3.Connection) -> None:
            JOIN session ss ON ss.id = swc.session_id
            WHERE ss.period_number IS NOT NULL
            GROUP BY ss.period_number""")
+    conn.commit()
+
+
+def rebuild_word_first_seen(conn: sqlite3.Connection) -> None:
+    """When each word was first ever spoken in the chamber (NEW-1).
+
+    Derived purely from the precomputed ``session_word_count`` + session dates:
+    for every distinct word, the earliest sitting day (across ALL electoral
+    cycles, previous ones included) that contains it — ordered by date then id so
+    a same-day tie is broken deterministically. The sitting-day page reads this
+    to surface the words that *debuted* on that day (never said before).
+    """
+    conn.execute("DELETE FROM word_first_seen")
+    conn.execute(
+        """INSERT INTO word_first_seen(word, session_id, date, kind)
+           SELECT word, session_id, date, kind FROM (
+               SELECT swc.word, swc.session_id, ss.date, swc.kind,
+                      ROW_NUMBER() OVER (
+                          PARTITION BY swc.word
+                          ORDER BY ss.date, ss.id) AS rn
+               FROM session_word_count swc
+               JOIN session ss ON ss.id = swc.session_id
+           ) WHERE rn = 1""")
     conn.commit()
 
 

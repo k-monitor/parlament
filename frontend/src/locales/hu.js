@@ -115,6 +115,8 @@ export default {
     wordcloudEntity: 'név',
     topSpeakers: 'Ki beszélt a legtöbbet ezen a napon?',
     topSpeakersCaption: 'A képviselők összes felszólalási ideje szerint ezen az ülésnapon (az ülésvezetői és rendészeti felszólalások nélkül). A névre kattintva a képviselő profilja nyílik meg.',
+    newWords: 'Mely szavak hangzottak el először?',
+    newWordsCaption: 'Ezek a szótövek ezen az ülésnapon hangzottak el először a parlamentben – korábban, a megelőző ciklusokban sem mondta ki őket senki (a rendelkezésre álló jegyzőkönyvek alapján). A neveket és a nagybetűs (tulajdonnévi) szavakat kihagytuk. A szám az adott napi előfordulást jelzi. Kattintásra rákeres az adott napra.',
   },
   reps: {
     title: 'Képviselők',

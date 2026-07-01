@@ -19,15 +19,19 @@ const error = ref(false)
 // Word cloud (WCLOUD-1): a separate, non-blocking request so it never slows the
 // transcript load (WCLOUD-5). A failure here leaves the transcript untouched.
 const cloud = ref(null)
+// New words (NEW-1): words that debuted on this day, never said before in
+// parliament (previous cycles included). Again a separate, non-blocking request.
+const newWords = ref(null)
 // Speaker toplist (TOPSPK-1): likewise a separate, non-blocking request (TOPSPK-5).
 const topSpeakers = ref(null)
 // Longest single speaking time, for sizing the (decorative) bars (TOPSPK-4).
 const topMax = computed(() => Math.max(1, ...(topSpeakers.value?.speakers || []).map((s) => s.seconds || 0)))
 
 async function load() {
-  loading.value = true; error.value = false; cloud.value = null; topSpeakers.value = null
+  loading.value = true; error.value = false; cloud.value = null; newWords.value = null; topSpeakers.value = null
   try { data.value = await api.session(props.id) } catch { error.value = true } finally { loading.value = false }
   api.sessionWordcloud(props.id).then((c) => { cloud.value = c }).catch(() => {})
+  api.sessionNewWords(props.id).then((n) => { newWords.value = n }).catch(() => {})
   api.sessionTopSpeakers(props.id).then((t) => { topSpeakers.value = t }).catch(() => {})
 }
 onMounted(load)
@@ -52,6 +56,19 @@ function searchWord(word) {
       <section v-if="cloud && cloud.words.length" class="card pad wcloud">
         <h2 class="wcloud-title">{{ $t('sessions.wordcloud') }}</h2>
         <WordCloud :words="cloud.words" :caption="$t('sessions.wordcloudCaption')" @pick="searchWord" />
+      </section>
+
+      <section v-if="newWords && newWords.words.length" class="card pad newwords">
+        <h2 class="wcloud-title">{{ $t('sessions.newWords') }}</h2>
+        <p class="small soft" style="margin:0 0 .6rem;">{{ $t('sessions.newWordsCaption') }}</p>
+        <ul class="chips">
+          <li v-for="w in newWords.words" :key="w.text">
+            <button
+              type="button" class="chip" :title="`${w.text}: ${w.count}`"
+              @click="searchWord(w.text)"
+            >{{ w.text }}<span class="chip-count" v-if="w.count > 1">{{ w.count }}</span></button>
+          </li>
+        </ul>
       </section>
 
       <section v-if="topSpeakers && topSpeakers.speakers.length" class="card pad toplist">
@@ -98,6 +115,17 @@ function searchWord(word) {
 <style scoped>
 .wcloud { margin-bottom: 1rem; }
 .wcloud-title { font-size: 1.05rem; margin: 0 0 .6rem; }
+.newwords { margin-bottom: 1rem; }
+.chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }
+.chip {
+  display: inline-flex; align-items: baseline; gap: .32rem;
+  font: inherit; font-size: .9rem; cursor: pointer;
+  padding: .2rem .55rem; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--accent-soft); color: var(--ink);
+  transition: border-color .12s, background .12s;
+}
+.chip:hover, .chip:focus-visible { border-color: var(--accent); outline: none; }
+.chip-count { font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .toplist { margin-bottom: 1rem; }
 .top-rows { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(130px, 1.5fr) auto 1fr auto auto; row-gap: .24rem; }
 .top-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; column-gap: .55rem; align-items: center; padding: .12rem 0; font-size: .9rem; }

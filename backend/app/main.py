@@ -68,7 +68,7 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
         "source_attribution": {  # LEGAL-1 / TRUST-1
             "name": "Magyar Országgyűlés",
             "url": "https://www.parlament.hu",
-            "license_url": "https://www.parlament.hu/web/guest/jogi-nyilatkozat",
+            "license_url": "https://www.parlament.hu/web/guest/felhasznalasi-feltetelek",
             "note": "Az adatok forrása a parlament.hu; a feldolgozást a "
                     "Parlamonitor végzi.",
         },

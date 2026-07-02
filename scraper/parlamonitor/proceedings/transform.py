@@ -24,7 +24,7 @@ from ..timing import apply_timing
 
 PARLIAMENT = "HU"
 CREATOR = "Magyar Országgyűlés"
-LICENSE = "https://www.parlament.hu/web/guest/jogi-nyilatkozat"
+LICENSE = "https://www.parlament.hu/web/guest/felhasznalasi-feltetelek"
 LANGUAGE = "HU-hu"
 
 _HMS_RE = re.compile(r"^(?P<h>\d{1,2}):(?P<m>\d{2})(?::(?P<s>\d{2}))?$")

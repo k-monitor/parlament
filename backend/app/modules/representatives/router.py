@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...config import settings
-from ...db import get_db
+from ...db import fold_text, get_db
 
 router = APIRouter(prefix="/representatives", tags=["representatives"])
 
@@ -126,6 +126,45 @@ def list_factions(period: Optional[int] = None,
             "avg_speeches": (r["speech_count"] / mp) if mp else 0,
         })
     return {"factions": factions, "methodology": _FACTION_METHODOLOGY}
+
+
+@router.get("/resolve")
+def resolve_speakers(
+    name: List[str] = Query(default=[]),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Resolve interjection speaker names to representatives (heckle attribution).
+
+    The inline transcript lifts parenthetical heckles like
+    ``Vitályos Eszter: Végrehajtod vagy nem?`` out of a speech; the caller passes
+    the leading names here to attach a face + profile link. Matching is accent-
+    and case-insensitive on the exact ``person.label`` (surname + given). Only a
+    name mapping to a SINGLE person (MPs preferred on a tie) is returned — an
+    ambiguous or unknown name is omitted, and the caller renders it as plain
+    text. Keyed in the response by the requested spelling.
+
+    Declared before ``/{person_id}`` so "resolve" isn't captured as an MP id."""
+    names = [n.strip() for n in name if n and n.strip()][:40]
+    resolved: dict = {}
+    if not names:
+        return {"resolved": resolved}
+    # The person table is small (~450 rows); fold every label once and group so
+    # a duplicate name (two people, same folded label) is detected as ambiguous.
+    groups: dict = {}
+    for r in db.execute(
+            "SELECT person_id, label, photo_uri, is_mp FROM person").fetchall():
+        groups.setdefault(fold_text(r["label"]), []).append(r)
+    for n in names:
+        rows = groups.get(fold_text(n))
+        if not rows:
+            continue
+        mps = [r for r in rows if r["is_mp"]]
+        cand = mps or rows
+        if len(cand) == 1:
+            r = cand[0]
+            resolved[n] = {"person_id": r["person_id"], "label": r["label"],
+                           "photo_uri": r["photo_uri"]}
+    return {"resolved": resolved}
 
 
 @router.get("/{person_id}")

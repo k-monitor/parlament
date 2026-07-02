@@ -92,6 +92,36 @@ const INTERJECTION_SEP = /\s+[‐-―−-]\s+/
 // A top-level "(…)" parenthetical (no nesting expected in the transcripts).
 const PARENTHETICAL = /\(([^()]+)\)/g
 
+// An interjection often opens with the heckler's name — "Vitályos Eszter:
+// Végrehajtod vagy nem?". Split that "Name:" attribution off so the caller can
+// resolve the name to a representative (face + profile link) and set the remark
+// apart as a small aside. The name is title-case tokens (optionally led by an
+// honorific like "Dr."), two to four of them — Hungarian names are surname +
+// given — so single-word cues ("Közbeszólás:", "Taps:") and descriptions with
+// lowercase words ("Moraj a kormánypárti oldalon:") are NOT taken for a name.
+// The name still has to match a real MP downstream, so a false positive like
+// "Az Elnök:" simply fails to resolve and renders as plain text.
+const HONORIFIC = /^(?:dr|prof|ifj|id|özv)\.?$/i
+// A name token: a capitalised word (accents/apostrophes/hyphens allowed, e.g.
+// "Ruszin-Szendi") OR a bare initial ("Z." in "Z. Kárpát Dániel").
+const NAME_TOKEN = /^\p{Lu}(?:[\p{L}'’-]*|\.)$/u
+
+// Returns `{ speaker, text }`: `speaker` is the attributed name (null if none),
+// `text` the remark with any "Name:" prefix removed.
+function splitInterjectionSpeaker(raw) {
+  const colon = raw.indexOf(':')
+  if (colon < 1 || colon > 60) return { speaker: null, text: raw }
+  const text = raw.slice(colon + 1).trim()
+  if (!text) return { speaker: null, text: raw }
+  const tokens = raw.slice(0, colon).trim().split(/\s+/)
+  let i = 0
+  while (i < tokens.length && HONORIFIC.test(tokens[i])) i++
+  const nameTokens = tokens.slice(i)
+  if (nameTokens.length < 2 || nameTokens.length > 4) return { speaker: null, text: raw }
+  if (!nameTokens.every((t) => NAME_TOKEN.test(t))) return { speaker: null, text: raw }
+  return { speaker: nameTokens.join(' '), text }
+}
+
 // Punctuation that ends up orphaned at the START of a continuation when a
 // parenthetical is dropped mid-sentence ("…dobják ki" | "(heckle)" | ", arra
 // adtak…"). It closed the interrupted clause, so it belongs on the paragraph
@@ -120,8 +150,10 @@ function pushSpoken(out, raw, prev) {
 }
 
 // Turn a speech's flat sentence list into rendered paragraphs. Returns
-// `[{ text, interjection }]`: `interjection: true` marks a stage-direction/heckle
-// paragraph the caller should render in italics.
+// `[{ text, interjection, speaker }]`: `interjection: true` marks a stage-
+// direction/heckle paragraph the caller should render in italics; `speaker`
+// (when non-null) is the name a heckle was attributed to ("Name: …"), for the
+// caller to resolve to a representative — see splitInterjectionSpeaker().
 export function transcriptParagraphs(sentences) {
   // Re-group the flat sentence list into the source <p> paragraphs: sentences
   // sharing a `paragraph` index belong together. A null index (pre-migration
@@ -153,7 +185,9 @@ export function transcriptParagraphs(sentences) {
       prevSpoken = pushSpoken(out, block.slice(last, m.index), prevSpoken)
       for (const part of m[1].split(INTERJECTION_SEP)) {
         const t = part.trim()
-        if (t) out.push({ text: t, interjection: true })
+        if (!t) continue
+        const { speaker, text } = splitInterjectionSpeaker(t)
+        out.push({ text, interjection: true, speaker })
       }
       last = m.index + m[0].length
     }

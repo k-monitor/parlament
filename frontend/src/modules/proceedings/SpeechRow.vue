@@ -21,11 +21,14 @@ const open = ref(false)
 const loading = ref(false)
 const error = ref(false)
 const loaded = ref(false)
-// Rendered paragraphs: [{ text, interjection }]. The flat sentence list is
-// re-grouped into the source <p> paragraphs, the redundant leading speaker label
-// is stripped, and parenthetical stage directions / heckles are lifted out into
-// their own italic paragraphs — see transcriptParagraphs() in format.js.
+// Rendered paragraphs: [{ text, interjection, speaker }]. The flat sentence list
+// is re-grouped into the source <p> paragraphs, the redundant leading speaker
+// label is stripped, and parenthetical stage directions / heckles are lifted out
+// into their own italic paragraphs — see transcriptParagraphs() in format.js.
 const paragraphs = ref([])
+// name -> { person_id, label, photo_uri } for heckles attributed to a resolvable
+// MP. Only these render as a compact avatar + linked name; the rest stay text.
+const speakers = ref({})
 
 async function toggle() {
   if (!props.speech.has_text) return
@@ -36,11 +39,22 @@ async function toggle() {
     const res = await api.speechText(props.speech.uid)
     paragraphs.value = transcriptParagraphs(res.sentences || [])
     loaded.value = true
+    // Attribute named heckles to representatives (best-effort, non-blocking:
+    // failure just leaves them as plain "Name: remark" text).
+    const names = paragraphs.value.filter((p) => p.speaker).map((p) => p.speaker)
+    if (names.length) {
+      try { speakers.value = await api.resolveSpeakers(names) } catch { /* keep plain */ }
+    }
   } catch {
     error.value = true
   } finally {
     loading.value = false
   }
+}
+
+// An interjection whose "Name:" prefix didn't resolve is shown verbatim.
+function paraText(p) {
+  return p.speaker ? `${p.speaker}: ${p.text}` : p.text
 }
 </script>
 
@@ -83,8 +97,18 @@ async function toggle() {
       <p v-if="loading" class="loadrow muted small"><span class="spinner" aria-hidden="true"></span>{{ $t('sessions.transcriptLoading') }}</p>
       <p v-else-if="error" class="muted small">{{ $t('sessions.transcriptLoadError') }}</p>
       <template v-else>
-        <p v-for="(para, i) in paragraphs" :key="i"
-           class="transcript-text" :class="{ interjection: para.interjection }">{{ para.text }}</p>
+        <template v-for="(para, i) in paragraphs" :key="i">
+          <!-- Heckle attributed to a representative: a compact face + linked
+               name + the remark, deliberately smaller so it reads as an aside,
+               not a separate speech. -->
+          <p v-if="para.interjection && para.speaker && speakers[para.speaker]"
+             class="transcript-text interjection heckle">
+            <SpeakerLink :speaker="speakers[para.speaker]" size="xs" class="heckle-who" />
+            <span class="heckle-what">{{ para.text }}</span>
+          </p>
+          <p v-else class="transcript-text"
+             :class="{ interjection: para.interjection }">{{ paraText(para) }}</p>
+        </template>
       </template>
     </div>
   </li>
@@ -120,6 +144,14 @@ async function toggle() {
 /* Stage directions / heckles lifted out of the parentheses: italic and set apart
    in a softer (but still AA, ~7:1) tone so they read as asides, not speech. */
 .transcript-text.interjection { font-style: italic; color: var(--ink-soft); }
+/* A heckle attributed to a known MP: face + linked name inline with the remark,
+   at a smaller size so it never reads as a full speech — just a quick aside. */
+.transcript-text.heckle {
+  display: flex; align-items: center; gap: .45rem;
+  font-size: .9em; margin-top: .45em;
+}
+.heckle-who { flex: none; flex-wrap: nowrap; font-style: normal; font-weight: 600; gap: .35rem !important; }
+.heckle-what { font-style: italic; color: var(--ink-soft); }
 .loadrow { display: flex; align-items: center; gap: .5rem; margin: 0; }
 .spinner {
   width: .8rem; height: .8rem; border-radius: 50%; flex: none;

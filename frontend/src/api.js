@@ -7,7 +7,13 @@ async function get(path, params) {
   const url = new URL(BASE + path, location.origin)
   if (params) {
     for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v)
+      if (v === undefined || v === null || v === '') continue
+      // Arrays become repeated params (?name=A&name=B) for list-valued queries.
+      if (Array.isArray(v)) {
+        for (const item of v) if (item != null && item !== '') url.searchParams.append(k, item)
+      } else {
+        url.searchParams.set(k, v)
+      }
     }
   }
   const res = await fetch(url)
@@ -19,8 +25,30 @@ async function get(path, params) {
   return res.json()
 }
 
+// Interjection speaker names recur across many speeches on a sitting day (the
+// same MPs heckle repeatedly), so resolutions are cached process-wide: a name
+// maps to a person object once resolved, or to `null` once known-unresolvable,
+// and is never re-requested.
+const _speakerCache = new Map()
+
+async function resolveSpeakers(names) {
+  const want = [...new Set(names)].filter((n) => n)
+  const need = want.filter((n) => !_speakerCache.has(n))
+  if (need.length) {
+    const res = await get('/representatives/resolve', { name: need })
+    for (const n of need) _speakerCache.set(n, (res.resolved && res.resolved[n]) || null)
+  }
+  const out = {}
+  for (const n of want) {
+    const p = _speakerCache.get(n)
+    if (p) out[n] = p
+  }
+  return out
+}
+
 export const api = {
   meta: () => get('/meta'),
+  resolveSpeakers,
   // proceedings
   search: (params) => get('/proceedings/search', params),
   searchTrend: (params) => get('/proceedings/search/trend', params),

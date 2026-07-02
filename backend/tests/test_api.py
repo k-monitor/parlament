@@ -170,6 +170,19 @@ def test_degraded_speech_renders(client):
     assert d["speech"]["speaker"]["label"] == "Nagy Anna"
 
 
+def test_resolve_speakers_matches_mp_by_name(client):
+    """Heckle attribution: an interjection name resolves to an MP (accent/case-
+    insensitive), an unknown name is omitted, and "resolve" isn't caught as an id."""
+    d = client.get("/api/v1/representatives/resolve",
+                   params=[("name", "kovacs bela"), ("name", "Nagy Anna"),
+                           ("name", "Közbeszólás")]).json()
+    assert set(d["resolved"]) == {"kovacs bela", "Nagy Anna"}
+    assert d["resolved"]["kovacs bela"]["person_id"] == "k001"
+    assert d["resolved"]["Nagy Anna"]["label"] == "Nagy Anna"
+    assert "photo_uri" in d["resolved"]["Nagy Anna"]
+    assert client.get("/api/v1/representatives/resolve").json() == {"resolved": {}}
+
+
 def test_representative_profile(client):
     d = client.get("/api/v1/representatives/k001").json()
     assert d["label"] == "Kovács Béla"

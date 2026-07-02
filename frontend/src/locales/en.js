@@ -226,7 +226,7 @@ export default {
   },
   agendaTypes: {
     opening: 'Opening', procedural: 'Procedural', regular: 'Debate', oath: 'Oath', voting: 'Voting',
-    rules_of_procedure: 'Rules of procedure', questioning_of_the_government: 'Immediate question',
-    qa: 'Interpellation / question', condolence: 'Commemoration',
+    rules_of_procedure: 'Rules of procedure', questioning_of_the_government: 'Interpellation',
+    qa: 'Immediate question / question', condolence: 'Commemoration',
   },
 }

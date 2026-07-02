@@ -52,9 +52,11 @@ def _session_record(session="43001", period=43, sitting=1, date="2026-05-09"):
                                   "textBody": [{"speech_id": f"{period}-{sitting}-1",
                                     "sentences": [
                                         {"text": "A költségvetés fontos kérdés.",
-                                         "timeStart": 10.0, "timeEnd": 20.0},
+                                         "timeStart": 10.0, "timeEnd": 20.0,
+                                         "paragraph": 0},
                                         {"text": "Az ÁGAZATI fejlesztés ügye sürgős!",
-                                         "timeStart": 20.0, "timeEnd": 40.0},
+                                         "timeStart": 20.0, "timeEnd": 40.0,
+                                         "paragraph": 1},
                                     ]}]}],
                 "debug": {"confidence": 0.7, "align-method": "estimated-day-offset",
                           "speechUUID": "uuid-sp-1"},

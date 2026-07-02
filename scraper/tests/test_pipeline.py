@@ -109,6 +109,50 @@ def test_agenda_bills_split():
     assert "T/360" in bills
 
 
+def test_agenda_title_keeps_text_after_mid_title_code():
+    """A code inside parentheses mid-title must not truncate the topic: the old
+    behaviour cut at the first code, leaving "Interpelláció megtárgyalása (" and
+    dropping the actual subject."""
+    topic, bills = agenda.split_topic_and_bills(
+        "Interpelláció megtárgyalása (I/112) Folytatódik-e a panelprogram?")
+    assert bills == ["I/112"]
+    assert topic == "Interpelláció megtárgyalása Folytatódik-e a panelprogram?"
+    assert "(" not in topic
+
+
+def test_agenda_title_trailing_code_and_empty_parens():
+    topic, bills = agenda.split_topic_and_bills(
+        "A honvédelemről szóló törvényjavaslat általános vitája (T/360)")
+    assert bills == ["T/360"]
+    assert topic == "A honvédelemről szóló törvényjavaslat általános vitája"
+
+
+def test_agenda_item_grouping_key_independent_of_speech_type():
+    """Speeches of one act must share the grouping key (title + officialTitle)
+    regardless of their per-speech type, so they land in one section — the
+    loader groups on that key, NOT on the classified type."""
+    from parlamonitor.proceedings.transform import _agenda_item
+    chair = _agenda_item({"aktus": "Személyes érintettség", "type": "ülésvezetés"})
+    speaker = _agenda_item({"aktus": "Személyes érintettség",
+                            "type": "személyes érintettség miatti felszólalás"})
+    group_key = lambda i: (i.get("title"), i.get("officialTitle"))
+    assert group_key(chair) == group_key(speaker)
+
+
+def test_agenda_type_from_act_name_with_speech_fallback():
+    """A named act classifies from its own name (an interpelláció stays
+    questioning-of-the-government even for an immediate-question-typed speech);
+    an act whose name carries no signal falls back to the speech type so
+    structural sections aren't mislabelled regular."""
+    from parlamonitor.proceedings.transform import _agenda_item
+    interp = _agenda_item({"aktus": "Interpelláció megtárgyalása (I/94) Ki védi meg?",
+                           "type": "elhangzik az interpelláció/kérdés/azonnali kérdés"})
+    assert interp["type"] == agenda.CORE_GOVERNMENT_QUESTIONING
+    chair = _agenda_item({"aktus": "Az ülés napirendjének megállapítása",
+                          "type": "ülésvezetés"})
+    assert chair["type"] == agenda.CORE_PROCEDURAL
+
+
 # --- segmentation ----------------------------------------------------------
 
 def test_html_to_text_strips_tags():
@@ -119,6 +163,16 @@ def test_html_to_text_strips_tags():
 def test_split_sentences_basic():
     sents = split_sentences("Jó napot kívánok. Köszönöm a szót! Valóban?")
     assert len(sents) == 3
+    # A single paragraph → every sentence carries paragraph index 0.
+    assert all(s["paragraph"] == 0 for s in sents)
+
+
+def test_split_sentences_tracks_paragraphs():
+    """Sentences carry the index of their source paragraph (newline boundary),
+    so the reader can reconstruct the original multi-paragraph formatting."""
+    text = "Első bekezdés első mondata. Ugyanaz második mondata.\nMásodik bekezdés."
+    sents = split_sentences(text)
+    assert [s["paragraph"] for s in sents] == [0, 0, 1]
 
 
 # --- timing ----------------------------------------------------------------

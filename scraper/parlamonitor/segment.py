@@ -88,31 +88,49 @@ def _get_nlp():
     return _NLP
 
 
-def split_sentences(text: str) -> list[dict]:
-    """Split ``text`` into a list of ``{"text": ...}`` sentence dicts."""
-    text = clean_text(text)
-    if not text:
-        return []
-    nlp = _get_nlp()
-    if nlp:
-        # Feed paragraph by paragraph so a missing terminal period at a
-        # paragraph end does not glue two sentences together.
-        out: list[dict] = []
-        for para in text.split("\n"):
-            para = para.strip()
-            if not para:
-                continue
-            out.extend({"text": str(s).strip()} for s in nlp(para).sents
-                       if str(s).strip())
-        return out
-    flat = text.replace("\n", " ")
-    # Split on candidate boundaries, then re-join across false boundaries (an
-    # abbreviation or single initial before the period).
-    pieces = _SENT_RE.split(flat)
+def _regex_sentences(para: str) -> list[str]:
+    """Punctuation-based sentence split of a single paragraph (spaCy fallback).
+
+    Splits on candidate boundaries, then re-joins across false boundaries (an
+    abbreviation or single initial before the period)."""
+    pieces = _SENT_RE.split(para)
     merged: list[str] = []
     for piece in pieces:
         if merged and _is_false_boundary(merged[-1]):
             merged[-1] = f"{merged[-1]} {piece}"
         else:
             merged.append(piece)
-    return [{"text": s.strip()} for s in merged if s.strip()]
+    return [s.strip() for s in merged if s.strip()]
+
+
+def split_sentences(text: str) -> list[dict]:
+    """Split ``text`` into a list of ``{"text": ..., "paragraph": n}`` dicts.
+
+    ``paragraph`` is a 0-based index that increments at each source paragraph
+    (a ``<p>``/``<br>`` boundary, which ``html_to_text`` preserves as a
+    newline). The sentence list stays flat — the unit of search and video
+    seeking is still the sentence — but the index lets the reader re-group the
+    sentences back into the transcript's original paragraphs (otherwise a whole
+    speech renders as one undifferentiated block)."""
+    text = clean_text(text)
+    if not text:
+        return []
+    nlp = _get_nlp()
+    # Segment paragraph by paragraph either way: it keeps a missing terminal
+    # period at a paragraph end from gluing two sentences together, and gives
+    # each sentence the index of the paragraph it belongs to.
+    out: list[dict] = []
+    para_idx = 0
+    for para in text.split("\n"):
+        para = para.strip()
+        if not para:
+            continue
+        if nlp:
+            sents = [str(s).strip() for s in nlp(para).sents if str(s).strip()]
+        else:
+            sents = _regex_sentences(para)
+        if not sents:
+            continue
+        out.extend({"text": s, "paragraph": para_idx} for s in sents)
+        para_idx += 1
+    return out

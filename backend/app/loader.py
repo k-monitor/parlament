@@ -604,8 +604,11 @@ def _delete_session(conn: sqlite3.Connection, sid: str) -> None:
 
 def _load_speech(conn, sid, period, sp, agenda_cache) -> None:
     ag = sp.get("agendaItem") or {}
-    ag_key = (ag.get("title"), ag.get("officialTitle"), ag.get("type"),
-              ag.get("nativeType"))
+    # Group by ACT IDENTITY (title + official title), NOT by type: one act's
+    # speeches can carry different per-speech types, and including type here
+    # split a single act into several sections (e.g. each interpelláció, and
+    # "Személyes érintettség"). The first speech of the act fixes its type.
+    ag_key = (ag.get("title"), ag.get("officialTitle"))
     if ag_key not in agenda_cache:
         cur = conn.execute(
             "INSERT INTO agenda_item(session_id, ord, title, official_title, "
@@ -674,9 +677,10 @@ def _load_speech(conn, sid, period, sp, agenda_cache) -> None:
 
     for i, s in enumerate(sentences):
         conn.execute(
-            "INSERT INTO sentence(speech_id, ord, text, time_start, time_end) "
-            "VALUES (?,?,?,?,?)",
-            (uid, i, s["text"], s.get("timeStart"), s.get("timeEnd")))
+            "INSERT INTO sentence(speech_id, ord, text, time_start, time_end, paragraph) "
+            "VALUES (?,?,?,?,?,?)",
+            (uid, i, s["text"], s.get("timeStart"), s.get("timeEnd"),
+             s.get("paragraph")))
 
 
 # ---------------------------------------------------------------------------

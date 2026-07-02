@@ -48,8 +48,10 @@ Primary use cases:
 1. **Search → result → watch.** Search a phrase → see ranked sentence hits with
    speaker/date/context → click a hit → proceedings viewer opens with the video
    seeked to that sentence and the transcript synchronized.
-2. **Browse a sitting.** Open a sitting day, read the transcript segmented by
-   agenda item and speech, click any sentence to watch.
+2. **Browse a sitting.** Open a sitting day, see it segmented by agenda item →
+   speech; **expand any speech to read its transcript inline** (in its original
+   paragraphs) without leaving the page, or open the full video viewer to watch
+   it with the transcript synced sentence-by-sentence.
 3. **Inspect a representative.** Open an MP's profile → biography/affiliation,
    their speeches, and activity statistics with charts.
 4. **Programmatic access.** A developer queries the public API for the same data.
@@ -87,8 +89,10 @@ Primary use cases:
     `firstname`/`lastname`, faction `context`, optional Wikidata `wid`),
     `media` (whole-day HLS `videoFileURI`, `duration`, license),
     `textContents[].textBody[]` (the speech text split into **`sentences[]` with
-    `timeStart`/`timeEnd`** day-absolute seconds, estimated per §3.4), and a
-    `debug` block (`confidence`, `align-method`, the upstream per-speech type
+    `timeStart`/`timeEnd`** day-absolute seconds, estimated per §3.4, each also
+    tagged with the **source paragraph** it came from — the `<p>` boundary in the
+    upstream HTML — so the reader can re-group the flat sentence list back into
+    the transcript's original paragraphs), and a `debug` block (`confidence`, `align-method`, the upstream per-speech type
     `felszolalasTipusa`, source URIs). *(Per-speech
     `media.videoStart`/`videoEnd` offsets exist in the reference shape but are
     not populated in v1 — see §3.4/§10.)* The per-speech type drives the
@@ -174,8 +178,17 @@ Primary use cases:
 
 - **electoral_period** — number, date range.
 - **session** (sitting day) — id, period, date start/end, source page.
-- **agenda_item** — title, official title, `type` (from the pipeline's agenda
-  taxonomy, e.g. `CORE_OPENING`, `CORE_VOTING`, `CORE_QA`, …), order within session.
+- **agenda_item** — **one row per agenda act** in the sitting: `title`,
+  `official title` (the full act name as published, including any iromány code —
+  e.g. *"Interpelláció megtárgyalása (I/94) …"* — shown as the section heading so
+  it is not truncated), `type` (from the pipeline's agenda taxonomy, e.g.
+  `CORE_OPENING`, `CORE_VOTING`, `CORE_QA`, …), and order within session. The
+  type is **classified from the act name**, so **all of the act's speeches group
+  under this one item** regardless of their individual per-speech types (a
+  chair's `ülésvezetés` turn and a member's substantive speech alike) — matching
+  how `parlament.hu` presents the act. Only when the act name itself carries no
+  type signal does classification fall back to the per-speech type, so structural
+  sections (e.g. *"Az ülés napirendjének megállapítása"*) keep a meaningful type.
 - **speech** — `originID`, Felicitas speech UUID (`speech_uuid`, for
   cross-module links such as BILL-8), session, agenda item, order, speaker
   reference, speaker status/context (e.g. `main-speaker`, chair), the upstream
@@ -185,7 +198,9 @@ Primary use cases:
   excluded from statistics — STAT-1), media reference, start/end, confidence,
   align-method.
 - **sentence** — speech reference, order, **text**, `timeStart`, `timeEnd`
-  (day-absolute seconds). This is the unit of search and of video seeking.
+  (day-absolute seconds), and the **paragraph index** of the source `<p>` it
+  belongs to (so the transcript can be rendered in its original paragraphs —
+  §5.5). This is the unit of search and of video seeking.
 - **media** — per session day: HLS `videoFileURI`, duration, license, creator.
 - **person** (representative) — `label`, first/last name, optional Wikidata id,
   plus enrichable bio fields (party, constituency, term memberships, photo URL).
@@ -426,6 +441,27 @@ merely because an accent was omitted (or added).
 - **TOPSPK-5.** The toplist is served from a **dedicated aggregate endpoint**
   computed per sitting; it is a **separate request** from the transcript so it
   never slows the sitting-day load (cf. WCLOUD-5 / SEA-8).
+
+### 5.5 Sitting-day transcript reading
+
+- **SITREAD-1 (SHOULD).** On a **sitting day's page** (use case 2), each speech in
+  the agenda → speech list can be **expanded in place to read its transcript
+  inline** — an accordion/spoiler that reveals the speech's text without leaving
+  the page — while a **distinct affordance still opens the full video viewer**
+  (§5.2) for that speech. Reading the text and watching the video are both
+  reachable from the list; neither replaces the other. The text is fetched **on
+  demand per speech** (a lightweight request, separate from the sitting-day load —
+  cf. WCLOUD-5), so a long day of hundreds of speeches stays responsive. A
+  video-only speech (no transcript, VIE-8) has nothing to reveal and shows only
+  the viewer affordance.
+- **SITREAD-2.** The inline transcript preserves the text's **original paragraph
+  structure** (the source `<p>` paragraphs, per the sentence paragraph index of
+  §3.1/§4.1): it renders as separate paragraphs, not one undifferentiated block,
+  so it reads like the official record. Text is shown at full contrast on the
+  page's normal surface (A11Y-1), never washed out.
+- **SITREAD-3.** Expanding/collapsing a speech is **instant** — a spoiler toggle
+  must not re-render or re-fetch the rest of the (potentially very long) list, and
+  its text is cached once loaded so re-opening is immediate.
 
 ---
 

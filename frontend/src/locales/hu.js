@@ -335,8 +335,8 @@ export default {
     oath: 'Eskütétel',
     voting: 'Szavazás',
     rules_of_procedure: 'Házszabály',
-    questioning_of_the_government: 'Azonnali kérdés',
-    qa: 'Interpelláció / kérdés',
+    questioning_of_the_government: 'Interpelláció',
+    qa: 'Azonnali kérdés / kérdés',
     condolence: 'Megemlékezés',
   },
 }

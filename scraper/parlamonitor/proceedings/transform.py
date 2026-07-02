@@ -112,15 +112,33 @@ def _add_seconds(start_iso: str, seconds) -> str:
 
 
 def _agenda_item(sp: dict) -> dict:
-    topic, bills = agenda_mod.split_topic_and_bills(sp.get("aktus") or "")
+    aktus = (sp.get("aktus") or "").strip()
+    topic, bills = agenda_mod.split_topic_and_bills(aktus)
     item = {
         "title": topic or (sp.get("type") or "").strip(),
-        "officialTitle": (sp.get("aktus") or "").strip() or topic,
+        "officialTitle": aktus or topic,
     }
     if bills or sp.get("bills"):
         # Bill references kept for the future Bills module (EXT-2); deduped.
         item["billReferences"] = sorted(set((sp.get("bills") or []) + bills))
-    agenda_mod.annotate(item, sp.get("aktus"), sp.get("type"))
+    # Classify the ACT primarily from its OWN name, so every speech under it
+    # classifies the same and lands in one agenda item (the loader groups by
+    # act identity, not type). Feeding the per-speech type as a signal for a
+    # NAMED act was the old bug: it split one act into several sections whenever
+    # its speeches had different types — every interpelláció became a
+    # "questioning_of_the_government" section plus a stray "qa" one, and
+    # "Személyes érintettség" split into a regular and an ügyrendi half (one
+    # section each on parlament.hu). We fall back to the per-speech type ONLY
+    # when the act name carries no type signal (the generic `regular` result,
+    # e.g. "Személyes érintettség" or "Az ülés napirendjének megállapítása"), so
+    # structural sections keep a meaningful type. The per-speech type is still
+    # recorded on the speech itself (felszolalasTipusa).
+    native, core = agenda_mod.classify(aktus)
+    if core == agenda_mod.CORE_REGULAR and native is None:
+        native, core = agenda_mod.classify(sp.get("type"))
+    item["type"] = core
+    if native:
+        item["nativeType"] = native
     return item
 
 

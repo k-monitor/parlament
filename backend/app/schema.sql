@@ -150,7 +150,11 @@ CREATE TABLE sentence (
     ord         INTEGER,
     text        TEXT NOT NULL,
     time_start  REAL,
-    time_end    REAL
+    time_end    REAL,
+    -- 0-based index of the source paragraph this sentence belongs to, so a
+    -- speech can be re-grouped into its original paragraphs for reading
+    -- (NULL on pre-migration rows → render as one block).
+    paragraph   INTEGER
 );
 CREATE INDEX idx_sentence_speech ON sentence(speech_id);
 

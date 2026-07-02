@@ -629,13 +629,25 @@ def get_speech_text(uid: str, db: sqlite3.Connection = Depends(get_db)):
     sp = db.execute("SELECT uid, has_text FROM speech WHERE uid = ?", (uid,)).fetchone()
     if not sp:
         raise HTTPException(404, "Speech not found")
-    rows = db.execute(
-        "SELECT ord, text FROM sentence WHERE speech_id = ? ORDER BY ord", (uid,)
-    ).fetchall()
+    # `paragraph` groups the flat sentence list back into the transcript's
+    # original paragraphs (NULL on a pre-migration DB → the reader falls back to
+    # one block). Select it defensively so an old DB without the column works.
+    try:
+        rows = db.execute(
+            "SELECT ord, text, paragraph FROM sentence WHERE speech_id = ? ORDER BY ord",
+            (uid,)).fetchall()
+        sentences = [{"ord": r["ord"], "text": r["text"], "paragraph": r["paragraph"]}
+                     for r in rows]
+    except sqlite3.OperationalError:
+        rows = db.execute(
+            "SELECT ord, text FROM sentence WHERE speech_id = ? ORDER BY ord",
+            (uid,)).fetchall()
+        sentences = [{"ord": r["ord"], "text": r["text"], "paragraph": None}
+                     for r in rows]
     return {
         "uid": uid,
         "has_text": bool(sp["has_text"]),
-        "sentences": [{"ord": r["ord"], "text": r["text"]} for r in rows],
+        "sentences": sentences,
     }
 
 

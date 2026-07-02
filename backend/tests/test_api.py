@@ -43,6 +43,9 @@ def test_speech_text_returns_sentences_for_inline_spoiler(client):
     assert len(d["sentences"]) == 2
     assert [s["ord"] for s in d["sentences"]] == [0, 1]
     assert all(s["text"] for s in d["sentences"])
+    # Each sentence carries its source-paragraph index so the reader can
+    # reconstruct the transcript's original paragraphs.
+    assert [s["paragraph"] for s in d["sentences"]] == [0, 1]
 
 
 def test_speech_text_video_only_speech_is_empty(client):

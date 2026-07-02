@@ -106,12 +106,22 @@ _BILL_CODE_RE = re.compile(r"\b[A-ZÁÉÍÓÖŐÚÜŰ]/\d+")
 def split_topic_and_bills(title: str) -> tuple[str, list[str]]:
     """Split an agenda title into ``(topic, bill_references)``.
 
-    The topic is the text before the first bill code; bill references are the
-    codes themselves (kept for the future Bills module, EXT-2)."""
+    The topic is the human-readable title with the bill codes removed; bill
+    references are the codes themselves (kept for the Bills module, EXT-2).
+
+    The code is NOT always a trailing suffix — it often sits mid-title inside
+    parentheses, e.g. ``"Interpelláció megtárgyalása (I/112) Folytatódik-e a
+    panelprogram?"``. Truncating at the first code (the old behaviour) left a
+    dangling ``"("`` and threw away the descriptive part after it, so we strip
+    the codes wherever they occur and tidy up any parentheses/separators left
+    empty, keeping the whole title intact."""
     if not title:
         return "", []
     codes = _BILL_CODE_RE.findall(title)
     if not codes:
         return title.strip(), []
-    topic = title[: title.find(codes[0])].strip()
+    topic = _BILL_CODE_RE.sub("", title)          # drop the codes in place
+    topic = re.sub(r"\([\s,;]*\)", "", topic)     # remove now-empty "(…)"
+    topic = re.sub(r"\s{2,}", " ", topic)          # collapse the gaps left behind
+    topic = topic.strip(" ,;–—-")                  # trim dangling separators
     return topic, codes

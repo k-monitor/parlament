@@ -98,7 +98,7 @@ function searchWord(word) {
 
       <section v-for="a in data.agenda" :key="a.id" class="agenda card">
         <h2 class="pad agenda-title">
-          {{ a.title }}
+          {{ a.official_title || a.title }}
           <span class="badge" v-if="a.type">{{ agendaLabel(a.type) }}</span>
         </h2>
         <ul class="speeches">

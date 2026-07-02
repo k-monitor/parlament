@@ -35,6 +35,27 @@ def test_speech_not_found(client):
     assert client.get("/api/v1/proceedings/speeches/99999-1").status_code == 404
 
 
+def test_speech_text_returns_sentences_for_inline_spoiler(client):
+    """The sitting-day spoiler pulls just the transcript, not the viewer payload."""
+    d = client.get("/api/v1/proceedings/speeches/43001-1/text").json()
+    assert d["uid"] == "43001-1"
+    assert d["has_text"] is True
+    assert len(d["sentences"]) == 2
+    assert [s["ord"] for s in d["sentences"]] == [0, 1]
+    assert all(s["text"] for s in d["sentences"])
+
+
+def test_speech_text_video_only_speech_is_empty(client):
+    """A video-only speech (VIE-8) reports has_text=False with no sentences."""
+    d = client.get("/api/v1/proceedings/speeches/43001-2/text").json()
+    assert d["has_text"] is False
+    assert d["sentences"] == []
+
+
+def test_speech_text_not_found(client):
+    assert client.get("/api/v1/proceedings/speeches/99999-1/text").status_code == 404
+
+
 def test_session_browse_groups_by_agenda(client):
     d = client.get("/api/v1/proceedings/sessions/43001").json()
     titles = [a["title"] for a in d["agenda"]]

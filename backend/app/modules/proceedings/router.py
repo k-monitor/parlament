@@ -616,6 +616,29 @@ def get_speech(uid: str, db: sqlite3.Connection = Depends(get_db)):
     }
 
 
+@router.get("/speeches/{uid}/text")
+def get_speech_text(uid: str, db: sqlite3.Connection = Depends(get_db)):
+    """The transcript sentences of one speech, for inline reading on the
+    sitting-day page (the spoiler drop-down).
+
+    A deliberately lightweight companion to `/speeches/{uid}` (which also derives
+    the video clip and prev/next neighbours): expanding a speech in the day list
+    only needs its text, so this returns just the sentences and never pulls the
+    whole viewer payload. `has_text` distinguishes a genuinely empty transcript
+    (video-only speech, VIE-8) from one still being read."""
+    sp = db.execute("SELECT uid, has_text FROM speech WHERE uid = ?", (uid,)).fetchone()
+    if not sp:
+        raise HTTPException(404, "Speech not found")
+    rows = db.execute(
+        "SELECT ord, text FROM sentence WHERE speech_id = ? ORDER BY ord", (uid,)
+    ).fetchall()
+    return {
+        "uid": uid,
+        "has_text": bool(sp["has_text"]),
+        "sentences": [{"ord": r["ord"], "text": r["text"]} for r in rows],
+    }
+
+
 def _speech_neighbours(db, session_id, idx):
     prev = db.execute(
         "SELECT uid FROM speech WHERE session_id=? AND speech_index<? "

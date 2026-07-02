@@ -68,6 +68,11 @@ export default {
     topSpeakersCaption: 'Representatives by total speaking time on this sitting day (chairing and procedural speeches excluded). Click a name to open the representative\'s profile.',
     newWords: 'Which words were said for the first time?',
     newWordsCaption: 'These lemmas were spoken in parliament for the first time on this sitting day — never before, previous cycles included (based on the transcripts available). Names and capitalized (proper-noun) words are excluded. The number is how often it was said that day. Click a word to search that day.',
+    showTranscript: 'Show transcript',
+    hideTranscript: 'Hide transcript',
+    openViewer: 'Open video & transcript',
+    transcriptLoading: 'Loading transcript…',
+    transcriptLoadError: 'Could not load the transcript.',
   },
   reps: {
     title: 'Representatives', searchPlaceholder: 'Search representatives by name…', faction: 'Faction',

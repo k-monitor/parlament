@@ -32,6 +32,7 @@ export const api = {
   sessionTopSpeakers: (id) => get(`/proceedings/sessions/${id}/top-speakers`),
   sessionNewWords: (id) => get(`/proceedings/sessions/${id}/new-words`),
   speech: (uid) => get(`/proceedings/speeches/${uid}`),
+  speechText: (uid) => get(`/proceedings/speeches/${uid}/text`),
   // representatives
   representatives: (params) => get('/representatives', params),
   representative: (id, period) => get(`/representatives/${id}`, { period }),

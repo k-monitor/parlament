@@ -4,13 +4,13 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api.js'
-import { agendaLabel, formatDate, formatDuration, formatSpeakingTime } from '../../format.js'
+import { agendaLabel, formatDate, formatSpeakingTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
-import TimingBadge from '../../components/TimingBadge.vue'
 import WordCloud from '../../components/WordCloud.vue'
 import HelpTip from '../../components/HelpTip.vue'
+import SpeechRow from './SpeechRow.vue'
 
 const props = defineProps({ id: String })
 const router = useRouter()
@@ -102,18 +102,7 @@ function searchWord(word) {
           <span class="badge" v-if="a.type">{{ agendaLabel(a.type) }}</span>
         </h2>
         <ul class="speeches">
-          <li v-for="sp in a.speeches" :key="sp.uid">
-            <router-link :to="{ name: 'viewer', params: { uid: sp.uid } }" class="speech-row" :class="{ procedural: sp.procedural }">
-              <SpeakerLink :speaker="sp.speaker" />
-              <FactionBadge :faction="sp.faction" />
-              <span class="badge subtle" v-if="sp.speech_type">{{ sp.speech_type }}</span>
-              <span class="grow"></span>
-              <span class="muted small" v-if="!sp.has_text">📼 {{ $t('viewer.videoOnly') }}</span>
-              <TimingBadge :timing="sp.timing" />
-              <span class="muted small" v-if="sp.duration">⏱ {{ formatDuration(sp.duration) }}</span>
-              <span class="play-affordance" aria-hidden="true">▶</span>
-            </router-link>
-          </li>
+          <SpeechRow v-for="sp in a.speeches" :key="sp.uid" :speech="sp" />
         </ul>
       </section>
     </div>
@@ -151,10 +140,4 @@ function searchWord(word) {
 .agenda { margin-bottom: 1rem; }
 .agenda-title { font-size: 1.05rem; margin: 0; border-bottom: 1px solid var(--line); display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .speeches { list-style: none; margin: 0; padding: .3rem; }
-.speech-row { display: flex; align-items: center; gap: .8rem; padding: .5rem .7rem; border-radius: 8px; color: var(--ink); }
-.speech-row:hover { background: var(--accent-soft); text-decoration: none; }
-.speech-row.procedural { opacity: .72; }
-.badge.subtle { background: var(--line); color: var(--muted); font-weight: 400; }
-.grow { flex: 1; }
-.play-affordance { color: var(--accent); }
 </style>

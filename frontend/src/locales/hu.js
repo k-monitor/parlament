@@ -117,6 +117,11 @@ export default {
     topSpeakersCaption: 'A képviselők összes felszólalási ideje szerint ezen az ülésnapon (az ülésvezetői és rendészeti felszólalások nélkül). A névre kattintva a képviselő profilja nyílik meg.',
     newWords: 'Mely szavak hangzottak el először?',
     newWordsCaption: 'Ezek a szótövek ezen az ülésnapon hangzottak el először a parlamentben – korábban, a megelőző ciklusokban sem mondta ki őket senki (a rendelkezésre álló jegyzőkönyvek alapján). A neveket és a nagybetűs (tulajdonnévi) szavakat kihagytuk. A szám az adott napi előfordulást jelzi. Kattintásra rákeres az adott napra.',
+    showTranscript: 'Jegyzőkönyv megjelenítése',
+    hideTranscript: 'Jegyzőkönyv elrejtése',
+    openViewer: 'Videó és jegyzőkönyv megnyitása',
+    transcriptLoading: 'Jegyzőkönyv betöltése…',
+    transcriptLoadError: 'A jegyzőkönyv betöltése nem sikerült.',
   },
   reps: {
     title: 'Képviselők',

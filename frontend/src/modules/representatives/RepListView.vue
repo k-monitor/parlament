@@ -10,10 +10,13 @@ import { formatSpeakingTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
+import Pagination from '../../components/Pagination.vue'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+
+const PAGE = 60
 
 // Explicit scope label so it's clear the list (and its stats) cover only the
 // globally selected cycle, not all cycles.
@@ -27,6 +30,9 @@ const loading = ref(false)
 const error = ref(false)
 const factions = ref([])
 
+const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
+const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
+
 const f = reactive({
   q: route.query.q || '',
   faction_id: route.query.faction_id || '',
@@ -38,7 +44,12 @@ function apply() {
   if (f.q) query.q = f.q
   if (f.faction_id) query.faction_id = f.faction_id
   if (f.sort) query.sort = f.sort
+  // Changing a filter resets to the first page (offset is intentionally dropped).
   router.push({ name: 'representatives', query })
+}
+
+function gotoPage(p) {
+  router.push({ name: 'representatives', query: { ...route.query, offset: p * PAGE } })
 }
 
 async function load() {
@@ -48,7 +59,7 @@ async function load() {
     // it scopes the list to MPs serving in that cycle.
     data.value = await api.representatives({
       q: route.query.q, faction_id: route.query.faction_id, period: store.cycle,
-      sort: route.query.sort || 'speaking_time', limit: 300,
+      sort: route.query.sort || 'speaking_time', limit: PAGE, offset: route.query.offset || 0,
     })
   } catch { error.value = true } finally { loading.value = false }
 }
@@ -62,8 +73,11 @@ watch(() => route.query, (q) => {
   f.q = q.q || ''; f.faction_id = q.faction_id || ''; f.sort = q.sort || 'speaking_time'
   load()
 })
-// Re-fetch when the global cycle changes.
-watch(() => store.cycle, load)
+// Changing the cycle resets to the first page; the offset reset triggers load via the query watcher.
+watch(() => store.cycle, () => {
+  if (route.query.offset) router.push({ name: 'representatives', query: { ...route.query, offset: undefined } })
+  else load()
+})
 let searchTimer = null
 function onSearchInput() { clearTimeout(searchTimer); searchTimer = setTimeout(apply, 300) }
 </script>
@@ -114,6 +128,7 @@ function onSearchInput() { clearTimeout(searchTimer); searchTimer = setTimeout(a
           </div>
         </li>
       </ul>
+      <Pagination :page="page" :total-pages="totalPages" @goto="gotoPage" />
     </div>
   </StateBlock>
 </template>

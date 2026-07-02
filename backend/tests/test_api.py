@@ -44,6 +44,15 @@ def test_session_browse_groups_by_agenda(client):
     assert first["speeches"][0]["uid"] == "43001-1"
 
 
+def test_session_list_paginates(client):
+    d = client.get("/api/v1/proceedings/sessions").json()
+    assert d["total"] == 1 and d["limit"] == 50 and d["offset"] == 0
+    assert len(d["sessions"]) == 1
+    # Offset past the end yields an empty page, but total still reflects the count.
+    d2 = client.get("/api/v1/proceedings/sessions?offset=50").json()
+    assert d2["total"] == 1 and d2["sessions"] == []
+
+
 def test_session_wordcloud(client):
     """WCLOUD-1/2: the sitting word cloud returns frequency-ranked topical words,
     stop-words and short tokens dropped."""

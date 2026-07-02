@@ -1,22 +1,44 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
 import { formatDate, formatDuration } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
+import Pagination from '../../components/Pagination.vue'
+
+const route = useRoute()
+const router = useRouter()
+
+const PAGE = 60
 
 const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
 
+const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
+const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
+
+function gotoPage(p) {
+  router.push({ name: 'sessions', query: { ...route.query, offset: p * PAGE } })
+}
+
 async function load() {
   loading.value = true; error.value = false
   // Scoped to the global cycle chooser (store.cycle; null = all cycles).
-  try { data.value = await api.sessions(store.cycle) } catch { error.value = true } finally { loading.value = false }
+  try {
+    data.value = await api.sessions({
+      period: store.cycle, limit: PAGE, offset: route.query.offset || 0,
+    })
+  } catch { error.value = true } finally { loading.value = false }
 }
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
-// Re-fetch when the global cycle changes.
-watch(() => store.cycle, load)
+watch(() => route.query, load)
+// Changing the cycle resets to the first page; the offset reset triggers load via the query watcher.
+watch(() => store.cycle, () => {
+  if (route.query.offset) router.push({ name: 'sessions', query: {} })
+  else load()
+})
 </script>
 
 <template>
@@ -35,6 +57,7 @@ watch(() => store.cycle, load)
         <div class="muted small" v-if="s.video_duration">⏱ {{ formatDuration(s.video_duration) }}</div>
       </router-link>
     </div>
+    <Pagination v-if="data" :page="page" :total-pages="totalPages" @goto="gotoPage" />
   </StateBlock>
 </template>
 

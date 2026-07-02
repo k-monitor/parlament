@@ -310,19 +310,25 @@ def suggest(q: str = Query(..., min_length=1), limit: int = Query(8, ge=1, le=20
 
 @router.get("/sessions")
 def list_sessions(period: Optional[int] = None,
+                  limit: int = Query(50, ge=1, le=200),
+                  offset: int = Query(0, ge=0),
                   db: sqlite3.Connection = Depends(get_db)):
     where = ""
     params: dict = {}
     if period is not None:
         where = "WHERE s.period_number = :period"; params["period"] = period
+    total = db.execute(
+        f"SELECT COUNT(*) AS c FROM session s {where}", params).fetchone()["c"]
     rows = db.execute(
         f"""SELECT s.id, s.period_number, s.sitting, s.date, s.date_start,
                    s.date_end, s.video_duration,
                    (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id) AS speeches,
                    (SELECT COUNT(*) FROM agenda_item ai WHERE ai.session_id=s.id) AS agenda_items
-            FROM session s {where} ORDER BY s.date DESC, s.sitting DESC""",
-        params).fetchall()
-    return {"sessions": [dict(r) for r in rows]}
+            FROM session s {where} ORDER BY s.date DESC, s.sitting DESC
+            LIMIT :limit OFFSET :offset""",
+        {**params, "limit": limit, "offset": offset}).fetchall()
+    return {"total": total, "limit": limit, "offset": offset,
+            "sessions": [dict(r) for r in rows]}
 
 
 @router.get("/sessions/{session_id}")

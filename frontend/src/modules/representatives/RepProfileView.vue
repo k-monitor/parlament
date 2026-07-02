@@ -97,7 +97,7 @@ function toggleVoteDay(day) {
 
 const PLACEHOLDER =
   'data:image/svg+xml;utf8,' + encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="110"><rect width="110" height="110" fill="%23e7e5df"/><circle cx="55" cy="44" r="22" fill="%23bdb9af"/><rect x="18" y="74" width="74" height="40" rx="20" fill="%23bdb9af"/></svg>')
+    '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="110"><rect width="110" height="110" fill="#e7e5df"/><circle cx="55" cy="44" r="22" fill="#bdb9af"/><rect x="18" y="74" width="74" height="40" rx="20" fill="#bdb9af"/></svg>')
 function onImgErr(e) { e.target.src = PLACEHOLDER }
 
 const overTimeItems = computed(() => {

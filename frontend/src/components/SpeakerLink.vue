@@ -9,7 +9,7 @@ defineProps({
 const PLACEHOLDER =
   'data:image/svg+xml;utf8,' +
   encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect width="48" height="48" fill="%23e7e5df"/><circle cx="24" cy="19" r="9" fill="%23bdb9af"/><rect x="9" y="32" width="30" height="18" rx="9" fill="%23bdb9af"/></svg>'
+    '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect width="48" height="48" fill="#e7e5df"/><circle cx="24" cy="19" r="9" fill="#bdb9af"/><rect x="9" y="32" width="30" height="18" rx="9" fill="#bdb9af"/></svg>'
   )
 function onErr(e) { e.target.src = PLACEHOLDER }
 </script>

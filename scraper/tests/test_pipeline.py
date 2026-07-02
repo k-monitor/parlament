@@ -190,6 +190,7 @@ def _raw_bundle():
     return {
         "cycle": 43, "sitting": 7, "session": "43007", "date": "2026-06-09",
         "datum_felirat": "2026.06.09.(7)",
+        "day_uuid": "623075ee-d900-4f17-8944-da6465a86766",
         "video": {"m3u8":
             "https://sgis.parlament.hu:446/vod/smil:20260609.090000.0.1200000.smil/playlist.m3u8",
             "day_off1": 0.0},
@@ -236,6 +237,36 @@ def test_transform_day_shape():
     assert data[0]["debug"]["align-method"] == "felicitas-speech-offset"
     # Speech 2 has no per-speech offsets -> whole-day positional fallback.
     assert data[1]["debug"]["align-method"] == "estimated-day-offset"
+
+
+def test_plenary_day_page_url_round_trips():
+    import base64 as _b64
+    import gzip as _gzip
+    import json as _json
+    from parlamonitor.proceedings.transform import plenary_day_page_url
+
+    uid = "623075ee-d900-4f17-8944-da6465a86766"
+    url = plenary_day_page_url(uid)
+    assert url.startswith("https://www.parlament.hu/ulesnapok-ulesidok#page=cv1gzb-")
+    # Reverse the encoding the same way parlament.hu's client does and confirm
+    # the decoded state points at this exact sitting day's speech listing.
+    token = url.split("#page=cv1gzb-", 1)[1].translate(str.maketrans("_-", "/+"))
+    token += "=" * (-len(token) % 4)
+    state = _json.loads(_gzip.decompress(_b64.b64decode(token)).decode("utf-8"))
+    assert "ulesnap-felszolalasai-with-contract" in state["page"]
+    assert state["binding"]["felszolalasDao.parameter"]["content"]["pUlesnapId"] == uid
+
+
+def test_plenary_day_page_url_none_without_uuid():
+    from parlamonitor.proceedings.transform import plenary_day_page_url
+    assert plenary_day_page_url(None) is None
+    # Legacy cycle-42 numeric day ids don't resolve on the new SPA page.
+    assert plenary_day_page_url("2741490") is None
+
+
+def test_transform_day_carries_day_page_url():
+    rec = transform_day(_raw_bundle())
+    assert "ulesnapok-ulesidok#page=cv1gzb-" in rec["meta"]["sourcePage"]
 
 
 def test_transform_degraded_speech_flagged():

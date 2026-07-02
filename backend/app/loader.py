@@ -565,7 +565,8 @@ def load_session(conn: sqlite3.Connection, record: dict) -> str:
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (sid, period, meta.get("sitting"), meta.get("date"),
              meta.get("dateStart"), meta.get("dateEnd"), meta.get("source"),
-             _first_source_page(record), meta.get("sourceScrapedAt"),
+             meta.get("sourcePage") or _first_source_page(record),
+             meta.get("sourceScrapedAt"),
              meta.get("timingMethod"), meta.get("dayVideoURI"),
              meta.get("dayVideoPlayseq"),
              _day_duration(record), _day_license(record), _day_creator(record)))
@@ -902,8 +903,14 @@ def rebuild_word_first_seen(conn: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 def build_database(data_dir: str | Path, db_path: str | Path, *,
-                   only_session: str | None = None) -> None:
-    """Full rebuild into a fresh file, then atomic swap over the live DB (DB-4)."""
+                   only_session: str | None = None,
+                   skip_wordcloud: bool = False) -> None:
+    """Full rebuild into a fresh file, then atomic swap over the live DB (DB-4).
+
+    ``skip_wordcloud`` skips the (expensive) per-sitting term extraction that feeds
+    the word cloud / new-words features (WCLOUD-2). Those tables are left empty, so
+    those views come up blank — handy for a fast dev rebuild when they aren't needed.
+    """
     data_dir = Path(data_dir)
     db_path = Path(db_path)
     tmp_path = db_path.with_suffix(db_path.suffix + ".building")
@@ -946,7 +953,10 @@ def build_database(data_dir: str | Path, db_path: str | Path, *,
         # before the aggregates so word_doc_freq can derive from it (WCLOUD-2);
         # cached on disk in the DB's dir (writable + persisted; the source data
         # dir is mounted read-only) so unchanged sittings aren't reprocessed.
-        rebuild_session_word_counts(conn, db_path.parent)
+        if skip_wordcloud:
+            logger.info("Skipping word-cloud term extraction (--skip-wordcloud)")
+        else:
+            rebuild_session_word_counts(conn, db_path.parent)
         rebuild_aggregates(conn)
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("sessions_loaded", str(loaded)))
@@ -1039,12 +1049,16 @@ def main(argv=None) -> int:
     ap.add_argument("data_dir", help="scraper data directory (contains processed/)")
     ap.add_argument("db_path", help="output SQLite file")
     ap.add_argument("--session", help="load only this session id (e.g. 43003)")
+    ap.add_argument("--skip-wordcloud", action="store_true",
+                    help="skip per-sitting word-cloud/new-words term extraction "
+                         "(faster dev rebuild; those views come up empty)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("parlamonitor.loader").setLevel(logging.INFO)
-    build_database(args.data_dir, args.db_path, only_session=args.session)
+    build_database(args.data_dir, args.db_path, only_session=args.session,
+                   skip_wordcloud=args.skip_wordcloud)
     return 0
 
 

@@ -50,7 +50,7 @@ function searchWord(word) {
       <router-link :to="{ name: 'sessions' }" class="small">‹ {{ $t('sessions.title') }}</router-link>
       <h1>{{ formatDate(data.session.date) }} · {{ data.session.sitting }}. {{ $t('sessions.sitting').toLowerCase() }}</h1>
       <p class="muted small">
-        <a v-if="data.session.video_playseq || data.session.source_page" :href="data.session.video_playseq || data.session.source_page" target="_blank" rel="noopener">↗ {{ $t('viewer.viewOnParlament') }}</a>
+        <a v-if="data.session.source_page" :href="data.session.source_page" target="_blank" rel="noopener">↗ {{ $t('viewer.viewOnParlament') }}</a>
       </p>
 
       <section v-if="cloud && cloud.words.length" class="card pad wcloud">

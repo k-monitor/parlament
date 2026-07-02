@@ -10,7 +10,7 @@
 // affordance still opens the full viewer (video + karaoke transcript).
 import { ref } from 'vue'
 import { api } from '../../api.js'
-import { formatDuration } from '../../format.js'
+import { formatDuration, transcriptParagraphs } from '../../format.js'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
@@ -21,25 +21,11 @@ const open = ref(false)
 const loading = ref(false)
 const error = ref(false)
 const loaded = ref(false)
+// Rendered paragraphs: [{ text, interjection }]. The flat sentence list is
+// re-grouped into the source <p> paragraphs, the redundant leading speaker label
+// is stripped, and parenthetical stage directions / heckles are lifted out into
+// their own italic paragraphs — see transcriptParagraphs() in format.js.
 const paragraphs = ref([])
-
-// Re-group the flat sentence list back into the transcript's original
-// paragraphs: sentences sharing a `paragraph` index belong together. When the
-// index is null (a pre-migration speech) every sentence shares `null`, so the
-// whole speech collapses to a single block — the previous behaviour.
-function groupParagraphs(sentences) {
-  const out = []
-  let key
-  for (const s of sentences) {
-    if (out.length === 0 || s.paragraph !== key) {
-      out.push(s.text)
-      key = s.paragraph
-    } else {
-      out[out.length - 1] += ' ' + s.text
-    }
-  }
-  return out
-}
 
 async function toggle() {
   if (!props.speech.has_text) return
@@ -48,7 +34,7 @@ async function toggle() {
   loading.value = true; error.value = false
   try {
     const res = await api.speechText(props.speech.uid)
-    paragraphs.value = groupParagraphs(res.sentences || [])
+    paragraphs.value = transcriptParagraphs(res.sentences || [])
     loaded.value = true
   } catch {
     error.value = true
@@ -97,7 +83,8 @@ async function toggle() {
       <p v-if="loading" class="loadrow muted small"><span class="spinner" aria-hidden="true"></span>{{ $t('sessions.transcriptLoading') }}</p>
       <p v-else-if="error" class="muted small">{{ $t('sessions.transcriptLoadError') }}</p>
       <template v-else>
-        <p v-for="(para, i) in paragraphs" :key="i" class="transcript-text">{{ para }}</p>
+        <p v-for="(para, i) in paragraphs" :key="i"
+           class="transcript-text" :class="{ interjection: para.interjection }">{{ para.text }}</p>
       </template>
     </div>
   </li>
@@ -130,6 +117,9 @@ async function toggle() {
 .speech-body { padding: .35rem .9rem .8rem calc(.7rem + 48px + .6rem); animation: reveal .13s ease-out; }
 .transcript-text { margin: 0; color: var(--ink); line-height: 1.65; white-space: pre-wrap; }
 .transcript-text + .transcript-text { margin-top: .7em; }
+/* Stage directions / heckles lifted out of the parentheses: italic and set apart
+   in a softer (but still AA, ~7:1) tone so they read as asides, not speech. */
+.transcript-text.interjection { font-style: italic; color: var(--ink-soft); }
 .loadrow { display: flex; align-items: center; gap: .5rem; margin: 0; }
 .spinner {
   width: .8rem; height: .8rem; border-radius: 50%; flex: none;

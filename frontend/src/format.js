@@ -46,3 +46,118 @@ export function agendaLabel(type) {
 export function timeLabel(seconds) {
   return formatDuration(seconds)
 }
+
+// --- Transcript rendering -------------------------------------------------
+//
+// Raw proceedings text carries two things a reader shouldn't see as plain body:
+//   1. a leading speaker label — "TUZSON BENCE (Fidesz):", "ELNÖK:",
+//      "DR. ÁDER JÁNOS köztársasági elnök:" — redundant because the row already
+//      shows the speaker, so it is stripped;
+//   2. stage-direction / heckle parentheticals — "(Taps a kormánypártok
+//      soraiból.)", "(Közbeszólás: …)" — which read better lifted out of the
+//      speech into their own italic lines. One parenthetical can bundle several
+//      interjections separated by a spaced dash (U+2011); each becomes its own
+//      italic paragraph.
+
+// A token whose letters are all uppercase (a shouted surname / "DR.") — the
+// signature of a speaker name. Empty of letters ⇒ not a name token.
+const isCapsToken = (t) => /\p{L}/u.test(t) && !/\p{Ll}/u.test(t)
+
+// Strip the redundant leading speaker attribution from the start of a speech —
+// "TUZSON BENCE (Fidesz):", "ELNÖK:", "DR. ÁDER JÁNOS köztársasági elnök:". The
+// label always opens the speech and ends at its first colon; dropping up to that
+// colon also swallows the faction/role trailing the name ("(Momentum)",
+// "korjegyző", "…képviselőcsoportja részéről"). It is recognised structurally so
+// a genuine sentence is never mutilated: a `!`/`?` before the colon disqualifies
+// it (real speech, not a label), and the label must be either the lone chair
+// token ("ELNÖK…") or open with two ALL-CAPS name tokens — so "EU-csúcs volt:…"
+// or "MSZP frakcióvezetője …:" (acronym-led sentences) are left intact.
+function stripSpeakerLabel(text) {
+  const stop = text.search(/[:!?\n]/)
+  if (stop < 0 || text[stop] !== ':' || stop > 140) return text
+  const tokens = text.slice(0, stop).trim().split(/\s+/)
+  const isLabel =
+    (tokens.length === 1 && /^ELNÖK/u.test(tokens[0])) ||
+    (tokens.length >= 2 && isCapsToken(tokens[0]) && isCapsToken(tokens[1]))
+  return isLabel ? text.slice(stop + 1).replace(/^[ \t]+/, '') : text
+}
+
+// An interjection separator inside a parenthetical: a dash flanked by whitespace.
+// The surrounding-space requirement keeps hyphenated names (Ruszin-Szendi,
+// Turi-Kovács) and ranges (2028-ig) intact — only " ‑ " style separators split.
+// The class covers the dash block U+2010–U+2015, the minus sign U+2212, and a
+// plain hyphen.
+const INTERJECTION_SEP = /\s+[‐-―−-]\s+/
+
+// A top-level "(…)" parenthetical (no nesting expected in the transcripts).
+const PARENTHETICAL = /\(([^()]+)\)/g
+
+// Punctuation that ends up orphaned at the START of a continuation when a
+// parenthetical is dropped mid-sentence ("…dobják ki" | "(heckle)" | ", arra
+// adtak…"). It closed the interrupted clause, so it belongs on the paragraph
+// before the interjection, not dangling on the one after it.
+const LEADING_PUNCT = /^[,.;:!?…]+/
+
+// Push a spoken (non-interjection) segment onto `out`, returning the pushed
+// paragraph (or `prev` unchanged when the segment is empty). If the segment
+// leads with orphaned punctuation (see LEADING_PUNCT) and a previous spoken
+// paragraph exists, that punctuation is lifted onto the end of `prev` so the
+// break reads "…dobják ki," / "arra adtak…" instead of "…dobják ki" / ", arra
+// adtak…".
+function pushSpoken(out, raw, prev) {
+  let text = raw.trim()
+  if (prev) {
+    const lead = text.match(LEADING_PUNCT)
+    if (lead) {
+      prev.text += lead[0]
+      text = text.slice(lead[0].length).trimStart()
+    }
+  }
+  if (!text) return prev
+  const para = { text, interjection: false }
+  out.push(para)
+  return para
+}
+
+// Turn a speech's flat sentence list into rendered paragraphs. Returns
+// `[{ text, interjection }]`: `interjection: true` marks a stage-direction/heckle
+// paragraph the caller should render in italics.
+export function transcriptParagraphs(sentences) {
+  // Re-group the flat sentence list into the source <p> paragraphs: sentences
+  // sharing a `paragraph` index belong together. A null index (pre-migration
+  // speech) collapses the whole speech to one block — the previous behaviour.
+  const blocks = []
+  let key
+  for (const s of sentences || []) {
+    if (blocks.length === 0 || s.paragraph !== key) {
+      blocks.push(s.text)
+      key = s.paragraph
+    } else {
+      blocks[blocks.length - 1] += ' ' + s.text
+    }
+  }
+  // The speaker label only ever opens the speech, so strip it from the first
+  // block alone.
+  if (blocks.length) blocks[0] = stripSpeakerLabel(blocks[0])
+
+  // Split every block into normal-speech paragraphs and italic interjections.
+  const out = []
+  for (const block of blocks) {
+    let last = 0, m
+    // Last spoken paragraph in THIS block, so orphaned leading punctuation on a
+    // post-interjection continuation reattaches to it — never across the block
+    // boundary into a previous source paragraph.
+    let prevSpoken = null
+    PARENTHETICAL.lastIndex = 0
+    while ((m = PARENTHETICAL.exec(block)) !== null) {
+      prevSpoken = pushSpoken(out, block.slice(last, m.index), prevSpoken)
+      for (const part of m[1].split(INTERJECTION_SEP)) {
+        const t = part.trim()
+        if (t) out.push({ text: t, interjection: true })
+      }
+      last = m.index + m[0].length
+    }
+    pushSpoken(out, block.slice(last), prevSpoken)
+  }
+  return out
+}

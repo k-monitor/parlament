@@ -92,6 +92,16 @@ const INTERJECTION_SEP = /\s+[‐-―−-]\s+/
 // A top-level "(…)" parenthetical (no nesting expected in the transcripts).
 const PARENTHETICAL = /\(([^()]+)\)/g
 
+// Some parentheticals are references the speaker dictated, not stage directions
+// or heckles, and must stay INLINE (not be lifted into their own italic line):
+//   • a bare number — "A Házszabály 9. § (2) bekezdése", "(3) pont";
+//   • a Hungarian legal date — Roman-numeral month + day — as in
+//     "17/2026. (V. 9.) OGY-határozat" or "H/170. … (II. 24.)".
+// Recognised structurally: the content is made up only of digits, Roman-numeral
+// letters, dots and whitespace, and contains at least one digit (so a real
+// heckle — which has lowercase words — never matches).
+const REFERENCE_PAREN = /^[IVXLCDM\d.\s]+$/
+
 // An interjection often opens with the heckler's name — "Vitályos Eszter:
 // Végrehajtod vagy nem?". Split that "Name:" attribution off so the caller can
 // resolve the name to a representative (face + profile link) and set the remark
@@ -182,6 +192,11 @@ export function transcriptParagraphs(sentences) {
     let prevSpoken = null
     PARENTHETICAL.lastIndex = 0
     while ((m = PARENTHETICAL.exec(block)) !== null) {
+      // A reference like "(2)" or "(V. 9.)" is part of the speech, not a heckle:
+      // skip the match so it stays in the surrounding spoken text (`last` is left
+      // untouched, so the next slice swallows it).
+      const inner = m[1].trim()
+      if (/\d/.test(inner) && REFERENCE_PAREN.test(inner)) continue
       prevSpoken = pushSpoken(out, block.slice(last, m.index), prevSpoken)
       for (const part of m[1].split(INTERJECTION_SEP)) {
         const t = part.trim()

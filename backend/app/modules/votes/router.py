@@ -17,6 +17,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...db import get_db
+from ...parlament_links import vote_page_url
 
 router = APIRouter(prefix="/votes", tags=["votes"])
 
@@ -141,6 +142,7 @@ def get_vote(vote_id: str, db: sqlite3.Connection = Depends(get_db)):
 
     return {
         **_vote_brief(v), "total_votes": v["total_votes"], "remark": v["remark"],
+        "source_url": vote_page_url(v["id"]),      # deep link to the parlament.hu adatlap
         "subjects": subjects,
         "faction_stats": faction_stats,
         "records": records,

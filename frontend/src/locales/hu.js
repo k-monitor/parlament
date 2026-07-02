@@ -295,6 +295,7 @@ export default {
     date: 'Időpont',
     subject: 'A szavazás tárgya',
     votingMode: 'Szavazás módja',
+    viewOnParlament: 'Megtekintés a parlament.hu-n',
     decidedBills: 'Érintett irományok',
     yes: 'Igen', no: 'Nem', abstain: 'Tartózkodás',
     absent: 'Igazoltan távol', novote: 'Nem szavazott', other: 'Egyéb',

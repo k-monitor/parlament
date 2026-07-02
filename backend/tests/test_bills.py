@@ -38,12 +38,24 @@ def test_sponsor_faction_resolved_by_ext_id(conn):
 
 
 def test_bill_source_url_falls_back_when_no_text(conn):
-    """LEGAL-1: a bill with text links to the PDF; one without falls back to
-    the generic portal page rather than a dead link."""
+    """LEGAL-1: for a bill whose id isn't a resolvable UUID (as in these
+    fixtures) source_url degrades — to the PDF when there is text, else the
+    generic portal page — rather than a dead link."""
     with_text = conn.execute("SELECT source_url FROM bill WHERE id='bill-uuid-1'").fetchone()
     assert with_text["source_url"].endswith("00100.pdf")
     no_text = conn.execute("SELECT source_url FROM bill WHERE id='bill-uuid-2'").fetchone()
     assert "iromanyok-lekerdezese" in no_text["source_url"]
+
+
+def test_bill_source_url_is_adatlap_deep_link_for_real_bill(conn, db_path):
+    """A real bill (UUID id) links to its parlament.hu adatlap detail sheet."""
+    c = loader.connect(db_path)
+    uid = "988b700c-0acb-4573-a15d-a8fe96bae550"
+    loader.load_bills(c, {"meta": {"cycle": 43},
+                          "data": [{"billId": uid, "billNumber": "T/999",
+                                    "title": "X", "textUrl": "https://x/doc.pdf"}]})
+    row = c.execute("SELECT source_url FROM bill WHERE id=?", (uid,)).fetchone()
+    assert "iromanyok#page=cv1gzb-" in row["source_url"]
 
 
 def test_reingest_bills_is_idempotent(conn, db_path):

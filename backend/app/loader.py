@@ -34,6 +34,7 @@ from pathlib import Path
 
 from . import nlp
 from .config import settings
+from .parlament_links import bill_page_url
 from .wordfreq import count_words
 
 logger = logging.getLogger("parlamonitor.loader")
@@ -306,7 +307,8 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
             (bid, rec.get("billNumber"), rec.get("billNumberSort"), period,
              rec.get("title"), rec.get("type"), rec.get("mainType"),
              rec.get("status"), rec.get("submittedDate"), text_url,
-             rec.get("textCaption"), text_url or _BILL_PORTAL_FALLBACK,
+             rec.get("textCaption"),
+             bill_page_url(bid) or text_url or _BILL_PORTAL_FALLBACK,
              1 if rec.get("noText") else 0, _json_or_none(rec.get("stages")),
              h.get("subtype"), h.get("character"), h.get("negotiationMode"),
              h.get("statusType"), h.get("currentEvent"), h.get("promulgationNumber"),

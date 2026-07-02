@@ -196,6 +196,7 @@ export default {
     date: 'Time',
     subject: 'Subject of the vote',
     votingMode: 'Voting mode',
+    viewOnParlament: 'View on parlament.hu',
     decidedBills: 'Bills decided',
     yes: 'Yes', no: 'No', abstain: 'Abstain',
     absent: 'Excused absent', novote: 'Did not vote', other: 'Other',

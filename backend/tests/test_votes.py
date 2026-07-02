@@ -107,6 +107,10 @@ def test_get_vote_rollcall(client):
     assert d["total_votes"] == 2
     # tally by normalized code
     assert d["tally"] == {"yes": 1, "no": 1, "abstain": 1}
+    # The parlament.hu deep link is always present in the payload; it's null here
+    # only because the fixture's vote id isn't a resolvable UUID (see the
+    # parlament_links unit test for the real-id case).
+    assert "source_url" in d and d["source_url"] is None
     # roll call: MP resolved to a profile link; faction colour attached
     k = next(r for r in d["records"] if r["name"] == "Kovács Béla")
     assert k["person_id"] == "k001" and k["value_code"] == "yes"

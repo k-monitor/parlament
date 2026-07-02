@@ -63,6 +63,9 @@ watch(() => props.id, load)
             <dt>{{ $t('votes.remark') }}</dt><dd>{{ vote.remark }}</dd>
           </template>
         </dl>
+        <p class="muted small" v-if="vote.source_url" style="margin:.4rem 0 0;">
+          <a :href="vote.source_url" target="_blank" rel="noopener">↗ {{ $t('votes.viewOnParlament') }}</a>
+        </p>
 
         <div v-if="vote.subjects.length" class="vbills">
           <span class="muted small">{{ $t('votes.decidedBills') }}:</span>

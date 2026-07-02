@@ -10,6 +10,9 @@ const props = defineProps({
   nodes: { type: Array, default: () => [] },
   links: { type: Array, default: () => [] },
   caption: { type: String, default: '' },
+  // When false, the caption still labels the diagram for assistive tech but is not
+  // shown as a visible figcaption (the parent surfaces it elsewhere, e.g. a HelpTip).
+  showCaption: { type: Boolean, default: true },
   askerHeading: { type: String, default: '' },
   answererHeading: { type: String, default: '' },
   valueLabel: { type: String, default: '' },   // unit for the a11y table
@@ -143,7 +146,7 @@ const active = ref(-1)   // hovered/focused source node index (highlight its rib
 
 <template>
   <figure v-if="layout" class="sankey" style="margin:0;">
-    <figcaption v-if="caption" class="small soft" style="margin-bottom:.5rem;">{{ caption }}</figcaption>
+    <figcaption v-if="caption && showCaption" class="small soft" style="margin-bottom:.5rem;">{{ caption }}</figcaption>
     <div class="scroll">
       <svg :viewBox="`0 0 ${WIDTH} ${layout.H}`" class="svg" role="img" :aria-label="caption">
         <!-- column headings -->

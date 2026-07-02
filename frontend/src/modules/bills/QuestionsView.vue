@@ -14,6 +14,7 @@ import { formatDate } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import SankeyDiagram from '../../components/SankeyDiagram.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
+import HelpTip from '../../components/HelpTip.vue'
 import Pagination from '../../components/Pagination.vue'
 
 const { t } = useI18n()
@@ -110,7 +111,13 @@ watch(() => store.cycle, load)
 </script>
 
 <template>
-  <h1>{{ $t('questions.title') }}</h1>
+  <div class="sechead">
+    <h1>{{ $t('questions.title') }}</h1>
+    <HelpTip :label="$t('questions.title')">
+      <p>{{ $t('questions.chartCaption') }}</p>
+      <p>{{ $t('questions.methodology') }}</p>
+    </HelpTip>
+  </div>
   <p class="muted">{{ $t('questions.subtitle') }}</p>
 
   <StateBlock
@@ -125,7 +132,7 @@ watch(() => store.cycle, load)
       <div class="card pad">
         <SankeyDiagram
           :nodes="nodes" :links="data.links" :selected="flow ? flow.index : -1"
-          :caption="$t('questions.chartCaption')"
+          :caption="$t('questions.chartCaption')" :show-caption="false"
           :asker-heading="$t('questions.askerHeading')"
           :answerer-heading="$t('questions.answererHeading')"
           :value-label="$t('questions.count')"
@@ -133,7 +140,6 @@ watch(() => store.cycle, load)
         />
         <p class="muted small hint">{{ $t('questions.clickHint') }}</p>
       </div>
-      <p class="muted small note">{{ $t('questions.methodology') }}</p>
 
       <!-- drill-down: the questions making up the clicked flow -->
       <section v-if="flow" ref="panelRef" class="flowpanel">
@@ -182,7 +188,8 @@ watch(() => store.cycle, load)
 </template>
 
 <style scoped>
-.note { margin-top: 1rem; }
+.sechead { display: flex; align-items: center; gap: .35rem; }
+.sechead h1 { margin: 0; }
 .hint { margin: .6rem 0 0; }
 .flowpanel { margin-top: 1.5rem; scroll-margin-top: 5rem; }
 .flowhead { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: .5rem; }

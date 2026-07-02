@@ -14,6 +14,9 @@ import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 const props = defineProps({
   words: { type: Array, default: () => [] },
   caption: { type: String, default: '' },
+  // When false, the caption still labels the cloud for assistive tech but is not
+  // shown as a visible figcaption (the parent surfaces it elsewhere, e.g. a HelpTip).
+  showCaption: { type: Boolean, default: true },
 })
 defineEmits(['pick'])
 
@@ -140,7 +143,7 @@ watch(() => props.words, relayout)
 
 <template>
   <figure v-if="words.length" class="wc" style="margin:0;">
-    <figcaption v-if="caption" class="small soft" style="margin-bottom:.5rem;">{{ caption }}</figcaption>
+    <figcaption v-if="caption && showCaption" class="small soft" style="margin-bottom:.5rem;">{{ caption }}</figcaption>
     <div ref="cloudEl" class="cloud" :style="{ height: cloudHeight + 'px' }" role="img" :aria-label="caption">
       <button
         v-for="p in placed" :key="p.text" type="button" class="word"

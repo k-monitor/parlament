@@ -10,6 +10,7 @@ import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
 import WordCloud from '../../components/WordCloud.vue'
+import HelpTip from '../../components/HelpTip.vue'
 
 const props = defineProps({ id: String })
 const router = useRouter()
@@ -54,13 +55,18 @@ function searchWord(word) {
       </p>
 
       <section v-if="cloud && cloud.words.length" class="card pad wcloud">
-        <h2 class="wcloud-title">{{ $t('sessions.wordcloud') }}</h2>
-        <WordCloud :words="cloud.words" :caption="$t('sessions.wordcloudCaption')" @pick="searchWord" />
+        <div class="sechead">
+          <h2 class="wcloud-title">{{ $t('sessions.wordcloud') }}</h2>
+          <HelpTip :label="$t('sessions.wordcloud')"><p>{{ $t('sessions.wordcloudCaption') }}</p></HelpTip>
+        </div>
+        <WordCloud :words="cloud.words" :caption="$t('sessions.wordcloudCaption')" :show-caption="false" @pick="searchWord" />
       </section>
 
       <section v-if="newWords && newWords.words.length" class="card pad newwords">
-        <h2 class="wcloud-title">{{ $t('sessions.newWords') }}</h2>
-        <p class="small soft" style="margin:0 0 .6rem;">{{ $t('sessions.newWordsCaption') }}</p>
+        <div class="sechead">
+          <h2 class="wcloud-title">{{ $t('sessions.newWords') }}</h2>
+          <HelpTip :label="$t('sessions.newWords')"><p>{{ $t('sessions.newWordsCaption') }}</p></HelpTip>
+        </div>
         <ul class="chips">
           <li v-for="w in newWords.words" :key="w.text">
             <button
@@ -72,8 +78,10 @@ function searchWord(word) {
       </section>
 
       <section v-if="topSpeakers && topSpeakers.speakers.length" class="card pad toplist">
-        <h2 class="wcloud-title">{{ $t('sessions.topSpeakers') }}</h2>
-        <p class="small soft" style="margin:0 0 .6rem;">{{ $t('sessions.topSpeakersCaption') }}</p>
+        <div class="sechead">
+          <h2 class="wcloud-title">{{ $t('sessions.topSpeakers') }}</h2>
+          <HelpTip :label="$t('sessions.topSpeakers')"><p>{{ $t('sessions.topSpeakersCaption') }}</p></HelpTip>
+        </div>
         <ol class="top-rows">
           <li v-for="sp in topSpeakers.speakers" :key="sp.person_id" class="top-row">
             <SpeakerLink :speaker="sp" size="sm" />
@@ -114,6 +122,8 @@ function searchWord(word) {
 
 <style scoped>
 .wcloud { margin-bottom: 1rem; }
+.sechead { display: flex; align-items: center; gap: .35rem; margin-bottom: .6rem; }
+.sechead .wcloud-title { margin: 0; }
 .wcloud-title { font-size: 1.05rem; margin: 0 0 .6rem; }
 .newwords { margin-bottom: 1rem; }
 .chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }

@@ -487,6 +487,18 @@ CREATE TABLE build_meta (
     value TEXT
 );
 
+-- Per-file load bookkeeping for the *incremental* update path (`--update`).
+-- Records the (mtime, size) of every processed JSON the DB was last built/updated
+-- from, keyed by basename, so an update reloads only the sittings/registries whose
+-- source file actually changed since — instead of a full rebuild (SCR-2). A full
+-- `build_database` reseeds every row; a DB built before this table existed simply
+-- triggers one more full rebuild to seed the baseline.
+CREATE TABLE load_state (
+    name  TEXT PRIMARY KEY,   -- processed-file basename, e.g. "43007-session.json"
+    mtime REAL NOT NULL,
+    size  INTEGER NOT NULL
+);
+
 -- Per-sitting topical term frequencies for the word cloud (WCLOUD-2), precomputed
 -- at load time so the expensive lemmatization / entity extraction never runs at
 -- request time. A `word` is a HuSpaCy lemma (inflected forms collapsed) or a

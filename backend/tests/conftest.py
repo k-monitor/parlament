@@ -251,7 +251,9 @@ def _votes_registry():
 
 
 @pytest.fixture
-def db_path(tmp_path):
+def data_dir(tmp_path):
+    """A synthetic scraper data directory (processed/*.json) the loader builds
+    from. Exposed on its own so the incremental-update tests can mutate it."""
     data = tmp_path / "data"
     (data / "processed").mkdir(parents=True)
     import json
@@ -263,8 +265,13 @@ def db_path(tmp_path):
         json.dumps(_votes_registry(), ensure_ascii=False))
     (data / "processed" / "43001-session.json").write_text(
         json.dumps(_session_record(), ensure_ascii=False))
+    return data
+
+
+@pytest.fixture
+def db_path(tmp_path, data_dir):
     out = tmp_path / "test.db"
-    loader.build_database(data, out)
+    loader.build_database(data_dir, out)
     return out
 
 

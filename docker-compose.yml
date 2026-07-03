@@ -1,16 +1,53 @@
 # Parlamonitor — Docker Compose deployment.
 #
-# One stateless container (OPS-1) serves the API, the Vue SPA and the MP photos.
-# It reads the scraper output mounted read-only at /data and builds the runtime
-# SQLite DB into the `dbdata` volume on first boot.
+# Two services from one image (OPS-1):
+#   app   — serves the API, the Vue SPA and the MP photos; builds the runtime DB
+#           from the mounted scraper output on first boot.
+#   sync  — a sidecar that continuously checks parlament.hu for changes in the
+#           latest cycle, re-scrapes only what changed (SCR-2/SCR-4) and
+#           incrementally updates the DB in place, swapping it atomically (DB-4).
+#           The app picks up the new DB on its next request — no restart, no
+#           downtime. Prefer an external cron? Drop this service and run
+#           `docker compose run --rm sync sync` (one pass) on a schedule instead.
 #
-#   docker compose up -d --build      # build image + start
-#   docker compose logs -f app        # watch (DB build then uvicorn)
+#   docker compose up -d --build      # build image + start app and sync
+#   docker compose logs -f app        # watch the API (DB build then uvicorn)
+#   docker compose logs -f sync       # watch the continuous sync
 #   open http://localhost:8000        # app + /api/docs
 #
 # See DEPLOYMENT.md for the full guide.
 
+x-common-env: &common-env
+  # Paths inside the container (match the volumes below).
+  PARLAMONITOR_DB: /db/parlamonitor.db
+  PARLAMONITOR_DATA_DIR: /data
+  PARLAMONITOR_PHOTOS_DIR: /data/media/photos
+  # Empty = all modules (proceedings,representatives,bills,votes). EXT-6.
+  PARLAMONITOR_MODULES: ${PARLAMONITOR_MODULES:-}
+
 services:
+  # One-shot builder. Builds the runtime DB on first boot (or REBUILD_DB=1) and
+  # exits; app + sync wait for it to COMPLETE. This keeps the potentially long
+  # first build (HuSpaCy word-cloud lemmatization can take many minutes) out of
+  # the serving container, so the app's healthcheck is never held up by a build.
+  init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: parlamonitor:latest
+    command: ["ensure-db"]
+    environment:
+      <<: *common-env
+      # Set to 1 to rebuild the DB from /data on the next `up`.
+      REBUILD_DB: ${REBUILD_DB:-0}
+      # Term-extraction backend for the build (auto|huspacy|regex). `regex` makes
+      # the first build fast (lower-quality word cloud) if HuSpaCy is too slow.
+      PARLAMONITOR_WORDCLOUD_BACKEND: ${PARLAMONITOR_WORDCLOUD_BACKEND:-auto}
+    volumes:
+      - ./data:/data:ro
+      - dbdata:/db
+    restart: "no"
+
   app:
     build:
       context: .
@@ -19,23 +56,21 @@ services:
     ports:
       - "${PARLAMONITOR_PORT:-8000}:8000"
     environment:
-      # Paths inside the container (match the volumes below).
-      PARLAMONITOR_DB: /db/parlamonitor.db
-      PARLAMONITOR_DATA_DIR: /data
-      PARLAMONITOR_PHOTOS_DIR: /data/media/photos
+      <<: *common-env
       PARLAMONITOR_FRONTEND_DIST: /app/frontend/dist
       # Served same-origin, so CORS only matters if you point a separate SPA host
       # at this API. Set to your public origin(s), comma-separated.
       PARLAMONITOR_CORS_ORIGINS: ${PARLAMONITOR_CORS_ORIGINS:-http://localhost:8000}
-      # Empty = all modules (proceedings,representatives,bills). EXT-6.
-      PARLAMONITOR_MODULES: ${PARLAMONITOR_MODULES:-}
-      # Set to 1 to rebuild the DB from /data on the next start.
-      REBUILD_DB: ${REBUILD_DB:-0}
     volumes:
-      # Scraper output (processed/*.json + media/photos), read-only.
+      # Scraper output (processed/*.json + media/photos), read-only for the API.
       - ./data:/data:ro
       # Persisted runtime DB so it survives restarts and isn't rebuilt each boot.
       - dbdata:/db
+    # Serve only once the DB has been built (init completed) — so uvicorn starts
+    # immediately and the healthcheck passes without waiting on a build.
+    depends_on:
+      init:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)"]
@@ -43,6 +78,41 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+
+  # Continuous, low-load sync of the latest cycle. Comment this whole service out
+  # to disable in-container syncing (e.g. when driving it from an external cron).
+  sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: parlamonitor:latest
+    command: ["sync-loop"]
+    environment:
+      <<: *common-env
+      # How often to poll parlament.hu (seconds). An idle poll is a handful of
+      # requests; a change triggers a scoped re-scrape + incremental DB update.
+      PARLAMONITOR_SYNC_INTERVAL: ${PARLAMONITOR_SYNC_INTERVAL:-1800}
+      # Optional: pin a cycle instead of auto-detecting the latest.
+      PARLAMONITOR_SYNC_CYCLE: ${PARLAMONITOR_SYNC_CYCLE:-}
+      # Politeness toward parlament.hu (SCR-4) — all optional.
+      PARLAMONITOR_SLEEP: ${PARLAMONITOR_SLEEP:-1.0}
+      PARLAMONITOR_USER_AGENT: ${PARLAMONITOR_USER_AGENT:-}
+      PARLAMONITOR_PROXY: ${PARLAMONITOR_PROXY:-}
+      # Refresh the per-MP registry at most this often (seconds); 12h default.
+      PARLAMONITOR_SYNC_REPS_MAX_AGE: ${PARLAMONITOR_SYNC_REPS_MAX_AGE:-43200}
+      # Force the same word-cloud backend the app uses (auto|huspacy|regex) so an
+      # incremental update lemmatizes changed sittings the same way (WCLOUD-6).
+      PARLAMONITOR_WORDCLOUD_BACKEND: ${PARLAMONITOR_WORDCLOUD_BACKEND:-auto}
+    volumes:
+      # Read-write here: the sync writes fresh scraper output + portraits.
+      - ./data:/data
+      - dbdata:/db
+    # Start only after the DB has been built (init completed), so sync only ever
+    # does cheap incremental updates and never races the first full build.
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
 volumes:
   dbdata:

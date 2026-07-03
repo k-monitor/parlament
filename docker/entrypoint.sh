@@ -6,8 +6,14 @@
 # swapping it in atomically (DB-4). We run it on first boot (or when REBUILD_DB=1)
 # and then start the API.
 #
-#   serve            build the DB if missing, then run uvicorn   (default)
+#   ensure-db        build the DB if missing (or REBUILD_DB=1), then exit — the
+#                    one-shot `init` service; keeps the slow first build OUT of
+#                    the serving container so its healthcheck isn't held hostage
+#   serve            run uvicorn (builds the DB only if it is still missing)
 #   loader           (re)build the DB and exit
+#   update           incrementally reconcile the DB to /data and swap (no scrape)
+#   sync             one continuous-sync pass (scrape latest cycle + update DB)
+#   sync-loop        run `sync` forever on an interval (the sidecar's command)
 #   <anything else>  exec'd verbatim (e.g. `pytest`, `sh`)
 set -e
 
@@ -22,16 +28,39 @@ build_db() {
 }
 
 case "${1:-serve}" in
-    serve)
+    ensure-db)
+        # First-boot / rebuild step. The full build (incl. HuSpaCy word-cloud
+        # lemmatization) can take many minutes; running it here — a service the
+        # app and sync wait on to *complete* — means the app's healthcheck only
+        # ever sees a ready-to-serve process, never a long-building one.
         if [ ! -f "$DB" ] || [ "${REBUILD_DB:-0}" = "1" ]; then
             build_db
         else
-            echo "[entrypoint] reusing existing DB at $DB (set REBUILD_DB=1 to rebuild)"
+            echo "[entrypoint] DB present at $DB; skipping build (REBUILD_DB=1 to force)"
+        fi
+        ;;
+    serve)
+        # The init service normally built the DB already; build here only as a
+        # safety net if it is somehow still missing (never on REBUILD_DB — that
+        # is init's job, so the API never blocks on a multi-minute rebuild).
+        if [ ! -f "$DB" ]; then
+            echo "[entrypoint] DB missing at $DB — building before serving"
+            build_db
         fi
         exec uvicorn app.main:app --host 0.0.0.0 --port 8000
         ;;
     loader)
         build_db
+        ;;
+    update)
+        echo "[entrypoint] incremental DB update: $DATA_DIR -> $DB"
+        python -m app.loader --update "$DATA_DIR" "$DB" -v
+        ;;
+    sync)
+        exec /usr/local/bin/sync-once.sh
+        ;;
+    sync-loop)
+        exec /usr/local/bin/sync-loop.sh
         ;;
     *)
         exec "$@"

@@ -776,7 +776,8 @@ def _session_fingerprint(method: str, texts: list[str]) -> str:
 
 
 def rebuild_session_word_counts(conn: sqlite3.Connection,
-                                cache_dir: str | Path | None = None) -> None:
+                                cache_dir: str | Path | None = None,
+                                only_sessions: set[str] | None = None) -> None:
     """Precompute per-sitting topical term frequencies for the word cloud (WCLOUD-2).
 
     For each session, lemmatize its non-procedural sentence text and extract named
@@ -788,6 +789,11 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
     is optional — without ``cache_dir`` (or if it can't be read/written) everything
     is simply recomputed, so it must point at a writable location (the source data
     dir is mounted read-only in the container; use the DB's dir instead).
+
+    ``only_sessions`` scopes the pass to just those session ids (the incremental
+    ``--update`` path): only their ``session_word_count`` rows are cleared and
+    recomputed, leaving every other sitting's rows intact — so an update never
+    re-reads the whole corpus's sentences just to refresh one changed day.
     """
     backend = _wordcloud_backend()
     method = nlp.method_tag() if backend == "huspacy" else "regex:v1"
@@ -811,10 +817,16 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
         except OSError as exc:
             logger.warning("Could not write word-cloud cache %s (%s)", cache_path, exc)
 
-    conn.execute("DELETE FROM session_word_count")
-    # Latest sittings first (id desc) so the current cycle's clouds are ready
-    # first when a from-scratch lemmatization pass is long.
-    sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id DESC")]
+    if only_sessions is None:
+        conn.execute("DELETE FROM session_word_count")
+        # Latest sittings first (id desc) so the current cycle's clouds are ready
+        # first when a from-scratch lemmatization pass is long.
+        sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id DESC")]
+    else:
+        sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id DESC")
+                if r[0] in only_sessions]
+        conn.executemany("DELETE FROM session_word_count WHERE session_id = ?",
+                         [(s,) for s in sids])
     reused = recomputed = 0
     for i, sid in enumerate(sids, 1):
         texts = [t for (t,) in conn.execute(
@@ -968,6 +980,9 @@ def build_database(data_dir: str | Path, db_path: str | Path, *,
                      ("sessions_loaded", str(loaded)))
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("source_dir", str(data_dir)))
+        # Record every processed file's (mtime, size) so a later `--update` can
+        # tell which sittings/registries changed and reload only those (SCR-2).
+        _seed_load_state(conn, data_dir)
         conn.commit()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         conn.execute("ANALYZE")
@@ -977,11 +992,182 @@ def build_database(data_dir: str | Path, db_path: str | Path, *,
 
     # Atomic swap (DB-4): rename the freshly built file over the live one.
     os.replace(tmp_path, db_path)
+    _remove_db_side_files(tmp_path)
+    logger.info("Built database at %s", db_path)
+
+
+# ---------------------------------------------------------------------------
+# Incremental update (SCR-2 / DB-4) — reload only changed files, then swap
+# ---------------------------------------------------------------------------
+
+# The processed-file globs, in the load order full builds use (reps → bills →
+# votes → sessions) so cross-module person/faction/bill links resolve (EXT-2).
+_PROCESSED_GLOBS = ("representatives-*.json", "bills-*.json",
+                    "votes-*.json", "*-session.json")
+
+
+def _file_sig(path: Path) -> tuple[float, int]:
+    st = path.stat()
+    return (round(st.st_mtime, 3), st.st_size)
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (name,)).fetchone() is not None
+
+
+def _read_load_state(conn: sqlite3.Connection) -> dict[str, tuple[float, int]]:
+    return {r["name"]: (r["mtime"], r["size"])
+            for r in conn.execute("SELECT name, mtime, size FROM load_state")}
+
+
+def _write_load_state(conn: sqlite3.Connection, path: Path) -> None:
+    mtime, size = _file_sig(path)
+    conn.execute(
+        "INSERT INTO load_state(name, mtime, size) VALUES (?,?,?) "
+        "ON CONFLICT(name) DO UPDATE SET mtime=excluded.mtime, size=excluded.size",
+        (path.name, mtime, size))
+
+
+def _seed_load_state(conn: sqlite3.Connection, data_dir: Path) -> None:
+    conn.execute("DELETE FROM load_state")
+    processed = Path(data_dir) / "processed"
+    for pattern in _PROCESSED_GLOBS:
+        for p in sorted(processed.glob(pattern)):
+            _write_load_state(conn, p)
+
+
+def _changed_files(processed: Path, pattern: str,
+                   prev: dict[str, tuple[float, int]]) -> list[Path]:
+    """Processed files matching ``pattern`` whose (mtime, size) differs from the
+    last load (or that are brand new)."""
+    out = []
+    for p in sorted(processed.glob(pattern)):
+        if prev.get(p.name) != _file_sig(p):
+            out.append(p)
+    return out
+
+
+def _remove_db_side_files(base: Path) -> None:
     for suffix in ("-wal", "-shm"):
-        side = tmp_path.with_suffix(tmp_path.suffix + suffix)
+        side = base.with_suffix(base.suffix + suffix)
         if side.exists():
             side.unlink()
-    logger.info("Built database at %s", db_path)
+
+
+def _remove_db_files(base: Path) -> None:
+    if base.exists():
+        base.unlink()
+    _remove_db_side_files(base)
+
+
+def update_database(data_dir: str | Path, db_path: str | Path, *,
+                    skip_wordcloud: bool = False) -> bool:
+    """Incrementally reconcile the live DB to the scraper's processed JSON.
+
+    Compares each ``processed/*.json`` against the ``load_state`` recorded at the
+    last build/update and reloads **only the changed files** into a private
+    snapshot of the current DB, rebuilds the (cheap, SQL-only) aggregates, and
+    atomically swaps the result over the live file (DB-4) — so the running API
+    picks it up on its next request with no restart and no downtime, having
+    reprocessed only what actually changed (SCR-2).
+
+    Degrades to a full :func:`build_database` when there is no DB yet, or when the
+    existing DB predates the ``load_state`` table (one rebuild seeds the baseline).
+    Returns ``True`` if the DB was changed, ``False`` if nothing was stale.
+    """
+    data_dir = Path(data_dir)
+    db_path = Path(db_path)
+    processed = data_dir / "processed"
+
+    if not db_path.exists():
+        logger.info("No DB at %s yet — doing a full build", db_path)
+        build_database(data_dir, db_path, skip_wordcloud=skip_wordcloud)
+        return True
+
+    # Cheap pre-check against the LIVE DB (read-only): decide what changed before
+    # paying for a snapshot copy, so an idle tick costs ~a few file stats.
+    live = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    live.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(live, "load_state"):
+            logger.info("DB has no load_state table — full rebuild to seed baseline")
+            live.close()
+            build_database(data_dir, db_path, skip_wordcloud=skip_wordcloud)
+            return True
+        prev = _read_load_state(live)
+    finally:
+        live.close()
+
+    changed = {pat: _changed_files(processed, pat, prev) for pat in _PROCESSED_GLOBS}
+    n_changed = sum(len(v) for v in changed.values())
+    if n_changed == 0:
+        logger.info("No processed file changed since last load; DB is up to date")
+        return False
+    logger.info("Incremental update: %d changed file(s) — %s", n_changed,
+                {k: len(v) for k, v in changed.items() if v})
+
+    # Snapshot the live DB into a temp copy we mutate in place, then swap it in.
+    tmp_path = db_path.with_suffix(db_path.suffix + ".building")
+    _remove_db_files(tmp_path)
+    src = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    conn = connect(tmp_path)
+    try:
+        src.backup(conn)
+    finally:
+        src.close()
+
+    loaded_sessions: list[str] = []
+    ok = False
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+
+        for p in changed["representatives-*.json"]:
+            registry = json.loads(p.read_text())
+            _load_period_meta(conn, registry.get("meta", {}))
+            load_representatives(conn, registry)
+        for p in changed["bills-*.json"]:
+            load_bills(conn, json.loads(p.read_text()))
+        for p in changed["votes-*.json"]:
+            load_votes(conn, json.loads(p.read_text()))
+
+        for p in changed["*-session.json"]:
+            record = json.loads(p.read_text())
+            load_session(conn, record)
+            sid = record.get("meta", {}).get("session")
+            if sid:
+                loaded_sessions.append(sid)
+
+        # Aggregates are speech-derived, so they only need rebuilding when a
+        # sitting changed (bills/votes/reps carry their own rows). Word counts are
+        # scoped to just the changed sittings (cached; the rest stay intact).
+        if loaded_sessions:
+            if not skip_wordcloud:
+                rebuild_session_word_counts(conn, db_path.parent,
+                                            only_sessions=set(loaded_sessions))
+            rebuild_aggregates(conn)
+
+        for files in changed.values():
+            for p in files:
+                _write_load_state(conn, p)
+        conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
+                     ("last_update_sessions", ",".join(loaded_sessions)))
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.execute("ANALYZE")
+        conn.commit()
+        ok = True
+    finally:
+        conn.close()
+        if not ok:
+            _remove_db_files(tmp_path)
+
+    os.replace(tmp_path, db_path)
+    _remove_db_side_files(tmp_path)
+    logger.info("Updated database at %s (%d sittings, %d rep/bill/vote file(s))",
+                db_path, len(loaded_sessions), n_changed - len(loaded_sessions))
+    return True
 
 
 def _load_period_meta(conn: sqlite3.Connection, meta: dict) -> None:
@@ -1054,7 +1240,12 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Build the Parlamonitor SQLite DB")
     ap.add_argument("data_dir", help="scraper data directory (contains processed/)")
     ap.add_argument("db_path", help="output SQLite file")
-    ap.add_argument("--session", help="load only this session id (e.g. 43003)")
+    ap.add_argument("--update", action="store_true",
+                    help="incrementally reload only the processed files that "
+                         "changed since the last load, then atomically swap in the "
+                         "result (fast, zero-downtime); full build if no DB yet")
+    ap.add_argument("--session", help="load only this session id (e.g. 43003); "
+                    "full-build only")
     ap.add_argument("--skip-wordcloud", action="store_true",
                     help="skip per-sitting word-cloud/new-words term extraction "
                          "(faster dev rebuild; those views come up empty)")
@@ -1063,8 +1254,14 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("parlamonitor.loader").setLevel(logging.INFO)
-    build_database(args.data_dir, args.db_path, only_session=args.session,
-                   skip_wordcloud=args.skip_wordcloud)
+    if args.update:
+        if args.session:
+            ap.error("--session is only valid for a full build, not --update")
+        update_database(args.data_dir, args.db_path,
+                        skip_wordcloud=args.skip_wordcloud)
+    else:
+        build_database(args.data_dir, args.db_path, only_session=args.session,
+                       skip_wordcloud=args.skip_wordcloud)
     return 0
 
 

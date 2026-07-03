@@ -14,18 +14,28 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-# --- Stage 2: Python runtime (API + SPA + loader) ---
+# --- Stage 2: Python runtime (API + SPA + loader + scraper) ---
 FROM python:3.12-slim AS runtime
 WORKDIR /app/backend
 
+# `flock` (util-linux) guards overlapping cron/loop sync runs (docker/sync-once.sh).
+RUN apt-get update && apt-get install -y --no-install-recommends util-linux \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY scraper/requirements.txt /app/scraper/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -r /app/scraper/requirements.txt
 
 # Application code and the built SPA bundle.
 COPY backend/app ./app
+# The scraper package, so the same image can run the continuous sync
+# (`python -m parlamonitor sync`) alongside the loader/API (OPS-1/OPS-2).
+COPY scraper/parlamonitor /app/scraper/parlamonitor
 COPY --from=frontend /build/dist /app/frontend/dist
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY docker/entrypoint.sh docker/sync-once.sh docker/sync-loop.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/sync-once.sh \
+    /usr/local/bin/sync-loop.sh
 
 # Operational config (OPS-4). All paths point at the volumes the compose file
 # mounts; override any of these at run time.

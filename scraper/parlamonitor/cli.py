@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,7 @@ from .votes.scrape import fetch_votes, save_votes
 from .proceedings.scrape import download_period
 from .proceedings.transform import transform_day
 from .representatives.scrape import fetch_representatives, save_representatives
+from .sync import DEFAULT_REPS_MAX_AGE, latest_cycle, run_sync
 
 logger = logging.getLogger("parlamonitor")
 
@@ -217,15 +219,55 @@ def cmd_votes(args) -> None:
     })
 
 
+def cmd_sync(args) -> None:
+    """Low-load continuous sync of the latest cycle (SCR-2/SCR-4).
+
+    Cheaply checks parlament.hu and re-scrapes only what changed, refreshing the
+    processed JSON. The DB is brought up to date separately by the loader's
+    incremental ``--update`` (kept decoupled so either half can run alone)."""
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    felicitas = _client(args)
+    reps_max_age = (args.reps_max_age if args.reps_max_age is not None
+                    else float(os.environ.get("PARLAMONITOR_SYNC_REPS_MAX_AGE",
+                                              DEFAULT_REPS_MAX_AGE)))
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            cycle = args.cycle or latest_cycle(felicitas)
+            logger.info("Sync check for latest cycle %s", cycle)
+            summary = run_sync(
+                felicitas, paths, cycle, force=args.force,
+                no_detail=args.no_detail, no_offsets=args.no_offsets,
+                reps_max_age=reps_max_age, skip_bills=args.skip_bills,
+                skip_votes=args.skip_votes, skip_reps=args.skip_reps)
+    finally:
+        felicitas.close()
+
+    _write_log(paths, {"command": "sync", **summary,
+                       "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                       "backend": "felicitas-json"})
+    logger.info("Sync done: %d sitting(s) changed, bills=%s votes=%s reps=%s, %d error(s)",
+                len(summary["sessions"]), summary["bills"], summary["votes"],
+                summary["representatives"], len(summary["errors"]))
+    # Machine-readable one-liner for a wrapping script / cron log.
+    print(json.dumps({"changed": summary["changed"],
+                      "sessions": summary["sessions"],
+                      "bills": summary["bills"], "votes": summary["votes"],
+                      "representatives": summary["representatives"],
+                      "errors": summary["errors"]}))
+    if summary["errors"]:
+        sys.exit(1)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="parlamonitor",
                                 description="Parlamonitor scraper")
     p.add_argument("--debug", action="store_true")
     sub = p.add_subparsers(dest="command", required=True)
 
-    def _common(sp):
+    def _common(sp, *, cycle_required=True):
         sp.add_argument("data_dir", type=Path, help="output data directory")
-        sp.add_argument("--cycle", type=int, required=True,
+        sp.add_argument("--cycle", type=int, required=cycle_required, default=None,
                         help="electoral cycle number (e.g. 43)")
         sp.add_argument("--sleep", type=float, default=None,
                         help="politeness delay between requests (s)")
@@ -293,6 +335,26 @@ def build_parser() -> argparse.ArgumentParser:
                     help="re-fetch every vote's detail, ignoring the cache "
                          "(default: only new votes are fetched)")
     sp.set_defaults(func=cmd_votes)
+
+    sp = sub.add_parser("sync", help="one low-load sync pass over the latest cycle "
+                                     "(re-scrape only what changed)")
+    _common(sp, cycle_required=False)
+    sp.add_argument("--force", action="store_true",
+                    help="ignore all caches/signatures and re-scrape everything")
+    sp.add_argument("--no-detail", action="store_true",
+                    help="skip per-item bill/vote detail + per-MP detail "
+                         "(fast list-only refresh)")
+    sp.add_argument("--no-offsets", action="store_true",
+                    help="skip per-speech video-offset resolution (faster)")
+    sp.add_argument("--reps-max-age", type=float, default=None,
+                    help="only refresh representatives when the last refresh is "
+                         "older than this many seconds "
+                         f"(default {DEFAULT_REPS_MAX_AGE}, env "
+                         "PARLAMONITOR_SYNC_REPS_MAX_AGE)")
+    sp.add_argument("--skip-bills", action="store_true")
+    sp.add_argument("--skip-votes", action="store_true")
+    sp.add_argument("--skip-reps", action="store_true")
+    sp.set_defaults(func=cmd_sync)
     return p
 
 

@@ -96,6 +96,10 @@ class Paths:
         self.processed = self.data / "processed"
         self.logs = self.data / "logs"
         self.lockfile = self.data / "parlamonitor.lock"
+        # Small state file for the continuous `sync` watcher: the per-day / bills /
+        # votes / reps signatures of the last check, so an idle poll can decide
+        # nothing changed without re-fetching anything heavy (SCR-2 / SCR-4).
+        self.sync_state = self.data / "sync-state.json"
 
     def ensure(self) -> None:
         for d in (self.raw_plenary, self.processed, self.logs):

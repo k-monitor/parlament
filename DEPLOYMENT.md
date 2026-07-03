@@ -1,21 +1,40 @@
 # Deploying Parlamonitor with Docker Compose
 
-Parlamonitor runs as **one stateless container** (OPS-1): the FastAPI backend
-serves the versioned API, the MP photos, and the built Vue SPA from a single
-process. The container reads the scraper's JSON output (mounted read-only) and
-builds a read-only SQLite + FTS5 database into a persistent volume on first boot.
+Parlamonitor runs from **one image** (OPS-1) as three small services that share
+two volumes:
+
+- **`init`** — a one-shot builder that creates the read-only SQLite + FTS5
+  database in the persistent volume on first boot (or `REBUILD_DB=1`), then
+  exits. Keeping the build here — rather than inside the API — means the possibly
+  long first build never holds up the app's healthcheck.
+- **`app`** — the FastAPI backend serving the versioned API, the MP photos and
+  the built Vue SPA from a single stateless process. It opens the SQLite DB
+  **read-only, once per request**, so a swapped-in DB is picked up on the next
+  request with no restart.
+- **`sync`** — a sidecar that keeps the data in step with `parlament.hu`
+  (see [Continuous sync](#continuous-sync-keeping-in-step-with-parlamenthu)).
+  It cheaply checks the latest cycle for changes, re-scrapes **only what
+  changed**, and updates the DB **incrementally**, swapping the new file in
+  atomically. Optional — drive it from an external cron instead if you prefer.
+
+`app` and `sync` both wait for `init` to finish, so they start against a
+ready database and only ever read / incrementally update it.
 
 ```
-┌─────────────────────────────── container: parlamonitor ───────────────────────────────┐
-│  uvicorn → FastAPI                                                                      │
-│    /                → Vue SPA            (PARLAMONITOR_FRONTEND_DIST=/app/frontend/dist)│
-│    /api/v1/…        → JSON API                                                          │
-│    /media/photos/…  → MP portraits       (/data/media/photos)                           │
-│  loader (entrypoint) builds /db/parlamonitor.db from /data/processed/*.json             │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-        ▲ ./data (ro)                          ▲ dbdata volume (rw, persistent)
-   scraper output                         built runtime DB
+┌──────────── app (uvicorn → FastAPI) ────────────┐     ┌────────── sync (sidecar) ──────────┐
+│  /               → Vue SPA                       │     │  loop every N min (or cron):        │
+│  /api/v1/…       → JSON API   (opens DB ro,      │     │   1. parlamonitor sync  (scrape     │
+│  /media/photos/… → MP portraits  per request)    │     │      only changed items, latest     │
+│  builds /db/parlamonitor.db on first boot        │     │      cycle → /data/processed/*.json)│
+└──────────────────────────────────────────────────┘     │   2. app.loader --update  (reload   │
+        ▲ ./data (ro)          ▲ dbdata (rw)              │      only changed files → atomic     │
+        │                      │  ◄───── atomic swap ─────│      swap of /db/parlamonitor.db)   │
+   scraper output         runtime DB (shared)             └─────────────────────────────────────┘
+                                                             ▲ ./data (rw)   ▲ dbdata (rw)
 ```
+
+Because the swap is atomic and the API reopens the DB per request, updates are
+**zero-downtime**: no restart, no dropped requests.
 
 ## Prerequisites
 
@@ -45,20 +64,109 @@ Then open <http://localhost:8000> — the SPA, with API docs at
 <http://localhost:8000/api/docs> and the health probe at
 `/api/v1/health`.
 
-The first boot runs the loader (a few seconds) before uvicorn starts; the
-compose `healthcheck` has a 40s `start_period` to cover this.
+> **First boot builds the database and can take several minutes** (the HuSpaCy
+> word-cloud lemmatization over the whole corpus is the slow part — see
+> [First-boot build time](#first-boot-build-time-huspacy)). This runs in the
+> one-shot **`init`** service; `app` and `sync` only start **after it finishes**,
+> so watch `docker compose logs -f init`. Subsequent boots reuse the DB and start
+> in seconds.
 
-## What the container does on boot
+## What the containers do on boot
 
-The entrypoint ([`docker/entrypoint.sh`](docker/entrypoint.sh)):
+Three services from one image, in order (`docker/entrypoint.sh`):
 
-1. If `/db/parlamonitor.db` is missing (or `REBUILD_DB=1`), runs
-   `python -m app.loader /data /db/parlamonitor.db` — the **only** DB writer
-   (ING-2), atomic swap (DB-4).
-2. Execs `uvicorn app.main:app --host 0.0.0.0 --port 8000`.
+1. **`init`** (`ensure-db`) — if `/db/parlamonitor.db` is missing (or
+   `REBUILD_DB=1`), runs `python -m app.loader /data /db/parlamonitor.db` — the
+   **only** DB writer (ING-2), atomic swap (DB-4) — then **exits**. Both `app`
+   and `sync` wait for it to **complete** (compose `service_completed_successfully`),
+   so the long first build never blocks the API's healthcheck.
+2. **`app`** (`serve`) — execs `uvicorn app.main:app` (the DB already exists, so
+   it starts immediately and is healthy within seconds).
+3. **`sync`** (`sync-loop`) — the continuous updater (see above).
 
 The DB lives in the `dbdata` named volume, so it survives restarts and is **not**
-rebuilt on every boot.
+rebuilt on every boot. The word-cloud cache also persists there, so even an
+interrupted first build resumes cheaply.
+
+### First-boot build time (HuSpaCy)
+
+The word cloud lemmatizes every sitting's transcript with a neural model, which
+is minutes-to-tens-of-minutes the **first** time (cached on disk afterward). To
+make the very first boot fast, build with the dependency-free tokenizer and
+switch to HuSpaCy later:
+
+```bash
+PARLAMONITOR_WORDCLOUD_BACKEND=regex docker compose up -d   # fast first build
+```
+
+(The word cloud is lower quality under `regex`; a later full rebuild with
+`huspacy` upgrades it. Changing the backend invalidates the word-cloud cache, so
+do it with a full rebuild — `REBUILD_DB=1` — not a live update.)
+
+## Continuous sync (keeping in step with parlament.hu)
+
+The bundled **`sync`** service keeps the deployment current without a full
+rebuild and without downtime. Every `PARLAMONITOR_SYNC_INTERVAL` seconds it runs
+[`docker/sync-once.sh`](docker/sync-once.sh), which does two cheap steps:
+
+1. **`parlamonitor sync`** — probes the **latest cycle** with a couple of
+   list-level Felicitas queries and re-scrapes **only what changed**: a sitting
+   day is re-fetched only when it is new, its duration changed, or (for the still
+   live latest day) its one-request speech listing changed; bills/votes reuse the
+   on-disk detail cache so an unchanged cycle costs only the list query;
+   representatives refresh on a slow cadence (`PARLAMONITOR_SYNC_REPS_MAX_AGE`).
+   When nothing changed it writes nothing (SCR-2/SCR-4).
+2. **`app.loader --update`** — compares each `processed/*.json` against what the
+   DB was last built from (a `load_state` table) and reloads **only the changed
+   files** into a private snapshot of the live DB, rebuilds the (SQL-only)
+   aggregates, and **atomically swaps** the result in (DB-4). It is a fast no-op
+   when nothing is newer.
+
+Because the API opens the DB **read-only per request**, the swap is picked up on
+the next request — **no restart, no downtime, and only the changed sittings are
+reprocessed** (not the whole corpus). An idle poll is a handful of requests and
+touches neither the data files nor the DB.
+
+The `sync` service `depends_on` the `app` being healthy, so it starts only after
+the initial DB build and therefore only ever does incremental updates.
+
+**Tune the cadence / politeness** in `.env`:
+
+```dotenv
+PARLAMONITOR_SYNC_INTERVAL=1800          # seconds between polls (default 30 min)
+PARLAMONITOR_SYNC_REPS_MAX_AGE=43200     # refresh the MP registry at most every 12h
+PARLAMONITOR_SLEEP=1.0                   # politeness delay between requests (SCR-4)
+# PARLAMONITOR_SYNC_CYCLE=43             # pin a cycle (default: auto-detect latest)
+# PARLAMONITOR_PROXY=socks5h://…         # or route via a proxy / SSH host
+```
+
+**Run one pass on demand** (e.g. to test, or right after deploy):
+
+```bash
+docker compose run --rm sync sync        # a single scrape+update pass, then exits
+```
+
+### Alternative: external cron instead of the sidecar
+
+If you'd rather schedule from the host, comment out the `sync` service and run
+the same one-shot from cron — nothing else changes (the app still picks up the
+swap automatically):
+
+```cron
+*/30 * * * * docker compose -f /srv/parlamonitor/docker-compose.yml run --rm sync sync >> /var/log/parlamonitor-sync.log 2>&1
+```
+
+Or run the scraper on the host (outside Docker) and only the loader in the
+container — the two halves are decoupled by the `processed/*.json` files:
+
+```bash
+# host: refresh the JSON (writes only what changed)
+python -m parlamonitor sync ./data
+# container: reconcile the DB (fast, atomic, zero-downtime)
+docker compose run --rm app update
+```
+
+The `sync-once.sh` guard is an `flock`, so overlapping cron runs simply skip.
 
 ## Configuration
 
@@ -69,8 +177,9 @@ or, more simply, via a `.env` file next to it:
 # .env
 PARLAMONITOR_PORT=8000
 PARLAMONITOR_CORS_ORIGINS=https://parlamonitor.example.org
-PARLAMONITOR_MODULES=                 # empty = all (proceedings,representatives,bills)
+PARLAMONITOR_MODULES=                 # empty = all (proceedings,representatives,bills,votes)
 REBUILD_DB=0
+PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 ```
 
 | Variable | Default | Meaning |
@@ -80,14 +189,30 @@ REBUILD_DB=0
 | `PARLAMONITOR_MODULES` | _(empty → all)_ | comma list of enabled modules (EXT-6) |
 | `REBUILD_DB` | `0` | set to `1` to rebuild the DB from `/data` on next start |
 | `PARLAMONITOR_DB` | `/db/parlamonitor.db` | DB path inside the container |
-| `PARLAMONITOR_DATA_DIR` | `/data` | scraper-output mount the loader reads |
+| `PARLAMONITOR_DATA_DIR` | `/data` | scraper-output mount (read-only for `app`, read-write for `sync`) |
 | `PARLAMONITOR_PHOTOS_DIR` | `/data/media/photos` | MP portrait directory |
 | `PARLAMONITOR_FRONTEND_DIST` | `/app/frontend/dist` | built SPA served by the backend |
 | `PARLAMONITOR_MAX_SEARCH_TOTAL` | `5000` | cap on reported search totals |
+| **`sync` service** | | |
+| `PARLAMONITOR_SYNC_INTERVAL` | `1800` | seconds between continuous-sync polls |
+| `PARLAMONITOR_SYNC_CYCLE` | _(auto)_ | pin a cycle to watch (default: the latest) |
+| `PARLAMONITOR_SYNC_REPS_MAX_AGE` | `43200` | refresh the MP registry at most this often (s) |
+| `PARLAMONITOR_SYNC_ARGS` | _(none)_ | extra flags for `parlamonitor sync` (e.g. `--no-offsets`) |
+| `PARLAMONITOR_SLEEP` | `1.0` | politeness delay between scraper requests (SCR-4) |
+| `PARLAMONITOR_PROXY` / `PARLAMONITOR_SSH_*` | — | route scraper traffic via a proxy / SSH host |
+| `PARLAMONITOR_WORDCLOUD_BACKEND` | `auto` | `auto`/`huspacy`/`regex` term extraction (WCLOUD-6) |
 
 ## Common operations
 
-**Rebuild the DB after re-running the scraper** (data already refreshed under `./data`):
+**Incrementally update the DB** after new data landed under `./data` (only the
+changed sittings/registries are reloaded, then atomically swapped in — normally
+the `sync` service does this for you):
+
+```bash
+docker compose run --rm app update      # fast, zero-downtime; no-op if nothing changed
+```
+
+**Full rebuild** (e.g. after a schema change or to force a clean import):
 
 ```bash
 docker compose run --rm app loader      # one-shot rebuild, then exits
@@ -141,8 +266,10 @@ different host; the bundled single-process setup is same-origin and needs none.
 
 ## Notes & gotchas
 
-- **Data is mounted read-only** (`./data:/data:ro`); the writable runtime DB is
-  the separate `dbdata` volume — the loader never mutates the source JSON.
+- **Data mount:** the `app` mounts `./data` **read-only** and never writes it;
+  the `sync` sidecar mounts it **read-write** so the scraper can refresh the JSON
+  + portraits. The runtime DB lives in the separate `dbdata` volume, shared by
+  both — the `sync` writes it (atomic swap), the `app` only reads it.
 - **Photos are optional.** If `data/media/photos/` is absent, the
   `/media/photos` mount is simply skipped and profile portraits fall back
   gracefully.

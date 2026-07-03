@@ -17,7 +17,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
 import { api } from '../../api.js'
-import { agendaLabel, formatDate, formatDuration } from '../../format.js'
+import { agendaLabel, formatDate, formatDuration, splitSegments, stripSpeakerLabel } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
@@ -56,6 +56,37 @@ let loadedSrc = null
 const sentences = computed(() => (data.value && data.value.sentences) || [])
 const speech = computed(() => data.value && data.value.speech)
 const session = computed(() => data.value && data.value.session)
+
+// name -> { person_id, label, photo_uri } for heckles attributed to a resolvable
+// MP (best-effort; see resolveHecklers).
+const speakers = ref({})
+
+// Each karaoke sentence, with its text split into segments (spoken runs +
+// lifted-out parenthetical stage directions / heckles) — see splitSegments().
+// The original sentence fields (ord/time_start/time_end) are kept so seeking,
+// karaoke highlight, deep links and copy-link all still key off the sentence.
+// The redundant speaker label is stripped from the opening sentence (its
+// trailing "(Fidesz)" would otherwise be mistaken for a heckle).
+const segmentedSentences = computed(() =>
+  sentences.value.map((s, i) => ({
+    ...s,
+    segments: splitSegments(i === 0 ? stripSpeakerLabel(s.text) : s.text),
+  })))
+
+// Attribute named heckles ("Vitályos Eszter: …") to representatives so they get
+// a face + profile link. Best-effort: failure just leaves them as plain text.
+async function resolveHecklers() {
+  const names = segmentedSentences.value
+    .flatMap((s) => s.segments).filter((g) => g.speaker).map((g) => g.speaker)
+  speakers.value = {}
+  if (!names.length) return
+  try { speakers.value = await api.resolveSpeakers(names) } catch { /* keep plain */ }
+}
+
+// An interjection whose "Name:" prefix didn't resolve is shown verbatim.
+function asideText(seg) {
+  return seg.speaker ? `${seg.speaker}: ${seg.text}` : seg.text
+}
 
 // Prefer the per-speech clip (VIE-9); fall back to the whole-day stream when the
 // backend couldn't derive one (speech missing real offsets).
@@ -101,6 +132,7 @@ async function load() {
   // stream is unchanged, or builds one when it isn't.
   await nextTick()
   setupPlayer()
+  resolveHecklers()   // non-blocking; updates `speakers` when it resolves
 }
 
 // The clip's smil VOD is generated on demand: its playlist 404s until the
@@ -375,16 +407,28 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-else class="transcript" @scroll.passive="onUserScroll">
-            <p
-              v-for="s in sentences" :key="s.ord" :id="'s-' + s.ord"
+            <div
+              v-for="s in segmentedSentences" :key="s.ord" :id="'s-' + s.ord"
               :class="['sentence', { active: s.ord === currentOrd }]"
             >
-              <button class="sbtn" :title="formatDuration(s.time_start)" @click="playSentence(s)">
-                <span class="sicon" aria-hidden="true">▶</span>
-                {{ s.text }}
-              </button>
+              <div class="scontent">
+                <template v-for="(seg, j) in s.segments" :key="j">
+                  <!-- Heckle attributed to a representative: face + linked name +
+                       remark, set apart as a small aside. -->
+                  <p v-if="seg.interjection && seg.speaker && speakers[seg.speaker]" class="aside heckle">
+                    <SpeakerLink :speaker="speakers[seg.speaker]" size="xs" class="heckle-who" />
+                    <span class="aside-what">{{ seg.text }}</span>
+                  </p>
+                  <!-- Stage direction / unattributed heckle: italic aside. -->
+                  <p v-else-if="seg.interjection" class="aside">{{ asideText(seg) }}</p>
+                  <!-- Spoken text: the seekable karaoke unit (VIE-3). -->
+                  <button v-else class="sbtn" :title="formatDuration(s.time_start)" @click="playSentence(s)">
+                    <span class="sicon" aria-hidden="true">▶</span>{{ seg.text }}
+                  </button>
+                </template>
+              </div>
               <button class="copybtn" :aria-label="$t('viewer.copyLink')" :title="$t('viewer.copyLink')" @click="copyLink(s)">🔗</button>
-            </p>
+            </div>
           </div>
         </div>
       </div>
@@ -429,14 +473,22 @@ onBeforeUnmount(() => {
 .transcript { max-height: 70vh; overflow-y: auto; padding-right: .4rem; }
 .sentence { display: flex; align-items: flex-start; gap: .25rem; margin: 0 0 .15rem; border-radius: 8px; }
 .sentence.active { background: var(--accent-soft); }
+.scontent { flex: 1; min-width: 0; }
 .sbtn {
-  flex: 1; text-align: left; background: none; border: none; cursor: pointer;
+  display: block; width: 100%; text-align: left; background: none; border: none; cursor: pointer;
   font: inherit; color: var(--ink); padding: .4rem .5rem; border-radius: 8px; line-height: 1.55;
 }
 .sbtn:hover { background: #f0eee8; }
 .sentence.active .sbtn { color: #5a121a; font-weight: 500; }
 .sicon { color: var(--accent); font-size: .7rem; margin-right: .35rem; opacity: .55; }
 .sbtn:hover .sicon { opacity: 1; }
+/* Parenthetical stage directions / heckles lifted out of the speech: italic and
+   in a softer tone so they read as asides, not spoken text. */
+.aside { margin: 0; padding: .3rem .5rem; font-style: italic; color: var(--ink-soft); line-height: 1.5; font-size: .92em; }
+/* A heckle attributed to a known MP: small face + linked name + remark. */
+.aside.heckle { display: flex; align-items: center; gap: .45rem; }
+.heckle-who { flex: none; flex-wrap: nowrap; font-style: normal; font-weight: 600; gap: .35rem !important; }
+.aside-what { font-style: italic; }
 .copybtn { background: none; border: none; cursor: pointer; opacity: .25; padding: .4rem .3rem; font-size: .85rem; }
 .copybtn:hover { opacity: 1; }
 .toast {

@@ -72,7 +72,7 @@ const isCapsToken = (t) => /\p{L}/u.test(t) && !/\p{Ll}/u.test(t)
 // it (real speech, not a label), and the label must be either the lone chair
 // token ("ELNÖK…") or open with two ALL-CAPS name tokens — so "EU-csúcs volt:…"
 // or "MSZP frakcióvezetője …:" (acronym-led sentences) are left intact.
-function stripSpeakerLabel(text) {
+export function stripSpeakerLabel(text) {
   const stop = text.search(/[:!?\n]/)
   if (stop < 0 || text[stop] !== ':' || stop > 140) return text
   const tokens = text.slice(0, stop).trim().split(/\s+/)
@@ -159,6 +159,40 @@ function pushSpoken(out, raw, prev) {
   return para
 }
 
+// Split ONE block of text (a source paragraph, or a single karaoke sentence)
+// into ordered segments: `[{ text, interjection, speaker }]`. Parentheticals
+// become `interjection: true` segments (stage directions / named heckles, with
+// `speaker` set when a "Name:" prefix was recognised); numeric & date references
+// stay inline in the spoken text; punctuation orphaned after a dropped
+// parenthetical is reattached to the preceding spoken segment. Shared by the
+// flowing spoiler (per source paragraph) and the karaoke viewer (per sentence).
+export function splitSegments(block) {
+  const out = []
+  let last = 0, m
+  // Last spoken segment in THIS block, so orphaned leading punctuation on a
+  // post-interjection continuation reattaches to it — never across a block/
+  // sentence boundary.
+  let prevSpoken = null
+  PARENTHETICAL.lastIndex = 0
+  while ((m = PARENTHETICAL.exec(block)) !== null) {
+    // A reference like "(2)" or "(V. 9.)" is part of the speech, not a heckle:
+    // skip the match so it stays in the surrounding spoken text (`last` is left
+    // untouched, so the next slice swallows it).
+    const inner = m[1].trim()
+    if (/\d/.test(inner) && REFERENCE_PAREN.test(inner)) continue
+    prevSpoken = pushSpoken(out, block.slice(last, m.index), prevSpoken)
+    for (const part of m[1].split(INTERJECTION_SEP)) {
+      const t = part.trim()
+      if (!t) continue
+      const { speaker, text } = splitInterjectionSpeaker(t)
+      out.push({ text, interjection: true, speaker })
+    }
+    last = m.index + m[0].length
+  }
+  pushSpoken(out, block.slice(last), prevSpoken)
+  return out
+}
+
 // Turn a speech's flat sentence list into rendered paragraphs. Returns
 // `[{ text, interjection, speaker }]`: `interjection: true` marks a stage-
 // direction/heckle paragraph the caller should render in italics; `speaker`
@@ -182,31 +216,7 @@ export function transcriptParagraphs(sentences) {
   // block alone.
   if (blocks.length) blocks[0] = stripSpeakerLabel(blocks[0])
 
-  // Split every block into normal-speech paragraphs and italic interjections.
   const out = []
-  for (const block of blocks) {
-    let last = 0, m
-    // Last spoken paragraph in THIS block, so orphaned leading punctuation on a
-    // post-interjection continuation reattaches to it — never across the block
-    // boundary into a previous source paragraph.
-    let prevSpoken = null
-    PARENTHETICAL.lastIndex = 0
-    while ((m = PARENTHETICAL.exec(block)) !== null) {
-      // A reference like "(2)" or "(V. 9.)" is part of the speech, not a heckle:
-      // skip the match so it stays in the surrounding spoken text (`last` is left
-      // untouched, so the next slice swallows it).
-      const inner = m[1].trim()
-      if (/\d/.test(inner) && REFERENCE_PAREN.test(inner)) continue
-      prevSpoken = pushSpoken(out, block.slice(last, m.index), prevSpoken)
-      for (const part of m[1].split(INTERJECTION_SEP)) {
-        const t = part.trim()
-        if (!t) continue
-        const { speaker, text } = splitInterjectionSpeaker(t)
-        out.push({ text, interjection: true, speaker })
-      }
-      last = m.index + m[0].length
-    }
-    pushSpoken(out, block.slice(last), prevSpoken)
-  }
+  for (const block of blocks) out.push(...splitSegments(block))
   return out
 }

@@ -147,6 +147,38 @@ entirely for a fast list-only refresh.
 Schedule it from cron/systemd (OPS-2); each run appends an ingestion log under
 `data/logs/` (SCR-3).
 
+### Continuous sync (`sync`) — stay in step with parlament.hu, cheaply
+
+For a production deployment that must keep updating, the `sync` command does one
+**low-load** pass over the **latest cycle** (auto-detected) and re-scrapes only
+what changed since the last check (`parlamonitor/sync.py`):
+
+```bash
+python -m parlamonitor sync ./data                 # latest cycle, auto
+python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
+```
+
+- **Proceedings:** one `ulesnapok-query` lists the days; a sitting is re-scraped
+  only when it is new, its duration changed, or (for the still-live latest day)
+  its single-request speech listing changed — so finished days are never
+  re-fetched.
+- **Bills / votes:** the cheap list query runs, but per-item detail reuses the
+  detail cache above, and the registry JSON is rewritten only when it differs.
+- **Representatives:** refreshed on a slow cadence (`--reps-max-age`, default 12h,
+  env `PARLAMONITOR_SYNC_REPS_MAX_AGE`); local portraits are preserved.
+
+An idle poll is a handful of requests and writes nothing. Last-seen signatures
+live in `data/sync-state.json`; the run prints a one-line JSON summary of what
+changed and appends an ingestion log (SCR-3). `--force` ignores all caches.
+
+`sync` only refreshes the JSON — bringing the **database** up to date is the
+loader's incremental step (`python -m app.loader --update <data> <db>`), which
+reloads only the changed files and atomically swaps the DB in (zero downtime).
+The two are decoupled by the `processed/*.json` files, so you can run the scrape
+on one host and the DB update on another. The Docker deployment wires both
+together in a `sync` sidecar (or an external cron) — see
+[../DEPLOYMENT.md](../DEPLOYMENT.md).
+
 ## Layout
 
 ```

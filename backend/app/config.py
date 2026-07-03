@@ -42,16 +42,28 @@ class Settings:
     # Folded set of speech types excluded from statistics (STAT-1).
     procedural_speech_types: frozenset = field(default_factory=lambda: _procedural_speech_types())
     # Word-cloud term-extraction backend (WCLOUD-2). "huspacy" lemmatizes and
-    # extracts named entities with the HuSpaCy model; "regex" uses the
-    # dependency-free tokenizer; "auto" (default) prefers HuSpaCy when its model
-    # is installed and falls back to regex otherwise. The processing runs at load
-    # time and is cached, never at request time (OPS-4).
+    # extracts named entities with the HuSpaCy model locally; "modal" runs that
+    # same HuSpaCy pipeline on Modal (modal.com) GPU/CPU workers so a
+    # resource-constrained host offloads the heavy NER/lemmatization; "regex" uses
+    # the dependency-free tokenizer; "auto" (default) prefers local HuSpaCy when
+    # its model is installed and falls back to regex otherwise ("auto" never
+    # auto-selects Modal — it is opt-in). The processing runs at load time and is
+    # cached, never at request time (OPS-4).
     wordcloud_backend: str = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_WORDCLOUD_BACKEND", "auto").strip().lower())
     # Which HuSpaCy model to lemmatize with — the smallest (`hu_core_news_md`) by
     # default; a larger one (`hu_core_news_lg`/`_trf`) can be swapped in via env.
     huspacy_model: str = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_HUSPACY_MODEL", "hu_core_news_md").strip())
+    # Modal offload (wordcloud_backend="modal"). The deployed Modal app name to
+    # look the NLP service up under, and how many sentences to pack into each
+    # remote batch — larger batches = fewer, fatter calls (less overhead), bounded
+    # so a batch's payload/memory stays reasonable. Modal auth comes from the
+    # standard MODAL_TOKEN_ID/MODAL_TOKEN_SECRET env (or ~/.modal.toml).
+    modal_app_name: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_MODAL_APP", "parlamonitor-nlp").strip())
+    modal_batch_sentences: int = int(
+        os.environ.get("PARLAMONITOR_MODAL_BATCH_SENTENCES", "5000"))
 
     def module_enabled(self, name: str) -> bool:
         return name in self.enabled_modules

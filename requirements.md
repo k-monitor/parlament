@@ -107,6 +107,8 @@ Primary use cases:
   staged, opt-in, lockfile-guarded design is the model to follow.)
 - **SCR-2.** Ingestion is **incremental**: only new/changed sittings are
   processed; a full re-import must also be possible (e.g. after a schema change).
+  For a live deployment the scraper also offers a **continuous, low-load sync**
+  of the latest cycle (SCR-7).
 - **SCR-3.** Each run records an **ingestion log** (run time, sittings added,
   errors, source backend used) viewable by operators.
 - **SCR-4.** Scraper runs MUST be **polite** to `parlament.hu` (configurable
@@ -124,6 +126,23 @@ Primary use cases:
   sentence segmentation. No forced-alignment toolchain (`ffmpeg`/`espeak`/aeneas)
   and no NER/NEL endpoints are required (those belong to the advanced timing and
   entity work deferred in §10).
+- **SCR-7 (SHOULD).** For a **continuously-deployed** site, a **sync mode** keeps
+  the store in step with `parlament.hu` while imposing **minimal load when nothing
+  has changed**. Each poll cheaply probes only the **latest electoral cycle** —
+  list-level queries plus a **one-request-per-day speech-listing fingerprint** for
+  the still-live sitting — and re-scrapes only the sittings/bills/votes that
+  actually changed since the last check, reusing the per-item detail caches
+  (SCR-2). An idle poll costs a handful of requests and writes nothing; the
+  last-seen signatures are **persisted** so a poll is stateless across restarts.
+  Politeness knobs (SCR-4) and the poll cadence are deployment config (OPS-4). The
+  sync may run **inside the deployment** (a sidecar loop) or from an **external
+  cron**; both share one code path (§8.5 OPS-5). It refreshes the source records
+  only — bringing the database up to date is the loader's incremental step (ING-5),
+  so the two halves stay independently runnable (ING-1).
+  > **✅ realized.** `parlamonitor sync` auto-detects the latest cycle, probes it
+  > (one `ulesnapok-query` + per-live-day `ulesnapok-aktusok-query` fingerprint),
+  > re-scrapes only changed items, persists signatures in `sync-state.json`, and
+  > emits an ingestion log (SCR-3). Representatives refresh on a slow cadence.
 
 ### 3.3 Ingestion into the database
 
@@ -138,6 +157,18 @@ Primary use cases:
 - **ING-4.** Re-ingesting a sitting **replaces** its derived rows
   (upsert keyed on `originID` / session id) so corrections from the upstream
   source propagate.
+- **ING-5.** The loader supports an **incremental update** so a routine refresh
+  does **not** rebuild from scratch: it detects which source records changed since
+  the last load (tracked per file), applies **only those** into a snapshot of the
+  live DB, rebuilds the derived aggregates, and **atomically swaps** the result in
+  (DB-4). Reprocessing is thus bounded to the changed sittings and, combined with
+  the read-only-per-request API, the swap is **zero-downtime** (no restart). A
+  full rebuild remains available for schema changes / forced re-imports (SCR-2).
+  > **✅ realized.** `python -m app.loader --update` reconciles the DB to the
+  > scraper's `processed/*.json` via a `load_state` (mtime/size) table, reloading
+  > only changed files then atomically renaming the file over the live DB; it is a
+  > cheap no-op when nothing is newer, and degrades to a full build when no DB
+  > exists yet. This is the update half of the continuous sync (SCR-7 / OPS-5).
 
 ### 3.4 Sentence ↔ video timing (v1: positional estimate)
 
@@ -173,6 +204,9 @@ Primary use cases:
   not the system of record. Builds should be reproducible.
 - **DB-4.** A read replica / file copy may be swapped in atomically after a load
   so queries never hit a half-written DB (e.g. build new file, then atomic rename).
+  Because the API opens the DB **read-only, once per request**, an
+  atomically-swapped file is picked up by the **next request with no restart and no
+  downtime** — this is how the incremental update (ING-5) ships new data live.
 
 ### 4.1 Core entities (minimum)
 
@@ -409,6 +443,17 @@ merely because an accent was omitted (or added).
   detail cache) and the **request path never invokes the model**. When the model
   is **not installed the build degrades** to the dependency-free regex tokenizer
   (raw lowercased forms), so the word cloud still works on a minimal install.
+  Because this neural pipeline is the one heavy build step, it MAY additionally be
+  **offloaded to a managed GPU/CPU service** (e.g. Modal) so a resource-constrained
+  host stays responsive (OPS-6): the offloaded workers run the **same** model and
+  extraction logic — so their output, and the on-disk cache keyed on it, is
+  **identical** to the local path and interchangeable with it — and, exactly as
+  above, only the sittings whose text changed are ever sent, in **batches**, so the
+  compute (and any metered cost) tracks actual new work.
+  > **✅ realized.** A `modal` backend runs the identical `app.nlp` HuSpaCy pipeline
+  > on Modal workers (model loaded once per worker, pool bounded, scales to zero);
+  > selected via `PARLAMONITOR_WORDCLOUD_BACKEND=modal`, it degrades to local
+  > HuSpaCy then regex when unconfigured.
 - **WCLOUD-3.** In the visualization, word sizing alone must not be the only
   carrier of meaning (A11Y-1).
 - **WCLOUD-4 (SHOULD).** A word in the cloud is a **link into proceedings search
@@ -867,6 +912,22 @@ rework of existing features.
   (incl. Hungarian accent/case folding), sentence↔time mapping, and API contracts.
 - **OPS-4.** Configuration (source backend/API key, proxy, sleep, schedule,
   enabled modules) is environment-driven, not hard-coded.
+- **OPS-5.** The reference deployment is **Docker Compose** built from one image:
+  a one-shot **DB builder** (so the possibly-long first build never blocks the
+  API's healthcheck), the stateless **API**, and an optional **continuous-sync
+  sidecar** (SCR-7) that keeps the data current via the incremental,
+  **zero-downtime** loader update (ING-5). The sync can instead be driven by an
+  **external cron** (the same one-shot), with an `flock` guard so overlapping runs
+  skip. Routine updates never require a restart or a full rebuild.
+  > **✅ realized.** `docker-compose.yml` runs `init` → `app` + `sync`; `sync`
+  > loops `parlamonitor sync` then `app.loader --update` on a configurable interval
+  > and the running API picks up each atomic swap on its next request.
+- **OPS-6.** The expensive word-cloud NLP (WCLOUD-6) MAY be **offloaded to a
+  managed GPU/CPU service** (e.g. Modal), selected and authenticated purely via
+  environment (OPS-4). It **degrades gracefully** to the local model, then the
+  regex tokenizer, when unconfigured; metered cost is bounded because only the
+  changed sittings are sent, batched, to a capped worker pool that scales to zero
+  when idle.
 
 ---
 
@@ -879,7 +940,11 @@ rework of existing features.
 - **Backend:** Python + FastAPI, read-only SQLite, OpenAPI docs.
 - **Frontend:** SPA (React or Vue) with a client-side router and lazily-loaded
   feature modules; **hls.js** for HLS video; a charting lib for statistics.
-- **Deploy:** static frontend + containerized API; scheduled jobs via cron/systemd.
+- **Deploy:** Docker Compose from one image — a one-shot DB builder, the
+  containerized API, and a continuous-sync sidecar (or external cron) that keeps
+  the DB current via incremental, zero-downtime atomic swaps (OPS-5). The heavy
+  word-cloud NLP can be offloaded to a managed GPU/CPU service such as Modal
+  (OPS-6). Scheduled jobs via cron/systemd.
 
 ---
 

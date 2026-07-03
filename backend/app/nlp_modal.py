@@ -1,0 +1,116 @@
+"""Offload the word-cloud NER/lemmatization to Modal (modal.com) — WCLOUD-6.
+
+The HuSpaCy pipeline (tagger + lemmatizer + NER) is the one genuinely heavy step
+in the build. On a small production host it dominates the build/update time. This
+client hands that work to a Modal app running the **same** ``app.nlp`` logic on
+Modal's workers (GPU or many CPUs), so the host only orchestrates.
+
+Credit is kept low by design:
+
+* the on-disk fingerprint cache (``loader.rebuild_session_word_counts``) means
+  only sittings whose transcript actually changed are ever sent — a normal
+  incremental update ships **one** sitting, a first build ships them once;
+* sittings are packed into a few fat **batches** (``modal_batch_sentences``) and
+  dispatched with ``.map`` so a bounded pool of warm containers (the deployed
+  class caps ``max_containers``) chews through them in parallel — total CPU work,
+  hence credit, is ~the same as one container, but wall-clock is far shorter;
+* the model loads once per container (``@enter``) and the app scales to zero
+  between runs, so an idle deployment costs nothing.
+
+Because the Modal service runs the identical ``app.nlp`` module and the same
+pinned model, its output — and therefore :func:`method_tag` — matches the local
+``huspacy`` backend, so the disk cache and DB are interchangeable between them.
+
+Auth uses the standard Modal env (``MODAL_TOKEN_ID`` / ``MODAL_TOKEN_SECRET``) or
+``~/.modal.toml``. "modal" is opt-in via ``PARLAMONITOR_WORDCLOUD_BACKEND=modal``.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+
+from . import nlp
+from .config import settings
+
+logger = logging.getLogger("parlamonitor.nlp_modal")
+
+_SERVICE_CLASS = "NlpService"
+
+
+def _has_credentials() -> bool:
+    if os.environ.get("MODAL_TOKEN_ID") and os.environ.get("MODAL_TOKEN_SECRET"):
+        return True
+    return (Path.home() / ".modal.toml").exists()
+
+
+def available() -> bool:
+    """Whether the Modal backend can be used: the client is importable and some
+    credentials are present. (Does not spin up a container — the deployed app is
+    trusted to exist; a genuine call failure surfaces loudly at run time.)"""
+    try:
+        import modal  # noqa: F401
+    except Exception:
+        logger.warning("wordcloud_backend=modal but the `modal` client is not "
+                       "installed (pip install modal)")
+        return False
+    if not _has_credentials():
+        logger.warning("wordcloud_backend=modal but no Modal credentials found "
+                       "(set MODAL_TOKEN_ID/MODAL_TOKEN_SECRET or run `modal token new`)")
+        return False
+    return True
+
+
+def method_tag() -> str:
+    """Same tag as the local HuSpaCy backend, so the on-disk cache / DB built one
+    way is reused by the other (identical model + logic → identical output)."""
+    return nlp.method_tag()
+
+
+def _service():
+    import modal
+    app = settings.modal_app_name
+    try:
+        cls = modal.Cls.from_name(app, _SERVICE_CLASS)      # modal >= 0.72
+    except AttributeError:  # pragma: no cover - older client
+        cls = modal.Cls.lookup(app, _SERVICE_CLASS)
+    return cls()
+
+
+def _chunks(misses, batch_sentences):
+    """Group (sid, fp, texts) misses into batches of ~``batch_sentences`` sentences
+    (a single oversized sitting forms its own batch)."""
+    batch, n = [], 0
+    for m in misses:
+        batch.append(m)
+        n += len(m[2])
+        if n >= batch_sentences:
+            yield batch
+            batch, n = [], 0
+    if batch:
+        yield batch
+
+
+def _words(result: dict) -> dict:
+    ents = set(result.get("entities") or [])
+    return {w: [c, "entity" if w in ents else "term"]
+            for w, c in (result.get("counts") or {}).items()}
+
+
+def extract(misses, *, batch_sentences: int | None = None):
+    """Yield ``(sid, fp, words)`` for each miss (a ``(sid, fp, texts)`` triple),
+    in order, running the HuSpaCy analysis on Modal. Batches are dispatched with
+    ``.map`` so the deployed pool of warm containers processes them in parallel;
+    results come back in input order."""
+    batch_sentences = batch_sentences or settings.modal_batch_sentences
+    svc = _service()
+    chunks = list(_chunks(misses, batch_sentences))
+    if not chunks:
+        return
+    payloads = [[texts for (_sid, _fp, texts) in chunk] for chunk in chunks]
+    logger.info("Modal NLP: %d sitting(s) in %d batch(es) (~%d sentences/batch)",
+                sum(len(c) for c in chunks), len(chunks), batch_sentences)
+    for chunk, results in zip(chunks, svc.analyze_sessions.map(payloads)):
+        for (sid, fp, _texts), result in zip(chunk, results):
+            yield sid, fp, _words(result)

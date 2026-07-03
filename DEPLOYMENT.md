@@ -103,6 +103,70 @@ PARLAMONITOR_WORDCLOUD_BACKEND=regex docker compose up -d   # fast first build
 `huspacy` upgrades it. Changing the backend invalidates the word-cloud cache, so
 do it with a full rebuild — `REBUILD_DB=1` — not a live update.)
 
+### Offloading the word-cloud NLP to Modal (GPU/CPU)
+
+On a host without the CPU/RAM for the HuSpaCy pipeline, offload it to
+[Modal](https://modal.com): the `init` and `sync` services keep orchestrating,
+but the NER/lemmatization runs on Modal workers and the host only ships text and
+stores the results. It runs the **same** `app.nlp` code and pinned model, so the
+output — and the on-disk cache — is identical to the local `huspacy` backend.
+
+**One-time deploy** of the Modal service (from the `backend/` directory, so the
+local `app` package is bundled into the image):
+
+```bash
+cd backend
+pip install modal
+modal token new                 # authenticate (writes ~/.modal.toml)
+modal deploy modal_app.py       # builds the image (bakes in the model) + deploys
+modal run modal_app.py          # optional: smoke-test the deployed service
+```
+
+**Enable it** in `.env`, then `up` (the `init` build, and every `sync`, now use
+Modal):
+
+```dotenv
+PARLAMONITOR_WORDCLOUD_BACKEND=modal
+MODAL_TOKEN_ID=ak-…             # from `modal token new` / the Modal dashboard
+MODAL_TOKEN_SECRET=as-…
+# PARLAMONITOR_MODAL_APP=parlamonitor-nlp   # must match modal_app.py's app name
+```
+
+```bash
+docker compose up -d            # init builds the DB, offloading NLP to Modal
+```
+
+**How the $30 credit is stretched** (the design goal):
+
+- The fingerprint cache means **only sittings whose transcript changed are ever
+  sent** — a first build ships them once, a routine `sync` ships one. Re-running
+  changes nothing → sends nothing.
+- Sittings are packed into fat batches (`PARLAMONITOR_MODAL_BATCH_SENTENCES`) and
+  dispatched in parallel across a **bounded** pool of workers, each of which
+  **loads the model once** and is reused. Total compute (≈ credit) is about the
+  same as one worker; only wall-clock shrinks.
+- The app **scales to zero** ~1 min after the last call, so an idle deployment
+  costs nothing. A full first build of the whole corpus is well under a dollar of
+  CPU; incremental updates are fractions of a cent.
+
+**Tunables** (set before `modal deploy` — they shape the deployed image/class):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PARLAMONITOR_MODAL_GPU` | _(none → CPU)_ | GPU type e.g. `T4`/`A10G`; only worth it with a transformer model (`hu_core_news_trf`) |
+| `PARLAMONITOR_MODAL_CPU` | `1.0` | CPU cores per worker |
+| `PARLAMONITOR_MODAL_MAX_CONTAINERS` | `10` | worker pool ceiling (parallelism + credit cap) |
+| `PARLAMONITOR_HUSPACY_MODEL` | `hu_core_news_md` | model baked into the image (must match the host's tag) |
+| `PARLAMONITOR_MODAL_BATCH_SENTENCES` | `5000` | sentences per remote batch (host-side) |
+
+> The default `hu_core_news_md` is a CPU model — GPU gives it little benefit, so
+> **CPU is both cheaper and the right default**. Reach for a GPU only if you also
+> switch to the transformer model, which changes the output (and invalidates the
+> cache, so pair it with a full rebuild).
+
+**Without Docker** (host scrapes/loads directly): the same three env vars +
+`python -m app.loader --update <data> <db>` (or `build`) offload to Modal.
+
 ## Continuous sync (keeping in step with parlament.hu)
 
 The bundled **`sync`** service keeps the deployment current without a full
@@ -200,7 +264,11 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_SYNC_ARGS` | _(none)_ | extra flags for `parlamonitor sync` (e.g. `--no-offsets`) |
 | `PARLAMONITOR_SLEEP` | `1.0` | politeness delay between scraper requests (SCR-4) |
 | `PARLAMONITOR_PROXY` / `PARLAMONITOR_SSH_*` | — | route scraper traffic via a proxy / SSH host |
-| `PARLAMONITOR_WORDCLOUD_BACKEND` | `auto` | `auto`/`huspacy`/`regex` term extraction (WCLOUD-6) |
+| **Word-cloud NLP** | | (used by `init` + `sync`) |
+| `PARLAMONITOR_WORDCLOUD_BACKEND` | `auto` | `auto`/`huspacy`/`regex`/`modal` term extraction (WCLOUD-6) |
+| `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` | — | Modal auth (required when backend=`modal`) |
+| `PARLAMONITOR_MODAL_APP` | `parlamonitor-nlp` | deployed Modal app name (must match `modal_app.py`) |
+| `PARLAMONITOR_MODAL_BATCH_SENTENCES` | `5000` | sentences per Modal batch (host side) |
 
 ## Common operations
 

@@ -32,7 +32,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from . import nlp
+from . import nlp, nlp_modal
 from .config import settings
 from .parlament_links import bill_page_url
 from .wordfreq import count_words
@@ -746,19 +746,35 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
 
 
 def _wordcloud_backend() -> str:
-    """Resolve the configured word-cloud backend to a concrete one ("huspacy" or
-    "regex"). "auto" prefers HuSpaCy when its model loads, else regex; an explicit
-    "huspacy" that can't load is logged and degrades to regex so a build on a host
-    without the model still succeeds (OPS-4)."""
+    """Resolve the configured word-cloud backend to a concrete one ("modal",
+    "huspacy" or "regex").
+
+    "modal" (opt-in) offloads the HuSpaCy pipeline to Modal; if the client isn't
+    installed / not authenticated it degrades to local HuSpaCy, then regex.
+    "auto" prefers local HuSpaCy when its model loads, else regex (it never
+    auto-selects Modal). An explicit backend that can't be used is logged and
+    degrades so a build on a bare host still succeeds (OPS-4)."""
     want = settings.wordcloud_backend or "auto"
     if want == "regex":
         return "regex"
+    if want == "modal":
+        if nlp_modal.available():
+            return "modal"
+        logger.warning("wordcloud_backend=modal unavailable; trying local HuSpaCy, "
+                       "then the regex tokenizer")
     if nlp.available():
         return "huspacy"
     if want == "huspacy":
         logger.warning("wordcloud_backend=huspacy but the model is unavailable; "
                        "using the regex tokenizer instead")
     return "regex"
+
+
+def _words_map(counts, entity_words) -> dict:
+    """Term→[count, kind] map stored in ``session_word_count`` (kind flags named
+    entities so the cloud can style them)."""
+    return {w: [c, "entity" if w in entity_words else "term"]
+            for w, c in counts.items()}
 
 
 def _wordcloud_cache_path(cache_dir: Path) -> Path:
@@ -794,9 +810,19 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
     ``--update`` path): only their ``session_word_count`` rows are cleared and
     recomputed, leaving every other sitting's rows intact — so an update never
     re-reads the whole corpus's sentences just to refresh one changed day.
+
+    With ``wordcloud_backend="modal"`` the HuSpaCy analysis runs on Modal workers
+    (WCLOUD-6); only cache-miss sittings are sent, packed into batches, so credit
+    tracks actual new work. Output is identical to the local ``huspacy`` backend,
+    so the disk cache is shared between them.
     """
     backend = _wordcloud_backend()
-    method = nlp.method_tag() if backend == "huspacy" else "regex:v1"
+    if backend == "modal":
+        method = nlp_modal.method_tag()
+    elif backend == "huspacy":
+        method = nlp.method_tag()
+    else:
+        method = "regex:v1"
     logger.info("Word-cloud term extraction backend: %s", backend)
 
     cache_path = _wordcloud_cache_path(cache_dir) if cache_dir else None
@@ -827,39 +853,68 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
                 if r[0] in only_sessions]
         conn.executemany("DELETE FROM session_word_count WHERE session_id = ?",
                          [(s,) for s in sids])
-    reused = recomputed = 0
-    for i, sid in enumerate(sids, 1):
-        texts = [t for (t,) in conn.execute(
+
+    def _fetch(sid):
+        return [t for (t,) in conn.execute(
             "SELECT se.text FROM sentence se "
             "JOIN speech sp ON sp.uid = se.speech_id "
             "WHERE sp.session_id = ? AND sp.procedural = 0 AND se.text IS NOT NULL",
             (sid,))]
-        fp = _session_fingerprint(method, texts)
-        entry = cache["sessions"].get(sid)
-        if entry and entry.get("fp") == fp:
-            words = entry["words"]
-            reused += 1
-        else:
-            if backend == "huspacy":
-                counts, entity_words = nlp.analyze_counts(texts)
-            else:
-                counts, entity_words = count_words(texts), set()
-            words = {w: [c, "entity" if w in entity_words else "term"]
-                     for w, c in counts.items()}
-            cache["sessions"][sid] = {"fp": fp, "words": words}
-            recomputed += 1
+
+    def _write(sid, words):
         if words:
             conn.executemany(
                 "INSERT INTO session_word_count(session_id, word, count, kind) "
                 "VALUES (?, ?, ?, ?)",
                 [(sid, w, c, k) for w, (c, k) in words.items()])
-        # Persist progress periodically so a long (HuSpaCy) pass is resumable: the
-        # commit makes processed sittings queryable immediately and the cache lets
-        # a re-run skip them (an interrupted run otherwise loses everything).
-        if i % 10 == 0:
+
+    reused = recomputed = 0
+
+    def _emit(sid, fp, words):
+        # Store a freshly-computed sitting: cache it, write its rows, and commit +
+        # flush the cache periodically so a long pass is resumable (a re-run skips
+        # what's already done rather than losing everything).
+        nonlocal recomputed
+        cache["sessions"][sid] = {"fp": fp, "words": words}
+        _write(sid, words)
+        recomputed += 1
+        if recomputed % 10 == 0:
             conn.commit()
             _flush_cache()
-            logger.info("session_word_count progress: %d/%d sittings", i, len(sids))
+            logger.info("session_word_count progress: %d recomputed", recomputed)
+
+    if backend == "modal":
+        # Split cache hits (written now) from misses; ship the misses to Modal in
+        # batches and write each result as it returns.
+        misses = []  # (sid, fp, texts)
+        for sid in sids:
+            texts = _fetch(sid)
+            fp = _session_fingerprint(method, texts)
+            entry = cache["sessions"].get(sid)
+            if entry and entry.get("fp") == fp:
+                _write(sid, entry["words"])
+                reused += 1
+            else:
+                misses.append((sid, fp, texts))
+        conn.commit()
+        for sid, fp, words in nlp_modal.extract(misses):
+            _emit(sid, fp, words)
+    else:
+        # Local: process one sitting at a time (low memory) — HuSpaCy or regex.
+        for sid in sids:
+            texts = _fetch(sid)
+            fp = _session_fingerprint(method, texts)
+            entry = cache["sessions"].get(sid)
+            if entry and entry.get("fp") == fp:
+                _write(sid, entry["words"])
+                reused += 1
+                continue
+            if backend == "huspacy":
+                counts, entity_words = nlp.analyze_counts(texts)
+            else:
+                counts, entity_words = count_words(texts), set()
+            _emit(sid, fp, _words_map(counts, entity_words))
+
     conn.commit()
     _flush_cache()
     logger.info("session_word_count: %d sittings (%d processed, %d cached)",

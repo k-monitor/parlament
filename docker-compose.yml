@@ -25,6 +25,15 @@ x-common-env: &common-env
   # Empty = all modules (proceedings,representatives,bills,votes). EXT-6.
   PARLAMONITOR_MODULES: ${PARLAMONITOR_MODULES:-}
 
+# Word-cloud NLP config shared by the services that build/update the DB (init,
+# sync). Set PARLAMONITOR_WORDCLOUD_BACKEND=modal + the Modal token to offload the
+# heavy NER/lemmatization to modal.com (WCLOUD-6) — ideal on a small host.
+x-nlp-env: &nlp-env
+  PARLAMONITOR_WORDCLOUD_BACKEND: ${PARLAMONITOR_WORDCLOUD_BACKEND:-auto}
+  PARLAMONITOR_MODAL_APP: ${PARLAMONITOR_MODAL_APP:-parlamonitor-nlp}
+  MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
+  MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
+
 services:
   # One-shot builder. Builds the runtime DB on first boot (or REBUILD_DB=1) and
   # exits; app + sync wait for it to COMPLETE. This keeps the potentially long
@@ -37,12 +46,9 @@ services:
     image: parlamonitor:latest
     command: ["ensure-db"]
     environment:
-      <<: *common-env
+      <<: [*common-env, *nlp-env]
       # Set to 1 to rebuild the DB from /data on the next `up`.
       REBUILD_DB: ${REBUILD_DB:-0}
-      # Term-extraction backend for the build (auto|huspacy|regex). `regex` makes
-      # the first build fast (lower-quality word cloud) if HuSpaCy is too slow.
-      PARLAMONITOR_WORDCLOUD_BACKEND: ${PARLAMONITOR_WORDCLOUD_BACKEND:-auto}
     volumes:
       - ./data:/data:ro
       - dbdata:/db
@@ -88,7 +94,7 @@ services:
     image: parlamonitor:latest
     command: ["sync-loop"]
     environment:
-      <<: *common-env
+      <<: [*common-env, *nlp-env]
       # How often to poll parlament.hu (seconds). An idle poll is a handful of
       # requests; a change triggers a scoped re-scrape + incremental DB update.
       PARLAMONITOR_SYNC_INTERVAL: ${PARLAMONITOR_SYNC_INTERVAL:-1800}
@@ -100,9 +106,6 @@ services:
       PARLAMONITOR_PROXY: ${PARLAMONITOR_PROXY:-}
       # Refresh the per-MP registry at most this often (seconds); 12h default.
       PARLAMONITOR_SYNC_REPS_MAX_AGE: ${PARLAMONITOR_SYNC_REPS_MAX_AGE:-43200}
-      # Force the same word-cloud backend the app uses (auto|huspacy|regex) so an
-      # incremental update lemmatizes changed sittings the same way (WCLOUD-6).
-      PARLAMONITOR_WORDCLOUD_BACKEND: ${PARLAMONITOR_WORDCLOUD_BACKEND:-auto}
     volumes:
       # Read-write here: the sync writes fresh scraper output + portraits.
       - ./data:/data

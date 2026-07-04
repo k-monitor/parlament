@@ -175,6 +175,9 @@ async function setupPlayer() {
     else if (s != null && sentences.value[s]) playSentence(sentences.value[s], resumePlaying)
     else seekClip(0, resumePlaying)
     resumePlaying = false
+    // Bring the deep-linked sentence (?s=<ord>) into view on open, even when
+    // autoplay is blocked and no `timeupdate` fires to auto-scroll for us.
+    if (currentOrd.value >= 0) nextTick(() => scrollToCurrent())
   }
 
   // Same clip already attached (e.g. re-entering the same speech): just
@@ -342,12 +345,25 @@ function onUserScroll() {
   scrollTimer = setTimeout(() => { autoFollow = true }, 4000)
 }
 
-onMounted(() => { document.addEventListener('fullscreenchange', onFullscreenChange); load() })
+onMounted(() => {
+  document.addEventListener('fullscreenchange', onFullscreenChange)
+  // Zero the <main> padding on mobile so the fixed viewer pane fits the screen
+  // exactly (see the mobile media query). Scoped to this route via a body class.
+  document.body.classList.add('viewer-pane')
+  // Also pause karaoke auto-follow on a manual page scroll: if the layout ever
+  // falls back to the page scrolling (rather than the transcript), the
+  // transcript's own @scroll won't fire. Our scrollToCurrent() is guarded by
+  // suppressScrollUntil, which works the same whether window or transcript moved.
+  window.addEventListener('scroll', onUserScroll, { passive: true })
+  load()
+})
 // Switching speeches should keep playing (continuous viewing, VIE-9). The click
 // that triggers navigation is a user gesture, so autoplay is allowed.
 watch(() => props.uid, () => { resumePlaying = true; load() })
 onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFullscreenChange)
+  document.body.classList.remove('viewer-pane')
+  window.removeEventListener('scroll', onUserScroll)
   if (videoEl.value) videoEl.value.removeEventListener('timeupdate', onTimeUpdate)
   destroyHls()
 })
@@ -518,8 +534,39 @@ onBeforeUnmount(() => {
   background: var(--ink); color: #fff; padding: .6rem 1.1rem; border-radius: 999px; box-shadow: var(--shadow);
 }
 @media (max-width: 820px) {
-  .vgrid { grid-template-columns: 1fr; }
-  .vcol-video { position: static; }
-  .transcript { max-height: none; }
+  /* Mobile: turn the viewer into a fixed pane that fills the screen below the
+     sticky app header (52px). Everything but the transcript stays put — only
+     the transcript scrolls — so the video never drifts off-screen when karaoke
+     auto-scroll (VIE-4) advances the text. The <main> padding is zeroed for
+     this route (body.viewer-pane, styles.css) so the pane fits exactly with no
+     page scroll to pull the video away. The chrome around the video is kept
+     deliberately compact so the transcript keeps the majority of the screen. */
+  .viewer { display: flex; flex-direction: column; height: calc(100dvh - 52px); }
+
+  /* Compact metadata strip: smaller title, tight rows, and the (often very
+     long) agenda title clamped to one line so it can't push the video down. */
+  .vhead { flex: none; margin-bottom: .35rem; }
+  .vhead h1 { font-size: 1.05rem; margin: .1rem 0; }
+  .vhead .small.row { gap: .4rem !important; row-gap: .25rem !important; font-size: .82rem; }
+  .vhead .badge { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .vgrid { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: .4rem; }
+
+  /* Video sits within the page gutter, aligned with the metadata and transcript
+     (rounded corners from the base .player rule, no shadow). */
+  .vcol-video { flex: none; position: static; display: flex; flex-direction: column; gap: .3rem; }
+
+  /* Slim source/nav strips under the video. */
+  .vactions { margin-top: 0; gap: .6rem; font-size: .78rem; align-items: center; }
+  .vactions .btn { padding: .3rem .6rem; }
+  .timing-note { margin: 0; }
+  .vcol-video nav { margin-top: 0 !important; }
+  .vcol-video nav .btn { padding: .32rem .6rem; font-size: .85rem; }
+
+  /* The transcript is the only scroller; it fills the pane's remaining height.
+     Its heading is redundant here, so drop it to reclaim the space. */
+  .vcol-text { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .vcol-text h2 { display: none; }
+  .transcript { flex: 1; min-height: 0; max-height: none; }
 }
 </style>

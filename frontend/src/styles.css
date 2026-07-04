@@ -42,6 +42,12 @@ a:hover { text-decoration: underline; }
 /* Only vertical padding here — horizontal is the container's --gutter. Using the
    `padding` shorthand would reset left/right to 0 and override that gutter. */
 .page { padding-top: 1.5rem; padding-bottom: 4rem; }
+/* The proceedings viewer runs as a fixed full-screen pane on mobile (video
+   pinned, only the transcript scrolls). Drop the page's vertical padding there
+   so the pane fits the viewport exactly and nothing but the transcript moves. */
+@media (max-width: 820px) {
+  body.viewer-pane .page { padding-top: 0; padding-bottom: 0; }
+}
 
 h1 { font-size: 1.75rem; margin: .2rem 0 1rem; }
 h2 { font-size: 1.3rem; margin: 1.6rem 0 .8rem; }

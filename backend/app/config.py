@@ -37,6 +37,13 @@ class Settings:
     enabled_modules: list[str] = field(default_factory=lambda: _enabled_modules())
     frontend_dist: str | None = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_FRONTEND_DIST") or None)
+    # Canonical public base URL (e.g. "https://parlamonitor.hu"), used to build
+    # the absolute og:url / og:image links in the server-rendered share cards
+    # (og.py). Behind a reverse proxy the request's own scheme/host is often wrong
+    # (http, internal hostname), so this env pins the outward-facing origin; when
+    # unset the cards fall back to the request's base URL.
+    site_url: str | None = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_SITE_URL") or "").strip().rstrip("/") or None)
     # Cap on reported search totals so a pathological query can't scan forever.
     max_search_total: int = int(os.environ.get("PARLAMONITOR_MAX_SEARCH_TOTAL", "5000"))
     # Folded set of speech types excluded from statistics (STAT-1).

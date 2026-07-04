@@ -76,6 +76,12 @@ services:
       # Served same-origin, so CORS only matters if you point a separate SPA host
       # at this API. Set to your public origin(s), comma-separated.
       PARLAMONITOR_CORS_ORIGINS: ${PARLAMONITOR_CORS_ORIGINS:-http://localhost:8000}
+      # Canonical public base URL used to build the absolute og:url / og:image in
+      # the server-rendered social share cards (og.py). Set this to your real
+      # public origin so a shared link previews with correct absolute URLs;
+      # behind a proxy the request's own scheme/host is often wrong. When unset
+      # the cards fall back to the request base URL.
+      PARLAMONITOR_SITE_URL: ${PARLAMONITOR_SITE_URL:-}
     volumes:
       # Scraper output (processed/*.json + media/photos), read-only for the API.
       - ./data:/data:ro
@@ -113,12 +119,27 @@ services:
       PARLAMONITOR_SLEEP: ${PARLAMONITOR_SLEEP:-1.0}
       PARLAMONITOR_USER_AGENT: ${PARLAMONITOR_USER_AGENT:-}
       PARLAMONITOR_PROXY: ${PARLAMONITOR_PROXY:-}
+      # Optional SSH tunnel: route all parlament.hu traffic through an SSH host so
+      # it egresses from a fixed IP (scraper/ssh_proxy.py). Active once SSH_HOST is
+      # set; the private key is bind-mounted read-only below and SSH_KEY is then
+      # auto-pointed at that in-container path. Legacy `ssh-rsa` servers are
+      # detected and handled automatically (no PubkeyAcceptedTypes knob needed).
+      PARLAMONITOR_SSH_HOST: ${PARLAMONITOR_SSH_HOST:-}
+      PARLAMONITOR_SSH_PORT: ${PARLAMONITOR_SSH_PORT:-22}
+      PARLAMONITOR_SSH_USER: ${PARLAMONITOR_SSH_USER:-}
+      PARLAMONITOR_SSH_KEY: ${PARLAMONITOR_SSH_HOST:+/run/secrets/ssh_key}
+      PARLAMONITOR_SSH_KEY_PASSPHRASE: ${PARLAMONITOR_SSH_KEY_PASSPHRASE:-}
+      PARLAMONITOR_SSH_KNOWN_HOSTS: ${PARLAMONITOR_SSH_KNOWN_HOSTS:-}
       # Refresh the per-MP registry at most this often (seconds); 12h default.
       PARLAMONITOR_SYNC_REPS_MAX_AGE: ${PARLAMONITOR_SYNC_REPS_MAX_AGE:-43200}
     volumes:
       # Read-write here: the sync writes fresh scraper output + portraits.
       - ./data:/data
       - dbdata:/db
+      # SSH tunnel private key, read-only. Host path comes from .env; when SSH is
+      # not configured this defaults to /dev/null so compose stays happy and the
+      # (never-read) mount is harmless.
+      - ${PARLAMONITOR_SSH_KEY_FILE:-/dev/null}:/run/secrets/ssh_key:ro
     # Start only after the DB has been built (init completed), so sync only ever
     # does cheap incremental updates and never races the first full build.
     depends_on:

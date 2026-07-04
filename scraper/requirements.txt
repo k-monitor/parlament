@@ -8,10 +8,11 @@ requests>=2.31,<3
 # scrape — install it for higher-quality sentence boundaries.
 # spacy>=3.7,<3.9
 
-# Optional: route parlament.hu traffic through an SSH host (parlamonitor/ssh_proxy.py).
-# Only needed when --ssh-host / PARLAMONITOR_SSH_HOST is used; paramiko is
-# imported lazily, so a plain scrape works without it installed.
-# paramiko>=3,<4
+# Route parlament.hu traffic through an SSH host (parlamonitor/ssh_proxy.py).
+# Needed when --ssh-host / PARLAMONITOR_SSH_HOST is used (the Docker `sync`
+# service is wired for it); paramiko is imported lazily, so a plain scrape still
+# works even without it installed.
+paramiko>=3,<4
 
 # Optional: Whisper forced-alignment sentence timing (TIM-1, the default method).
 # The align stage transcribes each day's recording and aligns the words to the

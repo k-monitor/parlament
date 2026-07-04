@@ -210,6 +210,42 @@ PARLAMONITOR_SLEEP=1.0                   # politeness delay between requests (SC
 docker compose run --rm sync sync        # a single scrape+update pass, then exits
 ```
 
+### Tunnelling the scraper through an SSH host
+
+If `parlament.hu` is only reachable from a specific egress IP, route the
+scraper's traffic through an SSH host you control. The `sync` service opens one
+persistent SSH connection (key-based) and forwards every request over it, so the
+connection to `parlament.hu` originates from the SSH host — no system-wide SOCKS
+daemon needed. Set it up entirely from `.env`; it maps one-to-one to an
+`~/.ssh/config` host:
+
+```dotenv
+# ~/.ssh/config              →  .env
+# Host ahalo
+#   HostName ahalo.hu        PARLAMONITOR_SSH_HOST=ahalo.hu
+#   Port 2267                PARLAMONITOR_SSH_PORT=2267
+#   User autokmdb            PARLAMONITOR_SSH_USER=autokmdb
+#   IdentityFile /home/optv/autokmdb_key
+#                            PARLAMONITOR_SSH_KEY_FILE=/home/optv/autokmdb_key
+#   PubkeyAcceptedKeyTypes +ssh-rsa   ← handled automatically, no setting needed
+```
+
+The private key is bind-mounted **read-only** into the container (at
+`/run/secrets/ssh_key`), and `PARLAMONITOR_SSH_KEY` is pointed at it
+automatically once `PARLAMONITOR_SSH_HOST` is set. Legacy pre-7.2 OpenSSH servers
+that only accept the `ssh-rsa` (RSA-SHA1) signature are detected and retried
+transparently, so no `PubkeyAcceptedKeyTypes` equivalent is required. Host-key
+checking is trust-on-first-use unless you point `PARLAMONITOR_SSH_KNOWN_HOSTS` at
+a `known_hosts` file. The tunnel needs `paramiko`, which is bundled in the image
+— rebuild it (`docker compose up -d --build`) after enabling this the first time.
+
+Verify a one-shot pass egresses through the host:
+
+```bash
+docker compose up -d --build             # (re)build so paramiko is present
+docker compose run --rm sync sync        # watch the log for "SSH proxy up: …"
+```
+
 ### Alternative: external cron instead of the sidecar
 
 If you'd rather schedule from the host, comment out the `sync` service and run
@@ -263,7 +299,13 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_SYNC_REPS_MAX_AGE` | `43200` | refresh the MP registry at most this often (s) |
 | `PARLAMONITOR_SYNC_ARGS` | _(none)_ | extra flags for `parlamonitor sync` (e.g. `--no-offsets`) |
 | `PARLAMONITOR_SLEEP` | `1.0` | politeness delay between scraper requests (SCR-4) |
-| `PARLAMONITOR_PROXY` / `PARLAMONITOR_SSH_*` | — | route scraper traffic via a proxy / SSH host |
+| `PARLAMONITOR_PROXY` | — | SOCKS5/HTTP proxy URL for scraper traffic |
+| `PARLAMONITOR_SSH_HOST` | — | SSH host to tunnel scraper traffic through (enables the tunnel; see [SSH tunnel](#tunnelling-the-scraper-through-an-ssh-host)) |
+| `PARLAMONITOR_SSH_PORT` | `22` | SSH port |
+| `PARLAMONITOR_SSH_USER` | — | SSH login user |
+| `PARLAMONITOR_SSH_KEY_FILE` | — | host path to the private key (bind-mounted read-only into `sync`) |
+| `PARLAMONITOR_SSH_KEY_PASSPHRASE` | — | passphrase, if the key is encrypted |
+| `PARLAMONITOR_SSH_KNOWN_HOSTS` | — | known_hosts path for strict host-key checking (default: trust-on-first-use) |
 | **Word-cloud NLP** | | (used by `init` + `sync`) |
 | `PARLAMONITOR_WORDCLOUD_BACKEND` | `auto` | `auto`/`huspacy`/`regex`/`modal` term extraction (WCLOUD-6) |
 | `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` | — | Modal auth (required when backend=`modal`) |

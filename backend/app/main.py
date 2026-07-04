@@ -123,5 +123,12 @@ class SPAStaticFiles(StaticFiles):
 
 
 if settings.frontend_dist and os.path.isdir(settings.frontend_dist):
+    # Server-render per-URL OpenGraph/Twitter share cards for the deep-link
+    # routes (a shared sentence shows its quote + speaker, etc.). Registered
+    # BEFORE the catch-all SPA mount so it shadows the static shell for these
+    # exact paths; every other client route still gets the generic shell.
+    from . import og
+    og.register(app)
+
     app.mount("/", SPAStaticFiles(directory=settings.frontend_dist, html=True),
               name="frontend")

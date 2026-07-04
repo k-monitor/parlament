@@ -76,8 +76,9 @@ Primary use cases:
   strategy captured in the reference (Web-API XML backend with a token; public
   PAIR-proxy HTML backend without one; Felicitas JSON API to resolve the
   **whole-day HLS stream URL**), so behavior is well understood and verifiable
-  against it. (Felicitas *per-speech offsets* are explicitly out of scope for
-  v1 — see §3.4 and §10.)
+  against it. (The Felicitas *per-speech offsets* — out of scope in the earliest
+  draft — are now captured and used as the positional-timing fallback beneath the
+  Whisper forced alignment; see §3.4.)
 - The scraper produces one **session record** per sitting day with the data
   shape established by the reference output (`data/processed/<session>-session.json`).
   Whether this is materialized as intermediate JSON or written straight to the
@@ -121,11 +122,13 @@ Primary use cases:
   store MUST retain it.
 - **SCR-6.** The scraper's external dependencies MUST be either vendored into
   this project or clearly declared and pinned; the build MUST document how to
-  run a scrape from a clean checkout. **For v1 the dependency surface is
+  run a scrape from a clean checkout. **The host's default dependency surface is
   deliberately small** — HTTP access to `parlament.hu`/Felicitas and Hungarian
-  sentence segmentation. No forced-alignment toolchain (`ffmpeg`/`espeak`/aeneas)
-  and no NER/NEL endpoints are required (those belong to the advanced timing and
-  entity work deferred in §10).
+  sentence segmentation. The forced-alignment ASR toolchain (`ffmpeg` + Whisper)
+  is **optional and offloaded** (§3.4 TIM-5): it lives in the managed-GPU worker
+  image, not on the host, and its absence degrades to the positional timing
+  estimate rather than an error. NER/NEL endpoints remain out of scope (deferred
+  with the entity work, §10).
 - **SCR-7 (SHOULD).** For a **continuously-deployed** site, a **sync mode** keeps
   the store in step with `parlament.hu` while imposing **minimal load when nothing
   has changed**. Each poll cheaply probes only the **latest electoral cycle** —
@@ -170,26 +173,54 @@ Primary use cases:
   > cheap no-op when nothing is newer, and degrades to a full build when no DB
   > exists yet. This is the update half of the continuous sync (SCR-7 / OPS-5).
 
-### 3.4 Sentence ↔ video timing (v1: positional estimate)
+### 3.4 Sentence ↔ video timing (forced alignment, positional fallback)
 
-- **TIM-1 (MUST).** v1 derives each sentence's `timeStart`/`timeEnd` by a
-  **simple positional estimate**: the whole-day stream duration is distributed
-  across the sitting's text **proportional to character position** — i.e. a
-  sentence's share of the timeline equals its share of the day's transcript
-  characters. This needs only the day-stream duration and the segmented text;
-  no audio processing.
+- **TIM-1 (MUST).** Each sentence's `timeStart`/`timeEnd` is derived, by default,
+  by **forced alignment of the recording against the transcript**. An ASR model
+  (**whisper-large-v3-turbo**) transcribes the sitting's audio into time-stamped
+  words; those spoken-word timestamps are then matched, **at the sentence level**,
+  to the authoritative `parlament.hu` transcript text, so each official sentence
+  receives the **real time it was spoken** (`align-method =
+  "whisper-forced-alignment"`). This is accurate to the word, not merely the
+  neighborhood of a passage. The ASR text is used only to *find the times*; the
+  displayed and searched text is always the official transcript, never the
+  hypothesis.
 - **TIM-2.** Timing is **day-absolute** (offsets into the whole-day HLS stream),
-  so a click on a sentence seeks into that stream (§5.2). The model is the
-  reference pipeline's `estimated-day-offset` fallback, used as the *primary*
-  (and only) v1 method.
-- **TIM-3.** v1 timing is **approximate by design** — accurate to the rough
-  neighborhood of a passage, not the word. Every sentence MUST be stamped with
-  provenance marking it as estimated (e.g. `align-method = "estimated-day-offset"`,
-  reduced `confidence`) so the UI can disclose imprecision (§5.2 VIE-6).
-- **TIM-4.** The timing step MUST be a **distinct, swappable stage**, so a more
-  precise method (per-speech offsets, forced alignment — §10) can replace it
-  later without changing the scraper's fetch/parse/segment stages or the data
-  shape.
+  so a click on a sentence seeks into that stream (§5.2). The ASR decodes exactly
+  that stream, so its word times share the stream's own `t=0` — the same origin
+  the stored per-speech offsets are measured from — needing no coordinate
+  conversion.
+- **TIM-3 (fallback + provenance).** Where no usable transcription exists for a
+  speech (no recording, an ASR failure, or an alignment too thin to trust), timing
+  **degrades gracefully** to a positional estimate: the speech's real
+  `[video_start, video_end]` window (from the Felicitas per-speech offsets) with
+  its sentences distributed **by character position** (`align-method =
+  "felicitas-speech-offset"`), and, lacking even that, the whole-day positional
+  estimate (`align-method = "estimated-day-offset"`). Every sentence MUST be
+  stamped with provenance — its `align-method` and a `confidence` — so the UI can
+  disclose which sentences are word-accurate and which are approximate (§5.2
+  VIE-6). The positional estimate needs no audio processing, so a clean install
+  with no ASR backend still produces usable (approximate) timing (SCR-6).
+- **TIM-4 (MUST).** The timing step is a **distinct, swappable stage**: it only
+  reads a segmented, untimed session record and writes per-sentence times +
+  provenance, never touching the fetch/parse/segment stages or the data shape.
+  The (heavy) transcription is produced **once per sitting and cached** (keyed by
+  the recording URL + model), so a re-run transcribes only genuinely new audio;
+  the alignment itself is cheap, deterministic and runs offline (no GPU, no
+  network), so it is fully unit-testable.
+- **TIM-5.** The ASR is the one heavy compute in the timing stage and MAY be
+  **offloaded to a managed GPU service** (e.g. Modal), selected purely via
+  environment (OPS-4/OPS-6). It **degrades gracefully** to a local model, then to
+  the positional estimate, when unconfigured. Metered cost is bounded: only
+  cache-miss sittings are sent, **batched** across a capped worker pool that scales
+  to zero when idle, and a silence-skipping VAD means GPU time tracks actual
+  speech, not the (≈⅓ non-speech) wall-clock of a sitting.
+  > **✅ realized.** The scraper's `align` stage (`parlamonitor.whisper_align`)
+  > transcribes each day's HLS recording with whisper-large-v3-turbo on Modal
+  > (`whisper_modal_app.py`, `PARLAMONITOR_TIMING_BACKEND=auto|whisper-modal|
+  > whisper-local|character`), caches the words per sitting, and aligns them to the
+  > official sentences; `felicitas-speech-offset` (and then `estimated-day-offset`)
+  > remain the automatic per-speech fallbacks.
 
 ---
 
@@ -927,7 +958,10 @@ rework of existing features.
   environment (OPS-4). It **degrades gracefully** to the local model, then the
   regex tokenizer, when unconfigured; metered cost is bounded because only the
   changed sittings are sent, batched, to a capped worker pool that scales to zero
-  when idle.
+  when idle. The **timing-stage ASR** (whisper-large-v3-turbo, §3.4 TIM-1/TIM-5)
+  uses the **same offload pattern** on a separate GPU app: only cache-miss sittings
+  are sent, batched and run in parallel across a capped, scale-to-zero pool, and it
+  degrades to a local model then to the positional estimate when unconfigured.
 
 ---
 
@@ -965,22 +999,25 @@ rework of existing features.
   already accommodates them, with Bills and Votes as the worked examples.
   Within Votes, the **hemicycle seating chart** and **vote-based statistics**
   (cohesion, attendance, defection rates) remain future work (VOTE-8).
-- **Precise sentence ↔ video sync (planned enhancement to the timing stage,
-  §3.4).** v1 uses a positional/character-length estimate (TIM-1). A later
-  iteration replaces it — as a drop-in swap of the timing stage (TIM-4) — with
-  progressively more accurate methods:
+- **Precise sentence ↔ video sync — ✅ realized (§3.4).** The originally-planned
+  progression of the swappable timing stage (TIM-4) is now shipped:
   1. **Real per-speech offsets** via the Felicitas per-speech video query
-     (`ulesnapok-aktusok-query` → per-speech `offset1`/`offset2`), giving
-     second-precise speech boundaries (the reference's
-     `felicitas-speech-offset`); timing is then estimated only *within* a speech.
-  2. **Forced alignment** (e.g. aeneas/whisper) for word/sentence-precise timing,
-     which adds an audio-processing toolchain (`ffmpeg`/`espeak`).
+     (`ulesnapok-aktusok-query` → per-speech `offset1`/`offset2`) give
+     second-precise speech boundaries (`felicitas-speech-offset`); they are now
+     the positional-timing fallback.
+  2. **Forced alignment** with whisper-large-v3-turbo is now the **default**
+     (TIM-1): the ASR-timed transcript is aligned to the official text at the
+     sentence level for word-accurate timing. The audio/ASR toolchain
+     (`ffmpeg` + Whisper) is offloaded to a managed GPU service and degrades to
+     the positional estimate, so the host stays light (SCR-6/TIM-5).
 - Entity recognition/linking (NER/NEL) — tagging in-transcript entities and
   linking representatives/factions to Wikidata. Deferred with its external
   dependencies (entity-fishing endpoint, HuSpaCy model); the data shape reserves
   room for it (entity table, `people[].wid`).
-- Automatic speech-to-text/whisper re-transcription or speaker-diarization
-  improvements.
+- Whisper is used for **forced-alignment timing** (§3.4 TIM-1, realized), but
+  using ASR to **replace** the official transcript text, or **speaker
+  diarization**, remain out of scope — the displayed/searched text stays the
+  authoritative `parlament.hu` record.
 - Cross-parliament comparison or non-HU parliaments.
 - AI summarization/Q&A over proceedings (possible later module).
 

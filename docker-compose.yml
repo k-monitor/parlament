@@ -34,6 +34,15 @@ x-nlp-env: &nlp-env
   MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
   MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
 
+# Whisper forced-alignment sentence-timing config for the scraping side (sync).
+# PARLAMONITOR_TIMING_BACKEND=auto uses Whisper on Modal when the MODAL_TOKEN_* above
+# is set (deploy scraper/whisper_modal_app.py first), else degrades to the positional
+# estimate (TIM-1/TIM-5). Reuses the same Modal token as the word-cloud offload; only
+# the deployed app name differs.
+x-timing-env: &timing-env
+  PARLAMONITOR_TIMING_BACKEND: ${PARLAMONITOR_TIMING_BACKEND:-auto}
+  PARLAMONITOR_WHISPER_MODAL_APP: ${PARLAMONITOR_WHISPER_MODAL_APP:-parlamonitor-whisper}
+
 services:
   # One-shot builder. Builds the runtime DB on first boot (or REBUILD_DB=1) and
   # exits; app + sync wait for it to COMPLETE. This keeps the potentially long
@@ -94,7 +103,7 @@ services:
     image: parlamonitor:latest
     command: ["sync-loop"]
     environment:
-      <<: [*common-env, *nlp-env]
+      <<: [*common-env, *nlp-env, *timing-env]
       # How often to poll parlament.hu (seconds). An idle poll is a handful of
       # requests; a change triggers a scoped re-scrape + incremental DB update.
       PARLAMONITOR_SYNC_INTERVAL: ${PARLAMONITOR_SYNC_INTERVAL:-1800}

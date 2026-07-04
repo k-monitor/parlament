@@ -220,7 +220,7 @@ export default {
   about: {
     title: 'About', body: 'Parlamonitor is a third-party civic-tech website that makes the public sessions of the Hungarian National Assembly searchable and watchable down to the sentence. All data is sourced from parlament.hu and every fact links back to its original source.',
     dataTitle: 'Data & accuracy',
-    dataBody: 'Video timing in this version is a positional estimate (the day stream duration distributed by character position), so it is approximate — to the neighbourhood of a passage, not the word. Estimated precision is indicated on every sentence.',
+    dataBody: 'Sentence video timing is, by default, aligned to the recording by speech recognition (the whisper-large-v3-turbo model): the transcribed words’ timestamps are matched to the official transcript at sentence level, giving sentence-accurate timing. Where no transcript is available it falls back to a positional estimate (the day stream duration distributed by character position), which is only approximate — to the neighbourhood of a passage, not the word — and is flagged as estimated on every such sentence.',
     privacyTitle: 'Privacy', privacyBody: 'This site uses no third-party advertising or tracking scripts. Any visit statistics are anonymous and GDPR-compliant.',
     apiTitle: 'API', apiBody: 'The data is available through a documented, open API for developers.', apiLink: 'API documentation',
   },

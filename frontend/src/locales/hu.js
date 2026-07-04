@@ -321,7 +321,7 @@ export default {
     title: 'A projektről',
     body: 'A Parlamonitor egy harmadik feles, civil-tech weboldal, amely a Magyar Országgyűlés nyilvános üléseit teszi mondatszinten kereshetővé és megtekinthetővé. Minden adat forrása a parlament.hu, és minden tény visszavezethető az eredeti forrására.',
     dataTitle: 'Adatok és pontosság',
-    dataBody: 'A felszólalások videóidőzítése a jelenlegi verzióban pozícióalapú becslés (a napi videó hosszát a szöveg karakterarányában osztja el), ezért közelítő pontosságú — a passzus környékére, nem a szóra pontos. Minden mondatnál jelezzük a becsült pontosságot.',
+    dataBody: 'A felszólalások videóidőzítését alapesetben beszédfelismeréssel (whisper-large-v3-turbo modell) illesztjük a videóhoz: a felismert szöveg időbélyegeit mondatszinten összekötjük a hivatalos jegyzőkönyv szövegével, így a mondatokra pontos időzítés jön létre. Ahol nincs elérhető átirat, pozícióalapú becslésre esünk vissza (a napi videó hosszát a szöveg karakterarányában osztja el) — ez csak a passzus környékére pontos, és minden ilyen mondatnál jelezzük a becsült pontosságot.',
     privacyTitle: 'Adatvédelem',
     privacyBody: 'Az oldal nem használ harmadik feles hirdetési vagy követő szkripteket. Esetleges látogatottsági statisztika kizárólag anonim, GDPR-konform módon készül.',
     apiTitle: 'API',

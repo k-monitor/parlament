@@ -31,7 +31,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import Paths, RuntimeConfig
+from . import whisper_align
+from .config import (Paths, RuntimeConfig, timing_backend, whisper_language,
+                     whisper_model)
 from .felicitas import FelicitasClient
 from .http_client import HttpClient
 from .lockfile import acquire
@@ -72,12 +74,13 @@ def _write_log(paths: Paths, payload: dict) -> None:
 
 # --- transform stage -------------------------------------------------------
 
-def transform_all(paths: Paths, *, force: bool, only: list[str] | None = None) -> list[str]:
-    """Transform raw day bundles into session records. Idempotent: a session is
-    rebuilt only when its raw file is newer (or ``force``)."""
-    built: list[str] = []
-    raw_files = sorted(paths.raw_plenary.glob("raw-*-day.json"))
-    for raw_path in raw_files:
+def _pending_builds(paths: Paths, *, force: bool,
+                    only: list[str] | None = None) -> list[str]:
+    """Sessions whose session record is missing or older than its raw bundle (all,
+    when ``force``). The align and transform stages act on this same set so their
+    work stays in step."""
+    pending: list[str] = []
+    for raw_path in sorted(paths.raw_plenary.glob("raw-*-day.json")):
         session = raw_path.name[len("raw-"):-len("-day.json")]
         if only is not None and session not in only:
             continue
@@ -85,14 +88,48 @@ def transform_all(paths: Paths, *, force: bool, only: list[str] | None = None) -
         if (not force and out_path.exists()
                 and out_path.stat().st_mtime >= raw_path.stat().st_mtime):
             continue
+        pending.append(session)
+    return pending
+
+
+def align_all(paths: Paths, sessions: list[str], *, backend: str, force: bool
+              ) -> dict[str, list]:
+    """Ensure a Whisper transcription is cached for each session's recording,
+    returning ``{session: words}`` for those that have one (TIM-1). A no-op returning
+    ``{}`` when the backend resolves to ``character`` or nothing needs building."""
+    days: list[tuple[str, str | None, str | None]] = []
+    for session in sessions:
+        try:
+            raw = json.loads(paths.raw_day(session).read_text())
+        except (OSError, ValueError):
+            continue
+        video = raw.get("video") or {}
+        days.append((session, video.get("m3u8"), video.get("playseq")))
+    if not days:
+        return {}
+    return whisper_align.ensure_words(
+        paths, days, backend=backend, model=whisper_model(),
+        language=whisper_language(), force=force)
+
+
+def transform_all(paths: Paths, sessions: list[str], *,
+                  words_by_session: dict[str, list] | None = None) -> list[str]:
+    """Transform the given raw day bundles into session records, applying Whisper
+    forced-alignment timing where a transcription is available for the session."""
+    words_by_session = words_by_session or {}
+    built: list[str] = []
+    for session in sessions:
+        raw_path = paths.raw_day(session)
+        out_path = paths.session_file(session)
         raw = json.loads(raw_path.read_text())
-        record = transform_day(raw)
+        record = transform_day(raw, words=words_by_session.get(session))
         tmp = out_path.with_suffix(out_path.suffix + ".tmp")
         tmp.write_text(json.dumps(record, indent=2, ensure_ascii=False))
         tmp.replace(out_path)
         built.append(session)
-        logger.info("Built %s: %d speeches", session,
-                    record["meta"]["counts"]["speeches"])
+        logger.info("Built %s: %d speeches (%s)", session,
+                    record["meta"]["counts"]["speeches"],
+                    record["meta"]["timingMethod"])
     return built
 
 
@@ -120,8 +157,20 @@ def cmd_proceedings(args) -> None:
                     errors.append(f"download: {e}")
 
             built = []
+            words_by_session: dict[str, list] = {}
             if not args.download_only:
-                built = transform_all(paths, force=args.force)
+                pending = _pending_builds(paths, force=args.force)
+                if pending and not args.no_align:
+                    try:
+                        backend = args.timing_backend or timing_backend()
+                        words_by_session = align_all(
+                            paths, pending, backend=backend, force=args.force)
+                    except Exception as e:
+                        logger.exception("Whisper alignment failed; falling back "
+                                         "to positional timing")
+                        errors.append(f"align: {e}")
+                built = transform_all(paths, pending,
+                                      words_by_session=words_by_session)
     finally:
         felicitas.close()
 
@@ -130,8 +179,10 @@ def cmd_proceedings(args) -> None:
         "cycle": args.cycle,
         "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "backend": "felicitas-json",
+        "timingBackend": args.timing_backend or timing_backend(),
         "downloaded": downloaded,
         "built": built,
+        "aligned": sorted(words_by_session),
         "errors": errors,
     })
     logger.info("Proceedings run done: %d downloaded, %d built, %d errors",
@@ -296,6 +347,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="re-download and rebuild even if cached")
     sp.add_argument("--no-offsets", action="store_true",
                     help="skip per-speech video-offset resolution (faster)")
+    sp.add_argument("--timing-backend", default=None,
+                    choices=["auto", "whisper-modal", "whisper-local", "character"],
+                    help="sentence-timing method (default: env "
+                         "PARLAMONITOR_TIMING_BACKEND or 'auto' — Whisper forced "
+                         "alignment where available, else the character estimate)")
+    sp.add_argument("--no-align", action="store_true",
+                    help="skip Whisper alignment; use the positional character "
+                         "estimate (equivalent to --timing-backend character)")
     sp.add_argument("--download-only", action="store_true")
     sp.add_argument("--transform-only", action="store_true")
     sp.set_defaults(func=cmd_proceedings)

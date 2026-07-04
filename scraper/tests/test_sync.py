@@ -62,9 +62,9 @@ def patched(tmp_path, monkeypatch):
     def fake_scrape_day(felicitas, cycle, day, *, resolve_offsets=True):
         return {"session": day["uuid"], "speeches": felicitas.day_speeches(day["uuid"])}
 
-    def fake_transform_day(bundle):
+    def fake_transform_day(bundle, *, words=None):
         # session id is derived by the caller; here just carry a valid shape.
-        return {"meta": {"session": None}, "data": []}
+        return {"meta": {"session": None, "timingMethod": "character"}, "data": []}
 
     # Record which sitting the caller actually wrote by wrapping _write_json's
     # processed target — simplest is to intercept scrape_day per (cycle, sitting).

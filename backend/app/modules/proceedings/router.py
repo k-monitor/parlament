@@ -24,10 +24,11 @@ router = APIRouter(prefix="/proceedings", tags=["proceedings"])
 def _is_estimated(align_method: str | None) -> bool:
     """Whether sentence timing is an estimate the UI should disclose (VIE-6).
 
-    Both v1 methods estimate the *sentence* position (whole-day, or within a
-    speech's real offsets); only a future word-precise method (forced alignment)
-    would be exact."""
-    return (align_method or "") not in ("", "none", "forced-alignment")
+    The positional methods estimate the *sentence* position (whole-day, or within a
+    speech's real offsets); only a word-precise method — Whisper forced alignment —
+    is exact and needs no disclosure."""
+    return (align_method or "") not in (
+        "", "none", "forced-alignment", "whisper-forced-alignment")
 
 
 # ---------------------------------------------------------------------------

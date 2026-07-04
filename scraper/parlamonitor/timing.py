@@ -1,4 +1,4 @@
-"""Sentence ↔ video timing — per-speech offsets with intra-speech estimate.
+"""Sentence ↔ video timing — Whisper forced alignment, with a positional fallback.
 
 The signature feature is clicking a sentence to seek the day's video to the
 moment it was spoken (requirements §5.2). Timing is **day-absolute** seconds into
@@ -8,37 +8,46 @@ This is a **distinct, swappable stage** (TIM-4): it consumes a session record an
 only writes per-sentence ``timeStart``/``timeEnd`` plus provenance, never touching
 the fetch/parse/segment stages or the data shape.
 
-Two methods, picked per speech:
+Three methods, picked per speech in order of precision:
 
-* **``felicitas-speech-offset`` (primary).** The Felicitas backend gives each
-  speech its true ``[videoStart, videoEnd]`` window in the day stream (captured
-  by the scraper). We anchor each speech to that exact window and distribute its
-  sentences inside it **in proportion to character position**. Error is therefore
-  bounded *within a single speech* (a few seconds) and never accumulates across
-  the day — this is the §10 enhancement, now the default.
+* **``whisper-forced-alignment`` (default).** When a Whisper transcription of the
+  day is available (produced by :mod:`parlamonitor.whisper_align`'s backend and
+  cached on disk), each speech's sentences are aligned to the real spoken-word
+  timestamps, so their boundaries are **word-accurate**, not estimated. This is
+  the §10 forced-alignment enhancement, now the primary method (TIM-1).
 
-* **``estimated-day-offset`` (fallback).** For any speech missing real offsets we
-  fall back to the original whole-day positional estimate: distribute the day
-  duration across the whole transcript by character position. Less precise (drift
+* **``felicitas-speech-offset`` (fallback).** With no Whisper words for a speech,
+  we fall back to its true ``[videoStart, videoEnd]`` window (captured by the
+  scraper from Felicitas) and distribute its sentences inside it **in proportion
+  to character position**. Error is bounded *within a single speech* (a few
+  seconds) and never accumulates across the day.
+
+* **``estimated-day-offset`` (last resort).** For any speech missing real offsets
+  we fall back to the original whole-day positional estimate: distribute the day
+  duration across the whole transcript by character position. Least precise (drift
   accumulates), used only when no offsets are available.
 
-Both are estimates at the *sentence* level, so every aligned sentence is stamped
-with reduced ``confidence`` and the chosen ``align-method`` for the UI to
-disclose imprecision (TIM-3 / VIE-6).
+The two positional methods estimate the *sentence* position, so their sentences are
+stamped with reduced ``confidence`` for the UI to disclose imprecision (TIM-3 /
+VIE-6); the Whisper method is word-accurate and marked as such.
 """
 
 from __future__ import annotations
 
 import re
 
+from . import whisper_align
+
 SPEECH_OFFSET_METHOD = "felicitas-speech-offset"
 ALIGN_METHOD = "estimated-day-offset"            # whole-day fallback
+WHISPER_METHOD = whisper_align.WHISPER_METHOD    # forced alignment (default)
 NO_TIMING = "none"
 
 # Speech boundaries are measured, only the within-speech position is estimated,
 # so this method is more trustworthy than the pure whole-day estimate.
 SPEECH_OFFSET_CONFIDENCE = 0.9
 ESTIMATED_CONFIDENCE = 0.7
+WHISPER_CONFIDENCE = whisper_align.WHISPER_CONFIDENCE
 
 # …/vod/smil:20260601.124141.1332144.30513190.smil/playlist.m3u8
 #                          ^^^^^^^ off1ms  ^^^^^^^^ off2ms
@@ -110,17 +119,45 @@ def _speech_offsets(sp: dict) -> tuple[float, float] | None:
     return (vs, ve) if ve > vs else None
 
 
-def apply_timing(speeches: list[dict], *, force: bool = False) -> list[dict]:
+def _whisper_align_speech(sp: dict, sents: list[dict], words: list) -> bool:
+    """Align one speech's sentences to Whisper words within its real offset window.
+
+    Returns True on success (sentences stamped, day-absolute). Needs both real
+    per-speech offsets (the window to bound the alignment) and words spoken in it;
+    a thin match falls through so the caller uses the positional estimate."""
+    offsets = _speech_offsets(sp)
+    if offsets is None or not words:
+        return False
+    in_window = whisper_align.words_in_window(words, offsets[0], offsets[1])
+    if not in_window:
+        return False
+    result = whisper_align.align_speech(sents, in_window, offsets)
+    if result is None:
+        return False
+    spans, _coverage = result
+    for s, (ts, te) in zip(sents, spans):
+        s["timeStart"], s["timeEnd"] = ts, te
+    return True
+
+
+def apply_timing(speeches: list[dict], *, words: list | None = None,
+                 force: bool = False) -> list[dict]:
     """Stamp day-absolute ``timeStart``/``timeEnd`` on every sentence of one
-    sitting (in place). Prefers real per-speech offsets; falls back to the
-    whole-day positional estimate where offsets are missing.
+    sitting (in place).
+
+    When ``words`` (a day's Whisper ``[start, end, text]`` list) is supplied, each
+    speech is aligned to the real spoken-word timings (``whisper-forced-alignment``);
+    a speech the ASR couldn't cover falls back to its real per-speech offset window,
+    and a speech without offsets to the whole-day positional estimate. With no
+    ``words`` the behaviour is exactly the prior positional pipeline.
 
     ``speeches`` must be in spoken order. Returns the same list. A speech whose
     sentences already carry timing is skipped unless ``force``."""
     speeches = sorted(speeches, key=lambda s: s.get("speechIndex", 0))
 
-    # Precompute whole-day positional offsets (the fallback) keyed by sentence
-    # identity, so a speech without real offsets still gets day-absolute timing.
+    # Precompute whole-day positional offsets (the last-resort fallback) keyed by
+    # sentence identity, so a speech without real offsets still gets day-absolute
+    # timing.
     duration = day_duration_seconds(speeches)
     total_chars = sum(_char_weight(s) for sp in speeches for s in _iter_sentences(sp))
     legacy: dict[int, tuple[float, float]] = {}
@@ -140,17 +177,20 @@ def apply_timing(speeches: list[dict], *, force: bool = False) -> list[dict]:
         if already and not force:
             continue
 
-        offsets = _speech_offsets(sp)
-        if offsets is not None:
-            _distribute(sents, offsets[0], offsets[1])
-            method, conf = SPEECH_OFFSET_METHOD, SPEECH_OFFSET_CONFIDENCE
-        elif legacy:
-            for s in sents:
-                start, end = legacy[id(s)]
-                s["timeStart"], s["timeEnd"] = start, end
-            method, conf = ALIGN_METHOD, ESTIMATED_CONFIDENCE
+        if words and _whisper_align_speech(sp, sents, words):
+            method, conf = WHISPER_METHOD, WHISPER_CONFIDENCE
         else:
-            method, conf = NO_TIMING, None
+            offsets = _speech_offsets(sp)
+            if offsets is not None:
+                _distribute(sents, offsets[0], offsets[1])
+                method, conf = SPEECH_OFFSET_METHOD, SPEECH_OFFSET_CONFIDENCE
+            elif legacy:
+                for s in sents:
+                    start, end = legacy[id(s)]
+                    s["timeStart"], s["timeEnd"] = start, end
+                method, conf = ALIGN_METHOD, ESTIMATED_CONFIDENCE
+            else:
+                method, conf = NO_TIMING, None
 
         debug = sp.setdefault("debug", {})
         debug["align-method"] = method

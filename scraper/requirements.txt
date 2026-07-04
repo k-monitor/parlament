@@ -13,5 +13,18 @@ requests>=2.31,<3
 # imported lazily, so a plain scrape works without it installed.
 # paramiko>=3,<4
 
+# Optional: Whisper forced-alignment sentence timing (TIM-1, the default method).
+# The align stage transcribes each day's recording and aligns the words to the
+# official transcript at sentence level.
+#  - `modal` is the lightweight CLIENT for the managed-GPU offload
+#    (PARLAMONITOR_TIMING_BACKEND=whisper-modal); the heavy faster-whisper + model
+#    live in the Modal image (whisper_modal_app.py), never on the host.
+#  - `faster-whisper` (plus an `ffmpeg` binary on PATH) is only needed for the LOCAL
+#    backend (PARLAMONITOR_TIMING_BACKEND=whisper-local).
+# Both are imported lazily and the pipeline degrades to the positional estimate
+# when neither is present, so a plain scrape needs neither (SCR-6).
+# modal>=0.64
+# faster-whisper>=1.1,<2
+
 # Test-only:
 #   pytest>=8

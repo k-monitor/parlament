@@ -35,8 +35,10 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from . import whisper_align
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
-from .config import Paths, session_id
+from .config import Paths, session_id, timing_backend as _default_timing_backend
+from .config import whisper_language, whisper_model
 from .felicitas import FelicitasClient
 from .proceedings.scrape import _write_json, scrape_day, sitting_number
 from .proceedings.transform import transform_day
@@ -123,9 +125,13 @@ def _votes_fingerprint(records: list[dict]) -> str:
 # --- proceedings -----------------------------------------------------------
 
 def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
-                      state: dict, *, force: bool, resolve_offsets: bool) -> list[str]:
+                      state: dict, *, force: bool, resolve_offsets: bool,
+                      timing_backend: str) -> list[str]:
     """Re-scrape only the sitting days that are new or changed. Returns the list
-    of session ids whose ``processed`` JSON was (re)written."""
+    of session ids whose ``processed`` JSON was (re)written.
+
+    Changed days are batch-transcribed with Whisper (forced-alignment timing, TIM-1)
+    before transform; a day with no transcription degrades to positional timing."""
     start, end = _cycle_range(felicitas, cycle)
     days = felicitas.session_days(cycle, start, end)
     if not days:
@@ -133,7 +139,7 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
         return []
     latest_date = max((d.get("date") or "") for d in days)
     proc = state.setdefault("proceedings", {})
-    written: list[str] = []
+    changed: list[tuple[str, dict]] = []      # (session, bundle) to (re)build
 
     for day in sorted(days, key=lambda d: d.get("date") or ""):
         sitting = sitting_number(day)
@@ -167,12 +173,32 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
                             session, day.get("date"))
             else:
                 _write_json(paths.raw_day(session), bundle)
-                record = transform_day(bundle)
-                _write_json(paths.session_file(session), record)
-                written.append(session)
-                logger.info("Synced sitting %s (%s): %d speeches", session,
-                            day.get("date"), len(bundle["speeches"]))
+                changed.append((session, bundle))
         proc[session] = sig
+
+    if not changed:
+        return []
+
+    # Transcribe the changed days' recordings (cache-aware, batched, parallel on
+    # Modal); alignment failure for any day is isolated so it just falls back to the
+    # positional estimate (SCR-5).
+    words_by_session: dict[str, list] = {}
+    try:
+        days_info = [(s, (b.get("video") or {}).get("m3u8"),
+                      (b.get("video") or {}).get("playseq")) for s, b in changed]
+        words_by_session = whisper_align.ensure_words(
+            paths, days_info, backend=timing_backend, model=whisper_model(),
+            language=whisper_language(), force=force)
+    except Exception:
+        logger.exception("Whisper alignment failed; using positional timing")
+
+    written: list[str] = []
+    for session, bundle in changed:
+        record = transform_day(bundle, words=words_by_session.get(session))
+        _write_json(paths.session_file(session), record)
+        written.append(session)
+        logger.info("Synced sitting %s: %d speeches (%s)", session,
+                    len(bundle["speeches"]), record["meta"]["timingMethod"])
     return written
 
 
@@ -231,10 +257,11 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
              force: bool = False, no_detail: bool = False,
              no_offsets: bool = False, reps_max_age: float = DEFAULT_REPS_MAX_AGE,
              skip_bills: bool = False, skip_votes: bool = False,
-             skip_reps: bool = False) -> dict:
+             skip_reps: bool = False, timing_backend: str | None = None) -> dict:
     """One cheap sync pass over ``cycle``. Each domain is isolated so one failing
     query never aborts the others (SCR-5). Returns a summary of what changed."""
     paths.ensure()
+    backend = timing_backend or _default_timing_backend()
     state = load_state(paths.sync_state)
     summary = {"cycle": cycle, "checkedAt": _now(),
                "sessions": [], "bills": False, "votes": False,
@@ -243,7 +270,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
     try:
         summary["sessions"] = _sync_proceedings(
             felicitas, paths, cycle, state, force=force,
-            resolve_offsets=not no_offsets)
+            resolve_offsets=not no_offsets, timing_backend=backend)
     except Exception as e:
         logger.exception("Proceedings sync failed")
         summary["errors"].append(f"proceedings: {e}")

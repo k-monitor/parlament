@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from .. import agenda as agenda_mod
 from ..names import build_person
 from ..segment import html_to_text, split_sentences
-from ..timing import apply_timing
+from ..timing import SPEECH_OFFSET_METHOD, WHISPER_METHOD, apply_timing
 
 PARLIAMENT = "HU"
 CREATOR = "Magyar Országgyűlés"
@@ -220,8 +220,14 @@ def _speech_entry(cycle: int, sitting: int, sp: dict, date: str,
     return entry
 
 
-def transform_day(raw: dict, *, force_timing: bool = True) -> dict:
-    """Turn a raw day bundle (``scrape.scrape_day`` output) into a session record."""
+def transform_day(raw: dict, *, words: list | None = None,
+                  force_timing: bool = True) -> dict:
+    """Turn a raw day bundle (``scrape.scrape_day`` output) into a session record.
+
+    ``words`` is the day's Whisper ``[start, end, text]`` transcription (day-absolute
+    seconds), produced and cached by the align stage; when given, sentence timing is
+    word-accurate forced alignment (TIM-1), otherwise it is the positional estimate.
+    """
     cycle = int(raw["cycle"])
     sitting = int(raw["sitting"])
     date = raw.get("date") or ""
@@ -234,8 +240,10 @@ def transform_day(raw: dict, *, force_timing: bool = True) -> dict:
     for i, e in enumerate(entries, start=1):
         e["speechIndex"] = i
 
-    # v1 timing: positional/character estimate across the whole day (TIM-1).
-    apply_timing(entries, force=force_timing)
+    # Whisper forced alignment when a transcription is available, else the
+    # positional character estimate (TIM-1 / TIM-4).
+    apply_timing(entries, words=words, force=force_timing)
+    timing_method = WHISPER_METHOD if words else SPEECH_OFFSET_METHOD
 
     if entries:
         date_start = min(e["dateStart"] for e in entries)
@@ -266,7 +274,7 @@ def transform_day(raw: dict, *, force_timing: bool = True) -> dict:
             # first to "activate" the stream (carried through for the viewer).
             "dayVideoPlayseq": (day_video or {}).get("playseq"),
             "counts": {"speeches": len(entries), "withText": n_text},
-            "timingMethod": "felicitas-speech-offset",
+            "timingMethod": timing_method,
             "processing": {"transform": datetime.now().isoformat("T", "seconds")},
         },
         "data": entries,

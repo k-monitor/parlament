@@ -25,6 +25,33 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+# --- sentence↔video timing backend (TIM-1) --------------------------------
+# The default sentence timing is Whisper forced alignment (parlamonitor.whisper_align);
+# it degrades to the positional character estimate when no transcription backend is
+# available, so a clean checkout still scrapes with no GPU/audio toolchain (SCR-6).
+
+def timing_backend() -> str:
+    """``auto`` | ``whisper-modal`` | ``whisper-local`` | ``character``.
+
+    ``auto`` prefers Whisper on Modal, then local ``faster-whisper``, then the
+    character estimate — whichever is actually available."""
+    return (os.environ.get("PARLAMONITOR_TIMING_BACKEND") or "auto").strip().lower()
+
+
+def whisper_model() -> str:
+    """The Whisper model id. ``large-v3-turbo`` is fast and cheap yet accurate."""
+    return (os.environ.get("PARLAMONITOR_WHISPER_MODEL") or "large-v3-turbo").strip()
+
+
+def whisper_language() -> str:
+    return (os.environ.get("PARLAMONITOR_WHISPER_LANGUAGE") or "hu").strip()
+
+
+def whisper_modal_app() -> str:
+    return (os.environ.get("PARLAMONITOR_WHISPER_MODAL_APP")
+            or "parlamonitor-whisper").strip()
+
+
 def session_id(cycle: int, sitting: int) -> str:
     """Canonical session key ``<cycle><sitting:03d>`` (e.g. 43, day 7 -> ``43007``).
 
@@ -110,6 +137,13 @@ class Paths:
     def raw_day(self, session: str) -> Path:
         """Raw scraped bundle for one sitting, pre-transform."""
         return self.raw_plenary / f"raw-{session}-day.json"
+
+    def whisper_cache(self, session: str) -> Path:
+        """Cached Whisper word-timestamps for one sitting (TIM-1).
+
+        Keyed by the recording URL + model inside the file, so an unchanged sitting
+        is never re-transcribed on a re-run — the GPU cost tracks only new work."""
+        return self.raw_plenary / f"whisper-{session}.json"
 
     def session_file(self, session: str) -> Path:
         """The published per-sitting session record."""

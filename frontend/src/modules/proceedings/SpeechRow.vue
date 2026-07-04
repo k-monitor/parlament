@@ -68,13 +68,17 @@ function paraText(p) {
         <FactionBadge :faction="speech.faction" />
         <span class="badge subtle" v-if="speech.speech_type">{{ speech.speech_type }}</span>
       </div>
-      <!-- Trailing controls: kept together as one non-shrinking group so the play
-           button is never pushed off the card's edge (it used to be clipped on
-           mobile). -->
-      <div class="speech-controls">
+      <!-- Meta: the video-only note, timing and duration. On desktop it sits
+           inline before the actions; on mobile it drops to its own line under the
+           speaker so the long "video only" note never squeezes the name. -->
+      <div class="speech-meta">
         <span class="muted small" v-if="!speech.has_text">📼 {{ $t('viewer.videoOnly') }}</span>
         <TimingBadge :timing="speech.timing" />
         <span class="muted small nowrap" v-if="speech.duration">⏱ {{ formatDuration(speech.duration) }}</span>
+      </div>
+      <!-- Actions: kept together as one non-shrinking group so the play button is
+           never pushed off the card's edge (it used to be clipped on mobile). -->
+      <div class="speech-actions">
         <!-- Spoiler toggle: reveals the transcript inline. Sits just left of the
              play button; hidden for video-only speeches. -->
         <button
@@ -126,13 +130,31 @@ function paraText(p) {
 .speech-item { border-radius: 8px; }
 .speech-item.procedural { opacity: .72; }
 .speech-row { display: flex; align-items: center; gap: .8rem; padding: .5rem .7rem; border-radius: 8px; color: var(--ink); }
-/* Leading info grows to push the controls right (replaces the old .grow spacer)
-   and can shrink below its content so its badges wrap on narrow screens. */
+/* Leading info grows to push the meta + actions right (replaces the old .grow
+   spacer) and can shrink below its content so its badges wrap on narrow screens. */
 .speech-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: .5rem .8rem; }
-/* Controls stay together as one block that never shrinks, so the play button is
+.speech-meta { flex: 0 0 auto; display: flex; align-items: center; gap: .6rem; }
+/* Actions stay together as one block that never shrinks, so the play button is
    always fully visible instead of being clipped past the card edge. */
-.speech-controls { flex: 0 0 auto; display: flex; align-items: center; gap: .6rem; }
+.speech-actions { flex: 0 0 auto; display: flex; align-items: center; gap: .4rem; }
 .nowrap { white-space: nowrap; }
+
+/* Mobile: stack into an identity block (top-left) with the play controls pinned
+   top-right, and the meta line (video-only note · timing · duration) on its own
+   row underneath — so a wrapped two-line name and the long "video only" note no
+   longer collide or float, vertically centred, in the middle of the row. */
+@media (max-width: 560px) {
+  .speech-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "main actions" "meta actions";
+    align-items: start;
+    column-gap: .5rem; row-gap: .3rem;
+  }
+  .speech-main { grid-area: main; align-self: center; }
+  .speech-meta { grid-area: meta; flex-wrap: wrap; }
+  .speech-actions { grid-area: actions; align-self: start; }
+}
 /* Highlight only the header row when open (or hovered) — the transcript itself
    stays on the plain surface so a long block reads at full contrast (~9.5:1
    with --ink) instead of washed out on the pink tint. */

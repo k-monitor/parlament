@@ -103,10 +103,15 @@ const videoPlayseq = computed(() => usingClip.value
   ? (speech.value && speech.value.video_playseq) || null
   : (session.value && session.value.video_playseq) || null)
 // Day-absolute time that the clip's t=0 maps to, so sentence times (which are
-// day-absolute) convert to clip-relative seeks: clipT = time - clipOrigin. For
-// the whole-day fallback the clip *is* the day, so the origin is 0.
+// day-absolute) convert to clip-relative seeks: clipT = time - clipOrigin. The
+// clip is cut at the speech's `video_start` (per_speech_clip, media.py), so THAT
+// — not `time_start` — is its origin. They differ by the pre-speech preamble
+// (chair calling the speaker, walking to the podium, applause) that whisper
+// alignment correctly places *before* the first spoken sentence: using
+// `time_start` would shift the whole clip by that gap (up to ~20s). For the
+// whole-day fallback the clip *is* the day, so the origin is 0.
 const clipOrigin = computed(() =>
-  (usingClip.value && speech.value.time_start != null) ? speech.value.time_start : 0)
+  (usingClip.value && speech.value.video_start != null) ? speech.value.video_start : 0)
 
 // "View on parlament.hu" (VIE-7): the per-speech playseq player plays exactly
 // this speech's clip on parlament.hu's own server — a real per-speech original,

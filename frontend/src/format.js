@@ -134,20 +134,33 @@ function splitInterjectionSpeaker(raw) {
 // adtak…"). It closed the interrupted clause, so it belongs on the paragraph
 // before the interjection, not dangling on the one after it.
 const LEADING_PUNCT = /^[,.;:!?…]+/
+// A pause-dash the speaker used to bracket the interjected clause — "…úr ‑ de
+// hát… (Derültség.) ‑, hogy…" leaves a stray "‑" opening the continuation once
+// the parenthetical is lifted out. Unlike the clause punctuation it carries no
+// meaning on its own, so it is simply DROPPED (not reattached). Same dash class
+// as INTERJECTION_SEP (U+2010–U+2015, U+2212, hyphen).
+const LEADING_DASH = /^[\s‐-―−-]+/
 
 // Push a spoken (non-interjection) segment onto `out`, returning the pushed
-// paragraph (or `prev` unchanged when the segment is empty). If the segment
-// leads with orphaned punctuation (see LEADING_PUNCT) and a previous spoken
-// paragraph exists, that punctuation is lifted onto the end of `prev` so the
-// break reads "…dobják ki," / "arra adtak…" instead of "…dobják ki" / ", arra
-// adtak…".
+// paragraph (or `prev` unchanged when the segment is empty). When a previous
+// spoken paragraph exists and this segment opens with the debris of a lifted
+// parenthetical — stray pause-dashes and/or the punctuation that closed the
+// interrupted clause — the dashes are dropped and the clause punctuation is
+// lifted onto the end of `prev`, so the break reads "…dobják ki," / "arra
+// adtak…" instead of "…dobják ki" / ", arra adtak…" (and "‑, hogy…" never
+// dangles as its own "▶ ‑," row in the karaoke viewer).
 function pushSpoken(out, raw, prev) {
   let text = raw.trim()
   if (prev) {
-    const lead = text.match(LEADING_PUNCT)
-    if (lead) {
-      prev.text += lead[0]
-      text = text.slice(lead[0].length).trimStart()
+    // Peel the lifted-parenthetical debris off the front, alternating between
+    // stray dashes (dropped) and clause punctuation (lifted onto `prev`), until
+    // real words remain.
+    for (;;) {
+      const dash = text.match(LEADING_DASH)
+      if (dash) text = text.slice(dash[0].length)
+      const punct = text.match(LEADING_PUNCT)
+      if (punct) { prev.text += punct[0]; text = text.slice(punct[0].length).trimStart() }
+      if (!dash && !punct) break
     }
   }
   if (!text) return prev
@@ -161,7 +174,11 @@ function pushSpoken(out, raw, prev) {
 // its "Name:" attribution lifted off (see splitInterjectionSpeaker).
 function pushAsides(out, inner) {
   for (const part of inner.split(INTERJECTION_SEP)) {
-    const t = part.trim()
+    // Trim surrounding separator-dashes too: when an interjection bundle is cut
+    // across sentence boundaries the " ‑ " separator loses one flanking space,
+    // so INTERJECTION_SEP no longer splits it and a stray leading/trailing dash
+    // clings to the part ("Nyilvános idegenvezetés van. ‑").
+    const t = part.replace(LEADING_DASH, '').replace(/[\s‐-―−-]+$/, '').trim()
     if (!t) continue
     const { speaker, text } = splitInterjectionSpeaker(t)
     out.push({ text, interjection: true, speaker })
@@ -182,17 +199,19 @@ function pushAsides(out, inner) {
 // heckles); numeric & date references — "(2)", "(V. 9.)" — stay inline in the
 // spoken text; punctuation orphaned after a dropped parenthetical is reattached
 // to the preceding spoken segment.
-export function splitSegmentsCarry(block, inParen = false) {
+export function splitSegmentsCarry(block, inParen = false, prevSpoken = null) {
   const out = []
-  // Last spoken segment in THIS block, so orphaned leading punctuation on a
-  // post-interjection continuation reattaches to it — never across a boundary.
-  let prevSpoken = null
+  // `prevSpoken` is the last spoken segment seen so far — it may live in an
+  // EARLIER sentence (passed in by segmentSentences) so orphaned leading
+  // punctuation on a post-interjection continuation reattaches even when the
+  // parenthetical spanned a sentence boundary. It is threaded back out as
+  // `lastSpoken` for the next sentence.
 
   // Continuation of an aside opened in an earlier sentence: everything up to the
   // closing ")" (or the whole block, if it never closes) is still the aside.
   if (inParen) {
     const close = block.indexOf(')')
-    if (close < 0) { pushAsides(out, block); return { segments: out, inParen: true } }
+    if (close < 0) { pushAsides(out, block); return { segments: out, inParen: true, lastSpoken: prevSpoken } }
     pushAsides(out, block.slice(0, close))
     block = block.slice(close + 1)
     inParen = false
@@ -207,7 +226,7 @@ export function splitSegmentsCarry(block, inParen = false) {
       // Unclosed "(": opens an aside that runs on into the next sentence.
       prevSpoken = pushSpoken(out, block.slice(last, open), prevSpoken)
       pushAsides(out, block.slice(open + 1))
-      return { segments: out, inParen: true }
+      return { segments: out, inParen: true, lastSpoken: prevSpoken }
     }
     const inner = block.slice(open + 1, close).trim()
     // A reference like "(2)" or "(V. 9.)" is part of the speech, not a heckle:
@@ -219,8 +238,8 @@ export function splitSegmentsCarry(block, inParen = false) {
     last = close + 1
     idx = close + 1
   }
-  pushSpoken(out, block.slice(last), prevSpoken)
-  return { segments: out, inParen: false }
+  prevSpoken = pushSpoken(out, block.slice(last), prevSpoken)
+  return { segments: out, inParen: false, lastSpoken: prevSpoken }
 }
 
 // Convenience wrapper for callers that pass a self-contained block (a full source
@@ -238,10 +257,20 @@ export function splitSegments(block) {
 // leading speaker label is stripped from the opening sentence.
 export function segmentSentences(sentences) {
   let inParen = false
+  // Thread the last spoken segment across sentences so a comma orphaned by a
+  // parenthetical that closed in a LATER sentence ("…szégyellték (heckle" /
+  // "…soraiból.)," / "nem értem…") reattaches to its clause instead of showing
+  // as its own "▶ ," row. Reset at a paragraph boundary so punctuation is never
+  // lifted across a <p> break.
+  let prevSpoken = null
+  let prevPara
   return (sentences || []).map((s, i) => {
+    if (i > 0 && s.paragraph !== prevPara) prevSpoken = null
+    prevPara = s.paragraph
     const text = i === 0 ? stripSpeakerLabel(s.text) : s.text
-    const res = splitSegmentsCarry(text, inParen)
+    const res = splitSegmentsCarry(text, inParen, prevSpoken)
     inParen = res.inParen
+    prevSpoken = res.lastSpoken
     return { ...s, segments: res.segments }
   })
 }

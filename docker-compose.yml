@@ -127,9 +127,10 @@ services:
       PARLAMONITOR_SSH_HOST: ${PARLAMONITOR_SSH_HOST:-}
       PARLAMONITOR_SSH_PORT: ${PARLAMONITOR_SSH_PORT:-22}
       PARLAMONITOR_SSH_USER: ${PARLAMONITOR_SSH_USER:-}
-      # Fixed in-container path of the key bind-mounted below. Harmless when SSH
-      # is off: the scraper ignores it unless SSH_HOST is also set.
-      PARLAMONITOR_SSH_KEY: ${PARLAMONITOR_SSH_KEY:-/run/secrets/ssh_key}
+      # Fixed in-container path of the key bind-mounted below (plain literal, no
+      # interpolation — podman-compose mishandles the fancier forms). Harmless
+      # when SSH is off: the scraper ignores it unless SSH_HOST is also set.
+      PARLAMONITOR_SSH_KEY: /run/secrets/ssh_key
       PARLAMONITOR_SSH_KEY_PASSPHRASE: ${PARLAMONITOR_SSH_KEY_PASSPHRASE:-}
       PARLAMONITOR_SSH_KNOWN_HOSTS: ${PARLAMONITOR_SSH_KNOWN_HOSTS:-}
       # Refresh the per-MP registry at most this often (seconds); 12h default.

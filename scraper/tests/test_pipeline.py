@@ -331,6 +331,42 @@ def test_transform_degraded_speech_flagged():
     assert no_text["debug"]["confidence_reason"] == "no-proceedings-text"
 
 
+def test_transform_dedups_speech_listed_under_several_agenda_items():
+    # The Felicitas source emits the same physical speech once per agenda item it
+    # is linked to (same speech_uuid + video offsets + text, differing aktus). The
+    # transform must collapse those to one speech, keeping the first agenda item
+    # and recording the others — not show the chair's remarks 2-3× in a row.
+    raw = _raw_bundle()
+    opener = dict(raw["speeches"][0])
+    dup1 = dict(opener, aktus="Az ülés napirendjének megállapítása")
+    dup2 = dict(opener, aktus="Bejelentések")
+    raw["speeches"] = [opener, dup1, dup2] + raw["speeches"][1:]
+
+    rec = transform_day(raw)
+    data = rec["data"]
+    # Three physical speeches survive (u1 once, u2, u3), not five.
+    assert rec["meta"]["counts"]["speeches"] == 3
+    assert [d["debug"]["speechUUID"] for d in data] == ["u1", "u2", "u3"]
+    # speechIndex is contiguous over the deduped list (drives the uid).
+    assert [d["speechIndex"] for d in data] == [1, 2, 3]
+    # Kept under its FIRST agenda item; the others are recorded for provenance.
+    assert data[0]["agendaItem"]["officialTitle"] == "Ülésnap megnyitása"
+    assert data[0]["debug"]["mergedAgendaItems"] == [
+        "Az ülés napirendjének megállapítása", "Bejelentések"]
+
+
+def test_transform_keeps_distinct_speeches_sharing_a_speaker():
+    # Same speaker, different speeches (distinct uuid) must NOT be merged.
+    raw = _raw_bundle()
+    again = dict(raw["speeches"][0], speech_uuid="u1b", sorszam=4,
+                 aktus="Napirend utáni felszólalások", kezdete="18:00:00",
+                 video_off_start=6000.0, video_off_end=6120.0)
+    raw["speeches"].append(again)
+    rec = transform_day(raw)
+    assert rec["meta"]["counts"]["speeches"] == 4
+    assert [d["debug"]["speechUUID"] for d in rec["data"]] == ["u1", "u2", "u3", "u1b"]
+
+
 def test_sitting_number_from_felirat():
     assert sitting_number({"datum_felirat": "2026.06.23.(11)"}) == 11
 

@@ -60,6 +60,19 @@ MIN_COVERAGE = 0.30
 # Hungarian function words: a, az, és, hogy…) also occur in a *wrong* alignment, so
 # they don't count toward the hyp-coverage trust signal.
 _MIN_RUN = 2
+# No real spoken word lasts this long. When Whisper fails to transcribe a passage
+# (an off-mic exchange, laughter) it often STRETCHES the neighbouring word to span
+# the gap — e.g. a 4.2s "következő" absorbing an untranscribed heckle. Such a word's
+# recorded start is meaningless (it's mostly untranscribed audio), so we clamp its
+# span to the last MAX_WORD_DUR seconds before its end and free the rest as a gap
+# the unspoken/untranscribed sentences can be interpolated into.
+MAX_WORD_DUR = 1.5
+# A sentence's matched words are split into time-clusters wherever a gap this large
+# opens between consecutive matches (after the clamp above). A stretched-word clamp
+# turns an absorbed passage into exactly such a gap; the sentence is then anchored
+# on its DENSEST cluster, so a stray early match (the spurious "A" before a stretched
+# "következő") no longer drags the sentence's start back across the gap.
+MAX_INTRA_GAP = 2.5
 
 # `\w` is Unicode-aware in Python, so this keeps Hungarian accented letters
 # (á é í ó ö ő ú ü ű) and digits while dropping punctuation/whitespace.
@@ -135,27 +148,72 @@ def words_in_window(words: list, start: float, end: float) -> list:
 
 # --- alignment ------------------------------------------------------------
 
+def _spoken_text(sentences: list[dict]) -> list[str]:
+    """Per-sentence text with parenthetical content removed.
+
+    Stage directions and heckles in the proceedings — "(Taps.)", "(Közbeszólás:
+    …)", "(Derültség a Fidesz padsoraiban.)" — are editorial notes, NOT words the
+    speaker utters, so they must not anchor the alignment: matching their tokens
+    against the ASR hypothesis drags the timing of the real sentences around them.
+    Open-paren state is carried ACROSS sentences because one parenthetical is
+    often split over several sentences at its internal full stops (e.g. "(A
+    teremben lévők közösen eléneklik a Himnuszt, ezt követően helyet foglalnak.)"
+    becomes two sentences). No nesting occurs in the transcripts, so a boolean
+    depth is enough. A fully-parenthetical sentence yields "" — it contributes no
+    anchor and its span is later interpolated into the gap (:func:`_fill_gaps`)."""
+    out: list[str] = []
+    in_paren = False
+    for s in sentences:
+        kept: list[str] = []
+        for ch in (s.get("text") or ""):
+            if ch == "(":
+                in_paren = True
+            elif ch == ")":
+                in_paren = False
+            elif not in_paren:
+                kept.append(ch)
+        out.append("".join(kept))
+    return out
+
+
 def _flatten_ref(sentences: list[dict]) -> tuple[list[str], list[int]]:
     """Flatten the reference sentences to one token stream, remembering which
-    sentence each token came from."""
+    sentence each token came from. Parenthetical stage directions are dropped (see
+    :func:`_spoken_text`) so only actually-spoken words anchor the alignment."""
     toks: list[str] = []
     owner: list[int] = []
-    for i, s in enumerate(sentences):
-        for t in _norm_tokens(s.get("text", "")):
+    for i, spoken in enumerate(_spoken_text(sentences)):
+        for t in _norm_tokens(spoken):
             toks.append(t)
             owner.append(i)
     return toks, owner
 
 
-def _char_weight(sent: dict) -> int:
-    return max(len((sent.get("text") or "").strip()), 1)
+def _cluster_span(times: list[tuple[float, float]]) -> tuple[float, float]:
+    """Reduce a sentence's matched word ``(start, end)`` times to one ``[lo, hi]``.
+
+    The times are in match order (⇒ time order). Where a gap larger than
+    :data:`MAX_INTRA_GAP` opens between consecutive matches, the sentence is split
+    into clusters; we anchor on the one with the most words and read ``lo``/``hi``
+    off it. This drops a stray early match separated from the real run by a gap
+    (which a clamped stretched word opens — see :data:`MAX_WORD_DUR`), so the
+    sentence's start isn't dragged back across untranscribed audio."""
+    clusters: list[list[tuple[float, float]]] = [[times[0]]]
+    for prev, cur in zip(times, times[1:]):
+        if cur[0] - prev[1] > MAX_INTRA_GAP:
+            clusters.append([cur])
+        else:
+            clusters[-1].append(cur)
+    best = max(clusters, key=len)
+    return min(t[0] for t in best), max(t[1] for t in best)
 
 
-def _fill_gaps(spans: list, start: float, end: float, sentences: list[dict]) -> None:
+def _fill_gaps(spans: list, start: float, end: float, weights: list[int]) -> None:
     """Give every sentence a ``[start, end]`` time. Sentences the ASR matched keep
     their measured span; unmatched runs between two matched anchors (or before the
-    first / after the last) are distributed across the free interval by character
-    length, then the whole list is clamped monotonic inside ``[start, end]``.
+    first / after the last) are distributed across the free interval by ``weights``
+    (spoken-character length — so a non-spoken stage direction claims almost none of
+    the gap), then the whole list is clamped monotonic inside ``[start, end]``.
 
     ``spans[i]`` is ``[s, e]`` for a matched sentence or ``None`` for an unmatched
     one; mutated in place to contain no ``None``."""
@@ -173,11 +231,10 @@ def _fill_gaps(spans: list, start: float, end: float, sentences: list[dict]) -> 
         hi = spans[j][0] if j < n else end
         if hi < lo:
             hi = lo
-        run = sentences[i:j]
-        total = sum(_char_weight(s) for s in run)
+        total = sum(weights[i:j])
         cursor, scale = lo, (hi - lo) / total if total else 0.0
         for k in range(i, j):
-            w = _char_weight(sentences[k]) * scale
+            w = weights[k] * scale
             spans[k] = [cursor, min(cursor + w, hi)]
             cursor += w
         i = j
@@ -204,15 +261,22 @@ def align_speech(sentences: list[dict], words: list, window: tuple[float, float]
     """
     if not sentences:
         return None
+    spoken = _spoken_text(sentences)          # parentheticals dropped (not spoken)
     ref_tokens, owner = _flatten_ref(sentences)
-    # Expand multi-token whisper "words" defensively (usually one token each).
+    # Expand multi-token whisper "words" defensively (usually one token each) and
+    # clamp implausibly long "words" (see MAX_WORD_DUR): an absorbed passage keeps
+    # only its final MAX_WORD_DUR seconds, so the untranscribed audio before it is
+    # freed and later opens an intra-sentence cluster gap.
     hyp_tokens: list[str] = []
     hyp_time: list[tuple[float, float]] = []
     for w in words or []:
         wt = _norm_tokens(w[2])
         if not wt:
             continue
-        span = (float(w[0]), float(w[1]))
+        ws, we = float(w[0]), float(w[1])
+        if we - ws > MAX_WORD_DUR:
+            ws = we - MAX_WORD_DUR
+        span = (ws, we)
         for t in wt:
             hyp_tokens.append(t)
             hyp_time.append(span)
@@ -220,9 +284,9 @@ def align_speech(sentences: list[dict], words: list, window: tuple[float, float]
         return None
 
     start, end = float(window[0]), float(window[1])
-    # Per-sentence accumulator of matched word times.
-    lo: list[float | None] = [None] * len(sentences)
-    hi: list[float | None] = [None] * len(sentences)
+    # Per-sentence matched word times (in match ⇒ time order), reduced to a span by
+    # clustering so a stray early match doesn't drag a sentence's start back.
+    per_sent: list[list[tuple[float, float]]] = [[] for _ in sentences]
     matched = 0        # all matched ref tokens (monotonic optimal alignment)
     solid = 0          # matched tokens in runs of >=_MIN_RUN (trust signal)
 
@@ -231,12 +295,7 @@ def align_speech(sentences: list[dict], words: list, window: tuple[float, float]
         if size >= _MIN_RUN:
             solid += size
         for k in range(size):
-            si = owner[a0 + k]
-            ws, we = hyp_time[b0 + k]
-            if lo[si] is None or ws < lo[si]:
-                lo[si] = ws
-            if hi[si] is None or we > hi[si]:
-                hi[si] = we
+            per_sent[owner[a0 + k]].append(hyp_time[b0 + k])
             matched += 1
 
     # Trust the alignment if either side is well covered (see MIN_COVERAGE): the
@@ -248,9 +307,13 @@ def align_speech(sentences: list[dict], words: list, window: tuple[float, float]
                      coverage, hyp_coverage, MIN_COVERAGE)
         return None
 
-    spans: list = [None if lo[i] is None else [lo[i], hi[i]]
-                   for i in range(len(sentences))]
-    _fill_gaps(spans, start, end, sentences)
+    spans: list = [_cluster_span(t) if t else None for t in per_sent]
+    spans = [list(s) if s is not None else None for s in spans]
+    # Interpolate the unmatched sentences weighted by SPOKEN length, so a stage
+    # direction (no spoken words) barely occupies the gap and the real spoken lines
+    # around it get the time.
+    weights = [max(len(spoken[i].strip()), 1) for i in range(len(sentences))]
+    _fill_gaps(spans, start, end, weights)
     return [(s, e) for s, e in spans], coverage
 
 

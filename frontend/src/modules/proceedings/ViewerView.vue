@@ -15,9 +15,10 @@
 // * VIE-9: when the clip ends, auto-advance to the next speech and keep playing.
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import Hls from 'hls.js'
 import { api } from '../../api.js'
-import { agendaLabel, formatDate, formatDuration, splitSegments, stripSpeakerLabel } from '../../format.js'
+import { agendaLabel, formatDate, formatDuration, segmentSentences } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
@@ -26,6 +27,14 @@ import TimingBadge from '../../components/TimingBadge.vue'
 const props = defineProps({ uid: String })
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
+
+// Hoisted out of the transcript v-for: the copy-link label is a constant, but as
+// an inline $t() it was re-translated twice PER SENTENCE on every re-render — and
+// the component re-renders on every `timeupdate` tick during playback. On a
+// long speech that made vue-i18n's translate ~94% of playback CPU (profiled).
+// A computed translates once (recomputing only when the locale changes).
+const copyLinkLabel = computed(() => t('viewer.copyLink'))
 
 const data = ref(null)
 const loading = ref(false)
@@ -62,16 +71,13 @@ const session = computed(() => data.value && data.value.session)
 const speakers = ref({})
 
 // Each karaoke sentence, with its text split into segments (spoken runs +
-// lifted-out parenthetical stage directions / heckles) — see splitSegments().
+// lifted-out parenthetical stage directions / heckles) — see segmentSentences().
 // The original sentence fields (ord/time_start/time_end) are kept so seeking,
 // karaoke highlight, deep links and copy-link all still key off the sentence.
-// The redundant speaker label is stripped from the opening sentence (its
-// trailing "(Fidesz)" would otherwise be mistaken for a heckle).
-const segmentedSentences = computed(() =>
-  sentences.value.map((s, i) => ({
-    ...s,
-    segments: splitSegments(i === 0 ? stripSpeakerLabel(s.text) : s.text),
-  })))
+// Parenthesis state is threaded sentence-to-sentence so a stage direction split
+// across sentence boundaries ("…úrtól. (" / "A miniszterek felállnak." / "…tett
+// minisztereknek.)") is lifted out as asides instead of leaking stray "(" / ")".
+const segmentedSentences = computed(() => segmentSentences(sentences.value))
 
 // Attribute named heckles ("Vitályos Eszter: …") to representatives so they get
 // a face + profile link. Best-effort: failure just leaves them as plain text.
@@ -247,9 +253,16 @@ function onTimeUpdate() {
   }
 }
 
+// Karaoke auto-scroll. A smooth scrollIntoView fires the container's own
+// `scroll` events, which would otherwise trip onUserScroll and switch OFF
+// auto-follow (making the transcript stutter along in 4s bursts). Suppress
+// those self-inflicted events for a short window around each programmatic
+// scroll; a real user scroll outside that window still pauses following.
 function scrollToCurrent() {
   const el = document.getElementById('s-' + currentOrd.value)
-  if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  if (!el) return
+  suppressScrollUntil = performance.now() + 900
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
 }
 
 // Seek to a clip-relative second (the control bar / clip start work in these).
@@ -313,8 +326,12 @@ function toggleFullscreen() {
 function onFullscreenChange() { isFullscreen.value = !!document.fullscreenElement }
 
 // Pause auto-follow while the user manually scrolls; resume when they stop.
+// Scroll events fired by our own scrollToCurrent() (within suppressScrollUntil)
+// are ignored so karaoke-follow doesn't disable itself.
 let scrollTimer = null
+let suppressScrollUntil = 0
 function onUserScroll() {
+  if (performance.now() < suppressScrollUntil) return
   autoFollow = false
   clearTimeout(scrollTimer)
   scrollTimer = setTimeout(() => { autoFollow = true }, 4000)
@@ -427,7 +444,7 @@ onBeforeUnmount(() => {
                   </button>
                 </template>
               </div>
-              <button class="copybtn" :aria-label="$t('viewer.copyLink')" :title="$t('viewer.copyLink')" @click="copyLink(s)">🔗</button>
+              <button class="copybtn" :aria-label="copyLinkLabel" :title="copyLinkLabel" @click="copyLink(s)">🔗</button>
             </div>
           </div>
         </div>

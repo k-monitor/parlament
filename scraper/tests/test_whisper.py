@@ -89,6 +89,73 @@ def test_align_speech_trusts_high_hyp_coverage_despite_stage_directions():
     assert spans[0][1] <= spans[1][0] <= spans[3][1] <= spans[4][0]
 
 
+def test_spoken_text_strips_parentheticals_across_sentences():
+    """Parenthetical stage directions — including ones split across sentence
+    boundaries — are removed before alignment; spoken text is kept verbatim."""
+    sentences = [
+        {"text": "Kérem, énekeljük el a Himnuszt. ("},
+        {"text": "A teremben lévők közösen eléneklik a Himnuszt, majd leülnek.)"},
+        {"text": "Köszönöm szépen."},
+        {"text": "(Taps a kormánypártok soraiból.)"},
+    ]
+    spoken = whisper_align._spoken_text(sentences)
+    assert spoken[0].strip() == "Kérem, énekeljük el a Himnuszt."
+    assert spoken[1].strip() == ""          # entirely inside the carried-over paren
+    assert spoken[2].strip() == "Köszönöm szépen."
+    assert spoken[3].strip() == ""          # fully parenthetical
+
+
+def test_align_speech_ignores_parenthetical_between_spoken_sentences():
+    """A stage direction between two spoken sentences must not steal word times:
+    its tokens (which recur as ordinary spoken words like "a") are excluded, so
+    the real sentences anchor correctly and the aside is interpolated into the
+    gap — the misalignment the parenthetical otherwise caused."""
+    sentences = [
+        {"text": "A jogállam helyreállítása a legfontosabb feladat."},
+        {"text": "(Derültség a Fidesz padsoraiban.)"},   # not spoken aloud
+        {"text": "A következő időszak feladata a helyreállítás."},
+    ]
+    words = [
+        [10.0, 10.5, "A"], [10.5, 11.0, "jogállam"], [11.0, 11.6, "helyreállítása"],
+        [11.6, 12.0, "a"], [12.0, 12.7, "legfontosabb"], [12.7, 13.2, "feladat"],
+        [30.0, 30.4, "A"], [30.4, 31.0, "következő"], [31.0, 31.6, "időszak"],
+        [31.6, 32.2, "feladata"], [32.2, 32.5, "a"], [32.5, 33.3, "helyreállítás"],
+    ]
+    spans, coverage = whisper_align.align_speech(sentences, words, (0.0, 40.0))
+    assert spans[0] == (10.0, 13.2)          # first spoken sentence, real times
+    assert spans[2] == (30.0, 33.3)          # third spoken sentence, real times
+    assert 13.2 <= spans[1][0] <= spans[1][1] <= 30.0   # aside strictly in the gap
+    assert coverage == 1.0                    # every SPOKEN ref token matched
+
+
+def test_align_speech_reclaims_time_from_stretched_asr_word():
+    """When Whisper fails to transcribe a passage and STRETCHES a neighbouring word
+    to span it (a >MAX_WORD_DUR "word"), the following sentence must anchor on the
+    real, densely-matched run — not on the stray match at the absorbed span's start.
+    The untranscribed spoken sentence before it then gets real room in the gap."""
+    sentences = [
+        {"text": "Az alkotmányosságot legyőzték."},               # spoken, matches
+        {"text": "Pócs képviselő úrnak valami problémája van?"},   # spoken, NOT in ASR
+        {"text": "A következő időszak feladata a helyreállítás."},  # spoken, matches
+    ]
+    words = [
+        [10.0, 10.5, "Az"], [10.5, 11.0, "alkotmányosságot"], [11.0, 11.6, "legyőzték"],
+        # "A" then a 4.6s "következő" absorbing the untranscribed Pócs sentence;
+        # "időszak…" is correctly timed after it.
+        [20.0, 20.4, "A"], [20.4, 25.0, "következő"],
+        [25.0, 25.5, "időszak"], [25.5, 26.0, "feladata"],
+        [26.0, 26.3, "a"], [26.3, 27.0, "helyreállítás"],
+    ]
+    spans, _ = whisper_align.align_speech(sentences, words, (0.0, 40.0))
+    assert spans[0] == (10.0, 11.6)
+    # Sentence 2 anchors on the reliable cluster (~"időszak" onward), not at 20.0.
+    assert spans[2][0] >= 23.0
+    # The untranscribed spoken sentence gets real room, not a squished sliver.
+    assert spans[1][1] - spans[1][0] >= 3.0
+    # Monotonic and ordered.
+    assert spans[0][1] <= spans[1][0] <= spans[1][1] <= spans[2][0]
+
+
 def test_align_speech_low_coverage_returns_none():
     """When almost nothing matches (bad audio / heavy paraphrase) the caller must
     fall back to the positional estimate rather than trust a bogus alignment."""

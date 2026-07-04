@@ -89,9 +89,6 @@ export function stripSpeakerLabel(text) {
 // plain hyphen.
 const INTERJECTION_SEP = /\s+[‐-―−-]\s+/
 
-// A top-level "(…)" parenthetical (no nesting expected in the transcripts).
-const PARENTHETICAL = /\(([^()]+)\)/g
-
 // Some parentheticals are references the speaker dictated, not stage directions
 // or heckles, and must stay INLINE (not be lifted into their own italic line):
 //   • a bare number — "A Házszabály 9. § (2) bekezdése", "(3) pont";
@@ -159,38 +156,94 @@ function pushSpoken(out, raw, prev) {
   return para
 }
 
-// Split ONE block of text (a source paragraph, or a single karaoke sentence)
-// into ordered segments: `[{ text, interjection, speaker }]`. Parentheticals
-// become `interjection: true` segments (stage directions / named heckles, with
-// `speaker` set when a "Name:" prefix was recognised); numeric & date references
-// stay inline in the spoken text; punctuation orphaned after a dropped
-// parenthetical is reattached to the preceding spoken segment. Shared by the
-// flowing spoiler (per source paragraph) and the karaoke viewer (per sentence).
-export function splitSegments(block) {
+// Push a parenthetical's inner content as one or more interjection segments —
+// one per interjection bundled inside (they split on a spaced dash), each with
+// its "Name:" attribution lifted off (see splitInterjectionSpeaker).
+function pushAsides(out, inner) {
+  for (const part of inner.split(INTERJECTION_SEP)) {
+    const t = part.trim()
+    if (!t) continue
+    const { speaker, text } = splitInterjectionSpeaker(t)
+    out.push({ text, interjection: true, speaker })
+  }
+}
+
+// Split ONE block of text into ordered segments `[{ text, interjection, speaker }]`,
+// carrying open-parenthesis state IN and OUT so a parenthetical can span the
+// block boundary. This matters for the karaoke viewer, which splits per SENTENCE:
+// a stage direction with an internal full stop — "(A miniszterek felállnak. A
+// patkóban… gratulál az esküt tett minisztereknek.)" — is cut into several
+// sentences, so no single sentence holds a balanced "(…)". `inParen` (from the
+// previous sentence) tells us the sentence opens inside a still-running aside;
+// the returned `inParen` tells the next one the same. No nesting is expected in
+// the transcripts, so the state is a simple boolean.
+//
+// Parentheticals become `interjection: true` segments (stage directions / named
+// heckles); numeric & date references — "(2)", "(V. 9.)" — stay inline in the
+// spoken text; punctuation orphaned after a dropped parenthetical is reattached
+// to the preceding spoken segment.
+export function splitSegmentsCarry(block, inParen = false) {
   const out = []
-  let last = 0, m
   // Last spoken segment in THIS block, so orphaned leading punctuation on a
-  // post-interjection continuation reattaches to it — never across a block/
-  // sentence boundary.
+  // post-interjection continuation reattaches to it — never across a boundary.
   let prevSpoken = null
-  PARENTHETICAL.lastIndex = 0
-  while ((m = PARENTHETICAL.exec(block)) !== null) {
-    // A reference like "(2)" or "(V. 9.)" is part of the speech, not a heckle:
-    // skip the match so it stays in the surrounding spoken text (`last` is left
-    // untouched, so the next slice swallows it).
-    const inner = m[1].trim()
-    if (/\d/.test(inner) && REFERENCE_PAREN.test(inner)) continue
-    prevSpoken = pushSpoken(out, block.slice(last, m.index), prevSpoken)
-    for (const part of m[1].split(INTERJECTION_SEP)) {
-      const t = part.trim()
-      if (!t) continue
-      const { speaker, text } = splitInterjectionSpeaker(t)
-      out.push({ text, interjection: true, speaker })
+
+  // Continuation of an aside opened in an earlier sentence: everything up to the
+  // closing ")" (or the whole block, if it never closes) is still the aside.
+  if (inParen) {
+    const close = block.indexOf(')')
+    if (close < 0) { pushAsides(out, block); return { segments: out, inParen: true } }
+    pushAsides(out, block.slice(0, close))
+    block = block.slice(close + 1)
+    inParen = false
+  }
+
+  let last = 0, idx = 0
+  while (idx < block.length) {
+    const open = block.indexOf('(', idx)
+    if (open < 0) break
+    const close = block.indexOf(')', open + 1)
+    if (close < 0) {
+      // Unclosed "(": opens an aside that runs on into the next sentence.
+      prevSpoken = pushSpoken(out, block.slice(last, open), prevSpoken)
+      pushAsides(out, block.slice(open + 1))
+      return { segments: out, inParen: true }
     }
-    last = m.index + m[0].length
+    const inner = block.slice(open + 1, close).trim()
+    // A reference like "(2)" or "(V. 9.)" is part of the speech, not a heckle:
+    // leave it inline (advance past it without moving `last`, so the next spoken
+    // slice swallows it).
+    if (/\d/.test(inner) && REFERENCE_PAREN.test(inner)) { idx = close + 1; continue }
+    prevSpoken = pushSpoken(out, block.slice(last, open), prevSpoken)
+    pushAsides(out, block.slice(open + 1, close))
+    last = close + 1
+    idx = close + 1
   }
   pushSpoken(out, block.slice(last), prevSpoken)
-  return out
+  return { segments: out, inParen: false }
+}
+
+// Convenience wrapper for callers that pass a self-contained block (a full source
+// paragraph, as the flowing spoiler does): returns just the segments, dropping
+// the carry state. A paragraph's parentheticals are balanced within it.
+export function splitSegments(block) {
+  return splitSegmentsCarry(block).segments
+}
+
+// Segment a speech's flat karaoke sentence list, threading open-parenthesis state
+// from each sentence into the next so a stage direction split across sentence
+// boundaries is lifted out as italic asides (not left as spoken text with stray
+// "(" / ")"). Returns each sentence with a `.segments` array; the ord/time_start/
+// time_end fields are preserved for seeking and karaoke highlight. The redundant
+// leading speaker label is stripped from the opening sentence.
+export function segmentSentences(sentences) {
+  let inParen = false
+  return (sentences || []).map((s, i) => {
+    const text = i === 0 ? stripSpeakerLabel(s.text) : s.text
+    const res = splitSegmentsCarry(text, inParen)
+    inParen = res.inParen
+    return { ...s, segments: res.segments }
+  })
 }
 
 // Turn a speech's flat sentence list into rendered paragraphs. Returns

@@ -179,6 +179,11 @@ def _speech_entry(cycle: int, sitting: int, sp: dict, date: str,
         "source": "felicitas-json",
         "confidence": 1.0 if sentences else 0.5,
     }
+    # Other agenda items this one physical speech was also listed under in the
+    # source (see _dedup_speeches) — kept for provenance; the speech itself is
+    # filed under its first agenda item only.
+    if sp.get("_merged_aktus"):
+        debug["mergedAgendaItems"] = sp["_merged_aktus"]
     if not sentences:
         # Video-only / no transcript — published in degraded form, flagged, never
         # dropped (SCR-5 / VIE-8).
@@ -220,6 +225,36 @@ def _speech_entry(cycle: int, sitting: int, sp: dict, date: str,
     return entry
 
 
+def _dedup_speeches(speeches: list[dict]) -> list[dict]:
+    """Collapse the source's per-agenda-item duplication of a single speech.
+
+    The Felicitas backend lists the SAME physical speech once for every agenda
+    item (``aktus``) it is linked to — identical ``speech_uuid``, video offsets
+    and text, differing only in ``aktus``. Left as-is, a chair's opening/closing
+    remarks show 2-3× in a row (measured: 189 of 205 sitting days affected). We
+    keep the FIRST occurrence (document order) and record the other agenda items
+    it spanned in ``_merged_aktus``; the speech is filed under its first agenda
+    item. Keyed on ``speech_uuid`` + video offsets so a hypothetical uuid reuse
+    with genuinely different content stays separate; falls back to ``sorszam``
+    when the source omits a uuid (e.g. legacy cycle-42 days).
+    """
+    kept: list[dict] = []
+    seen: dict = {}
+    for sp in speeches:
+        uuid = sp.get("speech_uuid")
+        key = ((uuid, sp.get("video_off_start"), sp.get("video_off_end"))
+               if uuid else ("sorszam", sp.get("sorszam")))
+        first = seen.get(key)
+        if first is None:
+            seen[key] = sp
+            kept.append(sp)
+        else:
+            aktus = (sp.get("aktus") or "").strip()
+            if aktus and aktus != (first.get("aktus") or "").strip():
+                first.setdefault("_merged_aktus", []).append(aktus)
+    return kept
+
+
 def transform_day(raw: dict, *, words: list | None = None,
                   force_timing: bool = True) -> dict:
     """Turn a raw day bundle (``scrape.scrape_day`` output) into a session record.
@@ -235,6 +270,7 @@ def transform_day(raw: dict, *, words: list | None = None,
 
     speeches = [s for s in raw.get("speeches", []) if s.get("sorszam") is not None]
     speeches.sort(key=lambda s: int(s["sorszam"]))
+    speeches = _dedup_speeches(speeches)
 
     entries = [_speech_entry(cycle, sitting, sp, date, day_video) for sp in speeches]
     for i, e in enumerate(entries, start=1):

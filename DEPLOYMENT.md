@@ -8,9 +8,9 @@ two volumes:
   exits. Keeping the build here — rather than inside the API — means the possibly
   long first build never holds up the app's healthcheck.
 - **`app`** — the FastAPI backend serving the versioned API, the MP photos and
-  the built Vue SPA from a single stateless process. It opens the SQLite DB
-  **read-only, once per request**, so a swapped-in DB is picked up on the next
-  request with no restart.
+  the built Vue SPA from a single stateless process (one uvicorn worker per
+  core). It reads the SQLite DB **read-only** and re-stats the file on every
+  request, so a swapped-in DB is picked up on the next request with no restart.
 - **`sync`** — a sidecar that keeps the data in step with `parlament.hu`
   (see [Continuous sync](#continuous-sync-keeping-in-step-with-parlamenthu)).
   It cheaply checks the latest cycle for changes, re-scrapes **only what
@@ -33,8 +33,9 @@ ready database and only ever read / incrementally update it.
                                                              ▲ ./data (rw)   ▲ dbdata (rw)
 ```
 
-Because the swap is atomic and the API reopens the DB per request, updates are
-**zero-downtime**: no restart, no dropped requests.
+Because the swap is atomic and the API notices the replaced file (new inode) on
+its next request, updates are **zero-downtime**: no restart, no dropped
+requests.
 
 ## Prerequisites
 
@@ -186,7 +187,7 @@ rebuild and without downtime. Every `PARLAMONITOR_SYNC_INTERVAL` seconds it runs
    aggregates, and **atomically swaps** the result in (DB-4). It is a fast no-op
    when nothing is newer.
 
-Because the API opens the DB **read-only per request**, the swap is picked up on
+Because the API re-stats the **read-only** DB per request, the swap is picked up on
 the next request — **no restart, no downtime, and only the changed sittings are
 reprocessed** (not the whole corpus). An idle poll is a handful of requests and
 touches neither the data files nor the DB.
@@ -293,6 +294,10 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_PHOTOS_DIR` | `/data/media/photos` | MP portrait directory |
 | `PARLAMONITOR_FRONTEND_DIST` | `/app/frontend/dist` | built SPA served by the backend |
 | `PARLAMONITOR_MAX_SEARCH_TOTAL` | `5000` | cap on reported search totals |
+| `PARLAMONITOR_WEB_WORKERS` | _(one per core)_ | uvicorn worker processes (see [Handling high traffic](#handling-high-traffic-cloudflare--tuning)) |
+| `PARLAMONITOR_FORWARDED_ALLOW_IPS` | `*` | which proxy IPs uvicorn trusts `X-Forwarded-*` from |
+| `PARLAMONITOR_API_CACHE_CONTROL` | `public, max-age=60, s-maxage=300, stale-while-revalidate=600` | Cache-Control stamped on API responses |
+| `PARLAMONITOR_HTML_CACHE_CONTROL` | `public, max-age=0, s-maxage=300, stale-while-revalidate=600` | Cache-Control stamped on the SPA shell / OG share cards |
 | **`sync` service** | | |
 | `PARLAMONITOR_SYNC_INTERVAL` | `1800` | seconds between continuous-sync polls |
 | `PARLAMONITOR_SYNC_CYCLE` | _(auto)_ | pin a cycle to watch (default: the latest) |
@@ -373,6 +378,104 @@ parlamonitor.example.org {
 When the public origin differs from the container, set
 `PARLAMONITOR_CORS_ORIGINS` to that origin only if you also serve the SPA from a
 different host; the bundled single-process setup is same-origin and needs none.
+
+## Handling high traffic (Cloudflare + tuning)
+
+The data changes at most once per sync interval (default 30 min), and every
+endpoint is a read — so the right way to absorb a traffic spike is to serve
+almost everything from a cache in front of the origin, and to let the origin
+use all its cores for the misses. The app does its half of this out of the box:
+
+- **Cache-Control on everything** (`backend/app/caching.py`): hashed
+  `/assets/…` bundles are `immutable` (cached for a year), MP photos for a
+  day, API responses for 60 s in the browser and **5 min at a shared cache**
+  (`s-maxage=300`) with `stale-while-revalidate` so an expiring entry is
+  refreshed in the background instead of stampeding the origin. The SPA shell
+  and the OG share cards are edge-cacheable but never browser-cached, so a
+  deploy shows up on reload. Only `/api/v1/health` is `no-store`. Tune with
+  `PARLAMONITOR_API_CACHE_CONTROL` / `PARLAMONITOR_HTML_CACHE_CONTROL` — keep
+  `s-maxage` comfortably under `PARLAMONITOR_SYNC_INTERVAL`.
+- **gzip** on responses over 1 KiB — session listings and search results
+  compress ~10×, which matters because the origin's uplink is usually the
+  first thing a spike saturates (Cloudflare pulls whatever the origin sends).
+- **One uvicorn worker per core** (the API is read-only over one SQLite file,
+  so workers share it safely). Pin the count with `PARLAMONITOR_WEB_WORKERS`.
+- **Warm read path**: each worker thread keeps its SQLite connection (and its
+  page cache) across requests and `mmap`s the DB, so all workers read one
+  shared copy of hot pages from the OS page cache. A synced-in DB is still
+  picked up on the very next request (the swap changes the file's inode).
+
+### Cloudflare setup
+
+With the DNS record proxied (orange cloud), Cloudflare caches the static
+assets by default — but **not** the API JSON or the HTML shell. Two Cache
+Rules turn those on (Rules → Cache Rules, order matters):
+
+1. **Never cache health** — When `URI Path equals /api/v1/health` →
+   _Bypass cache_. (Belt-and-braces: the `no-store` header already prevents
+   caching, but a bypass rule keeps it out of any "cache everything" match.)
+2. **Cache the site** — When `Hostname equals parlamonitor.example.org` →
+   _Eligible for cache_, Edge TTL: **"Use cache-control header if present"**.
+   This makes `/api/…` and the HTML shell cacheable while the origin's
+   `s-maxage`/`no-store` headers keep control of how long — so a config
+   change on the origin never needs a dashboard edit.
+
+With that in place a hot endpoint costs the origin one request per 5 minutes
+per Cloudflare data center; everything else is served from the edge. Also
+worth enabling:
+
+- **Tiered Cache** (Caching → Tiered Cache): edge misses fill from an upper
+  Cloudflare tier instead of each data center hitting the VM separately —
+  during a spike this collapses global traffic to ~1 origin fetch per URL per
+  TTL.
+- **Rate limiting** (Security → WAF → Rate limiting rules): the FTS search
+  endpoints (`/api/v1/*/search…`) are the only genuinely expensive requests;
+  a rule like _60 requests / minute / IP on `/api/`_ stops one client from
+  monopolizing the origin. Search totals are already capped server-side
+  (`PARLAMONITOR_MAX_SEARCH_TOTAL`).
+- **Compression** (Speed → Optimization): Brotli/gzip toward visitors is on by
+  default; leave it — Cloudflare re-encodes the origin's gzip.
+- **SSL/TLS: Full (strict)** with an origin certificate, so the
+  Cloudflare→origin hop is also encrypted (pair with the reverse proxy above).
+
+Two origin-side settings complete the picture:
+
+```dotenv
+# .env — canonical public origin: correct absolute og:url/og:image in share
+# cards regardless of what the proxy forwards.
+PARLAMONITOR_SITE_URL=https://parlamonitor.example.org
+PARLAMONITOR_CORS_ORIGINS=https://parlamonitor.example.org
+```
+
+And **lock the origin down** so traffic can't bypass the cache: bind the
+published port to localhost (see the reverse-proxy section) and, in the Azure
+Network Security Group, allow 443 only from [Cloudflare's IP
+ranges](https://www.cloudflare.com/ips/) (Azure's `Internet` service tag
+otherwise lets anyone hit the VM directly).
+
+**After a deploy** the hashed assets are new URLs (no purge needed) and the
+HTML/API entries age out within their ≤5-min TTL on their own. Purge only when
+you need a change visible instantly: Caching → Purge → _Purge everything_ (or
+just the shell URLs).
+
+### If the VM itself becomes the bottleneck
+
+Cache misses are cheap (read-only SQLite, mmap'd), so a single small VM goes a
+long way once the cache hit rate is high. If `docker stats` still shows the
+`app` container pinned:
+
+- **More cores** helps linearly — workers default to one per core. The `sync`
+  sidecar's NLP is the only heavy background load; offload it to Modal (see
+  above) so cores stay free for serving.
+- **RAM**: the ~300 MB DB should fit in the page cache next to the workers;
+  on a <2 GB VM prefer fewer workers over swapping (watch `Swp` in `htop` —
+  a swapping SQLite mmap is much slower than a cold read).
+- **Lengthen the TTLs** (`PARLAMONITOR_API_CACHE_CONTROL`) — doubling
+  `s-maxage` halves origin traffic for the same content freshness bound.
+- The app is a stateless reader, so it also scales horizontally: any number
+  of `app` containers can share the `dbdata` volume read-only behind a load
+  balancer — but with Cloudflare in front, a bigger single VM is almost
+  always the simpler win.
 
 ## Notes & gotchas
 

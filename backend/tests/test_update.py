@@ -120,3 +120,17 @@ def test_update_falls_back_to_full_build_without_load_state(data_dir, db_path):
     assert loader.update_database(data_dir, db_path) is True
     # The fallback full rebuild reseeds the baseline.
     assert "43001-session.json" in _load_state_names(db_path)
+
+
+def test_api_picks_up_swapped_db_without_restart(client, data_dir, db_path):
+    """DB-4 zero-downtime: the API's thread-cached read-only connections
+    (app/db.py) must notice the loader's atomic swap (new inode) and serve the
+    new data on the very next request — no restart."""
+    assert client.get("/api/v1/meta").json()["counts"]["sessions"] == 1
+
+    (data_dir / "processed" / "43002-session.json").write_text(
+        json.dumps(_session_record(session="43002", sitting=2, date="2026-05-16"),
+                   ensure_ascii=False))
+    assert loader.update_database(data_dir, db_path) is True
+
+    assert client.get("/api/v1/meta").json()["counts"]["sessions"] == 2

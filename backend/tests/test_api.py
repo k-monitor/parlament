@@ -365,3 +365,28 @@ def test_disabled_module_not_mounted(monkeypatch, db_path):
     monkeypatch.delenv("PARLAMONITOR_MODULES")
     importlib.reload(config_module)
     importlib.reload(main_module)
+
+
+def test_cache_control_headers(client):
+    """High-traffic hardening: path-based Cache-Control lets the CDN/browser
+    absorb repeat traffic (backend/app/caching.py)."""
+    api = client.get("/api/v1/meta")
+    assert api.status_code == 200
+    assert "s-maxage" in api.headers["cache-control"]
+    # Health reflects this origin right now — never cache it.
+    assert client.get("/api/v1/health").headers["cache-control"] == "no-store"
+    # Errors are not stamped (a cached 404 would mask later-added data).
+    missing = client.get("/api/v1/proceedings/speeches/nope")
+    assert missing.status_code == 404
+    assert "cache-control" not in missing.headers
+
+
+def test_gzip_compression(client):
+    """Large JSON responses are gzip-compressed toward clients/CDN."""
+    r = client.get("/api/v1/proceedings/sessions",
+                   headers={"Accept-Encoding": "gzip"})
+    assert r.status_code == 200
+    # httpx transparently decompresses; the header records the encoding.
+    small_or_encoded = (r.headers.get("content-encoding") == "gzip"
+                        or int(r.headers.get("content-length", "0")) < 1024)
+    assert small_or_encoded

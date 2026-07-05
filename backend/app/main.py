@@ -13,9 +13,11 @@ import sqlite3
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .caching import CacheControlMiddleware
 from .config import settings
 from .db import get_db
 from .modules.registry import load_modules
@@ -41,6 +43,13 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
+
+# High-traffic hardening (NFR-1): compress the sizeable JSON/HTML payloads
+# (origin egress is the bottleneck behind a CDN — Cloudflare pulls whatever the
+# origin sends), and stamp path-based Cache-Control so the CDN/browser can
+# absorb repeat traffic instead of the API (see caching.py).
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+app.add_middleware(CacheControlMiddleware)
 
 # Mount the enabled feature modules (EXT-3/EXT-6).
 _MODULES = [m for m in load_modules() if settings.module_enabled(m.name)]

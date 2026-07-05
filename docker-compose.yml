@@ -82,6 +82,15 @@ services:
       # behind a proxy the request's own scheme/host is often wrong. When unset
       # the cards fall back to the request base URL.
       PARLAMONITOR_SITE_URL: ${PARLAMONITOR_SITE_URL:-}
+      # Uvicorn worker processes (default: one per core). The API is read-only
+      # over one SQLite file, so workers scale it across cores safely.
+      PARLAMONITOR_WEB_WORKERS: ${PARLAMONITOR_WEB_WORKERS:-}
+      # Cache-Control stamped on API / HTML responses (see backend/app/caching.py
+      # and the "Handling high traffic" section of DEPLOYMENT.md). The defaults
+      # cache for 5 min at the CDN edge — comfortably under the 30-min sync
+      # cadence. Set e.g. "no-store" to opt an axis out entirely.
+      PARLAMONITOR_API_CACHE_CONTROL: ${PARLAMONITOR_API_CACHE_CONTROL:-}
+      PARLAMONITOR_HTML_CACHE_CONTROL: ${PARLAMONITOR_HTML_CACHE_CONTROL:-}
     volumes:
       # Scraper output (processed/*.json + media/photos), read-only for the API.
       - ./data:/data:ro

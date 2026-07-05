@@ -47,7 +47,15 @@ case "${1:-serve}" in
             echo "[entrypoint] DB missing at $DB — building before serving"
             build_db
         fi
-        exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+        # One worker per core by default (the API is read-only, so workers
+        # share the DB file freely); override with PARLAMONITOR_WEB_WORKERS.
+        # --proxy-headers trusts X-Forwarded-Proto/For from the reverse proxy /
+        # Cloudflare in front, so redirects and the OG share cards see the real
+        # scheme/host (PARLAMONITOR_SITE_URL still wins when set).
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+            --workers "${PARLAMONITOR_WEB_WORKERS:-$(nproc 2>/dev/null || echo 2)}" \
+            --proxy-headers \
+            --forwarded-allow-ips "${PARLAMONITOR_FORWARDED_ALLOW_IPS:-*}"
         ;;
     loader)
         build_db

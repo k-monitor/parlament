@@ -1,41 +1,60 @@
 # Deploying Parlamonitor with Docker Compose
 
-Parlamonitor runs from **one image** (OPS-1) as three small services that share
-two volumes:
+Parlamonitor runs from **one image** (OPS-1) as a small set of services around
+two shared volumes. There are **two kinds of update**, and both are
+zero-downtime:
 
+- **data updates** — handled continuously by the `sync` sidecar (atomic DB swap
+  picked up per request);
+- **code / SPA updates** — handled by [`./deploy.sh`](deploy.sh), which does a
+  **blue-green swap** of the serving container behind an in-stack reverse proxy.
+
+The services:
+
+- **`caddy`** — the stable front. It **owns the published port** and
+  health-check-balances across the two serving "colors" (`app_blue` /
+  `app_green`). Because nothing else binds the port, swapping the serving
+  container is invisible to whatever is in front of it (Cloudflare, a host TLS
+  proxy, or nothing). See [`docker/Caddyfile`](docker/Caddyfile).
+- **`app_blue` / `app_green`** — the two interchangeable serving colors: the
+  FastAPI backend serving the versioned API, the MP photos and the built Vue SPA
+  from a single stateless process (one uvicorn worker per core). It reads the
+  SQLite DB **read-only** and re-stats the file on every request, so a
+  swapped-in DB is picked up on the next request with no restart. **Only one
+  color runs in steady state**; `./deploy.sh` flips between them.
 - **`init`** — a one-shot builder that creates the read-only SQLite + FTS5
   database in the persistent volume on first boot (or `REBUILD_DB=1`), then
   exits. Keeping the build here — rather than inside the API — means the possibly
-  long first build never holds up the app's healthcheck.
-- **`app`** — the FastAPI backend serving the versioned API, the MP photos and
-  the built Vue SPA from a single stateless process (one uvicorn worker per
-  core). It reads the SQLite DB **read-only** and re-stats the file on every
-  request, so a swapped-in DB is picked up on the next request with no restart.
+  long first build never holds up a color's healthcheck.
 - **`sync`** — a sidecar that keeps the data in step with `parlament.hu`
   (see [Continuous sync](#continuous-sync-keeping-in-step-with-parlamenthu)).
   It cheaply checks the latest cycle for changes, re-scrapes **only what
   changed**, and updates the DB **incrementally**, swapping the new file in
   atomically. Optional — drive it from an external cron instead if you prefer.
+- **`app`** — a tools-only service that never auto-starts; the target of one-off
+  `compose run --rm app <loader|update|pytest|sh|…>` commands.
 
-`app` and `sync` both wait for `init` to finish, so they start against a
+The colors and `sync` both wait for `init` to finish, so they start against a
 ready database and only ever read / incrementally update it.
 
 ```
-┌──────────── app (uvicorn → FastAPI) ────────────┐     ┌────────── sync (sidecar) ──────────┐
-│  /               → Vue SPA                       │     │  loop every N min (or cron):        │
-│  /api/v1/…       → JSON API   (opens DB ro,      │     │   1. parlamonitor sync  (scrape     │
-│  /media/photos/… → MP portraits  per request)    │     │      only changed items, latest     │
-│  builds /db/parlamonitor.db on first boot        │     │      cycle → /data/processed/*.json)│
-└──────────────────────────────────────────────────┘     │   2. app.loader --update  (reload   │
-        ▲ ./data (ro)          ▲ dbdata (rw)              │      only changed files → atomic     │
-        │                      │  ◄───── atomic swap ─────│      swap of /db/parlamonitor.db)   │
-   scraper output         runtime DB (shared)             └─────────────────────────────────────┘
-                                                             ▲ ./data (rw)   ▲ dbdata (rw)
+                          ┌──── app_blue  (uvicorn → FastAPI) ────┐
+ Cloudflare / proxy ─▶ caddy ─┤  /            → Vue SPA               │   ┌──── sync (sidecar) ─────────┐
+   (one stable port)  :8000│  /api/v1/…    → JSON API (DB ro,      │   │ loop every N min (or cron): │
+      health-check LB  │   │  /media/…     → photos)  per request  │   │  1. parlamonitor sync       │
+      + retry across   │   └───────────────────────────────────────┘   │     (scrape only changed)   │
+      both colors      └── app_green (idle; ./deploy.sh flips to it) │   │  2. app.loader --update     │
+                                    ▲ ./data (ro)   ▲ dbdata (rw)        │     (reload changed → atomic│
+                                    │               │ ◄── atomic swap ───│      swap of the runtime DB)│
+                               scraper output   runtime DB (shared)      └─────────────────────────────┘
+                                                                            ▲ ./data (rw)  ▲ dbdata (rw)
 ```
 
-Because the swap is atomic and the API notices the replaced file (new inode) on
-its next request, updates are **zero-downtime**: no restart, no dropped
-requests.
+Because the DB swap is atomic and the API notices the replaced file (new inode)
+on its next request, **data** updates are zero-downtime. And because `caddy`
+stays bound to the port while `./deploy.sh` starts the new color, health-checks
+it, then retires the old one, **code** updates are zero-downtime too: no restart,
+no dropped requests.
 
 ## Prerequisites
 
@@ -56,9 +75,14 @@ requests.
 
 ## Quick start
 
+`./deploy.sh` is the entry point for **both** the first bring-up and every later
+update — it builds the image, ensures the DB, starts a serving color behind
+`caddy`, and (on updates) retires the old color once the new one is healthy:
+
 ```bash
-docker compose up -d --build
-docker compose logs -f app        # watch: DB build, then "Uvicorn running"
+./deploy.sh                        # build + bring up caddy, a color, init, sync
+podman compose logs -f init        # first boot: watch the DB build
+podman compose logs -f app_blue    # then watch the active color ("Uvicorn running")
 ```
 
 Then open <http://localhost:8000> — the SPA, with API docs at
@@ -67,23 +91,31 @@ Then open <http://localhost:8000> — the SPA, with API docs at
 
 > **First boot builds the database and can take several minutes** (the HuSpaCy
 > word-cloud lemmatization over the whole corpus is the slow part — see
-> [First-boot build time](#first-boot-build-time-huspacy)). This runs in the
-> one-shot **`init`** service; `app` and `sync` only start **after it finishes**,
-> so watch `docker compose logs -f init`. Subsequent boots reuse the DB and start
-> in seconds.
+> [First-boot build time](#first-boot-build-time-huspacy)). `deploy.sh` runs this
+> in the one-shot **`init`** service and only starts a serving color **after it
+> finishes**, so watch `podman compose logs -f init`. Subsequent runs reuse the
+> DB and start in seconds.
+>
+> **Note.** A bare `podman compose up -d` starts only the plumbing (`caddy`,
+> `init`, `sync`) — the serving colors are gated behind the `serve` profile so a
+> stray `up` can never start both at once. Use `./deploy.sh` to bring a color up.
 
 ## What the containers do on boot
 
-Three services from one image, in order (`docker/entrypoint.sh`):
+From one image (`docker/entrypoint.sh`):
 
 1. **`init`** (`ensure-db`) — if `/db/parlamonitor.db` is missing (or
    `REBUILD_DB=1`), runs `python -m app.loader /data /db/parlamonitor.db` — the
-   **only** DB writer (ING-2), atomic swap (DB-4) — then **exits**. Both `app`
-   and `sync` wait for it to **complete** (compose `service_completed_successfully`),
-   so the long first build never blocks the API's healthcheck.
-2. **`app`** (`serve`) — execs `uvicorn app.main:app` (the DB already exists, so
-   it starts immediately and is healthy within seconds).
-3. **`sync`** (`sync-loop`) — the continuous updater (see above).
+   **only** DB writer (ING-2), atomic swap (DB-4) — then **exits**. The serving
+   colors and `sync` wait for it to **complete** (compose
+   `service_completed_successfully`), so the long first build never blocks a
+   healthcheck.
+2. **`caddy`** — starts immediately and load-balances across the colors, taking
+   whichever is down out of rotation via its active health checks.
+3. **`app_blue` / `app_green`** (`serve`) — the color `./deploy.sh` brought up
+   execs `uvicorn app.main:app` (the DB already exists, so it starts immediately
+   and is healthy within seconds).
+4. **`sync`** (`sync-loop`) — the continuous updater (see above).
 
 The DB lives in the `dbdata` named volume, so it survives restarts and is **not**
 rebuilt on every boot. The word-cloud cache also persists there, so even an
@@ -327,19 +359,22 @@ the `sync` service does this for you):
 docker compose run --rm app update      # fast, zero-downtime; no-op if nothing changed
 ```
 
-**Full rebuild** (e.g. after a schema change or to force a clean import):
+**Full rebuild** (e.g. after a schema change or to force a clean import — atomic
+swap, so the running color picks it up live with no restart):
 
 ```bash
 docker compose run --rm app loader      # one-shot rebuild, then exits
-# or rebuild on the next start:
-REBUILD_DB=1 docker compose up -d
+# or force it via init on the next run:
+REBUILD_DB=1 docker compose run --rm init
 ```
 
-**Update the application code / SPA** (rebuilds the image, keeps the DB volume):
+**Update the application code / SPA** — the zero-downtime blue-green swap
+([`deploy.sh`](deploy.sh)); see [Zero-downtime code deploys](#zero-downtime-code-deploys):
 
 ```bash
 git pull
-docker compose up -d --build
+./deploy.sh                             # build, start the idle color, health-check, retire the old
+./deploy.sh --rollback                  # if the new build misbehaves: swap back to the previous image
 ```
 
 **Run the test suite inside the image:**
@@ -356,18 +391,62 @@ docker compose down                     # stop & remove containers (DB volume ke
 docker compose down -v                  # also delete the dbdata volume
 ```
 
+## Zero-downtime code deploys
+
+Data changes ship live via `sync` (atomic DB swap). **Application code / SPA**
+changes ship via [`./deploy.sh`](deploy.sh), a **blue-green swap** behind the
+in-stack `caddy` proxy. The serving process runs as two interchangeable colors,
+`app_blue` and `app_green`; exactly one serves at a time and `caddy` stays bound
+to the port throughout, so the swap never drops a request.
+
+```bash
+git pull
+./deploy.sh                 # build the checkout, then swap
+./deploy.sh --status        # which color is serving right now?
+./deploy.sh --rollback      # restore the previous image and swap back to it
+./deploy.sh --no-build      # re-flip to the already-built :latest (no rebuild)
+```
+
+What a run does:
+
+1. **Build** the new image from the current checkout (no downtime). The image
+   in use is first tagged `parlamonitor:rollback` so `--rollback` can restore it.
+2. **`init`** ensures the DB exists — off the serving path, so a first build
+   never blocks a healthcheck (a no-op when the DB is already in the volume).
+3. **Start the idle color** from the new image and **poll `/api/v1/health`**
+   until it passes (up to `DEPLOY_WAIT_TIMEOUT`, default 120 s).
+4. **Retire the old color** (`rm -sf`). `caddy` had been balancing across both
+   with active health checks + per-request retries, so it drains to the new
+   color with **no dropped requests**.
+
+If the new color never turns healthy, **the old one keeps serving** and the
+script exits non-zero — a bad build cannot take the site down. Inspect it with
+`podman compose logs --tail=80 app_<color>` and discard with
+`podman compose --profile serve rm -sf app_<color>`.
+
+The swap only touches the serving colors + `sync`; `caddy`, `init` and the
+`dbdata` volume are untouched, so data and in-flight edge caches are unaffected.
+`caddy` (and the surviving color, via `restart: unless-stopped`) come back after
+a host reboot — enable that for rootless podman with
+`systemctl --user enable --now podman-restart.service` and
+`loginctl enable-linger $USER`.
+
 ## Running behind a reverse proxy (TLS)
 
-The container speaks plain HTTP on port 8000. For a public deployment terminate
-TLS at a reverse proxy (Caddy, nginx, Traefik) and proxy to `app:8000`. Bind the
-published port to localhost so only the proxy reaches it:
+The stack's own `caddy` speaks plain HTTP on the published port
+(`${PARLAMONITOR_PORT:-8000}`) and does **not** terminate TLS — for a public
+deployment, terminate TLS in front of it and proxy to that port. Bind the
+published port to localhost so only your proxy reaches it — edit the `caddy`
+service's port mapping in `docker-compose.yml`:
 
 ```yaml
+  caddy:
     ports:
       - "127.0.0.1:8000:8000"
 ```
 
-Minimal Caddy example:
+Minimal host-Caddy example (a second Caddy in front is fine — this one just does
+TLS; the in-stack one does the blue-green balancing):
 
 ```caddy
 parlamonitor.example.org {
@@ -375,9 +454,14 @@ parlamonitor.example.org {
 }
 ```
 
+Alternatively, let the **in-stack** `caddy` terminate TLS itself: in
+[`docker/Caddyfile`](docker/Caddyfile) drop `auto_https off`, change the `:8000`
+site address to your hostname, and publish `443` on the `caddy` service. Then no
+second proxy is needed.
+
 When the public origin differs from the container, set
 `PARLAMONITOR_CORS_ORIGINS` to that origin only if you also serve the SPA from a
-different host; the bundled single-process setup is same-origin and needs none.
+different host; the bundled setup is same-origin and needs none.
 
 ## Handling high traffic (Cloudflare + tuning)
 

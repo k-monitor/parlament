@@ -1,0 +1,51 @@
+# Parlamonitor in-stack reverse proxy / blue-green load balancer.
+#
+# This is the ONE thing that stays bound to the published port across a code
+# deploy. It health-check-balances across the two app "colors" (app_blue and
+# app_green). In steady state only one color is running; a deploy starts the
+# idle color, waits for it to pass /api/v1/health, then stops the old one.
+# Caddy's active health checks + per-request retries route around the color
+# being torn down, so the swap drops no requests — zero downtime.
+#
+# Whatever sits in front of this (Cloudflare, a host TLS proxy, or nothing)
+# only ever talks to this single stable port; the color swap is invisible to it.
+{
+	admin off
+	# TLS is terminated in front of this (Cloudflare / a host reverse proxy),
+	# so serve plain HTTP here. To let THIS proxy terminate TLS instead, drop
+	# `auto_https off`, change the site address below to your hostname, and
+	# publish 443 on the caddy service.
+	auto_https off
+
+	# The origin is locked to the upstream proxy at the network layer (bind the
+	# published port to 127.0.0.1 and/or allow only Cloudflare's IPs — see
+	# DEPLOYMENT.md), so it is safe to trust the X-Forwarded-* it sends and pass
+	# the real visitor IP through to uvicorn (--proxy-headers).
+	servers {
+		trusted_proxies static 0.0.0.0/0 ::/0
+	}
+}
+
+:8000 {
+	reverse_proxy app_blue:8000 app_green:8000 {
+		lb_policy round_robin
+
+		# If the chosen upstream can't be dialled (the color being drained during
+		# a deploy), transparently retry the other one for up to 5s. This is what
+		# keeps the cutover seamless in the ~2s before the health checker reacts.
+		lb_try_duration 5s
+		lb_try_interval 250ms
+
+		# Active health checks: a color that is down (stopped / still booting) is
+		# taken out of rotation within ~2s and put back automatically when it
+		# starts passing. In steady state the not-running color simply stays out.
+		health_uri /api/v1/health
+		health_interval 2s
+		health_timeout 2s
+		health_status 200
+
+		# Passive: after a failed request, stop sending to that upstream briefly
+		# (belt-and-braces with the active checks above).
+		fail_duration 10s
+	}
+}

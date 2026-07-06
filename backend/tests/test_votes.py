@@ -188,3 +188,36 @@ def test_representative_absence_stats(client, db_path):
     assert t["votes_total"] == 3
     assert t["votes_absent"] == 2
     assert t["votes_absent_pct"] == 66.7
+
+
+def test_representative_vote_breakdown(client, db_path):
+    """The statistics endpoint returns the roll-call participation split for the
+    profile pie. Starting from the fixture (k001 has one Igen for v-1, a
+    roll-call vote), we add one vote per remaining category plus one roll-call
+    vote k001 has no record in — which is counted as "nem volt jelen". Abstention
+    counts as having voted, so v-1 (Igen) + v-3 (Tartózkodás) → voted == 2."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    extra = [
+        ("v-3", "Tartózkodás", "abstain"),
+        ("v-4", "Nem szavazott", "novote"),
+        ("v-5", "Előre bejelentett hiányzó", "absent"),
+    ]
+    for vid, value, code in extra:
+        c.execute("INSERT INTO vote (id, period_number, vote_datetime, result, has_per_mp) "
+                  "VALUES (?, 43, '2026-05-28T10:00:00Z', 'Elfogadva', 1)", (vid,))
+        c.execute("INSERT INTO vote_record (vote_id, person_id, name, value, value_code) "
+                  "VALUES (?, 'k001', 'Kovács Béla', ?, ?)", (vid, value, code))
+    # A roll-call vote k001 has NO record in → "nem volt jelen".
+    c.execute("INSERT INTO vote (id, period_number, vote_datetime, result, has_per_mp) "
+              "VALUES ('v-6', 43, '2026-05-29T10:00:00Z', 'Elfogadva', 1)")
+    c.commit(); c.close()
+
+    b = client.get("/api/v1/representatives/k001/statistics").json()["totals"]["vote_breakdown"]
+    assert b["voted"] == 2        # v-1 Igen + v-3 Tartózkodás
+    assert "abstain" not in b     # folded into "voted"
+    assert b["novote"] == 1       # v-4
+    assert b["absent"] == 1       # v-5, igazoltan távol
+    assert b["not_present"] == 1  # v-6, no record → nem volt jelen
+    # total = every roll-call vote in scope (v-1,3,4,5,6); v-2 has no roll call.
+    assert b["total"] == 5

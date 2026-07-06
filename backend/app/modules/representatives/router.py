@@ -300,19 +300,53 @@ def get_statistics(person_id: str, period: Optional[int] = None,
     votes_available = settings.module_enabled("votes")
     votes_total = votes_absent = 0
     votes_absent_pct = None
+    vote_breakdown = None
     if votes_available:
         extra = " AND v.period_number = :per" if period is not None else ""
         vparams: dict = {"pid": person_id}
         if period is not None:
             vparams["per"] = period
+        # One pass over the MP's roll-call records splits them into the four
+        # participation categories shown in the profile pie: "szavazott" (a vote
+        # was cast — igen/nem/tartózkodás all count as voting), "nem szavazott"
+        # (present, no vote), "igazoltan távol" (pre-announced absence) and —
+        # derived below — "nem volt jelen" (no record at all for a vote). `total`
+        # counts every record (the denominator for the absence %).
         vrow = db.execute(
             f"""SELECT COUNT(*) AS total,
-                       SUM(CASE WHEN vr.value_code = 'absent' THEN 1 ELSE 0 END) AS absent
+                       SUM(CASE WHEN vr.value_code IN ('yes','no','abstain') THEN 1 ELSE 0 END) AS voted,
+                       SUM(CASE WHEN vr.value_code = 'novote'  THEN 1 ELSE 0 END) AS novote,
+                       SUM(CASE WHEN vr.value_code = 'absent'  THEN 1 ELSE 0 END) AS absent
                 FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
                 WHERE vr.person_id = :pid{extra}""", vparams).fetchone()
         votes_total = vrow["total"] or 0
         votes_absent = vrow["absent"] or 0
         votes_absent_pct = round(100.0 * votes_absent / votes_total, 1) if votes_total else None
+
+        # "Nem volt jelen" is derived: of all roll-call votes in scope (those
+        # with a per-MP list, has_per_mp = 1 — voice/list votes are excluded so
+        # they don't inflate everyone's absence), the ones the MP has no record
+        # in at all. Clamped at 0 for the rare case where the record count
+        # exceeds the roll-call universe (e.g. votes lacking the flag in a test
+        # or partial import).
+        rc_where = "has_per_mp = 1"
+        rc_params: dict = {}
+        if period is not None:
+            rc_where += " AND period_number = :per"
+            rc_params["per"] = period
+        total_rollcall = (db.execute(
+            f"SELECT COUNT(*) AS n FROM vote WHERE {rc_where}",
+            rc_params).fetchone()["n"] or 0)
+        voted = vrow["voted"] or 0
+        novote = vrow["novote"] or 0
+        not_present = max(0, total_rollcall - votes_total)
+        vote_breakdown = {
+            "voted": voted,              # szavazott (igen + nem + tartózkodás)
+            "novote": novote,            # jelen, nem szavazott
+            "absent": votes_absent,      # igazoltan távol
+            "not_present": not_present,  # nem volt jelen (no roll-call record)
+            "total": voted + novote + votes_absent + not_present,
+        }
 
     if period is not None:
         ep = db.execute("SELECT label FROM electoral_period WHERE number=?",
@@ -339,6 +373,7 @@ def get_statistics(person_id: str, period: Optional[int] = None,
             "votes_total": votes_total,          # roll-call votes in scope
             "votes_absent": votes_absent,        # of those, "előre bejelentett hiányzó"
             "votes_absent_pct": votes_absent_pct,  # null when no votes in scope
+            "vote_breakdown": vote_breakdown,    # 5-way participation split, null while Votes off
         },
         "by_period": [dict(r) for r in by_period],
         "over_time": [dict(r) for r in over_time],

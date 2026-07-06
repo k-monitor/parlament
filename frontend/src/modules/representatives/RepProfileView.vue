@@ -3,16 +3,19 @@
 // precomputed statistics (with explicit scope + methodology), an accessible
 // trend chart, and a reverse-chronological speech list linking into the viewer.
 import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
 import { formatDate, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import BarChart from '../../components/BarChart.vue'
+import PieChart from '../../components/PieChart.vue'
 import ActivityBoard from '../../components/ActivityBoard.vue'
 import HelpTip from '../../components/HelpTip.vue'
 
 const props = defineProps({ id: String })
+const { t } = useI18n()
 
 // First day of the selected cycle, so the activity board always starts there
 // (null under "all cycles" → the board starts at the MP's first active day).
@@ -111,6 +114,30 @@ const overTimeItems = computed(() => {
 
 // Vote-value chip colour by normalized code, matching the Votes module palette.
 const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote', absent: 'absent' }
+
+// Roll-call participation pie: the backend's `vote_breakdown` mapped to
+// labelled, coloured segments (ordered fully-participated → fully-absent).
+// "Szavazott" counts every cast vote (igen/nem/tartózkodás) and is green;
+// "nem szavazott"/"igazoltan távol" reuse the Votes-module chip palette, and
+// "nem volt jelen" is the darkest, so the pie reads as a participation
+// gradient. Empty when the Votes module is off or the MP has no roll-call votes.
+const VOTE_BREAKDOWN_SEGMENTS = [
+  { key: 'voted', color: '#2e7d32' },
+  { key: 'novote', color: '#c79a2e' },
+  { key: 'absent', color: '#7c8288' },
+  { key: 'not_present', color: '#3f434a' },
+]
+const VB_LABEL = {
+  voted: 'profile.vbVoted', novote: 'profile.vbNovote',
+  absent: 'profile.vbAbsent', not_present: 'profile.vbNotPresent',
+}
+const voteBreakdownSegments = computed(() => {
+  const b = stats.value?.totals?.vote_breakdown
+  if (!b) return []
+  return VOTE_BREAKDOWN_SEGMENTS.map((s) => ({
+    ...s, label: t(VB_LABEL[s.key]), value: b[s.key] || 0,
+  }))
+})
 
 // Monotonic load id: profile switches (props.id / cycle watchers) can overlap
 // in flight; only the latest request may write state, or a slow earlier load
@@ -226,6 +253,18 @@ watch(() => store.cycle, load)
             </div>
             <!-- REP-3: bills metric hidden, not faked, until the Bills module ships -->
             <p v-if="!stats.totals.bills_available" class="small muted bills-note">ⓘ {{ $t('profile.billsUnavailable') }}</p>
+
+            <!-- Roll-call participation pie (szavazott / tartózkodott / nem
+                 szavazott / igazoltan távol / nem volt jelen). Shown only when
+                 the Votes module is live and the MP has roll-call votes in scope. -->
+            <div v-if="stats.totals.vote_breakdown && stats.totals.vote_breakdown.total"
+                 style="margin-top:1.2rem;">
+              <PieChart
+                :segments="voteBreakdownSegments"
+                :caption="$t('profile.voteBreakdown')"
+                :total-label="$t('profile.vbUnit')"
+              />
+            </div>
 
             <div v-if="overTimeItems.length" style="margin-top:1rem;">
               <BarChart

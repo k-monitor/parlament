@@ -15,7 +15,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ...db import get_db
+from ...db import get_db, like_contains
 from ...media import per_speech_clip
 
 router = APIRouter(prefix="/bills", tags=["bills"])
@@ -101,7 +101,8 @@ def list_bills(
     where = ["1=1"]
     params: dict = {}
     if q:
-        where.append("fold(b.title) LIKE fold(:q)"); params["q"] = f"%{q.strip()}%"
+        where.append("fold(b.title) LIKE fold(:q) ESCAPE '\\'")
+        params["q"] = like_contains(q.strip())
     if period is not None:
         where.append("b.period_number = :per"); params["per"] = period
     if main_type:
@@ -131,7 +132,10 @@ def list_bills(
                      "AND bs.person_id=:sp)"); params["sp"] = sponsor
     where_sql = " AND ".join(where)
 
-    order = {"number": "b.number_sort DESC",
+    # number_sort restarts every cycle, so rank by period first — otherwise an
+    # unscoped list pages through the previous cycle's high numbers before any
+    # current-cycle bill appears.
+    order = {"number": "b.period_number DESC, b.number_sort DESC",
              "date": "b.submitted_date DESC"}[sort]
 
     total = db.execute(f"SELECT COUNT(*) AS c FROM bill b WHERE {where_sql}",
@@ -218,7 +222,8 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[int], top: int)
     where_sql = " AND ".join(where)
 
     order_ids = [r["id"] for r in db.execute(
-        f"SELECT b.id FROM bill b WHERE {where_sql} ORDER BY b.number_sort DESC",
+        f"SELECT b.id FROM bill b WHERE {where_sql} "
+        f"ORDER BY b.period_number DESC, b.number_sort DESC",  # number_sort is per-cycle
         params)]
     factions = {r["id"]: r for r in
                 db.execute("SELECT id, label, color FROM faction")}
@@ -431,14 +436,17 @@ def _motions_for(db: sqlite3.Connection, bill_id: str) -> list[dict]:
 
 
 def _debate_speeches(db: sqlite3.Connection, start: sqlite3.Row,
-                     end: sqlite3.Row) -> list[dict]:
+                     end: sqlite3.Row, session_ids: list[str]) -> list[dict]:
     """The plenary speeches from the debate-opening anchor through the closing
-    one (inclusive), in proceedings order. Ordering is global by sitting date
-    then per-session speech index, so a debate adjourned and resumed on another
-    day still reads end to end. Each speaker who is a known MP links to their
-    profile via the shared `person` entity (EXT-2)."""
+    one (inclusive), in proceedings order, restricted to the sittings that
+    actually record a debate event for this bill (the anchors' sittings plus
+    any "… folytatása" continuation days). A date-only window would sweep in
+    whole unrelated sittings falling between the anchors and interleave two
+    sittings sharing a calendar date. Each speaker who is a known MP links to
+    their profile via the shared `person` entity (EXT-2)."""
+    ph = ",".join("?" * len(session_ids))
     rows = db.execute(
-        """SELECT sp.uid, sp.speech_index, sp.speaker_label, sp.person_id,
+        f"""SELECT sp.uid, sp.speech_index, sp.speaker_label, sp.person_id,
                   sp.speaker_status, sp.duration, sp.has_text,
                   p.label AS person_label, p.photo_uri,
                   f.label AS faction_label, f.color AS faction_color,
@@ -447,11 +455,13 @@ def _debate_speeches(db: sqlite3.Connection, start: sqlite3.Row,
            JOIN session ss ON ss.id = sp.session_id
            LEFT JOIN person p ON p.person_id = sp.person_id
            LEFT JOIN faction f ON f.id = sp.faction_id
-           WHERE (ss.date > :d1 OR (ss.date = :d1 AND sp.speech_index >= :i1))
-             AND (ss.date < :d2 OR (ss.date = :d2 AND sp.speech_index <= :i2))
-           ORDER BY ss.date, sp.speech_index""",
-        {"d1": start["sdate"], "i1": start["speech_index"],
-         "d2": end["sdate"], "i2": end["speech_index"]}).fetchall()
+           WHERE sp.session_id IN ({ph})
+             AND (sp.session_id <> ? OR sp.speech_index >= ?)
+             AND (sp.session_id <> ? OR sp.speech_index <= ?)
+           ORDER BY ss.date, ss.id, sp.speech_index""",
+        [*session_ids,
+         start["session_id"], start["speech_index"],
+         end["session_id"], end["speech_index"]]).fetchall()
     return [{
         "uid": r["uid"],
         "speaker": {"person_id": r["person_id"],
@@ -472,7 +482,8 @@ def _debates_for(db: sqlite3.Connection, bill_id: str) -> list[dict]:
     (graceful degradation, SCR-5)."""
     evs = db.execute(
         """SELECT e.ord, e.name, e.event_date, e.speech_number,
-                  s.uid AS speech_uid, s.speech_index, ss.date AS sdate
+                  s.uid AS speech_uid, s.speech_index, s.session_id,
+                  ss.date AS sdate
            FROM bill_event e
            LEFT JOIN speech s ON s.uid = (
                SELECT s2.uid FROM speech s2 WHERE s2.speech_uuid = e.speech_id
@@ -493,7 +504,17 @@ def _debates_for(db: sqlite3.Connection, bill_id: str) -> list[dict]:
         start, label, start_name = match
         if start["speech_uid"] is None or e["speech_uid"] is None:
             continue
-        speeches = _debate_speeches(db, start, e)
+        # The debate's sittings: the anchors' own, plus any day the source
+        # marks as a continuation ("<phase> folytatása") between them. A
+        # multi-day debate resumed on a later sitting still reads end to end,
+        # but sittings that merely fall between the anchor dates stay out.
+        cont_name = f"{label} folytatása"
+        session_ids = {start["session_id"], e["session_id"]}
+        session_ids.update(
+            ev["session_id"] for ev in evs
+            if start["ord"] < ev["ord"] < e["ord"]
+            and ev["name"] == cont_name and ev["session_id"] is not None)
+        speeches = _debate_speeches(db, start, e, sorted(session_ids))
         if not speeches:
             continue
         debates.append({
@@ -582,11 +603,19 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     # Each bill vote carries the upstream szavazasId (vote_id). Where the Votes
     # module has ingested that vote, resolve a `vote_ref` so the bill page can
     # link into the full roll call (EXT-2); otherwise it stays a plain tally.
-    votes = _rows(db,
-        """SELECT bv.vote_date, bv.subject, bv.yes, bv.no, bv.abstain, bv.result,
-                  bv.vote_id,
-                  (SELECT v.id FROM vote v WHERE v.id = bv.vote_id) AS vote_ref
-           FROM bill_vote bv WHERE bv.bill_id = ? ORDER BY bv.ord""", bill_id)
+    try:
+        votes = _rows(db,
+            """SELECT bv.vote_date, bv.subject, bv.yes, bv.no, bv.abstain,
+                      bv.result, bv.vote_id,
+                      (SELECT v.id FROM vote v WHERE v.id = bv.vote_id) AS vote_ref
+               FROM bill_vote bv WHERE bv.bill_id = ? ORDER BY bv.ord""", bill_id)
+    except sqlite3.OperationalError:
+        # Pre-votes-migration DB: the `vote` table may not exist (the other
+        # consumers guard the same way) — degrade to plain tallies, no links.
+        votes = _rows(db,
+            """SELECT bv.vote_date, bv.subject, bv.yes, bv.no, bv.abstain,
+                      bv.result, bv.vote_id, NULL AS vote_ref
+               FROM bill_vote bv WHERE bv.bill_id = ? ORDER BY bv.ord""", bill_id)
     deadlines = _rows(db,
         "SELECT name, deadline, reference, remark FROM bill_deadline "
         "WHERE bill_id = ? ORDER BY ord", bill_id)

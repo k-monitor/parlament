@@ -6,6 +6,7 @@ proceedings tables plus the shared core entities (person, faction, session).
 
 from __future__ import annotations
 
+import html
 import sqlite3
 from datetime import date
 from typing import Optional
@@ -13,7 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...config import settings
-from ...db import get_db
+from ...db import get_db, like_contains
 from ...media import per_speech_clip
 from ...search import build_match
 from ...wordfreq import count_words, tfidf_scores
@@ -34,6 +35,18 @@ def _is_estimated(align_method: str | None) -> bool:
 # ---------------------------------------------------------------------------
 # Search (SEA-*)
 # ---------------------------------------------------------------------------
+
+def _mark_html(s: str | None) -> str | None:
+    """Make FTS5 highlight/snippet output safe for the SPA's ``v-html``: the
+    match markers are emitted as control-char sentinels (which cannot occur in
+    transcript text), the sentence text is HTML-escaped, and only then do the
+    sentinels become ``<mark>`` tags — so a transcript containing ``<`` or
+    scraped markup renders literally instead of as HTML (stored-XSS surface)."""
+    if s is None:
+        return None
+    return (html.escape(s, quote=False)
+            .replace("\x02", "<mark>").replace("\x03", "</mark>"))
+
 
 def _search_where(q, date_from, date_to, period, person_id, faction_id, agenda_type):
     """Build the shared FTS-match + filter clause for the search endpoints.
@@ -103,8 +116,8 @@ def search(
         f"""
         SELECT se.id AS sentence_id, se.ord AS sentence_ord, se.time_start,
                se.time_end,
-               highlight(sentence_fts, 0, '<mark>', '</mark>') AS highlighted,
-               snippet(sentence_fts, 0, '<mark>', '</mark>', '…', 18) AS snippet,
+               highlight(sentence_fts, 0, char(2), char(3)) AS highlighted,
+               snippet(sentence_fts, 0, char(2), char(3), '…', 18) AS snippet,
                sp.uid AS speech_uid, sp.origin_id, sp.speaker_label,
                sp.person_id, sp.confidence, sp.align_method,
                ai.title AS agenda_title, ai.type AS agenda_type,
@@ -130,8 +143,8 @@ def search(
             {
                 "sentence_id": r["sentence_id"],
                 "sentence_ord": r["sentence_ord"],
-                "highlighted": r["highlighted"],
-                "snippet": r["snippet"],
+                "highlighted": _mark_html(r["highlighted"]),
+                "snippet": _mark_html(r["snippet"]),
                 "time_start": r["time_start"],
                 "time_end": r["time_end"],
                 "speech_uid": r["speech_uid"],
@@ -289,15 +302,16 @@ def search_breakdown(
 def suggest(q: str = Query(..., min_length=1), limit: int = Query(8, ge=1, le=20),
             db: sqlite3.Connection = Depends(get_db)):
     """Search-as-you-type suggestions for speakers and factions (SEA-7)."""
-    like = f"%{q.strip()}%"
+    like = like_contains(q.strip())
     people = db.execute(
         """SELECT p.person_id, p.label, p.photo_uri,
                   (SELECT COUNT(*) FROM speech s WHERE s.person_id=p.person_id) AS speeches
-           FROM person p WHERE p.is_mp = 1 AND fold(p.label) LIKE fold(:like)
+           FROM person p WHERE p.is_mp = 1 AND fold(p.label) LIKE fold(:like) ESCAPE '\\'
            ORDER BY speeches DESC LIMIT :limit""",
         {"like": like, "limit": limit}).fetchall()
     factions = db.execute(
-        "SELECT id, label, color FROM faction WHERE fold(label) LIKE fold(:like) LIMIT :limit",
+        "SELECT id, label, color FROM faction "
+        "WHERE fold(label) LIKE fold(:like) ESCAPE '\\' LIMIT :limit",
         {"like": like, "limit": limit}).fetchall()
     return {
         "speakers": [dict(r) for r in people],

@@ -47,12 +47,22 @@ const scopeLabel = computed(() => {
   return c ? t('cycle.scope', { cycle: c }) : t('cycle.scopeAll')
 })
 
+// Monotonic load id: rapid cycle switches can leave fetches racing; only the
+// latest may write state.
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true; error.value = false
   clearFlow()
   try {
-    data.value = await api.questionsSankey(store.cycle)
-  } catch { error.value = true } finally { loading.value = false }
+    const res = await api.questionsSankey(store.cycle)
+    if (seq === loadSeq) data.value = res
+  } catch {
+    if (seq === loadSeq) error.value = true
+  } finally {
+    if (seq === loadSeq) loading.value = false
+  }
 }
 
 // --- drill-down: the questions behind one clicked flow --------------------
@@ -86,18 +96,28 @@ function onSelect(sel) {
   nextTick(() => panelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
 }
 
+// Same guard for the drill-down: clicking flows/pages quickly must not let an
+// older list overwrite a newer one.
+let flowSeq = 0
+
 async function loadFlow() {
   if (!flow.value) return
+  const seq = ++flowSeq
   flowLoading.value = true; flowError.value = false
   try {
-    flowData.value = await api.questionsList({
+    const res = await api.questionsList({
       period: store.cycle,
       faction: flow.value.faction,
       answerer: flow.value.answerer,
       ministry: flow.value.ministry,
       limit: PAGE, offset: flowOffset.value,
     })
-  } catch { flowError.value = true } finally { flowLoading.value = false }
+    if (seq === flowSeq) flowData.value = res
+  } catch {
+    if (seq === flowSeq) flowError.value = true
+  } finally {
+    if (seq === flowSeq) flowLoading.value = false
+  }
 }
 
 function gotoFlowPage(p) {

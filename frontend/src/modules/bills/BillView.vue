@@ -75,13 +75,24 @@ const backLink = computed(() => (isBill.value
   ? { to: { name: 'bills' }, label: 'bills.title' }
   : { to: { name: 'documents' }, label: 'documents.title' }))
 
+// Monotonic load id: only the latest in-flight fetch may write state (rapid
+// navigation between documents can resolve out of order).
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true; error.value = false; bill.value = null; docRevealed.value = false
   Object.keys(motionOpen).forEach((k) => delete motionOpen[k])
   Object.keys(debateOpen).forEach((k) => delete debateOpen[k])
   motionsExpanded.value = false
-  try { bill.value = await api.bill(props.id) } catch { error.value = true }
-  finally { loading.value = false }
+  try {
+    const res = await api.bill(props.id)
+    if (seq === loadSeq) bill.value = res
+  } catch {
+    if (seq === loadSeq) error.value = true
+  } finally {
+    if (seq === loadSeq) loading.value = false
+  }
 }
 onMounted(load)
 watch(() => props.id, load)

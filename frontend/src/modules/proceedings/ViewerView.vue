@@ -81,12 +81,17 @@ const segmentedSentences = computed(() => segmentSentences(sentences.value))
 
 // Attribute named heckles ("Vitályos Eszter: …") to representatives so they get
 // a face + profile link. Best-effort: failure just leaves them as plain text.
-async function resolveHecklers() {
+// `seq` ties the resolution to the load that started it, so a slow response
+// can't attach speech A's hecklers to speech B.
+async function resolveHecklers(seq) {
   const names = segmentedSentences.value
     .flatMap((s) => s.segments).filter((g) => g.speaker).map((g) => g.speaker)
   speakers.value = {}
   if (!names.length) return
-  try { speakers.value = await api.resolveSpeakers(names) } catch { /* keep plain */ }
+  try {
+    const resolved = await api.resolveSpeakers(names)
+    if (seq === loadSeq) speakers.value = resolved
+  } catch { /* keep plain */ }
 }
 
 // An interjection whose "Name:" prefix didn't resolve is shown verbatim.
@@ -119,20 +124,28 @@ const clipOrigin = computed(() =>
 const sourceLink = computed(() => (speech.value
   && (speech.value.video_playseq || speech.value.source_page)) || null)
 
+// Monotonic load id: rapid prev/next navigation can leave several speech
+// fetches in flight, and they may resolve out of order — only the latest may
+// write state, or the viewer ends up showing speech A at speech B's URL.
+let loadSeq = 0
+
 async function load() {
   // When navigating between speeches we already have data on screen — keep it
   // (and the live <video>) mounted instead of dropping to the loading state,
   // so the player isn't torn down and recreated. Only the first load (no data
   // yet) shows the spinner, since the <video> doesn't exist until then.
   const navigating = !!data.value
+  const seq = ++loadSeq
   error.value = false
   if (!navigating) { loading.value = true; data.value = null }
   let next
   try {
     next = await api.speech(props.uid)
   } catch (e) {
+    if (seq !== loadSeq) return
     error.value = true; loading.value = false; data.value = null; return
   }
+  if (seq !== loadSeq) return  // superseded by a newer navigation
   data.value = next
   loading.value = false
   currentOrd.value = -1
@@ -142,8 +155,9 @@ async function load() {
   // then position the player. setupPlayer reuses the live player when the day
   // stream is unchanged, or builds one when it isn't.
   await nextTick()
+  if (seq !== loadSeq) return
   setupPlayer()
-  resolveHecklers()   // non-blocking; updates `speakers` when it resolves
+  resolveHecklers(seq)   // non-blocking; updates `speakers` when it resolves
 }
 
 // The clip's smil VOD is generated on demand: its playlist 404s until the

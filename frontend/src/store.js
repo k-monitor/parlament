@@ -93,10 +93,12 @@ export function loadMeta() {
       store.meta = m
       initCycle(m)
       store.loaded = true
+      store.failed = false
       return m
     })
     .catch((e) => {
       store.failed = true
+      inflight = null // drop the rejected promise so the next call retries
       throw e
     })
   return inflight

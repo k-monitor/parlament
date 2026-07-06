@@ -1,7 +1,7 @@
 <script setup>
 // Browsable, filterable representative list (REP-1). Filter/sort state is in the
 // URL so a filtered list is shareable.
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
@@ -52,16 +52,26 @@ function gotoPage(p) {
   router.push({ name: 'representatives', query: { ...route.query, offset: p * PAGE } })
 }
 
+// Monotonic load id: overlapping fetches (filter watcher + cycle watcher) can
+// resolve out of order; only the latest may write state.
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true; error.value = false
   try {
     // `period` comes from the global cycle chooser (store.cycle; null = all) —
     // it scopes the list to MPs serving in that cycle.
-    data.value = await api.representatives({
+    const res = await api.representatives({
       q: route.query.q, faction_id: route.query.faction_id, period: store.cycle,
       sort: route.query.sort || 'speaking_time', limit: PAGE, offset: route.query.offset || 0,
     })
-  } catch { error.value = true } finally { loading.value = false }
+    if (seq === loadSeq) data.value = res
+  } catch {
+    if (seq === loadSeq) error.value = true
+  } finally {
+    if (seq === loadSeq) loading.value = false
+  }
 }
 
 onMounted(async () => {
@@ -80,6 +90,9 @@ watch(() => store.cycle, () => {
 })
 let searchTimer = null
 function onSearchInput() { clearTimeout(searchTimer); searchTimer = setTimeout(apply, 300) }
+// The debounce survives the component: clear it, or typing then clicking an
+// MP within 300 ms yanks the user back to the list (apply() router.push).
+onUnmounted(() => clearTimeout(searchTimer))
 </script>
 
 <template>

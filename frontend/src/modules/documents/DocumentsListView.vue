@@ -5,7 +5,7 @@
 // only the browse page is distinct. Filter/sort state lives in the URL so a
 // filtered list is shareable, and each MP submitter links to their profile
 // (EXT-2).
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
@@ -57,16 +57,26 @@ async function loadFacets() {
   } catch { types.value = []; statuses.value = [] }
 }
 
+// Monotonic load id: overlapping fetches (filter watcher + cycle watcher) can
+// resolve out of order; only the latest may write state.
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true; error.value = false
   try {
     // `period` comes from the global cycle chooser (store.cycle; null = all).
-    data.value = await api.bills({
+    const res = await api.bills({
       q: route.query.q, type: route.query.type, status: route.query.status,
       period: store.cycle, sort: route.query.sort || 'number',
       main_type_not: 'T', limit: PAGE, offset: route.query.offset || 0,
     })
-  } catch { error.value = true } finally { loading.value = false }
+    if (seq === loadSeq) data.value = res
+  } catch {
+    if (seq === loadSeq) error.value = true
+  } finally {
+    if (seq === loadSeq) loading.value = false
+  }
 }
 
 onMounted(() => { loadMeta().catch(() => {}).finally(() => { loadFacets(); load() }) })
@@ -79,6 +89,9 @@ watch(() => route.query, (q) => {
 watch(() => store.cycle, () => { loadFacets(); load() })
 let t = null
 function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
+// The debounce survives the component: clear it, or typing then clicking a
+// document within 300 ms yanks the user back to the list (apply() router.push).
+onUnmounted(() => clearTimeout(t))
 </script>
 
 <template>

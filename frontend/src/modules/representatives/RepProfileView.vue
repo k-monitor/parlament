@@ -112,7 +112,13 @@ const overTimeItems = computed(() => {
 // Vote-value chip colour by normalized code, matching the Votes module palette.
 const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote', absent: 'absent' }
 
+// Monotonic load id: profile switches (props.id / cycle watchers) can overlap
+// in flight; only the latest request may write state, or a slow earlier load
+// would display MP A's data under MP B's URL.
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true; error.value = false
   profile.value = stats.value = activity.value = speechDays.value = voteDays.value = null
   questions.value = lawBills.value = otherDocs.value = null
@@ -149,10 +155,15 @@ async function load() {
       otherReq,
       votesReq,
     ])
+    if (seq !== loadSeq) return  // superseded by a newer navigation
     profile.value = p; stats.value = s; activity.value = act
     speechDays.value = days; voteDays.value = v
     questions.value = qd; lawBills.value = lb; otherDocs.value = od
-  } catch { error.value = true } finally { loading.value = false }
+  } catch {
+    if (seq === loadSeq) error.value = true
+  } finally {
+    if (seq === loadSeq) loading.value = false
+  }
 }
 // Gate the first fetch on the manifest so store.cycle is resolved to the latest
 // cycle before we query (otherwise the profile would briefly be scoped to "all").
@@ -275,6 +286,11 @@ watch(() => store.cycle, load)
               :aria-expanded="expanded[sec.key]" @click="expanded[sec.key] = !expanded[sec.key]">
               {{ expanded[sec.key] ? $t('profile.showLess') : $t('profile.showMore') }}
             </button>
+            <!-- The buckets are fetched with limit 100, but the header shows the
+                 true total — say so instead of silently truncating. -->
+            <p v-if="expanded[sec.key] && sec.data.total > sec.data.bills.length" class="muted small">
+              {{ $t('profile.showingFirst', { n: sec.data.bills.length }) }}
+            </p>
           </section>
 
           <!-- Votes grouped by sitting day; each day is a spoiler that lazily

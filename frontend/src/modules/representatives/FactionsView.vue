@@ -12,10 +12,22 @@ const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
 
+// Monotonic load id: rapid cycle switches can leave fetches racing; only the
+// latest may write state.
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true; error.value = false
   // Scoped to the global cycle chooser (store.cycle; null = all cycles).
-  try { data.value = await api.factions(store.cycle) } catch { error.value = true } finally { loading.value = false }
+  try {
+    const res = await api.factions(store.cycle)
+    if (seq === loadSeq) data.value = res
+  } catch {
+    if (seq === loadSeq) error.value = true
+  } finally {
+    if (seq === loadSeq) loading.value = false
+  }
 }
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
 // Re-fetch when the global cycle changes.

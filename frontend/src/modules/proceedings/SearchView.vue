@@ -41,8 +41,10 @@ const error = ref(false)
 
 const factions = ref([])
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
+// `total` arrives already capped by the backend (max_search_total), so page
+// straight from it — a second, lower cap here would strand reachable results.
 const totalPages = computed(() =>
-  data.value ? Math.ceil(Math.min(data.value.total, 1000) / PAGE) : 0)
+  data.value ? Math.ceil(data.value.total / PAGE) : 0)
 
 onMounted(async () => {
   // Ensure the global cycle is initialised before the first search so results
@@ -75,8 +77,20 @@ function gotoPage(p) {
   router.push({ name: 'search', query: { ...route.query, offset: p * PAGE } })
 }
 
+// Monotonic request id: every trigger (query watcher, cycle watcher, retry)
+// may overlap in flight, and HTTP responses can complete out of order — only
+// the latest request may write state, or a slow older search would overwrite
+// a newer one's results (and the trend/breakdown could belong to a different
+// query than the list).
+let reqSeq = 0
+
 async function runFromRoute() {
-  if (!route.query.q) { data.value = null; trend.value = null; breakdown.value = null; return }
+  if (!route.query.q) {
+    reqSeq++ // orphan any in-flight responses
+    data.value = null; trend.value = null; breakdown.value = null
+    return
+  }
+  const seq = ++reqSeq
   loading.value = true; error.value = false
   const filterArgs = {
     q: route.query.q,
@@ -89,15 +103,24 @@ async function runFromRoute() {
   // The over-time popularity chart (SEA-8) and the who-said-it breakdown (SEA-9)
   // are independent aggregates over the whole result set (not just this page),
   // so they run alongside and their failure must never break the results list.
-  api.searchTrend(filterArgs).then((t) => { trend.value = t }).catch(() => { trend.value = null })
-  api.searchBreakdown(filterArgs).then((b) => { breakdown.value = b }).catch(() => { breakdown.value = null })
+  api.searchTrend(filterArgs)
+    .then((t) => { if (seq === reqSeq) trend.value = t })
+    .catch(() => { if (seq === reqSeq) trend.value = null })
+  api.searchBreakdown(filterArgs)
+    .then((b) => { if (seq === reqSeq) breakdown.value = b })
+    .catch(() => { if (seq === reqSeq) breakdown.value = null })
   try {
-    data.value = await api.search({
+    const res = await api.search({
       ...filterArgs,
       limit: PAGE,
       offset: route.query.offset || 0,
     })
-  } catch (e) { error.value = true } finally { loading.value = false }
+    if (seq === reqSeq) data.value = res
+  } catch (e) {
+    if (seq === reqSeq) error.value = true
+  } finally {
+    if (seq === reqSeq) loading.value = false
+  }
 }
 
 // Keep the form synced when navigating via back/forward, and re-run on any change.

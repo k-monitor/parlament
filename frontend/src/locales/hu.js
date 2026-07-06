@@ -171,6 +171,7 @@ export default {
     viewSpeech: 'Megtekintés',
     showMore: 'Továbbiak megjelenítése',
     showLess: 'Kevesebb megjelenítése',
+    showingFirst: 'A lista az első {n} elemet mutatja.',
     present: 'jelenleg',
     votes: 'Szavazatok',
     votesDayCount: 'szavazat',

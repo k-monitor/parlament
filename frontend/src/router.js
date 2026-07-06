@@ -97,7 +97,14 @@ router.beforeEach(async (to) => {
     /* meta failed; let the view render its own error state */
   }
   if (to.meta.module && store.loaded && !store.moduleEnabled(to.meta.module)) {
-    return { name: 'notfound' }
+    // Render the 404 view *at the requested URL* — a named catch-all resolved
+    // without its repeatable param would rewrite the address bar to "/".
+    return {
+      name: 'notfound',
+      params: { pathMatch: to.path.substring(1).split('/') },
+      query: to.query,
+      hash: to.hash,
+    }
   }
   return true
 })

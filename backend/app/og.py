@@ -34,7 +34,7 @@ from .db import get_db
 
 # --- app-shell loading ------------------------------------------------------
 
-_shell_cache: str | None = None
+_shell_cache: tuple[tuple, str] | None = None  # (file ident, html)
 
 # Tags we replace/inject so we never emit duplicates of the shell's own
 # generic <title> / description.
@@ -44,22 +44,29 @@ _DESC_RE = re.compile(
 
 
 def _load_shell() -> str | None:
-    """Read the built `index.html` once and cache it. Returns None when no SPA
-    is being served (dev / API-only deployment), which is the signal to skip
-    registering the share-card routes entirely."""
+    """Read the built `index.html` and cache it against the file's identity
+    (inode/mtime), so an in-place frontend redeploy without a backend restart
+    is picked up — a process-lifetime cache would keep referencing the old
+    content-hashed asset bundles, blanking every shared deep link. Returns
+    None when no SPA is being served (dev / API-only deployment), which is
+    the signal to skip registering the share-card routes entirely."""
     global _shell_cache
-    if _shell_cache is not None:
-        return _shell_cache
     dist = settings.frontend_dist
     if not dist:
         return None
     path = os.path.join(dist, "index.html")
     try:
+        st = os.stat(path)
+        ident = (st.st_dev, st.st_ino, st.st_mtime_ns)
+        if _shell_cache is not None and _shell_cache[0] == ident:
+            return _shell_cache[1]
         with open(path, encoding="utf-8") as fh:
-            _shell_cache = fh.read()
+            content = fh.read()
+        _shell_cache = (ident, content)
+        return content
     except OSError:
-        return None
-    return _shell_cache
+        # Mid-deploy the file may be briefly absent — serve the last good copy.
+        return _shell_cache[1] if _shell_cache is not None else None
 
 
 # --- helpers ----------------------------------------------------------------
@@ -203,12 +210,20 @@ def register(app) -> None:
 
     @app.get("/proceedings/{uid}", response_class=HTMLResponse, include_in_schema=False)
     def share_speech(uid: str, request: Request,
-                     s: int | None = None,
+                     s: str | None = None,
                      db: sqlite3.Connection = Depends(get_db)):
         """Share card for the proceedings viewer (VIE-5): a speech, or — with
         `?s=<ord>` — one specific sentence. Shows the quote, the speaker's name,
-        faction, sitting date, and the speaker's portrait as the card image."""
+        faction, sitting date, and the speaker's portrait as the card image.
+
+        `s` is declared as str and parsed by hand: a typed `int` would make
+        FastAPI answer a mangled `?s=` (truncated/garbled share link) with a
+        422 JSON error instead of the promised app-shell fallback."""
         try:
+            try:
+                s_ord = int(s) if s is not None and s.strip() else None
+            except ValueError:
+                s_ord = None
             sp = db.execute(
                 """SELECT sp.uid, sp.session_id, sp.speaker_label,
                           p.label AS person_label, p.photo_uri,
@@ -228,10 +243,10 @@ def register(app) -> None:
 
             # The quote: the chosen sentence, or the opening of the speech.
             quote = ""
-            if s is not None:
+            if s_ord is not None:
                 row = db.execute(
                     "SELECT text FROM sentence WHERE speech_id = ? AND ord = ?",
-                    (uid, s)).fetchone()
+                    (uid, s_ord)).fetchone()
                 if row:
                     quote = row["text"]
             if not quote:
@@ -254,7 +269,7 @@ def register(app) -> None:
                                + " a Magyar Országgyűlésben. Nézd meg videóval, "
                                  "mondatonként szinkronizálva a Parlamonitoron.")
 
-            url_path = f"/proceedings/{uid}" + (f"?s={s}" if s is not None else "")
+            url_path = f"/proceedings/{uid}" + (f"?s={s_ord}" if s_ord is not None else "")
             has_photo = bool(sp["photo_uri"])
             return render(
                 request, title=title, description=description,

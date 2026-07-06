@@ -13,8 +13,8 @@ export function formatDuration(seconds) {
 
 // Compact "Xó Yp" / "Xh Ym" speaking-time label.
 export function formatSpeakingTime(seconds) {
-  if (!seconds) return '0p'
   const lang = i18n.global.locale.value
+  if (!seconds) return lang === 'en' ? '0m' : '0p'
   const m = Math.round(seconds / 60)
   if (m < 60) return lang === 'en' ? `${m}m` : `${m}p`
   const h = Math.floor(m / 60)

@@ -14,7 +14,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...config import settings
-from ...db import fold_text, get_db
+from ...db import fold_text, get_db, like_contains
 
 router = APIRouter(prefix="/representatives", tags=["representatives"])
 
@@ -34,18 +34,28 @@ def list_representatives(
     where = ["p.is_mp = 1"]
     params: dict = {}
     if q:
-        where.append("fold(p.label) LIKE fold(:q)"); params["q"] = f"%{q.strip()}%"
+        where.append("fold(p.label) LIKE fold(:q) ESCAPE '\\'")
+        params["q"] = like_contains(q.strip())
     if constituency:
-        where.append("fold(p.constituency) LIKE fold(:con)"); params["con"] = f"%{constituency}%"
-    if faction_id is not None:
+        where.append("fold(p.constituency) LIKE fold(:con) ESCAPE '\\'")
+        params["con"] = like_contains(constituency)
+    if faction_id is not None and period is not None:
+        # One membership row must match both — two independent EXISTS would
+        # list an MP who was in this faction only during a *different* cycle.
+        where.append("EXISTS (SELECT 1 FROM membership m WHERE m.person_id=p.person_id "
+                     "AND m.faction_id=:fid AND m.period_number=:per)")
+        params["fid"] = faction_id; params["per"] = period
+    elif faction_id is not None:
         where.append("EXISTS (SELECT 1 FROM membership m WHERE m.person_id=p.person_id "
                      "AND m.faction_id=:fid)"); params["fid"] = faction_id
-    if period is not None:
+    elif period is not None:
         where.append("EXISTS (SELECT 1 FROM membership m WHERE m.person_id=p.person_id "
                      "AND m.period_number=:per)"); params["per"] = period
     where_sql = " AND ".join(where)
 
-    order = {"name": "p.lastname, p.label",
+    # fold() the name sort: BINARY collation puts accented Hungarian surnames
+    # (Ágh, Árvay) after Z.
+    order = {"name": "fold(p.lastname), fold(p.label)",
              "speeches": "stat.speech_count DESC",
              "speaking_time": "stat.speaking_seconds DESC"}[sort]
 

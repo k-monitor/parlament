@@ -39,6 +39,17 @@ def fold_text(s: str | None) -> str | None:
     return stripped.casefold()
 
 
+def like_contains(term: str) -> str:
+    """A contains-match LIKE pattern that treats user input literally: ``%``,
+    ``_`` and ``\\`` in the term are escaped, so e.g. ``q=100%`` matches the
+    text "100%" rather than "100" followed by anything. Use together with
+    ``ESCAPE '\\'`` on the LIKE."""
+    escaped = (term.replace("\\", "\\\\")
+                   .replace("%", "\\%")
+                   .replace("_", "\\_"))
+    return f"%{escaped}%"
+
+
 def open_connection(db_path: str | None = None) -> sqlite3.Connection:
     path = db_path or settings.db_path
     if not Path(path).exists():
@@ -62,14 +73,24 @@ def open_connection(db_path: str | None = None) -> sqlite3.Connection:
     return conn
 
 
-_local = threading.local()
+# Warm connections are kept in a checkout pool rather than thread-locals:
+# FastAPI runs a sync dependency and the endpoint body as separate threadpool
+# jobs, so they routinely land on *different* threads. With thread-local
+# caching, two in-flight requests could share one connection concurrently, and
+# a DB swap would let one thread close() a connection another request was
+# still querying — a use-after-free that can segfault the process. Checking a
+# connection out per request makes each one single-user for the request's
+# lifetime; superseded connections are closed only by their sole holder.
+_pool_lock = threading.Lock()
+_pool_ident: tuple | None = None
+_pool: list[sqlite3.Connection] = []
 
 
-def _thread_connection() -> sqlite3.Connection:
-    """The calling thread's cached read-only connection, reopened only when the
-    DB file was atomically swapped (new inode/mtime) or the configured path
-    changed. The stat() is a few microseconds — negligible next to reopening
-    and re-registering ``fold`` on every request."""
+def _db_ident() -> tuple:
+    """Identity of the current DB file: the loader's atomic ``os.replace``
+    gives a new inode, and an in-place ``loader --update`` a new mtime, so
+    either kind of swap changes the ident and retires pooled connections. The
+    stat() is a few microseconds — negligible next to reopening per request."""
     path = settings.db_path
     try:
         st = os.stat(path)
@@ -77,20 +98,39 @@ def _thread_connection() -> sqlite3.Connection:
         raise FileNotFoundError(
             f"Database not found at {path}. Build it with "
             f"`python -m app.loader <data_dir> {path}`.")
-    ident = (path, st.st_dev, st.st_ino, st.st_mtime_ns)
-    if getattr(_local, "ident", None) == ident:
-        return _local.conn
-    old = getattr(_local, "conn", None)
-    if old is not None:
-        try:
-            old.close()
-        except sqlite3.Error:  # pragma: no cover
-            pass
-    _local.conn = open_connection(path)
-    _local.ident = ident
-    return _local.conn
+    return (path, st.st_dev, st.st_ino, st.st_mtime_ns)
 
 
 def get_db():
-    """FastAPI dependency yielding the thread's cached read-only connection."""
-    yield _thread_connection()
+    """FastAPI dependency yielding a pooled read-only connection, checked out
+    for the duration of the request (DB-4 zero-downtime swap preserved)."""
+    global _pool_ident
+    ident = _db_ident()
+    conn = None
+    with _pool_lock:
+        if _pool_ident != ident:
+            # DB file swapped: retire idle connections now; checked-out ones
+            # are closed by their own request on return (see finally below).
+            for stale in _pool:
+                try:
+                    stale.close()
+                except sqlite3.Error:  # pragma: no cover
+                    pass
+            _pool.clear()
+            _pool_ident = ident
+        elif _pool:
+            conn = _pool.pop()
+    if conn is None:
+        conn = open_connection(ident[0])
+    try:
+        yield conn
+    finally:
+        with _pool_lock:
+            if _pool_ident == ident:
+                _pool.append(conn)
+                conn = None
+        if conn is not None:  # superseded while we held it — safe: sole user
+            try:
+                conn.close()
+            except sqlite3.Error:  # pragma: no cover
+                pass

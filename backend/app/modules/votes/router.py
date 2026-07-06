@@ -16,7 +16,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ...db import get_db
+from ...db import get_db, like_contains
 from ...parlament_links import vote_page_url
 
 router = APIRouter(prefix="/votes", tags=["votes"])
@@ -66,10 +66,11 @@ def list_votes(
     where = ["1=1"]
     params: dict = {}
     if q:
-        where.append("(fold(v.subject) LIKE fold(:q) OR EXISTS (SELECT 1 FROM vote_subject vs "
-                     "WHERE vs.vote_id=v.id AND (fold(vs.bill_number) LIKE fold(:q) "
-                     "OR fold(vs.title) LIKE fold(:q))))")
-        params["q"] = f"%{q.strip()}%"
+        where.append("(fold(v.subject) LIKE fold(:q) ESCAPE '\\' "
+                     "OR EXISTS (SELECT 1 FROM vote_subject vs "
+                     "WHERE vs.vote_id=v.id AND (fold(vs.bill_number) LIKE fold(:q) ESCAPE '\\' "
+                     "OR fold(vs.title) LIKE fold(:q) ESCAPE '\\')))")
+        params["q"] = like_contains(q.strip())
     if period is not None:
         where.append("v.period_number = :per"); params["per"] = period
     if result:

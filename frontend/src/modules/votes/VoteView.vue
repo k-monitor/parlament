@@ -32,10 +32,21 @@ function factionParts(fs) {
   return { yes: (100 * yes) / total, no: (100 * no) / total, abstain: (100 * abstain) / total }
 }
 
+// Monotonic load id: only the latest in-flight fetch may write state (rapid
+// navigation between votes can resolve out of order).
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true; error.value = false; vote.value = null
-  try { vote.value = await api.vote(props.id) } catch { error.value = true }
-  finally { loading.value = false }
+  try {
+    const res = await api.vote(props.id)
+    if (seq === loadSeq) vote.value = res
+  } catch {
+    if (seq === loadSeq) error.value = true
+  } finally {
+    if (seq === loadSeq) loading.value = false
+  }
 }
 onMounted(load)
 watch(() => props.id, load)

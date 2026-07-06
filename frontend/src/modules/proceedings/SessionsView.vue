@@ -23,14 +23,24 @@ function gotoPage(p) {
   router.push({ name: 'sessions', query: { ...route.query, offset: p * PAGE } })
 }
 
+// Monotonic load id: the query and cycle watchers can leave fetches racing;
+// only the latest may write state.
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true; error.value = false
   // Scoped to the global cycle chooser (store.cycle; null = all cycles).
   try {
-    data.value = await api.sessions({
+    const res = await api.sessions({
       period: store.cycle, limit: PAGE, offset: route.query.offset || 0,
     })
-  } catch { error.value = true } finally { loading.value = false }
+    if (seq === loadSeq) data.value = res
+  } catch {
+    if (seq === loadSeq) error.value = true
+  } finally {
+    if (seq === loadSeq) loading.value = false
+  }
 }
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
 watch(() => route.query, load)

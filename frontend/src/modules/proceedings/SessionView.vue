@@ -28,12 +28,24 @@ const topSpeakers = ref(null)
 // Longest single speaking time, for sizing the (decorative) bars (TOPSPK-4).
 const topMax = computed(() => Math.max(1, ...(topSpeakers.value?.speakers || []).map((s) => s.seconds || 0)))
 
+// Monotonic load id: navigating session A → B with A's requests still in
+// flight must not let A's transcript/word-cloud land on B's page.
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true; error.value = false; cloud.value = null; newWords.value = null; topSpeakers.value = null
-  try { data.value = await api.session(props.id) } catch { error.value = true } finally { loading.value = false }
-  api.sessionWordcloud(props.id).then((c) => { cloud.value = c }).catch(() => {})
-  api.sessionNewWords(props.id).then((n) => { newWords.value = n }).catch(() => {})
-  api.sessionTopSpeakers(props.id).then((t) => { topSpeakers.value = t }).catch(() => {})
+  try {
+    const res = await api.session(props.id)
+    if (seq === loadSeq) data.value = res
+  } catch {
+    if (seq === loadSeq) error.value = true
+  } finally {
+    if (seq === loadSeq) loading.value = false
+  }
+  api.sessionWordcloud(props.id).then((c) => { if (seq === loadSeq) cloud.value = c }).catch(() => {})
+  api.sessionNewWords(props.id).then((n) => { if (seq === loadSeq) newWords.value = n }).catch(() => {})
+  api.sessionTopSpeakers(props.id).then((t) => { if (seq === loadSeq) topSpeakers.value = t }).catch(() => {})
 }
 onMounted(load)
 watch(() => props.id, load)

@@ -1,32 +1,33 @@
 # Parlamonitor — Docker / Podman Compose deployment.
 #
-# One image (OPS-1), a small set of services around two shared volumes. The
-# serving process is run as two interchangeable "colors" behind an in-stack
-# reverse proxy so application/SPA updates swap in with ZERO downtime — see
-# ./deploy.sh and DEPLOYMENT.md.
+# One image (OPS-1). Compose runs only the STABLE plumbing here; the two
+# interchangeable serving "colors" are managed by ./deploy.sh with plain
+# `podman` (so the zero-downtime blue-green swap works the same on old
+# podman-compose as on the modern `podman compose`/`docker compose` provider).
+# The colors join caddy's compose network at deploy time (./deploy.sh detects it
+# off the running caddy container — no external network needed, works on every
+# compose version) and mount the same external DB volume that ./deploy.sh owns.
 #
-#   caddy      — the stable front. Owns the published port and health-check-
-#                balances across app_blue / app_green. Nothing else binds the
-#                port, so the color swap is invisible to whatever is in front
-#                (Cloudflare, a host TLS proxy, or nothing).
-#   app_blue   — the two serving colors (FastAPI: API + Vue SPA + MP photos).
-#   app_green    Only ONE runs in steady state; ./deploy.sh flips between them.
-#   init       — one-shot: builds the runtime DB from /data on first boot
-#                (or REBUILD_DB=1), then exits. Keeps the slow first build out
-#                of the serving container's healthcheck.
-#   sync       — sidecar: continuously checks parlament.hu for changes in the
-#                latest cycle, re-scrapes only what changed (SCR-2/SCR-4) and
-#                incrementally updates the DB in place, swapping it atomically
-#                (DB-4). The app picks it up on the next request — no restart.
-#   app        — tools-only (never auto-starts): the target of one-off
-#                `compose run --rm app <loader|update|pytest|sh|…>` commands.
+#   caddy   — the stable front. Owns the published port and health-check-
+#             balances across app_blue / app_green (see docker/Caddyfile).
+#             Nothing else binds the port, so the color swap is invisible to
+#             whatever is in front (Cloudflare, a host TLS proxy, or nothing).
+#   init    — one-shot: builds the runtime DB from /data on first boot (or
+#             REBUILD_DB=1), then exits. Keeps the slow first build out of a
+#             serving color's healthcheck.
+#   sync    — sidecar: continuously checks parlament.hu for changes in the
+#             latest cycle, re-scrapes only what changed (SCR-2/SCR-4) and
+#             incrementally updates the DB in place, swapping it atomically
+#             (DB-4). The colors pick it up on the next request — no restart.
 #
-#   ./deploy.sh                       # build current checkout + zero-downtime swap
-#   podman compose logs -f app_blue   # watch the active color (whichever is up)
-#   podman compose logs -f sync       # watch the continuous sync
+# The serving colors themselves are NOT compose services — ./deploy.sh runs
+# them. See DEPLOYMENT.md for the full guide.
+#
+#   ./deploy.sh                       # build + bring up everything, zero-downtime swap
+#   ./deploy.sh --status              # which color is serving now
+#   podman-compose logs -f sync       # watch the continuous sync
+#   podman logs -f parlamonitor_app_blue   # watch the active color
 #   open http://localhost:8000        # app + /api/docs (via caddy)
-#
-# See DEPLOYMENT.md for the full guide.
 
 x-common-env: &common-env
   # Paths inside the container (match the volumes below).
@@ -54,60 +55,11 @@ x-timing-env: &timing-env
   PARLAMONITOR_TIMING_BACKEND: ${PARLAMONITOR_TIMING_BACKEND:-auto}
   PARLAMONITOR_WHISPER_MODAL_APP: ${PARLAMONITOR_WHISPER_MODAL_APP:-parlamonitor-whisper}
 
-# Extra env for the serving process (API + SPA + photos).
-x-app-serve-env: &app-serve-env
-  PARLAMONITOR_FRONTEND_DIST: /app/frontend/dist
-  # Served same-origin, so CORS only matters if you point a separate SPA host
-  # at this API. Set to your public origin(s), comma-separated.
-  PARLAMONITOR_CORS_ORIGINS: ${PARLAMONITOR_CORS_ORIGINS:-http://localhost:8000}
-  # Canonical public base URL used to build the absolute og:url / og:image in
-  # the server-rendered social share cards (og.py). Set this to your real
-  # public origin so a shared link previews with correct absolute URLs; behind
-  # a proxy the request's own scheme/host is often wrong. When unset the cards
-  # fall back to the request base URL.
-  PARLAMONITOR_SITE_URL: ${PARLAMONITOR_SITE_URL:-}
-  # Uvicorn worker processes (default: one per core). The API is read-only over
-  # one SQLite file, so workers scale it across cores safely.
-  PARLAMONITOR_WEB_WORKERS: ${PARLAMONITOR_WEB_WORKERS:-}
-  # Cache-Control stamped on API / HTML responses (see backend/app/caching.py
-  # and the "Handling high traffic" section of DEPLOYMENT.md).
-  PARLAMONITOR_API_CACHE_CONTROL: ${PARLAMONITOR_API_CACHE_CONTROL:-}
-  PARLAMONITOR_HTML_CACHE_CONTROL: ${PARLAMONITOR_HTML_CACHE_CONTROL:-}
-
-# The serving color, shared by app_blue and app_green. They are identical except
-# for their name; ./deploy.sh runs exactly one at a time. No published port —
-# only caddy binds the port and proxies to whichever color is healthy.
-x-app-serve: &app-serve
-  build:
-    context: .
-    dockerfile: Dockerfile
-  image: parlamonitor:latest
-  environment:
-    <<: [*common-env, *app-serve-env]
-  volumes:
-    # Scraper output (processed/*.json + media/photos), read-only for the API.
-    - ./data:/data:ro
-    # Persisted runtime DB so it survives restarts and isn't rebuilt each boot.
-    - dbdata:/db
-  # Serve only once the DB has been built (init completed) — so uvicorn starts
-  # immediately and the healthcheck passes without waiting on a build.
-  depends_on:
-    init:
-      condition: service_completed_successfully
-  restart: unless-stopped
-  healthcheck:
-    test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)"]
-    interval: 30s
-    timeout: 5s
-    retries: 3
-    start_period: 40s
-  # Colors never auto-start on a bare `up`; ./deploy.sh brings the right one up.
-  profiles: ["serve"]
-
 services:
   # The stable front (see docker/Caddyfile). Owns the published port and load-
   # balances across the two colors with active health checks + request retries,
-  # so the deploy-time color swap drops no requests.
+  # so the deploy-time color swap drops no requests. It reaches the colors by
+  # their network aliases (app_blue / app_green) on the shared external network.
   caddy:
     image: docker.io/library/caddy:2-alpine
     ports:
@@ -119,10 +71,14 @@ services:
       - caddy_config:/config
     restart: unless-stopped
 
-  # One-shot builder. Builds the runtime DB on first boot (or REBUILD_DB=1) and
-  # exits; the colors + sync wait for it to COMPLETE. This keeps the potentially
-  # long first build (HuSpaCy word-cloud lemmatization can take many minutes)
-  # out of the serving container, so a color's healthcheck is never held up.
+  # One-shot builder. ./deploy.sh runs this (`compose run --rm init`) before it
+  # starts a color, so the potentially long first build (HuSpaCy word-cloud
+  # lemmatization can take many minutes) never blocks a serving healthcheck.
+  # Also the target of one-off DB commands, e.g.
+  #   podman-compose run --rm init update     # incremental DB reconcile
+  #   podman-compose run --rm init loader      # full rebuild
+  #   podman-compose run --rm init pytest      # test suite
+  #   podman-compose run --rm init sh          # a shell
   init:
     build:
       context: .
@@ -131,34 +87,17 @@ services:
     command: ["ensure-db"]
     environment:
       <<: [*common-env, *nlp-env]
-      # Set to 1 to rebuild the DB from /data on the next `up` / deploy.
+      # Set to 1 to rebuild the DB from /data on the next run.
       REBUILD_DB: ${REBUILD_DB:-0}
     volumes:
       - ./data:/data:ro
       - dbdata:/db
     restart: "no"
 
-  # The two serving colors. ./deploy.sh runs exactly one; both are identical.
-  app_blue:
-    <<: *app-serve
-  app_green:
-    <<: *app-serve
-
-  # Tools-only: never auto-starts. The target of one-off commands, e.g.
-  #   podman compose run --rm app update      # incremental DB reconcile
-  #   podman compose run --rm app loader       # full rebuild
-  #   podman compose run --rm app pytest       # test suite
-  #   podman compose run --rm app sh           # a shell
-  app:
-    <<: *app-serve
-    depends_on: {}
-    restart: "no"
-    profiles: ["tools"]
-
   # Continuous, low-load sync of the latest cycle. Comment this whole service
   # out to disable in-container syncing (e.g. when driving it from an external
-  # cron). Restarted by ./deploy.sh onto the new image (harmless — flock-guarded
-  # and idle between polls).
+  # cron). ./deploy.sh refreshes it onto the new image after each deploy
+  # (harmless — flock-guarded and idle between polls).
   sync:
     build:
       context: .
@@ -200,14 +139,22 @@ services:
       # not configured this defaults to /dev/null so compose stays happy and the
       # (never-read) mount is harmless.
       - ${PARLAMONITOR_SSH_KEY_FILE:-/dev/null}:/run/secrets/ssh_key:ro
-    # Start only after the DB has been built (init completed), so sync only ever
-    # does cheap incremental updates and never races the first full build.
+    # A hint for the modern compose provider; ./deploy.sh also orders init before
+    # sync explicitly, so this works even where the condition is not honored.
     depends_on:
       init:
         condition: service_completed_successfully
     restart: unless-stopped
 
+# The DB volume is EXTERNAL and owned by ./deploy.sh (it creates it if missing).
+# External guarantees the compose plumbing and the hand-run colors mount the
+# exact same volume by name on every compose version — no project-prefix
+# surprises. The network is compose's own default; ./deploy.sh detects it off the
+# caddy container and joins the colors to it. Run `./deploy.sh` first (it creates
+# the volume), after which plain `podman-compose` commands work too.
 volumes:
   dbdata:
+    name: parlamonitor_dbdata
+    external: true
   caddy_data:
   caddy_config:

@@ -9,45 +9,46 @@ zero-downtime:
 - **code / SPA updates** — handled by [`./deploy.sh`](deploy.sh), which does a
   **blue-green swap** of the serving container behind an in-stack reverse proxy.
 
-The services:
+The moving parts. [`./deploy.sh`](deploy.sh) manages the **serving tier**
+(caddy + the two colors) with plain `podman`, so the blue-green swap works the
+same on old `podman-compose` as on the modern `podman compose`/`docker compose`
+provider. Compose manages the **data tier** (`init`, `sync`). Everything shares
+one **external** network (`parlamonitor`) and one **external** DB volume
+(`parlamonitor_dbdata`) that `./deploy.sh` owns.
 
-- **`caddy`** — the stable front. It **owns the published port** and
-  health-check-balances across the two serving "colors" (`app_blue` /
-  `app_green`). Because nothing else binds the port, swapping the serving
-  container is invisible to whatever is in front of it (Cloudflare, a host TLS
-  proxy, or nothing). See [`docker/Caddyfile`](docker/Caddyfile).
-- **`app_blue` / `app_green`** — the two interchangeable serving colors: the
-  FastAPI backend serving the versioned API, the MP photos and the built Vue SPA
-  from a single stateless process (one uvicorn worker per core). It reads the
-  SQLite DB **read-only** and re-stats the file on every request, so a
-  swapped-in DB is picked up on the next request with no restart. **Only one
-  color runs in steady state**; `./deploy.sh` flips between them.
-- **`init`** — a one-shot builder that creates the read-only SQLite + FTS5
-  database in the persistent volume on first boot (or `REBUILD_DB=1`), then
-  exits. Keeping the build here — rather than inside the API — means the possibly
-  long first build never holds up a color's healthcheck.
-- **`sync`** — a sidecar that keeps the data in step with `parlament.hu`
-  (see [Continuous sync](#continuous-sync-keeping-in-step-with-parlamenthu)).
+- **`caddy`** *(compose)* — the stable front. It **owns the published port** and
+  health-check-balances across the two serving "colors", reaching them by their
+  network aliases `app_blue` / `app_green`. Because nothing else binds the port,
+  swapping the serving container is invisible to whatever is in front of it
+  (Cloudflare, a host TLS proxy, or nothing). See [`docker/Caddyfile`](docker/Caddyfile).
+- **`parlamonitor_app_blue` / `_green`** *(podman, run by `./deploy.sh`)* — the
+  two interchangeable serving colors: the FastAPI backend serving the versioned
+  API, the MP photos and the built Vue SPA from a single stateless process (one
+  uvicorn worker per core). It reads the SQLite DB **read-only** and re-stats the
+  file on every request, so a swapped-in DB is picked up on the next request with
+  no restart. **Only one color runs at a time**; `./deploy.sh` flips between them.
+- **`init`** *(compose)* — a one-shot builder that creates the read-only SQLite +
+  FTS5 database in the persistent volume on first boot (or `REBUILD_DB=1`), then
+  exits. `./deploy.sh` runs it **before** starting a color, so the possibly long
+  first build never holds up a serving healthcheck. Also the target of one-off DB
+  commands (`compose run --rm init <update|loader|pytest|sh>`).
+- **`sync`** *(compose)* — a sidecar that keeps the data in step with
+  `parlament.hu` (see [Continuous sync](#continuous-sync-keeping-in-step-with-parlamenthu)).
   It cheaply checks the latest cycle for changes, re-scrapes **only what
   changed**, and updates the DB **incrementally**, swapping the new file in
   atomically. Optional — drive it from an external cron instead if you prefer.
-- **`app`** — a tools-only service that never auto-starts; the target of one-off
-  `compose run --rm app <loader|update|pytest|sh|…>` commands.
-
-The colors and `sync` both wait for `init` to finish, so they start against a
-ready database and only ever read / incrementally update it.
 
 ```
-                          ┌──── app_blue  (uvicorn → FastAPI) ────┐
- Cloudflare / proxy ─▶ caddy ─┤  /            → Vue SPA               │   ┌──── sync (sidecar) ─────────┐
-   (one stable port)  :8000│  /api/v1/…    → JSON API (DB ro,      │   │ loop every N min (or cron): │
-      health-check LB  │   │  /media/…     → photos)  per request  │   │  1. parlamonitor sync       │
-      + retry across   │   └───────────────────────────────────────┘   │     (scrape only changed)   │
-      both colors      └── app_green (idle; ./deploy.sh flips to it) │   │  2. app.loader --update     │
-                                    ▲ ./data (ro)   ▲ dbdata (rw)        │     (reload changed → atomic│
-                                    │               │ ◄── atomic swap ───│      swap of the runtime DB)│
-                               scraper output   runtime DB (shared)      └─────────────────────────────┘
-                                                                            ▲ ./data (rw)  ▲ dbdata (rw)
+                        ┌── parlamonitor_app_blue (uvicorn → FastAPI) ──┐
+ Cloudflare / proxy ─▶ caddy ─┤  /            → Vue SPA                     │   ┌──── sync (sidecar) ─────────┐
+   (one stable port)  :8000│  /api/v1/…    → JSON API (DB ro,            │   │ loop every N min (or cron): │
+      health-check LB  │   │  /media/…     → photos)  per request        │   │  1. parlamonitor sync       │
+      + retry across   │   └─────────────────────────────────────────────┘   │     (scrape only changed)   │
+      the two colors   └── parlamonitor_app_green (idle; deploy flips to it)│   │  2. app.loader --update     │
+                                    ▲ ./data (ro)   ▲ dbdata (rw)              │     (reload changed → atomic│
+                                    │               │ ◄──── atomic swap ───────│      swap of the runtime DB)│
+                               scraper output   runtime DB (shared)            └─────────────────────────────┘
+                                                                                  ▲ ./data (rw)  ▲ dbdata (rw)
 ```
 
 Because the DB swap is atomic and the API notices the replaced file (new inode)
@@ -58,8 +59,11 @@ no dropped requests.
 
 ## Prerequisites
 
-- Docker Engine 24+ with the Compose v2 plugin (`docker compose`, not the legacy
-  `docker-compose`).
+- **Podman 4+** (rootless is fine) with **`podman-compose`** *or* the
+  `podman compose` provider — `./deploy.sh` auto-detects which, and drives the
+  serving colors with plain `podman` so it does not depend on compose features.
+  Docker Engine 24+ with `docker compose` also works (`ENGINE`/`COMPOSE` are
+  overridable).
 - Scraper output present under [`data/`](data/):
   - `data/processed/*-session.json`, `data/processed/representatives-*.json`,
     `data/processed/bills-*.json` — **required**, used to build the DB.
@@ -80,9 +84,9 @@ update — it builds the image, ensures the DB, starts a serving color behind
 `caddy`, and (on updates) retires the old color once the new one is healthy:
 
 ```bash
-./deploy.sh                        # build + bring up caddy, a color, init, sync
-podman compose logs -f init        # first boot: watch the DB build
-podman compose logs -f app_blue    # then watch the active color ("Uvicorn running")
+./deploy.sh                          # build + bring up caddy, a color, init, sync
+podman-compose logs -f init          # first boot: watch the DB build
+podman logs -f parlamonitor_app_blue # then watch the active color ("Uvicorn running")
 ```
 
 Then open <http://localhost:8000> — the SPA, with API docs at
@@ -93,28 +97,28 @@ Then open <http://localhost:8000> — the SPA, with API docs at
 > word-cloud lemmatization over the whole corpus is the slow part — see
 > [First-boot build time](#first-boot-build-time-huspacy)). `deploy.sh` runs this
 > in the one-shot **`init`** service and only starts a serving color **after it
-> finishes**, so watch `podman compose logs -f init`. Subsequent runs reuse the
+> finishes**, so watch `podman-compose logs -f init`. Subsequent runs reuse the
 > DB and start in seconds.
 >
-> **Note.** A bare `podman compose up -d` starts only the plumbing (`caddy`,
-> `init`, `sync`) — the serving colors are gated behind the `serve` profile so a
-> stray `up` can never start both at once. Use `./deploy.sh` to bring a color up.
+> **Note.** `./deploy.sh` is the bootstrap: it creates the external network +
+> volume, then brings everything up. A bare `podman-compose up -d` only starts
+> the data-tier plumbing (`init`, `sync`) and `caddy` — the serving colors are
+> run by `./deploy.sh`, so a bare `up` never serves on its own.
 
 ## What the containers do on boot
 
-From one image (`docker/entrypoint.sh`):
+From one image (`docker/entrypoint.sh`), orchestrated by `./deploy.sh`:
 
 1. **`init`** (`ensure-db`) — if `/db/parlamonitor.db` is missing (or
    `REBUILD_DB=1`), runs `python -m app.loader /data /db/parlamonitor.db` — the
-   **only** DB writer (ING-2), atomic swap (DB-4) — then **exits**. The serving
-   colors and `sync` wait for it to **complete** (compose
-   `service_completed_successfully`), so the long first build never blocks a
-   healthcheck.
+   **only** DB writer (ING-2), atomic swap (DB-4) — then **exits**. `./deploy.sh`
+   runs this to completion **before** starting a color, so the long first build
+   never blocks a healthcheck.
 2. **`caddy`** — starts immediately and load-balances across the colors, taking
    whichever is down out of rotation via its active health checks.
-3. **`app_blue` / `app_green`** (`serve`) — the color `./deploy.sh` brought up
-   execs `uvicorn app.main:app` (the DB already exists, so it starts immediately
-   and is healthy within seconds).
+3. **`parlamonitor_app_blue` / `_green`** (`serve`) — the color `./deploy.sh`
+   started execs `uvicorn app.main:app` (the DB already exists, so it starts
+   immediately and is healthy within seconds).
 4. **`sync`** (`sync-loop`) — the continuous updater (see above).
 
 The DB lives in the `dbdata` named volume, so it survives restarts and is **not**
@@ -129,7 +133,7 @@ make the very first boot fast, build with the dependency-free tokenizer and
 switch to HuSpaCy later:
 
 ```bash
-PARLAMONITOR_WORDCLOUD_BACKEND=regex docker compose up -d   # fast first build
+PARLAMONITOR_WORDCLOUD_BACKEND=regex ./deploy.sh   # fast first build
 ```
 
 (The word cloud is lower quality under `regex`; a later full rebuild with
@@ -270,13 +274,14 @@ that only accept the `ssh-rsa` (RSA-SHA1) signature are detected and retried
 transparently, so no `PubkeyAcceptedKeyTypes` equivalent is required. Host-key
 checking is trust-on-first-use unless you point `PARLAMONITOR_SSH_KNOWN_HOSTS` at
 a `known_hosts` file. The tunnel needs `paramiko`, which is bundled in the image
-— rebuild it (`docker compose up -d --build`) after enabling this the first time.
+— run `./deploy.sh` after enabling this the first time (it rebuilds the image and
+refreshes the `sync` sidecar onto it).
 
 Verify a one-shot pass egresses through the host:
 
 ```bash
-docker compose up -d --build             # (re)build so paramiko is present
-docker compose run --rm sync sync        # watch the log for "SSH proxy up: …"
+./deploy.sh                              # rebuild so paramiko is present + refresh sync
+podman-compose run --rm sync sync        # watch the log for "SSH proxy up: …"
 ```
 
 ### Alternative: external cron instead of the sidecar
@@ -296,7 +301,7 @@ container — the two halves are decoupled by the `processed/*.json` files:
 # host: refresh the JSON (writes only what changed)
 python -m parlamonitor sync ./data
 # container: reconcile the DB (fast, atomic, zero-downtime)
-docker compose run --rm app update
+podman-compose run --rm init update
 ```
 
 The `sync-once.sh` guard is an `flock`, so overlapping cron runs simply skip.
@@ -356,16 +361,16 @@ changed sittings/registries are reloaded, then atomically swapped in — normall
 the `sync` service does this for you):
 
 ```bash
-docker compose run --rm app update      # fast, zero-downtime; no-op if nothing changed
+podman-compose run --rm init update     # fast, zero-downtime; no-op if nothing changed
 ```
 
 **Full rebuild** (e.g. after a schema change or to force a clean import — atomic
 swap, so the running color picks it up live with no restart):
 
 ```bash
-docker compose run --rm app loader      # one-shot rebuild, then exits
-# or force it via init on the next run:
-REBUILD_DB=1 docker compose run --rm init
+podman-compose run --rm init loader     # one-shot rebuild, then exits
+# or force it on the next init run:
+REBUILD_DB=1 podman-compose run --rm init
 ```
 
 **Update the application code / SPA** — the zero-downtime blue-green swap
@@ -380,15 +385,18 @@ git pull
 **Run the test suite inside the image:**
 
 ```bash
-docker compose run --rm app pytest      # any non-serve/loader arg is exec'd verbatim
+podman-compose run --rm init pytest     # any non-serve/loader arg is exec'd verbatim
 ```
 
 **Open a shell / stop / wipe:**
 
 ```bash
-docker compose run --rm app sh
-docker compose down                     # stop & remove containers (DB volume kept)
-docker compose down -v                  # also delete the dbdata volume
+podman-compose run --rm init sh
+./deploy.sh --stop                      # stop both serving colors (caddy stays up)
+podman-compose down                     # stop caddy + the init/sync plumbing
+# full wipe (external net + volume are owned by deploy.sh, not compose):
+./deploy.sh --stop && podman-compose down
+podman network rm parlamonitor; podman volume rm parlamonitor_dbdata
 ```
 
 ## Zero-downtime code deploys
@@ -396,8 +404,9 @@ docker compose down -v                  # also delete the dbdata volume
 Data changes ship live via `sync` (atomic DB swap). **Application code / SPA**
 changes ship via [`./deploy.sh`](deploy.sh), a **blue-green swap** behind the
 in-stack `caddy` proxy. The serving process runs as two interchangeable colors,
-`app_blue` and `app_green`; exactly one serves at a time and `caddy` stays bound
-to the port throughout, so the swap never drops a request.
+`parlamonitor_app_blue` and `parlamonitor_app_green` (run with plain `podman`, so
+this works on any podman/compose version); exactly one serves at a time and
+`caddy` stays bound to the port throughout, so the swap never drops a request.
 
 ```bash
 git pull
@@ -405,29 +414,32 @@ git pull
 ./deploy.sh --status        # which color is serving right now?
 ./deploy.sh --rollback      # restore the previous image and swap back to it
 ./deploy.sh --no-build      # re-flip to the already-built :latest (no rebuild)
+./deploy.sh --stop          # stop both colors (maintenance); caddy stays up
 ```
 
 What a run does:
 
-1. **Build** the new image from the current checkout (no downtime). The image
+1. **Ensure** the external network (`parlamonitor`) + DB volume
+   (`parlamonitor_dbdata`) exist, creating them if missing.
+2. **Build** the new image from the current checkout (no downtime). The image
    in use is first tagged `parlamonitor:rollback` so `--rollback` can restore it.
-2. **`init`** ensures the DB exists — off the serving path, so a first build
+3. **`init`** ensures the DB exists — off the serving path, so a first build
    never blocks a healthcheck (a no-op when the DB is already in the volume).
-3. **Start the idle color** from the new image and **poll `/api/v1/health`**
+4. **Start the idle color** from the new image and **poll `/api/v1/health`**
    until it passes (up to `DEPLOY_WAIT_TIMEOUT`, default 120 s).
-4. **Retire the old color** (`rm -sf`). `caddy` had been balancing across both
-   with active health checks + per-request retries, so it drains to the new
-   color with **no dropped requests**.
+5. **Retire the old color**. `caddy` had been balancing across both with active
+   health checks + per-request retries, so it drains to the new color with **no
+   dropped requests**.
 
 If the new color never turns healthy, **the old one keeps serving** and the
 script exits non-zero — a bad build cannot take the site down. Inspect it with
-`podman compose logs --tail=80 app_<color>` and discard with
-`podman compose --profile serve rm -sf app_<color>`.
+`podman logs --tail=80 parlamonitor_app_<color>` and discard with
+`podman rm -f parlamonitor_app_<color>`.
 
-The swap only touches the serving colors + `sync`; `caddy`, `init` and the
-`dbdata` volume are untouched, so data and in-flight edge caches are unaffected.
-`caddy` (and the surviving color, via `restart: unless-stopped`) come back after
-a host reboot — enable that for rootless podman with
+The swap only touches the serving colors + `sync`; `caddy`, `init` and the DB
+volume are untouched, so data and in-flight edge caches are unaffected. The
+colors and `caddy` carry `--restart unless-stopped`, so they come back after a
+host reboot — enable that for rootless podman with
 `systemctl --user enable --now podman-restart.service` and
 `loginctl enable-linger $USER`.
 

@@ -19,6 +19,26 @@ from ...db import fold_text, get_db, like_contains
 router = APIRouter(prefix="/representatives", tags=["representatives"])
 
 
+# Quorum-establishment "votes" (határozatképesség megállapítása) are procedural
+# headcounts to confirm the House is quorate, not substantive decisions —
+# parlament.hu's per-MP statistics don't count them as votes. We exclude them
+# from every per-MP vote tally (the participation pie, the absence %, and the
+# profile's grouped vote list) so our numbers match the official ones. They're
+# identified by their result label, NOT the subject: the subject "egyéb
+# szavazás" is also used for real votes, whereas the "Határozatképes"/
+# "Határozatképtelen" results only ever mark a quorum check.
+_QUORUM_RESULTS = ("Határozatképes", "Határozatképtelen")
+
+
+def _exclude_quorum(alias: str = "v") -> str:
+    """A ``WHERE``-appendable SQL fragment dropping the procedural quorum-check
+    votes from a per-MP vote query. ``alias`` is the ``vote`` table alias (``""``
+    when the query selects from ``vote`` directly with no alias)."""
+    vals = ", ".join(f"'{r}'" for r in _QUORUM_RESULTS)
+    col = f"{alias}.result" if alias else "result"
+    return f" AND {col} NOT IN ({vals})"
+
+
 @router.get("")
 def list_representatives(
     q: Optional[str] = None,
@@ -318,18 +338,18 @@ def get_statistics(person_id: str, period: Optional[int] = None,
                        SUM(CASE WHEN vr.value_code = 'novote'  THEN 1 ELSE 0 END) AS novote,
                        SUM(CASE WHEN vr.value_code = 'absent'  THEN 1 ELSE 0 END) AS absent
                 FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
-                WHERE vr.person_id = :pid{extra}""", vparams).fetchone()
+                WHERE vr.person_id = :pid{extra}{_exclude_quorum()}""", vparams).fetchone()
         votes_total = vrow["total"] or 0
         votes_absent = vrow["absent"] or 0
         votes_absent_pct = round(100.0 * votes_absent / votes_total, 1) if votes_total else None
 
         # "Nem volt jelen" is derived: of all roll-call votes in scope (those
         # with a per-MP list, has_per_mp = 1 — voice/list votes are excluded so
-        # they don't inflate everyone's absence), the ones the MP has no record
-        # in at all. Clamped at 0 for the rare case where the record count
-        # exceeds the roll-call universe (e.g. votes lacking the flag in a test
-        # or partial import).
-        rc_where = "has_per_mp = 1"
+        # they don't inflate everyone's absence, and quorum checks likewise),
+        # the ones the MP has no record in at all. Clamped at 0 for the rare
+        # case where the record count exceeds the roll-call universe (e.g. votes
+        # lacking the flag in a test or partial import).
+        rc_where = "has_per_mp = 1" + _exclude_quorum("")
         rc_params: dict = {}
         if period is not None:
             rc_where += " AND period_number = :per"
@@ -536,8 +556,10 @@ def get_vote_days(person_id: str, period: Optional[int] = None,
     """The sitting days an MP voted on, reverse-chronological, with a roll-call
     count per day (EXT-2). Drives the grouped, lazy-loaded vote list on the
     profile: a day's votes are fetched on demand via ``/votes`` filtered by
-    ``date``. Scoped to the selected cycle (§4A) when ``period`` is set. Empty
-    when the Votes module is disabled (EXT-6) — guard before querying."""
+    ``date``. Scoped to the selected cycle (§4A) when ``period`` is set;
+    procedural quorum checks are excluded (see ``_exclude_quorum``) so the count
+    matches the participation stats. Empty when the Votes module is disabled
+    (EXT-6) — guard before querying."""
     if not settings.module_enabled("votes"):
         return {"total": 0, "days": [], "available": False}
     extra = " AND v.period_number = :per" if period is not None else ""
@@ -547,7 +569,7 @@ def get_vote_days(person_id: str, period: Optional[int] = None,
     rows = db.execute(
         f"""SELECT substr(v.vote_datetime, 1, 10) AS date, COUNT(*) AS count
             FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
-            WHERE vr.person_id = :pid{extra}
+            WHERE vr.person_id = :pid{extra}{_exclude_quorum()}
             GROUP BY date ORDER BY date DESC""", params).fetchall()
     return {
         "total": sum(r["count"] for r in rows), "available": True,
@@ -564,8 +586,9 @@ def get_votes(person_id: str, period: Optional[int] = None,
     """How an MP voted, reverse-chronologically (the reciprocal of the Votes
     module's per-MP roll call, EXT-2), scoped to the selected cycle (§4A) when
     ``period`` is set, and to a single sitting day when ``date`` (YYYY-MM-DD) is
-    set (used by the grouped, lazy-loaded list). Empty when the Votes module is
-    disabled (EXT-6) — its tables may not exist, so guard before querying."""
+    set (used by the grouped, lazy-loaded list). Procedural quorum checks are
+    excluded (see ``_exclude_quorum``). Empty when the Votes module is disabled
+    (EXT-6) — its tables may not exist, so guard before querying."""
     if not settings.module_enabled("votes"):
         return {"total": 0, "limit": limit, "offset": offset, "votes": [],
                 "available": False}
@@ -578,12 +601,12 @@ def get_votes(person_id: str, period: Optional[int] = None,
         params["date"] = date
     total = db.execute(
         f"""SELECT COUNT(*) AS c FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
-            WHERE vr.person_id = :pid{extra}""", params).fetchone()["c"]
+            WHERE vr.person_id = :pid{extra}{_exclude_quorum()}""", params).fetchone()["c"]
     rows = db.execute(
         f"""SELECT v.id, v.vote_datetime, v.subject, v.result,
                   vr.value, vr.value_code
            FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
-           WHERE vr.person_id = :pid{extra}
+           WHERE vr.person_id = :pid{extra}{_exclude_quorum()}
            ORDER BY v.vote_datetime DESC LIMIT :limit OFFSET :offset""",
         {**params, "limit": limit, "offset": offset}).fetchall()
     # The bills each of those votes decided (for context on the profile).

@@ -211,13 +211,41 @@ def test_representative_vote_breakdown(client, db_path):
     # A roll-call vote k001 has NO record in → "nem volt jelen".
     c.execute("INSERT INTO vote (id, period_number, vote_datetime, result, has_per_mp) "
               "VALUES ('v-6', 43, '2026-05-29T10:00:00Z', 'Elfogadva', 1)")
+    # A procedural quorum check k001 was present for (Igen) — must be ignored,
+    # not counted as a cast vote nor in the total (parlament.hu excludes these).
+    c.execute("INSERT INTO vote (id, period_number, vote_datetime, result, has_per_mp) "
+              "VALUES ('v-q', 43, '2026-05-09T08:45:00Z', 'Határozatképes', 1)")
+    c.execute("INSERT INTO vote_record (vote_id, person_id, name, value, value_code) "
+              "VALUES ('v-q', 'k001', 'Kovács Béla', 'Igen', 'yes')")
     c.commit(); c.close()
 
     b = client.get("/api/v1/representatives/k001/statistics").json()["totals"]["vote_breakdown"]
-    assert b["voted"] == 2        # v-1 Igen + v-3 Tartózkodás
+    assert b["voted"] == 2        # v-1 Igen + v-3 Tartózkodás (v-q quorum excluded)
     assert "abstain" not in b     # folded into "voted"
     assert b["novote"] == 1       # v-4
     assert b["absent"] == 1       # v-5, igazoltan távol
     assert b["not_present"] == 1  # v-6, no record → nem volt jelen
-    # total = every roll-call vote in scope (v-1,3,4,5,6); v-2 has no roll call.
+    # total = every substantive roll-call vote in scope (v-1,3,4,5,6); v-2 has no
+    # roll call and v-q is a quorum check — both excluded.
     assert b["total"] == 5
+
+
+def test_representative_vote_lists_exclude_quorum_checks(client, db_path):
+    """The profile's grouped vote list (vote-days) and per-day list also drop
+    procedural quorum checks, so their counts match the participation stats."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("INSERT INTO vote (id, period_number, vote_datetime, result, has_per_mp) "
+              "VALUES ('v-q', 43, '2026-05-26T08:45:00Z', 'Határozatképtelen', 1)")
+    c.execute("INSERT INTO vote_record (vote_id, person_id, name, value, value_code) "
+              "VALUES ('v-q', 'k001', 'Kovács Béla', 'Igen', 'yes')")
+    c.commit(); c.close()
+
+    # k001 has one substantive vote (v-1, Igen) in the fixture; the quorum check
+    # must not appear in the day list nor bump its count.
+    days = client.get("/api/v1/representatives/k001/vote-days").json()
+    assert days["total"] == 1
+    votes = client.get("/api/v1/representatives/k001/votes").json()
+    assert votes["total"] == 1
+    assert all(v["result"] not in ("Határozatképes", "Határozatképtelen")
+               for v in votes["votes"])

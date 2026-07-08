@@ -35,7 +35,9 @@ CREATE TABLE person (
     label_full        TEXT,
     firstname         TEXT,
     lastname          TEXT,
-    wikidata_id       TEXT,
+    wikidata_id       TEXT,              -- Wikidata QID, joined via P4966 (EXT-2)
+    wikipedia_url     TEXT,              -- preferred (hu, else en) Wikipedia article
+    kmonitor_url      TEXT,              -- K-Monitor adatbázis tag page (matched by name)
     photo_uri         TEXT,
     photo_file        TEXT,
     constituency      TEXT,
@@ -77,6 +79,10 @@ CREATE TABLE session (
     date          TEXT,
     date_start    TEXT,
     date_end      TEXT,
+    -- 'published' = a held sitting with speeches; 'scheduled' = an announced
+    -- upcoming sitting parlament.hu lists before any recording/transcript exists
+    -- (shown as "coming", has no speeches yet).
+    status        TEXT DEFAULT 'published',
     source        TEXT,
     source_page   TEXT,
     scraped_at    TEXT,
@@ -438,15 +444,39 @@ CREATE TABLE vote_faction_stat (
 CREATE INDEX idx_vote_faction_stat_vote ON vote_faction_stat(vote_id);
 
 -- ---------------------------------------------------------------------------
--- Reserved for the deferred NER/NEL stage (§10) — kept so the shape has room.
+-- NER/NEL stage (§10): person + institution entities recognized in transcript
+-- sentences and linked out. `entity` is one row per mention (its char span in the
+-- sentence, for inline linking), tagged `kind` PER/ORG; `entity_link` resolves each
+-- distinct normalized name to an ordered set of destinations, once (loader-derived).
 -- ---------------------------------------------------------------------------
 CREATE TABLE entity (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    sentence_id INTEGER REFERENCES sentence(id),
-    label       TEXT,
-    wikidata_id TEXT,
+    sentence_id INTEGER NOT NULL REFERENCES sentence(id),
+    entity_key  TEXT NOT NULL,     -- normalized (lemma-joined) name; joins entity_link
+    surface     TEXT NOT NULL,     -- exact text as it appears in the sentence
     char_start  INTEGER,
-    char_end    INTEGER
+    char_end    INTEGER,
+    kind        TEXT NOT NULL DEFAULT 'PER'  -- 'PER' (person) | 'ORG' (institution)
+);
+CREATE INDEX idx_entity_sentence ON entity(sentence_id);
+CREATE INDEX idx_entity_key ON entity(entity_key);
+
+-- One resolved link-set per distinct name (normalized key). Written by the
+-- K-Monitor resolver (app/kmonitor.py) after gathering Wikidata candidates
+-- (app/wikidata.py). `links_json` is an ORDERED list of destinations —
+-- `[{type, url|person_id, label, description, wikidata_id}]` with
+-- `type ∈ {profile, kmonitor, wikipedia}` — K-Monitor first (the primary target),
+-- Wikipedia only as a fallback when no K-Monitor tag matched, and the internal MP
+-- profile first of all when the name is a known representative. `ambiguous` marks a
+-- name that resolved to more than one candidate in its chosen source (the UI shows
+-- the alternatives as separate badges, ordered by probability). A key with no
+-- destination at all is simply not written (so it isn't re-linked).
+CREATE TABLE entity_link (
+    entity_key      TEXT PRIMARY KEY,
+    kind            TEXT,          -- 'PER' | 'ORG'
+    ambiguous       INTEGER DEFAULT 0,
+    links_json      TEXT,          -- ordered JSON list of destinations (see above)
+    resolved_at     TEXT
 );
 
 -- ---------------------------------------------------------------------------

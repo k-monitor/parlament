@@ -57,6 +57,12 @@ export default {
     copyLink: 'Copy link', linkCopied: 'Link copied to clipboard', sittingDay: 'sitting', backToSession: 'Back to sitting',
     speechType: 'Speech type',
   },
+  entity: {
+    uncertain: 'Uncertain match',
+    profile: 'Profile',
+    kmonitor: 'K-Monitor database',
+    wikipedia: 'Wikipedia',
+  },
   sessions: {
     title: 'Sittings', date: 'Date', sitting: 'Sitting', speeches: 'speeches', agendaItems: 'agenda items',
     open: 'Open', agenda: 'Agenda', duration: 'Duration',
@@ -73,6 +79,9 @@ export default {
     openViewer: 'Open video & transcript',
     transcriptLoading: 'Loading transcript…',
     transcriptLoadError: 'Could not load the transcript.',
+    upcoming: 'Upcoming',
+    upcomingNote: 'This sitting is already on the Assembly\'s schedule — the recording and transcript will be available soon.',
+    notProcessed: 'This sitting has not been processed yet.',
   },
   reps: {
     title: 'Representatives', searchPlaceholder: 'Search representatives by name…', faction: 'Faction',
@@ -86,7 +95,7 @@ export default {
     otherDocuments: 'Other submitted documents',
     statistics: 'Statistics', biography: 'Details', constituency: 'Constituency',
     education: 'Highest education', email: 'Email', website: 'Website', committees: 'Committee memberships',
-    factionHistory: 'Faction history', wikidata: 'Wikidata', totalSpeeches: 'Number of speeches',
+    factionHistory: 'Faction history', wikidata: 'Wikidata', wikipedia: 'Wikipedia', kmonitor: 'K-Monitor', totalSpeeches: 'Number of speeches',
     totalSpeakingTime: 'Total speaking time', billsSubmitted: 'Bills submitted',
     votesAbsent: 'Absences from votes',
     voteBreakdown: 'Voting participation',

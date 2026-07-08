@@ -10,13 +10,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from parlamonitor import agenda, magyarkozlony
+from parlamonitor import agenda, magyarkozlony, wikidata
 from parlamonitor.http_client import HttpError
 from parlamonitor.names import build_person, split_name, split_speaker
 from parlamonitor.segment import html_to_text, split_sentences
 from parlamonitor.timing import apply_timing, smil_span_seconds
 from parlamonitor.proceedings.transform import transform_day
-from parlamonitor.proceedings.scrape import sitting_number
+from parlamonitor.proceedings.scrape import (_awaiting_content, scrape_day,
+                                             sitting_number)
 
 
 # --- names -----------------------------------------------------------------
@@ -95,6 +96,62 @@ def test_kozlony_none_without_inputs():
     assert magyarkozlony.resolve(http, None, "2026-05-09") is None
     assert magyarkozlony.resolve(http, 44, None) is None
     assert http.calls == []  # never fetched
+
+
+# --- wikidata (MP -> Wikidata/Wikipedia via P4966) -------------------------
+
+# A trimmed Wikidata Query Service JSON response: P4966 is the parlament.hu
+# kepviseloId, so a row's value is exactly our personID. Row 1 has both a
+# Hungarian and English article, row 2 only English, row 3 no article at all.
+_WD_JSON = {
+    "results": {"bindings": [
+        {"p4966": {"value": "g056"},
+         "item": {"value": "http://www.wikidata.org/entity/Q172301"},
+         "huArticle": {"value": "https://hu.wikipedia.org/wiki/Gy%C5%91ngy%C3%B6si_M%C3%A1rton"},
+         "enArticle": {"value": "https://en.wikipedia.org/wiki/M%C3%A1rton_Gy%C5%91ngy%C3%B6si"}},
+        {"p4966": {"value": "n026"},
+         "item": {"value": "http://www.wikidata.org/entity/Q832221"},
+         "enArticle": {"value": "https://en.wikipedia.org/wiki/Tibor_Navracsics"}},
+        {"p4966": {"value": "x999"},
+         "item": {"value": "http://www.wikidata.org/entity/Q1"}},
+    ]}
+}
+
+
+class _FakeJsonHttp:
+    def __init__(self, data=None, fail=False):
+        self._data, self._fail = data, fail
+        self.calls, self.slept = [], 0
+
+    def get_json(self, url, **kw):
+        self.calls.append((url, kw))
+        if self._fail:
+            raise HttpError("boom")
+        return self._data
+
+    def polite_sleep(self):
+        self.slept += 1
+
+
+def test_wikidata_links_keyed_by_p4966_and_prefer_hu():
+    http = _FakeJsonHttp(data=_WD_JSON)
+    links = wikidata.fetch_mp_links(http)
+    # keyed by the parlament.hu id (== our personID), QID lifted from the URI
+    assert links["g056"]["wikidataId"] == "Q172301"
+    # the Hungarian article wins over the English one for a Hungarian site
+    assert links["g056"]["wikipediaUrl"].startswith("https://hu.wikipedia.org/")
+    # only English available → use it
+    assert links["n026"]["wikipediaUrl"].startswith("https://en.wikipedia.org/")
+    # linked on Wikidata but no article anywhere → id kept, url is None
+    assert links["x999"] == {"wikidataId": "Q1", "wikipediaUrl": None}
+    # one query for the whole roster, preceded by a politeness sleep
+    assert len(http.calls) == 1 and http.slept == 1
+    assert http.calls[0][0] == wikidata.ENDPOINT
+
+
+def test_wikidata_links_degrade_to_empty_on_failure():
+    """A failed query never raises — the roster still loads, just without links."""
+    assert wikidata.fetch_mp_links(_FakeJsonHttp(fail=True)) == {}
 
 
 # --- agenda ----------------------------------------------------------------
@@ -365,6 +422,81 @@ def test_transform_keeps_distinct_speeches_sharing_a_speaker():
     rec = transform_day(raw)
     assert rec["meta"]["counts"]["speeches"] == 4
     assert [d["debug"]["speechUUID"] for d in rec["data"]] == ["u1", "u2", "u3", "u1b"]
+
+
+# --- upcoming / scheduled sittings (announced days, no recording yet) -------
+
+def test_transform_marks_normal_day_published():
+    rec = transform_day(_raw_bundle())
+    assert rec["meta"]["status"] == "published"
+
+
+def test_transform_marks_speechless_day_scheduled():
+    # An announced sitting parlament.hu lists before any speeches exist.
+    raw = _raw_bundle()
+    raw["speeches"] = []
+    raw["video"] = None
+    rec = transform_day(raw)
+    assert rec["meta"]["status"] == "scheduled"
+    assert rec["meta"]["counts"] == {"speeches": 0, "withText": 0}
+    assert rec["data"] == []
+    # Still carries a usable day range and a source link, so the placeholder is
+    # renderable and links back to parlament.hu (VIE-7).
+    assert rec["meta"]["date"] == "2026-06-09"
+    assert "ulesnapok-ulesidok#page=" in rec["meta"]["sourcePage"]
+
+
+class _FakeFelicitasDay:
+    """Minimal Felicitas stand-in for scrape_day: an announced day has no speeches
+    and no resolvable recording yet."""
+    def __init__(self, speeches, video=None, texts=None):
+        self._speeches = speeches
+        self._video = video
+        self._texts = texts or {}
+
+    def day_speeches(self, uuid):
+        return list(self._speeches)
+
+    def day_video(self, uuid):
+        return self._video
+
+    def speech_text(self, uuid):
+        return {"html": self._texts.get(uuid, "")}
+
+    def speech_offsets(self, uuid):
+        return None
+
+
+def _felicitas_day():
+    return {"uuid": "623075ee-d900-4f17-8944-da6465a86766",
+            "date": "2026-07-15", "datum_felirat": "2026.07.15.(16)",
+            "duration_s": None, "debate_s": None}
+
+
+def test_scrape_day_returns_placeholder_for_announced_day():
+    # Previously scrape_day returned None here and the day was dropped; now it must
+    # return a placeholder bundle so the upcoming sitting can be shown.
+    bundle = scrape_day(_FakeFelicitasDay(speeches=[]), 43, _felicitas_day())
+    assert bundle is not None
+    assert bundle["speeches"] == []
+    assert bundle["session"] == "43016"
+    assert transform_day(bundle)["meta"]["status"] == "scheduled"
+
+
+def test_awaiting_content(tmp_path):
+    import json as _json
+    def _write(name, obj):
+        p = tmp_path / name
+        p.write_text(_json.dumps(obj))
+        return p
+    # No speeches yet (announced placeholder) → still awaiting.
+    assert _awaiting_content(_write("a.json", {"speeches": []})) is True
+    # Speeches but none with text (video-only, transcript not published) → awaiting.
+    assert _awaiting_content(_write("b.json", {"speeches": [{"text_html": ""}]})) is True
+    # At least one speech has text → done.
+    assert _awaiting_content(_write("c.json", {"speeches": [{"text_html": "<p>x</p>"}]})) is False
+    # A malformed/missing file self-heals by re-scraping.
+    assert _awaiting_content(tmp_path / "missing.json") is True
 
 
 def test_sitting_number_from_felirat():

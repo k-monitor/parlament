@@ -32,7 +32,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from . import nlp, nlp_modal
+from . import kmonitor, nlp, nlp_modal, wikidata
 from .config import settings
 from .parlament_links import bill_page_url
 from .wordfreq import count_words
@@ -155,18 +155,21 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
         conn.execute(
             """
             INSERT INTO person(person_id, label, label_full, firstname, lastname,
+                               wikidata_id, wikipedia_url,
                                photo_uri, photo_file, constituency, seat, email,
                                website, highest_education, active, is_mp,
                                education_json, committees_json, offices_json,
                                faction_history_json, election_history_json,
                                external_stats_json)
-            VALUES (:pid, :label, :label_full, :firstname, :lastname, :photo_uri,
+            VALUES (:pid, :label, :label_full, :firstname, :lastname,
+                    :wikidata_id, :wikipedia_url, :photo_uri,
                     :photo_file, :constituency, :seat, :email, :website,
                     :highest_education, :active, 1, :education, :committees,
                     :offices, :faction_history, :election_history, :external_stats)
             ON CONFLICT(person_id) DO UPDATE SET
                 label=excluded.label, label_full=excluded.label_full,
                 firstname=excluded.firstname, lastname=excluded.lastname,
+                wikidata_id=excluded.wikidata_id, wikipedia_url=excluded.wikipedia_url,
                 photo_uri=excluded.photo_uri, photo_file=excluded.photo_file,
                 constituency=excluded.constituency, seat=excluded.seat,
                 email=excluded.email, website=excluded.website,
@@ -185,6 +188,8 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
                 "label_full": rec.get("labelFull"),
                 "firstname": rec.get("firstname"),
                 "lastname": rec.get("lastname"),
+                "wikidata_id": rec.get("wikidataId"),
+                "wikipedia_url": rec.get("wikipediaUrl"),
                 "photo_uri": photo_uri,
                 "photo_file": rec.get("photoFile"),
                 "constituency": rec.get("constituency"),
@@ -544,6 +549,16 @@ _BILL_PORTAL_FALLBACK = "https://www.parlament.hu/web/guest/iromanyok-lekerdezes
 # Session record
 # ---------------------------------------------------------------------------
 
+def _ensure_session_status(conn: sqlite3.Connection) -> None:
+    """Add ``session.status`` to a pre-existing DB, so the upcoming/scheduled-day
+    feature also lands via the incremental ``--update`` path (which snapshots the
+    live DB rather than re-running the schema), not only a full rebuild. A no-op on
+    a freshly-built DB whose schema already has the column."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(session)")]
+    if cols and "status" not in cols:
+        conn.execute("ALTER TABLE session ADD COLUMN status TEXT DEFAULT 'published'")
+
+
 def load_session(conn: sqlite3.Connection, record: dict) -> str:
     """Load one sitting-day session record atomically (ING-3). Re-ingesting a
     session replaces all of its derived rows (ING-4)."""
@@ -551,6 +566,7 @@ def load_session(conn: sqlite3.Connection, record: dict) -> str:
     sid = meta.get("session")
     period = meta.get("electoralPeriod")
     try:
+        _ensure_session_status(conn)
         # delete-then-insert keyed on session id => idempotent replace (ING-4).
         _delete_session(conn, sid)
 
@@ -561,12 +577,13 @@ def load_session(conn: sqlite3.Connection, record: dict) -> str:
 
         conn.execute(
             """INSERT INTO session(id, period_number, sitting, date, date_start,
-                   date_end, source, source_page, scraped_at, timing_method,
+                   date_end, status, source, source_page, scraped_at, timing_method,
                    video_uri, video_playseq, video_duration, video_license,
                    video_creator)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (sid, period, meta.get("sitting"), meta.get("date"),
-             meta.get("dateStart"), meta.get("dateEnd"), meta.get("source"),
+             meta.get("dateStart"), meta.get("dateEnd"),
+             meta.get("status") or "published", meta.get("source"),
              meta.get("sourcePage") or _first_source_page(record),
              meta.get("sourceScrapedAt"),
              meta.get("timingMethod"), meta.get("dayVideoURI"),
@@ -921,6 +938,246 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
                 len(sids), recomputed, reused)
 
 
+# Bump when the entity-span extraction logic changes in a way that should
+# invalidate the on-disk entity cache even if the model/text are unchanged.
+# ent-v2: extract ORG (institutions) alongside PER, and carry the span `kind`.
+_ENTITY_LOGIC = "ent-v2"
+
+
+def _entity_cache_path(cache_dir: Path) -> Path:
+    return Path(cache_dir) / "entity-cache.json"
+
+
+def _ensure_entity_tables(conn: sqlite3.Connection) -> None:
+    """Make the NEL tables match the current schema, in place — so the feature
+    (and its later extensions) also land on an existing DB via the incremental
+    ``--update`` path, not only a full rebuild. The old reserved ``entity`` shape is
+    replaced; a ``kind`` column is added to ``entity``; ``entity_link`` is (re)created
+    in its current multi-destination shape; and ``person.kmonitor_url`` is added."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(entity)")]
+    if cols and "entity_key" not in cols:
+        conn.execute("DROP TABLE entity")
+        cols = []
+    if not cols:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS entity (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                sentence_id INTEGER NOT NULL REFERENCES sentence(id),
+                entity_key  TEXT NOT NULL,
+                surface     TEXT NOT NULL,
+                char_start  INTEGER,
+                char_end    INTEGER,
+                kind        TEXT NOT NULL DEFAULT 'PER'
+            );
+            CREATE INDEX IF NOT EXISTS idx_entity_sentence ON entity(sentence_id);
+            CREATE INDEX IF NOT EXISTS idx_entity_key ON entity(entity_key);
+        """)
+    elif "kind" not in cols:
+        conn.execute("ALTER TABLE entity ADD COLUMN kind TEXT NOT NULL DEFAULT 'PER'")
+
+    # entity_link is rebuilt wholesale on every resolve, so if its columns don't
+    # match the current (multi-destination) shape just drop and recreate it — no
+    # data is lost that the next resolve wouldn't repopulate.
+    el_cols = [r[1] for r in conn.execute("PRAGMA table_info(entity_link)")]
+    if el_cols and "links_json" not in el_cols:
+        conn.execute("DROP TABLE entity_link")
+        el_cols = []
+    if not el_cols:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS entity_link (
+                entity_key      TEXT PRIMARY KEY,
+                kind            TEXT,
+                ambiguous       INTEGER DEFAULT 0,
+                links_json      TEXT,
+                resolved_at     TEXT
+            );
+        """)
+
+    person_cols = [r[1] for r in conn.execute("PRAGMA table_info(person)")]
+    if person_cols and "kmonitor_url" not in person_cols:
+        conn.execute("ALTER TABLE person ADD COLUMN kmonitor_url TEXT")
+
+
+def _delete_session_entities(conn: sqlite3.Connection, sid: str) -> None:
+    conn.execute(
+        "DELETE FROM entity WHERE sentence_id IN (SELECT se.id FROM sentence se "
+        "JOIN speech sp ON sp.uid = se.speech_id WHERE sp.session_id = ?)", (sid,))
+
+
+def rebuild_entity_mentions(conn: sqlite3.Connection,
+                            cache_dir: str | Path | None = None,
+                            only_sessions: set[str] | None = None) -> None:
+    """Extract PERSON + ORGANISATION mentions from transcript sentences into the
+    ``entity`` table (NEL, §10) so the transcript can link names inline.
+
+    Uses the same HuSpaCy backend as the word cloud (local model, or Modal when
+    the host has no model); when neither is available the pass is skipped so a
+    bare-host build still succeeds (OPS-4). Cached on disk like the word cloud
+    (``entity-cache.json``), keyed by a fingerprint of the text + method, so a
+    rebuild re-runs NER only for the sittings whose transcript actually changed.
+    ``only_sessions`` scopes the pass to just those ids (the ``--update`` path).
+
+    This only fills ``entity`` (the mention spans); resolving each distinct name
+    to a Wikidata item/Wikipedia article is a separate, network-side step
+    (``app.wikidata.resolve_entities`` → ``entity_link``)."""
+    if not settings.entity_links:
+        return
+    _ensure_entity_tables(conn)
+    # Person spans need the neural NER; the regex tokenizer can't produce them.
+    if nlp.available():
+        method, use_modal = nlp.method_tag() + ":" + _ENTITY_LOGIC, False
+    elif _wordcloud_backend() == "modal" and nlp_modal.available():
+        method, use_modal = nlp_modal.method_tag() + ":" + _ENTITY_LOGIC, True
+    else:
+        logger.info("entity extraction skipped (no HuSpaCy model available)")
+        return
+
+    cache_path = _entity_cache_path(cache_dir) if cache_dir else None
+    cache: dict = {"method": method, "sessions": {}}
+    if cache_path and cache_path.exists():
+        try:
+            loaded = json.loads(cache_path.read_text())
+            if loaded.get("method") == method:
+                cache = loaded
+        except (OSError, ValueError):
+            logger.warning("Could not read entity cache %s; recomputing", cache_path)
+
+    def _flush():
+        if cache_path:
+            try:
+                cache_path.write_text(json.dumps(cache, ensure_ascii=False))
+            except OSError as exc:
+                logger.warning("Could not write entity cache %s (%s)", cache_path, exc)
+
+    if only_sessions is None:
+        sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id DESC")]
+        conn.execute("DELETE FROM entity")
+    else:
+        sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id DESC")
+                if r[0] in only_sessions]
+        for sid in sids:
+            _delete_session_entities(conn, sid)
+
+    def _fetch(sid):
+        # Deterministic order (by sentence PK = insertion order) so cached spans
+        # re-associate to the right sentence rows on reuse. Non-procedural only,
+        # matching the word-cloud entity source.
+        return conn.execute(
+            "SELECT se.id, se.text FROM sentence se "
+            "JOIN speech sp ON sp.uid = se.speech_id "
+            "WHERE sp.session_id = ? AND sp.procedural = 0 AND se.text IS NOT NULL "
+            "ORDER BY se.id", (sid,)).fetchall()
+
+    def _write(sent_rows, per_sentence_spans) -> int:
+        rows = []
+        for (sentence_id, _text), spans in zip(sent_rows, per_sentence_spans):
+            for span in spans:
+                # ent-v2 spans are (surface, start, end, key, kind); tolerate a
+                # legacy 4-tuple from an older cache by defaulting kind to PER.
+                surface, start, end, key = span[0], span[1], span[2], span[3]
+                kind = span[4] if len(span) > 4 else "PER"
+                rows.append((sentence_id, key, surface, start, end, kind))
+        if rows:
+            conn.executemany(
+                "INSERT INTO entity(sentence_id, entity_key, surface, char_start, char_end, kind) "
+                "VALUES (?,?,?,?,?,?)", rows)
+        return len(rows)
+
+    processed = reused = mentions = 0
+    misses = []  # (sid, fp, sent_rows)
+    for sid in sids:
+        sent_rows = _fetch(sid)
+        fp = _session_fingerprint(method, [t for (_i, t) in sent_rows])
+        entry = cache["sessions"].get(sid)
+        if entry and entry.get("fp") == fp:
+            mentions += _write(sent_rows, entry["spans"])
+            reused += 1
+        else:
+            misses.append((sid, fp, sent_rows))
+
+    def _emit(sid, fp, sent_rows, per_sentence_spans):
+        nonlocal processed, mentions
+        cache["sessions"][sid] = {"fp": fp, "spans": per_sentence_spans}
+        mentions += _write(sent_rows, per_sentence_spans)
+        processed += 1
+        if processed % 10 == 0:
+            conn.commit()
+            _flush()
+            logger.info("entity mentions progress: %d sittings processed", processed)
+
+    try:
+        if use_modal:
+            packed = [(sid, fp, [t for (_i, t) in rows]) for (sid, fp, rows) in misses]
+            by_sid = {sid: rows for (sid, _fp, rows) in misses}
+            for sid, fp, spans in nlp_modal.extract_spans(packed):
+                _emit(sid, fp, by_sid[sid], spans)
+        else:
+            for (sid, fp, sent_rows) in misses:
+                spans = [[list(s) for s in per_sent]
+                         for per_sent in nlp.entity_spans([t for (_i, t) in sent_rows])]
+                _emit(sid, fp, sent_rows, spans)
+    except Exception as exc:  # enrichment must never break the build (SCR-5)
+        logger.warning("entity extraction aborted (%s); keeping what was done", exc)
+
+    conn.commit()
+    _flush()
+    logger.info("entity mentions: %d sittings (%d processed, %d cached), %d PER+ORG mentions",
+                len(sids), processed, reused, mentions)
+
+
+def _entity_kinds(conn: sqlite3.Connection) -> dict[str, str]:
+    """Each distinct ``entity_key`` → its majority ``kind`` (PER/ORG). One key is
+    almost always one kind; the rare mixed key takes whichever mention kind is more
+    frequent. Shared by both resolvers so they agree on how to query/match a name."""
+    try:
+        rows = conn.execute(
+            "SELECT entity_key, kind, COUNT(*) c FROM entity GROUP BY entity_key, kind"
+        ).fetchall()
+    except sqlite3.OperationalError:  # pre-NEL DB
+        return {}
+    best: dict[str, tuple[int, str]] = {}
+    for r in rows:
+        key, kind, c = r[0], (r[1] or "PER"), r[2]
+        if key not in best or c > best[key][0]:
+            best[key] = (c, kind)
+    return {k: v[1] for k, v in best.items()}
+
+
+def resolve_entity_links(conn: sqlite3.Connection,
+                         cache_dir: str | Path | None = None) -> None:
+    """Resolve recognized names to their inline destinations and set MP K-Monitor
+    links (NEL, §10). Fetches the K-Monitor tag index once, then: sets
+    ``person.kmonitor_url`` for MP profiles, gathers each transcript name's Wikidata
+    candidates, and writes ``entity_link`` (K-Monitor primary, Wikipedia fallback).
+
+    Each step degrades independently (no network / disabled flag / no mentions), so
+    a build never fails on enrichment (SCR-5)."""
+    index = kmonitor.load_index(cache_dir)   # {} when disabled or a fetch fails
+
+    # MP-profile K-Monitor links are independent of the transcript entities.
+    if settings.kmonitor_links:
+        try:
+            kmonitor.resolve_representatives(conn, index)
+        except Exception as exc:
+            logger.warning("K-Monitor MP linking failed (%s); skipping", exc)
+
+    if not settings.entity_links:
+        return
+    kinds = _entity_kinds(conn)
+    if not kinds:
+        return
+    try:
+        # Institutions already in K-Monitor need no Wikidata query (K-Monitor is the
+        # primary target; Wikipedia is only a fallback, and the unfiltered ORG query
+        # is the costly one). People are always queried, for the bounded Q5 MP match.
+        skip = {k for k, kind in kinds.items()
+                if kind == "ORG" and kmonitor._match(index, k, "ORG")}
+        wd = wikidata.resolve_candidates(conn, cache_dir, kinds, skip=skip)
+        kmonitor.resolve_links(conn, kinds, wd, index)
+    except Exception as exc:  # enrichment must never break the build (SCR-5)
+        logger.warning("entity link resolution failed (%s); leaving links as-is", exc)
+
+
 def rebuild_word_doc_freq(conn: sqlite3.Connection) -> None:
     """Per-cycle word document-frequencies for the word cloud's TF·IDF (WCLOUD-2).
 
@@ -1030,6 +1287,12 @@ def build_database(data_dir: str | Path, db_path: str | Path, *,
             logger.info("Skipping word-cloud term extraction (--skip-wordcloud)")
         else:
             rebuild_session_word_counts(conn, db_path.parent)
+        # Entity NEL (§10): extract PERSON + ORG mentions, then resolve names to
+        # K-Monitor (primary) / Wikipedia (fallback) and set MP K-Monitor links.
+        # Every step degrades gracefully (no model / no network / disabled).
+        if not skip_wordcloud:
+            rebuild_entity_mentions(conn, db_path.parent)
+            resolve_entity_links(conn, db_path.parent)
         rebuild_aggregates(conn)
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("sessions_loaded", str(loaded)))
@@ -1201,7 +1464,16 @@ def update_database(data_dir: str | Path, db_path: str | Path, *,
             if not skip_wordcloud:
                 rebuild_session_word_counts(conn, db_path.parent,
                                             only_sessions=set(loaded_sessions))
+                rebuild_entity_mentions(conn, db_path.parent,
+                                        only_sessions=set(loaded_sessions))
             rebuild_aggregates(conn)
+        # Re-resolve entity links when the transcript OR the MP roster changed: new
+        # mentions need resolving, and a reps change can flip a name from a Wikipedia
+        # link to an internal profile (or set an MP's K-Monitor link). Cheap when
+        # nothing new (K-Monitor index + Wikidata names are cached; entity_link is
+        # just rebuilt from cache).
+        if loaded_sessions or changed["representatives-*.json"]:
+            resolve_entity_links(conn, db_path.parent)
 
         for files in changed.values():
             for p in files:

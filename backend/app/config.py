@@ -71,6 +71,46 @@ class Settings:
         os.environ.get("PARLAMONITOR_MODAL_APP", "parlamonitor-nlp").strip())
     modal_batch_sentences: int = int(
         os.environ.get("PARLAMONITOR_MODAL_BATCH_SENTENCES", "5000"))
+    # Person-entity linking (NEL, §10). When enabled the loader extracts PERSON
+    # mentions from transcript sentences (HuSpaCy NER — shares the wordcloud
+    # backend/model) into the `entity` table and resolves each distinct name to a
+    # Wikidata item / Wikipedia article (app/wikidata.py) into `entity_link`, so
+    # the transcript can link names inline. Extraction needs a model (skipped on
+    # the regex backend); resolution needs network to `wikidata_endpoint` and
+    # degrades gracefully when it is unreachable.
+    entity_links: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_ENTITY_LINKS", "1").strip().lower()
+         not in ("0", "false", "no", "")))
+    wikidata_endpoint: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_WIKIDATA_ENDPOINT",
+                       "https://query.wikidata.org/sparql").strip())
+    # Wikidata asks API clients to send a descriptive User-Agent.
+    wikidata_user_agent: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_WIKIDATA_USER_AGENT",
+                       "Parlamonitor/1.0 (+https://github.com/k-monitor; civic-tech)").strip())
+    # K-Monitor linking (NEL primary target, app/kmonitor.py). When enabled the
+    # loader fetches K-Monitor's person + institution tag lists and links recognized
+    # names to their `adatbazis.k-monitor.hu` tag page (and sets `person.kmonitor_url`
+    # for MP profiles); Wikipedia is used only as a fallback where no tag matches.
+    # Independent of `entity_links` for the MP-profile side; the transcript side also
+    # needs `entity_links` (the extracted mentions). Degrades gracefully when the
+    # site is unreachable (names stay K-Monitor-unlinked, retried next run).
+    kmonitor_links: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_KMONITOR_LINKS", "1").strip().lower()
+         not in ("0", "false", "no", "")))
+    kmonitor_base_url: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_KMONITOR_BASE_URL",
+                       "https://adatbazis.k-monitor.hu/").strip())
+    kmonitor_persons_url: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_KMONITOR_PERSONS_URL",
+                       "https://adatbazis.k-monitor.hu/adatbazis/szemelyek").strip())
+    kmonitor_institutions_url: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_KMONITOR_INSTITUTIONS_URL",
+                       "https://adatbazis.k-monitor.hu/adatbazis/intezmenyek").strip())
+    # The site 403s a bare requests UA; reuse the descriptive Wikidata-style UA.
+    kmonitor_user_agent: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_KMONITOR_USER_AGENT",
+                       "Parlamonitor/1.0 (+https://github.com/k-monitor; civic-tech)").strip())
 
     def module_enabled(self, name: str) -> bool:
         return name in self.enabled_modules

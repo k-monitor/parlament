@@ -143,9 +143,37 @@ Primary use cases:
   only — bringing the database up to date is the loader's incremental step (ING-5),
   so the two halves stay independently runnable (ING-1).
   > **✅ realized.** `parlamonitor sync` auto-detects the latest cycle, probes it
-  > (one `ulesnapok-query` + per-live-day `ulesnapok-aktusok-query` fingerprint),
+  > (one `ulesnapok-query` + per-live-day `ulesnapok-aktusok-query` fingerprint,
+  > plus a cheap text probe for any day whose transcript is still pending — SCR-8),
   > re-scrapes only changed items, persists signatures in `sync-state.json`, and
   > emits an ingestion log (SCR-3). Representatives refresh on a slow cadence.
+- **SCR-8 (MUST).** `parlament.hu` publishes a sitting in **stages**, not at once:
+  first the bare day listing, then the **recording**, and only **days later** the
+  **transcript text** (jegyzőkönyv). Ingestion MUST follow this to completion and
+  **not treat a day as done the moment its video appears**:
+  - A sitting counts as complete only once its **transcript text has been
+    captured**. Until then it stays in the change-probe set and is re-checked on
+    every poll — **not only while it is the latest day** — so a transcript that
+    lands after the day is no longer the newest sitting is still pulled in, rather
+    than the day being frozen text-less forever. The re-check is cheap: the day's
+    one-request speech listing plus a **single speech-text probe** (attaching text
+    to an already-listed speech does not move the listing fingerprint, so the text
+    itself must be probed); the probe samples a few speeches because a transcript
+    is published for the **whole day at once** (all-or-nothing), and a video-only
+    day (VIE-8) can hold individual text-less speeches. Only not-yet-complete days
+    incur the probe, so an otherwise-idle poll stays cheap (SCR-7).
+  - An **announced sitting with no recording/speeches yet** — a day `parlament.hu`
+    already lists before it is held (or before it is processed) — MUST be ingested
+    as a **`scheduled` placeholder session**, never dropped, so the site can show a
+    sitting is **coming** (SIT-1). The probe window reaches a little past today so
+    an imminent announced day is captured. When the day is later held and
+    populated, re-ingesting it (ING-4) flips it to `published`.
+  > **✅ realized.** The sync's proceedings pass carries a per-day `has_text` signal
+  > in `sync-state.json`; a day without it is re-listed + text-probed each poll
+  > until its jegyzőkönyv lands, then it goes quiet. `scrape_day` returns a
+  > placeholder bundle (no speeches) instead of `None`, and `transform_day` stamps
+  > `meta.status` (`scheduled` / `published`). The batch `download_period` self-heals
+  > the same way (re-scrapes a stored day still `_awaiting_content`).
 
 ### 3.3 Ingestion into the database
 
@@ -242,7 +270,9 @@ Primary use cases:
 ### 4.1 Core entities (minimum)
 
 - **electoral_period** — number, date range.
-- **session** (sitting day) — id, period, date start/end, source page.
+- **session** (sitting day) — id, period, date start/end, source page, and a
+  **`status`** (`published` for a held sitting with speeches; `scheduled` for an
+  announced upcoming sitting that has no recording/speeches yet — SCR-8 / SIT-1).
 - **agenda_item** — **one row per agenda act** in the sitting: `title`,
   `official title` (the full act name as published, including any iromány code —
   e.g. *"Interpelláció megtárgyalása (I/94) …"* — shown as the section heading so
@@ -538,6 +568,18 @@ merely because an accent was omitted (or added).
 - **SITREAD-3.** Expanding/collapsing a speech is **instant** — a spoiler toggle
   must not re-render or re-fetch the rest of the (potentially very long) list, and
   its text is cached once loaded so re-opening is immediate.
+
+### 5.6 Sitting-day list & upcoming sittings
+
+- **SIT-1 (SHOULD).** The **sittings list** (use case 2's entry point) shows both
+  held sittings and **announced upcoming sittings** (`status = scheduled`, SCR-8),
+  so a visitor sees that **another sitting is coming** rather than the list simply
+  ending at the last processed day. An upcoming day is rendered **distinctly** —
+  an "upcoming" marker instead of speech/duration counts (which it does not have
+  yet) — and, sorted by date, it naturally leads the list. Opening one shows a
+  clear "recording and transcript coming soon" state, not an empty transcript;
+  once the sitting is held and ingested it becomes an ordinary `published` day.
+  The list is scoped by the global cycle selector (§4A) like every other view.
 
 ---
 

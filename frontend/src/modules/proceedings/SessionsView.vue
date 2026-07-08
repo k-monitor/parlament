@@ -58,13 +58,21 @@ watch(() => store.cycle, () => {
       <router-link
         v-for="s in data.sessions" :key="s.id"
         :to="{ name: 'session', params: { id: s.id } }" class="card pad scard"
+        :class="{ scheduled: s.status === 'scheduled' }"
       >
         <div class="sdate">{{ formatDate(s.date) }}</div>
         <div class="ssitting">{{ s.sitting }}. {{ $t('sessions.sitting').toLowerCase() }}</div>
-        <div class="muted small">
-          {{ s.speeches }} {{ $t('sessions.speeches') }} · {{ s.agenda_items }} {{ $t('sessions.agendaItems') }}
-        </div>
-        <div class="muted small" v-if="s.video_duration">⏱ {{ formatDuration(s.video_duration) }}</div>
+        <!-- An announced but not-yet-held sitting: no recording/transcript yet, so
+             show it is coming rather than "0 speeches". -->
+        <template v-if="s.status === 'scheduled'">
+          <div class="badge upcoming">⏳ {{ $t('sessions.upcoming') }}</div>
+        </template>
+        <template v-else>
+          <div class="muted small">
+            {{ s.speeches }} {{ $t('sessions.speeches') }} · {{ s.agenda_items }} {{ $t('sessions.agendaItems') }}
+          </div>
+          <div class="muted small" v-if="s.video_duration">⏱ {{ formatDuration(s.video_duration) }}</div>
+        </template>
       </router-link>
     </div>
     <Pagination v-if="data" :page="page" :total-pages="totalPages" @goto="gotoPage" />
@@ -76,4 +84,11 @@ watch(() => store.cycle, () => {
 .scard:hover { text-decoration: none; border-color: var(--accent); }
 .sdate { font-weight: 700; font-size: 1.1rem; color: var(--accent); }
 .ssitting { font-size: .9rem; color: var(--ink-soft); margin-bottom: .3rem; }
+/* Announced upcoming sitting: dashed, muted, so it reads as "coming", not done. */
+.scard.scheduled { border-style: dashed; opacity: .85; }
+.badge.upcoming {
+  display: inline-block; font-size: .78rem; font-weight: 600;
+  padding: .12rem .5rem; border-radius: 999px;
+  background: var(--accent-soft); color: var(--ink-soft);
+}
 </style>

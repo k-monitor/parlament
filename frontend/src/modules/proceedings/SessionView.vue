@@ -61,10 +61,19 @@ function searchWord(word) {
   <StateBlock :loading="loading" :error="error" @retry="load">
     <div v-if="data">
       <router-link :to="{ name: 'sessions' }" class="small">‹ {{ $t('sessions.title') }}</router-link>
-      <h1>{{ formatDate(data.session.date) }} · {{ data.session.sitting }}. {{ $t('sessions.sitting').toLowerCase() }}</h1>
+      <h1>
+        {{ formatDate(data.session.date) }} · {{ data.session.sitting }}. {{ $t('sessions.sitting').toLowerCase() }}
+        <span class="badge upcoming" v-if="data.session.status === 'scheduled'">⏳ {{ $t('sessions.upcoming') }}</span>
+      </h1>
       <p class="muted small">
         <a v-if="data.session.source_page" :href="data.session.source_page" target="_blank" rel="noopener">↗ {{ $t('viewer.viewOnParlament') }}</a>
       </p>
+
+      <!-- An announced/upcoming sitting (no speeches yet) or one parlament.hu has
+           not populated: show it is coming instead of an empty transcript. -->
+      <section v-if="!data.agenda.length" class="card pad empty-day">
+        <p>{{ data.session.status === 'scheduled' ? $t('sessions.upcomingNote') : $t('sessions.notProcessed') }}</p>
+      </section>
 
       <section v-if="cloud && cloud.words.length" class="card pad wcloud">
         <div class="sechead">
@@ -153,6 +162,13 @@ function searchWord(word) {
   .top-rows { grid-template-columns: 1fr auto; column-gap: .5rem; }
   .top-row .bar-track { grid-column: 1 / -1; }
 }
+.badge.upcoming {
+  font-size: .72rem; font-weight: 600; vertical-align: middle;
+  padding: .15rem .55rem; border-radius: 999px;
+  background: var(--accent-soft); color: var(--ink-soft);
+}
+.empty-day { color: var(--ink-soft); text-align: center; }
+.empty-day p { margin: .3rem 0; }
 .agenda { margin-bottom: 1rem; }
 .agenda-title { font-size: 1.05rem; margin: 0; border-bottom: 1px solid var(--line); display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .speeches { list-style: none; margin: 0; padding: .3rem; }

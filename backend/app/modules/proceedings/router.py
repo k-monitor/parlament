@@ -7,6 +7,7 @@ proceedings tables plus the shared core entities (person, faction, session).
 from __future__ import annotations
 
 import html
+import json
 import sqlite3
 from datetime import date
 from typing import Optional
@@ -334,9 +335,13 @@ def list_sessions(period: Optional[int] = None,
         where = "WHERE s.period_number = :period"; params["period"] = period
     total = db.execute(
         f"SELECT COUNT(*) AS c FROM session s {where}", params).fetchone()["c"]
+    # `status` distinguishes an announced upcoming sitting ('scheduled') from a held
+    # one ('published'); COALESCE keeps a pre-migration DB (default column value not
+    # yet backfilled) reporting 'published' rather than NULL.
+    status_col = "COALESCE(s.status, 'published')" if _has_session_status(db) else "'published'"
     rows = db.execute(
         f"""SELECT s.id, s.period_number, s.sitting, s.date, s.date_start,
-                   s.date_end, s.video_duration,
+                   s.date_end, s.video_duration, {status_col} AS status,
                    (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id) AS speeches,
                    (SELECT COUNT(*) FROM agenda_item ai WHERE ai.session_id=s.id) AS agenda_items
             FROM session s {where} ORDER BY s.date DESC, s.sitting DESC
@@ -344,6 +349,14 @@ def list_sessions(period: Optional[int] = None,
         {**params, "limit": limit, "offset": offset}).fetchall()
     return {"total": total, "limit": limit, "offset": offset,
             "sessions": [dict(r) for r in rows]}
+
+
+def _has_session_status(db: sqlite3.Connection) -> bool:
+    """Whether the (regenerable) DB has the ``session.status`` column — false only
+    on a DB built before the upcoming-sittings feature, so those endpoints keep
+    working until the next loader run adds it."""
+    return any(r["name"] == "status"
+               for r in db.execute("PRAGMA table_info(session)"))
 
 
 @router.get("/sessions/{session_id}")
@@ -596,6 +609,38 @@ def _doc_freqs(db, period, words):
 # Viewer: a single speech with its sentences (VIE-1/3/5)
 # ---------------------------------------------------------------------------
 
+def _speech_entities(db, uid: str) -> list[dict]:
+    """Resolved person/institution links occurring in a speech's transcript (NEL, §10).
+
+    One row per distinct recognized surface form → its ordered list of destinations
+    (`links`): an internal MP `profile`, K-Monitor tag pages (the primary source),
+    or Wikipedia (the fallback). The frontend matches these surfaces in the rendered
+    text and wraps each as the name plus a cluster of destination badges; `ambiguous`
+    marks a name that resolved to more than one candidate (shown as alternatives).
+    Degrades to [] on a pre-NEL DB (no entity tables)."""
+    try:
+        rows = db.execute(
+            """SELECT DISTINCT e.surface, el.kind, el.ambiguous, el.links_json
+               FROM entity e
+               JOIN sentence se ON se.id = e.sentence_id
+               JOIN entity_link el ON el.entity_key = e.entity_key
+               WHERE se.speech_id = ? AND el.links_json IS NOT NULL""",
+            (uid,)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    out = []
+    for r in rows:
+        try:
+            links = json.loads(r["links_json"]) or []
+        except (ValueError, TypeError):
+            links = []
+        if not links:
+            continue
+        out.append({"surface": r["surface"], "kind": r["kind"],
+                    "ambiguous": bool(r["ambiguous"]), "links": links})
+    return out
+
+
 @router.get("/speeches/{uid}")
 def get_speech(uid: str, db: sqlite3.Connection = Depends(get_db)):
     sp = db.execute(
@@ -627,6 +672,7 @@ def get_speech(uid: str, db: sqlite3.Connection = Depends(get_db)):
         "speech": speech,
         "session": _session_dict(session),
         "sentences": [dict(r) for r in sentences],
+        "entities": _speech_entities(db, uid),
         "neighbours": nb,
     }
 
@@ -663,6 +709,7 @@ def get_speech_text(uid: str, db: sqlite3.Connection = Depends(get_db)):
         "uid": uid,
         "has_text": bool(sp["has_text"]),
         "sentences": sentences,
+        "entities": _speech_entities(db, uid),
     }
 
 
@@ -687,6 +734,8 @@ def _session_dict(s) -> dict:
     return {
         "id": s["id"], "period": s["period_number"], "sitting": s["sitting"],
         "date": s["date"], "date_start": s["date_start"], "date_end": s["date_end"],
+        # 'published' | 'scheduled'; defensive for a pre-migration DB without the column.
+        "status": (s["status"] if "status" in s.keys() else None) or "published",
         "video_uri": s["video_uri"], "video_playseq": s["video_playseq"],
         "video_duration": s["video_duration"],
         "video_license": s["video_license"], "video_creator": s["video_creator"],

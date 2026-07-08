@@ -55,7 +55,7 @@ ENT_LABELS: frozenset[str] = frozenset(
 
 # Bump this when the extraction logic changes in a way that should invalidate the
 # on-disk processing cache even if the model and text are unchanged.
-_LOGIC_VERSION = 1
+_LOGIC_VERSION = 2
 
 _nlp = None
 _load_attempted = False
@@ -129,6 +129,74 @@ def _entity_key(ent) -> str | None:
     if not any(ch.isalpha() for ch in key):
         return None
     return key
+
+
+def _person_key(ent) -> str | None:
+    """Normalized key for a PERSON entity span (lemma-joined, inflection removed:
+    "Orbán Viktornak" → "Orbán Viktor"), or ``None`` to drop it. Looser than
+    ``_entity_key`` — a name may be short (e.g. "Áder") — but still requires an
+    alphabetic multi-character token so pronouns/noise don't leak in."""
+    key = " ".join(t.lemma_ for t in ent if not t.is_space).strip()
+    bare = key.replace(" ", "")
+    if len(bare) < 3 or key.lower() in STOPWORDS:
+        return None
+    if not any(ch.isalpha() for ch in key):
+        return None
+    return key
+
+
+def _org_key(ent) -> str | None:
+    """Normalized key for an ORGANISATION/institution span (lemma-joined,
+    inflection removed: "a Magyar Nemzeti Bankban" → "Magyar Nemzeti Bank"), or
+    ``None`` to drop it. Allows a short bare form (min 2 chars) so institution
+    acronyms — "EU", "MNB", "NAV" — survive; anything with no alphabetic character
+    or that is a bare stop-word is dropped. Unmatched keys never render (they link
+    to nothing), so being permissive here only risks harmless invisible rows."""
+    key = " ".join(t.lemma_ for t in ent if not t.is_space).strip()
+    bare = key.replace(" ", "")
+    if len(bare) < 2 or key.lower() in STOPWORDS:
+        return None
+    if not any(ch.isalpha() for ch in key):
+        return None
+    return key
+
+
+# NER labels linked inline in the transcript, with their key normaliser. PER →
+# people, ORG → institutions (LOC/MISC are deliberately excluded: places and the
+# MISC noise bucket aren't link-worthy entities here).
+_SPAN_KEYERS = {"PER": _person_key, "ORG": _org_key}
+
+
+def entity_spans(texts, *, batch_size: int = 128, n_process: int = 1):
+    """Per-text PERSON + ORGANISATION mentions for inline transcript linking (NEL).
+
+    Yields, for each input text in order, a list of
+    ``(surface, char_start, char_end, key, kind)`` tuples — one per recognized PER
+    or ORG span, where ``surface`` is the exact substring in the text (offsets
+    relative to that text), ``key`` is its inflection-normalized name (the join key
+    for ``entity_link``) and ``kind`` is ``"PER"`` or ``"ORG"``."""
+    nlp = get_nlp()
+    if nlp is None:
+        raise RuntimeError("HuSpaCy model not available")
+    for doc in nlp.pipe([t or "" for t in texts], batch_size=batch_size, n_process=n_process):
+        spans = []
+        for ent in doc.ents:
+            keyer = _SPAN_KEYERS.get(ent.label_)
+            if keyer is None:
+                continue
+            key = keyer(ent)
+            if key is None:
+                continue
+            spans.append((ent.text, ent.start_char, ent.end_char, key, ent.label_))
+        yield spans
+
+
+def person_spans(texts, *, batch_size: int = 128, n_process: int = 1):
+    """PERSON-only span mentions — a thin wrapper over :func:`entity_spans` kept for
+    callers that want just people. Yields ``(surface, start, end, key)`` per PER
+    span (the ``kind`` is dropped since it is always ``"PER"``)."""
+    for spans in entity_spans(texts, batch_size=batch_size, n_process=n_process):
+        yield [(s, a, b, k) for (s, a, b, k, kind) in spans if kind == "PER"]
 
 
 def analyze_counts(texts, *, batch_size: int = 128, n_process: int = 1):

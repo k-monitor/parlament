@@ -15,6 +15,12 @@ import sqlite3
 # The dedicated HuSpaCy tests opt back in explicitly. Must precede the app imports
 # below, which instantiate config.settings from the environment.
 os.environ.setdefault("PARLAMONITOR_WORDCLOUD_BACKEND", "regex")
+# Likewise disable entity extraction/resolution by default: it needs the HuSpaCy
+# model (offline determinism) and the Wikidata endpoint (no network in tests), and
+# K-Monitor linking would fetch the tag lists during a build. The dedicated entity
+# tests opt back in explicitly (with injected fetchers).
+os.environ.setdefault("PARLAMONITOR_ENTITY_LINKS", "0")
+os.environ.setdefault("PARLAMONITOR_KMONITOR_LINKS", "0")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -88,6 +94,7 @@ def _registry():
         "data": [
             {"personID": "k001", "label": "Kovács Béla", "firstname": "Béla",
              "lastname": "Kovács", "faction": {"label": "Fidesz", "id": 7, "position": "tag"},
+             "wikidataId": "Q42", "wikipediaUrl": "https://hu.wikipedia.org/wiki/Kov%C3%A1cs_B%C3%A9la",
              "constituency": "Budapest 1.", "highestEducation": "egyetem",
              "factionHistory": [{"cycle": "2026-", "label": "Fidesz", "start": "2026", "end": None}],
              "education": [{"degree": "jogász", "institution": "ELTE"}],

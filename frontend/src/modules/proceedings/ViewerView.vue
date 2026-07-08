@@ -19,6 +19,7 @@ import { useI18n } from 'vue-i18n'
 import Hls from 'hls.js'
 import { api } from '../../api.js'
 import { agendaLabel, formatDate, formatDuration, segmentSentences } from '../../format.js'
+import EntityText from '../../components/EntityText.vue'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
@@ -98,6 +99,10 @@ async function resolveHecklers(seq) {
 function asideText(seg) {
   return seg.speaker ? `${seg.speaker}: ${seg.text}` : seg.text
 }
+
+// Person names recognized in the transcript, resolved to Wikidata/Wikipedia
+// (NEL, §10); EntityText matches their surfaces inline and wraps them as links.
+const entities = computed(() => (data.value && data.value.entities) || [])
 
 // Prefer the per-speech clip (VIE-9); fall back to the whole-day stream when the
 // backend couldn't derive one (speech missing real offsets).
@@ -469,14 +474,20 @@ onBeforeUnmount(() => {
                        remark, set apart as a small aside. -->
                   <p v-if="seg.interjection && seg.speaker && speakers[seg.speaker]" class="aside heckle">
                     <SpeakerLink :speaker="speakers[seg.speaker]" size="xs" class="heckle-who" />
-                    <span class="aside-what">{{ seg.text }}</span>
+                    <span class="aside-what"><EntityText :text="seg.text" :entities="entities" /></span>
                   </p>
                   <!-- Stage direction / unattributed heckle: italic aside. -->
-                  <p v-else-if="seg.interjection" class="aside">{{ asideText(seg) }}</p>
-                  <!-- Spoken text: the seekable karaoke unit (VIE-3). -->
-                  <button v-else class="sbtn" :title="formatDuration(s.time_start)" @click="playSentence(s)">
-                    <span class="sicon" aria-hidden="true">▶</span>{{ seg.text }}
-                  </button>
+                  <p v-else-if="seg.interjection" class="aside"><EntityText :text="asideText(seg)" :entities="entities" /></p>
+                  <!-- Spoken text: the seekable karaoke unit (VIE-3). A span with
+                       role=button (not a <button>) so recognized person names can
+                       nest as links inside it; the entity links stop propagation
+                       so clicking a name opens its page instead of seeking. -->
+                  <span v-else class="sbtn" role="button" tabindex="0"
+                    :title="formatDuration(s.time_start)"
+                    @click="playSentence(s)"
+                    @keydown.enter.prevent="playSentence(s)" @keydown.space.prevent="playSentence(s)">
+                    <span class="sicon" aria-hidden="true">▶</span><EntityText :text="seg.text" :entities="entities" />
+                  </span>
                 </template>
               </div>
               <button class="copybtn" :aria-label="copyLinkLabel" :title="copyLinkLabel" @click="copyLink(s)">🔗</button>

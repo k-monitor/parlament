@@ -17,7 +17,12 @@ Per day it collects, for every speech:
   the future precise-timing stage, **not** used by v1 timing (TIM-1 / §10).
 
 Idempotent: a sitting whose raw file already exists is skipped unless it is the
-most recent (still-live) sitting or ``force`` is set (SCR-1 / SCR-2).
+most recent (still-live) sitting, it is still **awaiting content** (an announced
+day with no recording yet, or a video-only day whose transcript has not been
+published), or ``force`` is set (SCR-1 / SCR-2). parlament.hu publishes a sitting
+in stages — first the bare listing, then the recording, then (days later) the
+transcript text — so a day is only "done" once its text is in; until then it is
+re-scraped so a late-arriving transcript is picked up rather than frozen out.
 """
 
 from __future__ import annotations
@@ -49,13 +54,17 @@ def _now_iso() -> str:
 
 
 def scrape_day(felicitas: FelicitasClient, cycle: int, day: dict, *,
-               resolve_offsets: bool = True) -> dict | None:
-    """Build the raw bundle for one session day. ``None`` if it has no speeches."""
+               resolve_offsets: bool = True) -> dict:
+    """Build the raw bundle for one session day.
+
+    Always returns a bundle. A day parlament.hu already lists but for which no
+    speeches exist yet — an **announced/upcoming sitting**, listed before any
+    recording or transcript is available — yields a placeholder bundle
+    (``speeches: []``). The transform marks such a day ``scheduled`` so the site
+    can show that a sitting is coming instead of silently dropping it (rather than
+    the old behaviour of returning ``None`` and losing the day)."""
     day_uuid = day["uuid"]
     speeches = felicitas.day_speeches(day_uuid)
-    if not speeches:
-        return None
-
     video = felicitas.day_video(day_uuid)
     day_off1 = (video or {}).get("day_off1")
 
@@ -112,12 +121,33 @@ def _write_json(path, data) -> None:
     tmp.replace(path)
 
 
+def _awaiting_content(raw_path) -> bool:
+    """Whether an already-downloaded raw day is not yet complete and should be
+    re-scraped even though its file exists.
+
+    A day is incomplete while parlament.hu is still populating it: an announced
+    sitting with no speeches yet (a placeholder), or a video-only day whose
+    transcript text has not been published (every speech's ``text_html`` empty).
+    Once at least one speech carries text the day is considered done. A malformed
+    file re-scrapes to self-heal."""
+    try:
+        raw = json.loads(raw_path.read_text())
+    except (OSError, ValueError):
+        return True
+    speeches = raw.get("speeches") or []
+    if not speeches:
+        return True
+    return not any(s.get("text_html") for s in speeches)
+
+
 def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
                     start: str, end: str, *, force: bool = False,
                     resolve_offsets: bool = True) -> list[str]:
     """Download every sitting day of ``cycle`` in ``[start, end]`` to raw files.
 
-    Returns the list of session keys that were (re)written this run."""
+    Returns the list of session keys that were (re)written this run. Days still
+    awaiting a recording or transcript are re-scraped even if their file exists, so
+    a late-published transcript is picked up (see :func:`_awaiting_content`)."""
     days = felicitas.session_days(cycle, start, end)
     if not days:
         logger.info("No session days for cycle %s in [%s, %s]", cycle, start, end)
@@ -135,17 +165,18 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
         session = session_id(cycle, sitting)
         raw_path = paths.raw_day(session)
         is_latest = (day.get("date") == latest_date)
-        if raw_path.exists() and not force and not is_latest:
+        if (raw_path.exists() and not force and not is_latest
+                and not _awaiting_content(raw_path)):
             continue
 
         bundle = scrape_day(felicitas, cycle, day, resolve_offsets=resolve_offsets)
-        if bundle is None:
-            logger.info("Sitting %s (%s) has no speeches; skipping",
-                        session, day.get("date"))
-            continue
         _write_json(raw_path, bundle)
         n_text = sum(1 for s in bundle["speeches"] if s.get("text_html"))
-        logger.info("Saved %s (%s): %d speeches, %d with text",
-                    session, day.get("date"), len(bundle["speeches"]), n_text)
+        if not bundle["speeches"]:
+            logger.info("Saved %s (%s): announced sitting, no speeches yet "
+                        "(scheduled placeholder)", session, day.get("date"))
+        else:
+            logger.info("Saved %s (%s): %d speeches, %d with text",
+                        session, day.get("date"), len(bundle["speeches"]), n_text)
         written.append(session)
     return written

@@ -202,7 +202,7 @@ def cmd_representatives(args) -> None:
             registry = fetch_representatives(
                 felicitas, args.cycle,
                 details=not args.no_details, limit=args.limit,
-                photos_dir=photos_dir)
+                photos_dir=photos_dir, link_wikidata=not args.no_wikidata)
             save_representatives(paths, args.cycle, registry)
     finally:
         felicitas.close()
@@ -363,6 +363,8 @@ def build_parser() -> argparse.ArgumentParser:
     _common(sp)
     sp.add_argument("--no-details", action="store_true",
                     help="roster only, skip per-MP detail queries")
+    sp.add_argument("--no-wikidata", action="store_true",
+                    help="skip the Wikidata/Wikipedia link query")
     sp.add_argument("--photos", action="store_true", help="download MP portraits")
     sp.add_argument("--limit", type=int, default=None,
                     help="cap number of MPs (for testing)")

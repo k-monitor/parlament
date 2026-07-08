@@ -109,6 +109,19 @@ class NlpService:
         return out
 
     @modal.method()
+    def analyze_sessions_spans(self, sessions: list[list[str]]) -> list[list]:
+        """Extract PERSON + ORGANISATION mention spans for a batch of sittings
+        (NEL, §10). ``sessions`` is a list of per-sitting sentence lists; returns,
+        per sitting, a list (per sentence, in order) of ``[surface, start, end, key,
+        kind]`` spans — exactly what ``app.nlp.entity_spans`` yields."""
+        from app import nlp
+        out = []
+        for texts in sessions:
+            out.append([[list(s) for s in per_sent]
+                        for per_sent in nlp.entity_spans(texts, batch_size=256)])
+        return out
+
+    @modal.method()
     def method_tag(self) -> str:
         from app import nlp
         return nlp.method_tag()

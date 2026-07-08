@@ -45,6 +45,10 @@ x-nlp-env: &nlp-env
   PARLAMONITOR_MODAL_APP: ${PARLAMONITOR_MODAL_APP:-parlamonitor-nlp}
   MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
   MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
+  # Person-entity linking (NEL, §10): extract PERSON mentions (same HuSpaCy
+  # backend as the word cloud — set _WORDCLOUD_BACKEND=modal to offload) and
+  # resolve each name to Wikidata/Wikipedia. Set to 0 to disable.
+  PARLAMONITOR_ENTITY_LINKS: ${PARLAMONITOR_ENTITY_LINKS:-1}
 
 # Whisper forced-alignment sentence-timing config for the scraping side (sync).
 # PARLAMONITOR_TIMING_BACKEND=auto uses Whisper on Modal when the MODAL_TOKEN_* above

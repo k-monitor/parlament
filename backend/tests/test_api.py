@@ -72,9 +72,38 @@ def test_session_list_paginates(client):
     d = client.get("/api/v1/proceedings/sessions").json()
     assert d["total"] == 1 and d["limit"] == 50 and d["offset"] == 0
     assert len(d["sessions"]) == 1
+    # A normal held sitting reports its status.
+    assert d["sessions"][0]["status"] == "published"
     # Offset past the end yields an empty page, but total still reflects the count.
     d2 = client.get("/api/v1/proceedings/sessions?offset=50").json()
     assert d2["total"] == 1 and d2["sessions"] == []
+
+
+def test_scheduled_upcoming_session_listed_and_flagged(client, data_dir, db_path):
+    """An announced sitting with no speeches yet (status 'scheduled') is ingested
+    and surfaced as an upcoming day, not dropped — so the site shows a sitting is
+    coming."""
+    import json
+    from app import loader
+    rec = {"meta": {"session": "43002", "electoralPeriod": 43, "sitting": 2,
+                    "date": "2999-01-01", "status": "scheduled",
+                    "dateStart": "2999-01-01T00:00:00",
+                    "dateEnd": "2999-01-01T23:59:59", "source": "felicitas-json"},
+           "data": []}
+    (data_dir / "processed" / "43002-session.json").write_text(json.dumps(rec))
+    loader.build_database(data_dir, db_path)   # atomic-swaps over the live file
+
+    d = client.get("/api/v1/proceedings/sessions").json()
+    assert d["total"] == 2
+    # The future upcoming day sorts first and is flagged scheduled with no speeches.
+    top = d["sessions"][0]
+    assert top["id"] == "43002" and top["status"] == "scheduled" and top["speeches"] == 0
+    assert any(s["id"] == "43001" and s["status"] == "published"
+               for s in d["sessions"])
+    # The detail endpoint carries the status and an empty agenda (renderable).
+    det = client.get("/api/v1/proceedings/sessions/43002").json()
+    assert det["session"]["status"] == "scheduled"
+    assert det["agenda"] == []
 
 
 def test_session_wordcloud(client):
@@ -190,6 +219,11 @@ def test_representative_profile(client):
     assert d["current_faction"]["label"] == "Fidesz"
     assert d["current_faction"]["color"] == "#FF6A13"
     assert d["education"]
+    # Wikidata/Wikipedia links joined via P4966 (EXT-2) and surfaced on the profile.
+    assert d["wikidata_id"] == "Q42"
+    assert d["wikipedia_url"] == "https://hu.wikipedia.org/wiki/Kov%C3%A1cs_B%C3%A9la"
+    # An MP without a Wikidata item simply has null links (no crash).
+    assert client.get("/api/v1/representatives/n002").json()["wikipedia_url"] is None
 
 
 def test_representative_statistics_shows_bills_when_module_enabled(client):

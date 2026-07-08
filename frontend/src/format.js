@@ -275,6 +275,51 @@ export function segmentSentences(sentences) {
   })
 }
 
+// --- Inline entity links (NEL, §10) ---------------------------------------
+//
+// The backend returns, per speech, the person + institution names recognized in
+// its transcript with their resolved destinations (`{ surface, kind, ambiguous,
+// links: [{ type, url|person_id, label, description }] }`). `linkifyEntities`
+// splits a rendered text run into an ordered token list the template renders inline:
+//   { t: 'text', value }          — a plain run
+//   { t: 'link', value, entity }  — a recognized name → its link
+// Surfaces are the EXACT spans HuSpaCy found in the source text, so matching is a
+// plain substring scan (no offset bookkeeping through the paragraph transforms).
+// Longest surface first, so an inflected form ("Orbán Viktornak") wins over a
+// bare surname; matches must sit on word boundaries so a name never links inside
+// a longer word. Non-overlapping, left-to-right.
+const IS_LETTER = /\p{L}/u
+export function linkifyEntities(text, entities) {
+  if (!text || !entities || !entities.length) return [{ t: 'text', value: text || '' }]
+  const surfaces = [...new Map(entities.filter((e) => e.surface).map((e) => [e.surface, e])).values()]
+    .sort((a, b) => b.surface.length - a.surface.length)
+  const tokens = []
+  const pushText = (ch) => {
+    const last = tokens[tokens.length - 1]
+    if (last && last.t === 'text') last.value += ch
+    else tokens.push({ t: 'text', value: ch })
+  }
+  let i = 0
+  while (i < text.length) {
+    let hit = null
+    for (const e of surfaces) {
+      if (!text.startsWith(e.surface, i)) continue
+      const before = text[i - 1]
+      const after = text[i + e.surface.length]
+      if ((before && IS_LETTER.test(before)) || (after && IS_LETTER.test(after))) continue
+      hit = e
+      break
+    }
+    if (hit) {
+      tokens.push({ t: 'link', value: hit.surface, entity: hit })
+      i += hit.surface.length
+    } else {
+      pushText(text[i]); i++
+    }
+  }
+  return tokens
+}
+
 // Turn a speech's flat sentence list into rendered paragraphs. Returns
 // `[{ text, interjection, speaker }]`: `interjection: true` marks a stage-
 // direction/heckle paragraph the caller should render in italics; `speaker`

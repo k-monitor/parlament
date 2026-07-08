@@ -216,7 +216,9 @@ watch(() => store.cycle, load)
           <div class="row small links" style="gap:1rem;margin-top:.5rem;">
             <a v-if="profile.website" :href="profile.website" target="_blank" rel="noopener">🌐 {{ $t('profile.website') }}</a>
             <a v-if="profile.email" :href="'mailto:' + profile.email">✉ {{ profile.email }}</a>
-            <a v-if="profile.wikidata_id" :href="'https://www.wikidata.org/wiki/' + profile.wikidata_id" target="_blank" rel="noopener">Wikidata</a>
+            <a v-if="profile.wikipedia_url" :href="profile.wikipedia_url" target="_blank" rel="noopener"><span class="link-badge link-badge--w" aria-hidden="true">W</span> {{ $t('profile.wikipedia') }}</a>
+            <a v-if="profile.kmonitor_url" :href="profile.kmonitor_url" target="_blank" rel="noopener"><span class="link-badge" aria-hidden="true"><img src="/kmonitor-badge.png" alt="" /></span> {{ $t('profile.kmonitor') }}</a>
+            <a v-if="profile.wikidata_id" :href="'https://www.wikidata.org/wiki/' + profile.wikidata_id" target="_blank" rel="noopener">{{ $t('profile.wikidata') }}</a>
           </div>
         </div>
 
@@ -421,6 +423,16 @@ watch(() => store.cycle, load)
 <style scoped>
 .phead { display: flex; gap: 1.2rem; align-items: center; margin: .8rem 0 1rem; flex-wrap: wrap; }
 .phead h1 { margin: 0 0 .4rem; }
+/* Brand marks in the header links row (Wikipedia serif "W", K-Monitor logo) —
+   small "logo chips" matching the inline transcript entity badges. */
+.link-badge { display: inline-flex; align-items: center; justify-content: center;
+  width: 1.05em; height: 1.05em; vertical-align: -0.18em; margin-right: .05em;
+  border-radius: 3px; overflow: hidden; border: 1px solid var(--line);
+  background: var(--surface); }
+.link-badge img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.link-badge--w { font-family: Georgia, "Times New Roman", serif; font-weight: 700;
+  font-size: .82em; line-height: 1; color: var(--ink); }
+.links a:hover .link-badge { border-color: var(--accent); }
 /* activity board sits in the header corner; can scroll horizontally if wide */
 .pactivity { margin-left: auto; max-width: 100%; min-width: 0; }
 .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; align-items: start; }

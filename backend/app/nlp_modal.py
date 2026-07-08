@@ -114,3 +114,23 @@ def extract(misses, *, batch_sentences: int | None = None):
     for chunk, results in zip(chunks, svc.analyze_sessions.map(payloads)):
         for (sid, fp, _texts), result in zip(chunk, results):
             yield sid, fp, _words(result)
+
+
+def extract_spans(misses, *, batch_sentences: int | None = None):
+    """Yield ``(sid, fp, per_sentence_spans)`` for each miss (a ``(sid, fp, texts)``
+    triple), running HuSpaCy PERSON + ORGANISATION span extraction on Modal (NEL,
+    §10). ``per_sentence_spans`` is a list — one entry per input sentence, in order
+    — of ``[surface, start, end, key, kind]`` spans, exactly what
+    ``app.nlp.entity_spans`` yields. Batched + ``.map``-dispatched like
+    :func:`extract`."""
+    batch_sentences = batch_sentences or settings.modal_batch_sentences
+    svc = _service()
+    chunks = list(_chunks(misses, batch_sentences))
+    if not chunks:
+        return
+    payloads = [[texts for (_sid, _fp, texts) in chunk] for chunk in chunks]
+    logger.info("Modal NLP spans: %d sitting(s) in %d batch(es)",
+                sum(len(c) for c in chunks), len(chunks))
+    for chunk, results in zip(chunks, svc.analyze_sessions_spans.map(payloads)):
+        for (sid, fp, _texts), spans in zip(chunk, results):
+            yield sid, fp, spans

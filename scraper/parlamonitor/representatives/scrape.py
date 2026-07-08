@@ -25,6 +25,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from .. import wikidata
 from ..config import Paths
 from ..felicitas import PHOTO_RESOURCE, FelicitasClient
 from ..names import split_name
@@ -156,12 +157,14 @@ def _apply_details(rec: dict, details: dict[str, list[dict]]) -> None:
 
 def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
                           details: bool = True, limit: int | None = None,
-                          photos_dir=None) -> dict:
+                          photos_dir=None, link_wikidata: bool = True) -> dict:
     """Build the representative registry for ``cycle``.
 
     With ``details`` (default) each MP is enriched via the per-MP detail queries;
     ``limit`` caps how many MPs are processed (useful for a quick test run);
-    ``photos_dir`` (a Path) downloads each MP's portrait into it when given."""
+    ``photos_dir`` (a Path) downloads each MP's portrait into it when given.
+    With ``link_wikidata`` (default) each MP is joined to its Wikidata item and
+    Wikipedia article via property P4966 (one extra query for the whole roster)."""
     ranges = felicitas.cycle_ranges()
     rng = ranges.get(cycle)
     if not rng or not rng.get("start"):
@@ -172,12 +175,21 @@ def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
     roster = felicitas.representative_list(cycle, start, end)
     logger.info("Cycle %s roster: %d representatives", cycle, len(roster))
 
+    # One SPARQL query for the whole P4966 -> Wikidata/Wikipedia map; joined to
+    # each MP by id below (EXT-2 — never by name). Degrades to {} on failure.
+    wd_links = wikidata.fetch_mp_links(felicitas.http) if link_wikidata else {}
+
     records: list[dict] = []
     for i, row in enumerate(roster):
         if limit is not None and i >= limit:
             break
         rec = _base_record(row)
         pid = rec["personID"]
+        link = wd_links.get(pid) if pid else None
+        if link:
+            rec["wikidataId"] = link.get("wikidataId")
+            if link.get("wikipediaUrl"):
+                rec["wikipediaUrl"] = link["wikipediaUrl"]
         if details and pid:
             fetched: dict[str, list[dict]] = {}
             for q in DETAIL_QUERIES:
@@ -201,6 +213,8 @@ def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
             "scrapedAt": _now_iso(),
             "source": "felicitas-kepviselo-api",
             "withDetails": details,
+            "withWikidata": link_wikidata,
+            "wikidataLinked": sum(1 for r in records if r.get("wikidataId")),
             "count": len(records),
         },
         "data": records,

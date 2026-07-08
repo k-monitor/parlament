@@ -11,6 +11,7 @@
 import { ref } from 'vue'
 import { api } from '../../api.js'
 import { formatDuration, transcriptParagraphs } from '../../format.js'
+import EntityText from '../../components/EntityText.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
@@ -29,6 +30,11 @@ const paragraphs = ref([])
 // name -> { person_id, label, photo_uri } for heckles attributed to a resolvable
 // MP. Only these render as a compact avatar + linked name; the rest stay text.
 const speakers = ref({})
+// Person + institution names recognized in the transcript, resolved to their
+// destinations (NEL, §10): [{ surface, kind, ambiguous, links: [{ type, url|
+// person_id, label }] }]. Matched inline in the body text and wrapped as the name
+// plus a cluster of destination badges (see linkifyEntities / EntityText).
+const entities = ref([])
 
 async function toggle() {
   if (!props.speech.has_text) return
@@ -38,6 +44,7 @@ async function toggle() {
   try {
     const res = await api.speechText(props.speech.uid)
     paragraphs.value = transcriptParagraphs(res.sentences || [])
+    entities.value = res.entities || []
     loaded.value = true
     // Attribute named heckles to representatives (best-effort, non-blocking:
     // failure just leaves them as plain "Name: remark" text).
@@ -116,10 +123,9 @@ function paraText(p) {
           <p v-if="para.interjection && para.speaker && speakers[para.speaker]"
              class="transcript-text interjection heckle">
             <SpeakerLink :speaker="speakers[para.speaker]" size="xs" class="heckle-who" />
-            <span class="heckle-what">{{ para.text }}</span>
+            <span class="heckle-what"><EntityText :text="para.text" :entities="entities" /></span>
           </p>
-          <p v-else class="transcript-text"
-             :class="{ interjection: para.interjection }">{{ paraText(para) }}</p>
+          <p v-else class="transcript-text" :class="{ interjection: para.interjection }"><EntityText :text="paraText(para)" :entities="entities" /></p>
         </template>
       </template>
     </div>

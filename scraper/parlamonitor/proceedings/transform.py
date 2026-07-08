@@ -291,6 +291,11 @@ def transform_day(raw: dict, *, words: list | None = None,
         e["session"]["dateEnd"] = date_end
 
     n_text = sum(1 for e in entries if e["textContents"])
+    # A day parlament.hu lists but has not yet populated with speeches is an
+    # announced/upcoming sitting; the site shows it as "coming" rather than an
+    # empty transcript. Once speeches exist the day is published (its transcript
+    # may still lag per speech — VIE-8 — but there is content to browse).
+    status = "published" if entries else "scheduled"
     return {
         "meta": {
             "session": raw.get("session") or f"{cycle}{sitting:03d}",
@@ -299,6 +304,7 @@ def transform_day(raw: dict, *, words: list | None = None,
             "electoralPeriod": cycle,
             "sitting": sitting,
             "date": date,
+            "status": status,
             "dateStart": date_start,
             "dateEnd": date_end,
             "source": raw.get("source", "felicitas-json"),

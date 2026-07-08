@@ -100,6 +100,12 @@ export default {
     backToSession: 'Vissza az ülésnaphoz',
     speechType: 'Felszólalás típusa',
   },
+  entity: {
+    uncertain: 'Bizonytalan találat',
+    profile: 'Profil',
+    kmonitor: 'K-Monitor adatbázis',
+    wikipedia: 'Wikipédia',
+  },
   sessions: {
     title: 'Ülésnapok',
     date: 'Dátum',
@@ -122,6 +128,9 @@ export default {
     openViewer: 'Videó és jegyzőkönyv megnyitása',
     transcriptLoading: 'Jegyzőkönyv betöltése…',
     transcriptLoadError: 'A jegyzőkönyv betöltése nem sikerült.',
+    upcoming: 'Hamarosan',
+    upcomingNote: 'Az ülésnap már szerepel az Országgyűlés napirendjén – a felvétel és a jegyzőkönyv hamarosan elérhető lesz.',
+    notProcessed: 'Ez az ülésnap még nincs feldolgozva.',
   },
   reps: {
     title: 'Képviselők',
@@ -150,6 +159,8 @@ export default {
     committees: 'Bizottsági tagságok',
     factionHistory: 'Frakciótörténet',
     wikidata: 'Wikidata',
+    wikipedia: 'Wikipédia',
+    kmonitor: 'K-Monitor',
     totalSpeeches: 'Felszólalások száma',
     totalSpeakingTime: 'Összes beszédidő',
     billsSubmitted: 'Benyújtott önálló indítványok',

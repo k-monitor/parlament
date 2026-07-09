@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
-import { formatDate, formatDuration } from '../../format.js'
+import { formatDate } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import Pagination from '../../components/Pagination.vue'
 
@@ -71,7 +71,6 @@ watch(() => store.cycle, () => {
           <div class="muted small">
             {{ s.speeches }} {{ $t('sessions.speeches') }} · {{ s.agenda_items }} {{ $t('sessions.agendaItems') }}
           </div>
-          <div class="muted small" v-if="s.video_duration">⏱ {{ formatDuration(s.video_duration) }}</div>
         </template>
       </router-link>
     </div>

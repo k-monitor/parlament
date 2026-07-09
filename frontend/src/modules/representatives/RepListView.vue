@@ -131,7 +131,7 @@ onUnmounted(() => clearTimeout(searchTimer))
         <li v-for="r in data.representatives" :key="r.person_id" class="card pad repcard">
           <SpeakerLink :speaker="{ person_id: r.person_id, label: r.label, photo_uri: r.photo_uri }" />
           <div class="repmeta">
-            <FactionBadge :faction="r.faction" />
+            <FactionBadge :faction="r.faction" link />
             <span v-if="r.constituency" class="muted small">📍 {{ r.constituency }}</span>
           </div>
           <div class="repstats small muted">

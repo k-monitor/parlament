@@ -88,6 +88,7 @@ export default {
     title: 'Representatives', searchPlaceholder: 'Search representatives by name…', faction: 'Faction',
     constituency: 'Constituency', speeches: 'speeches', speakingTime: 'speaking time', sortName: 'By name',
     sortSpeeches: 'By speeches', sortSpeakingTime: 'By speaking time', noResults: 'No matching representatives.', profile: 'Profile',
+    filterByFaction: 'Filter representatives of {faction}',
   },
   profile: {
     speeches: 'Speeches',

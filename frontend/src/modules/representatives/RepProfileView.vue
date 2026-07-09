@@ -109,6 +109,8 @@ const overTimeItems = computed(() => {
     label: `${formatDate(p.date)}`,
     value: p.speech_count,
     sub: p.session_id,
+    // Each bar is a sitting day the MP spoke on — link it to that day's page.
+    to: p.session_id ? { name: 'session', params: { id: p.session_id } } : undefined,
   }))
 })
 
@@ -210,7 +212,7 @@ watch(() => store.cycle, load)
         <div class="pinfo">
           <h1>{{ profile.label }}</h1>
           <div class="row" style="gap:.8rem;">
-            <FactionBadge :faction="profile.current_faction" />
+            <FactionBadge :faction="profile.current_faction" link />
             <span v-if="profile.constituency" class="muted">📍 {{ profile.constituency }}</span>
           </div>
           <div class="row small links" style="gap:1rem;margin-top:.5rem;">
@@ -281,7 +283,7 @@ watch(() => store.cycle, load)
             <h2>{{ $t('profile.factionHistory') }}</h2>
             <ul class="timeline">
               <li v-for="(h, i) in profile.faction_history" :key="i">
-                <FactionBadge :faction="h.faction" />
+                <FactionBadge :faction="h.faction" link />
                 <span class="muted small">{{ h.cycle }}</span>
               </li>
             </ul>

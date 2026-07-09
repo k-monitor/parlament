@@ -148,6 +148,7 @@ export default {
     sortSpeakingTime: 'Beszédidő szerint',
     noResults: 'Nincs a feltételeknek megfelelő képviselő.',
     profile: 'Profil',
+    filterByFaction: '{faction} képviselőinek szűrése',
   },
   profile: {
     speeches: 'Felszólalások',

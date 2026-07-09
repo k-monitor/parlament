@@ -31,6 +31,8 @@ const max = computed(() => Math.max(1, ...props.items.map((i) => i.value || 0)))
 .bars { display: flex; flex-direction: column; gap: .35rem; }
 .bar-row { display: grid; grid-template-columns: minmax(80px, 28%) 1fr auto; gap: .6rem; align-items: center; }
 .bar-label { font-size: .82rem; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+a.bar-label { text-decoration: none; }
+a.bar-label:hover, a.bar-label:focus-visible { color: var(--accent); text-decoration: underline; }
 .bar-track { background: #eceae4; border-radius: 6px; height: 14px; overflow: hidden; }
 .bar-fill { display: block; height: 100%; border-radius: 6px; min-width: 2px; }
 .bar-val { font-size: .82rem; font-variant-numeric: tabular-nums; color: var(--ink); }

@@ -224,12 +224,15 @@ def get_representative(person_id: str, period: Optional[int] = None,
                FROM membership m LEFT JOIN faction f ON f.id = m.faction_id
                WHERE m.person_id = ? ORDER BY m.period_number DESC LIMIT 1""",
             (person_id,)).fetchone()
-    # Colour map so each historical faction renders consistently (REP-4).
-    colors = {r["label"]: r["color"]
-              for r in db.execute("SELECT label, color FROM faction")}
+    # Colour/id maps so each historical faction renders consistently (REP-4) and
+    # its badge can link to the faction-filtered rep list (id keyed by label).
+    faction_rows = db.execute("SELECT id, label, color FROM faction").fetchall()
+    colors = {r["label"]: r["color"] for r in faction_rows}
+    faction_ids = {r["label"]: r["id"] for r in faction_rows}
     faction_history = [
         {"cycle": h.get("cycle"), "start": h.get("start"), "end": h.get("end"),
-         "faction": {"label": h.get("label"), "color": colors.get(h.get("label"))}
+         "faction": {"id": faction_ids.get(h.get("label")),
+                     "label": h.get("label"), "color": colors.get(h.get("label"))}
                     if h.get("label") else None}
         for h in _loads(p["faction_history_json"])]
     return {

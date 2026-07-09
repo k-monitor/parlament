@@ -100,6 +100,80 @@ def test_search_breakdown_groups_by_faction_and_speaker(client):
     assert empty["factions"] == [] and empty["speakers"] == []
 
 
+def test_search_result_carries_surrounding_context(client):
+    # SEA-4: a hit carries a few sentences of surrounding transcript context so the
+    # moment can be read without opening the viewer. Speech 43001-1 has two
+    # sentences — the költségvetés hit (the first) shows the ágazati sentence after
+    # it and nothing before it (it is the speech's first sentence).
+    r = client.get("/api/v1/proceedings/search", params={"q": "koltsegvetes"})
+    res = r.json()["results"][0]
+    assert res["sentence_ord"] == 0
+    assert any("ÁGAZATI" in c["text"] for c in res["context"]["after"])
+    assert res["context"]["before"] == []
+    # …and the ágazati hit shows the költségvetés sentence before it.
+    res2 = client.get("/api/v1/proceedings/search",
+                      params={"q": "agazati"}).json()["results"][0]
+    assert any("költségvetés" in c["text"] for c in res2["context"]["before"])
+
+
+def _seed_prior_speech(db_path):
+    """A speech before the sitting's first one (speech_index 0), by a different MP,
+    so a hit in the first speech has a neighbouring speech to draw context from."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute(
+        """INSERT INTO speech (uid, origin_id, session_id, period_number,
+               speech_index, person_id, speaker_label, has_text)
+           VALUES ('43001-0','43-1-0','43001',43,0,'n002','Nagy Anna',1)""")
+    c.execute("INSERT INTO sentence (speech_id, ord, text) VALUES ('43001-0',0,?)",
+              ("Előzetes megjegyzés a vitához.",))
+    c.commit(); c.close()
+
+
+def test_search_context_spills_into_adjacent_speech(client, db_path):
+    # SEA-4: when the hit sits at a speech boundary its context is drawn from the
+    # speech before/after it, not only its own speech. The költségvetés hit is the
+    # first sentence of speech 43001-1, so its "before" context comes from 43001-0.
+    _seed_prior_speech(db_path)
+    res = client.get("/api/v1/proceedings/search",
+                     params={"q": "koltsegvetes"}).json()["results"][0]
+    before = res["context"]["before"]
+    assert any(c["text"] == "Előzetes megjegyzés a vitához." for c in before)
+    assert any(c["person_id"] == "n002" for c in before)   # a different speaker
+
+
+def _seed_earlier_hit(db_path):
+    """A második, korábbi ülésnap költségvetés-találata, hogy a dátum szerinti
+    rendezésnek legyen mit sorba raknia."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("INSERT INTO session (id, period_number, date) VALUES ('43000',43,'2026-04-01')")
+    c.execute(
+        """INSERT INTO speech (uid, origin_id, session_id, period_number,
+               speech_index, person_id, speaker_label, has_text, time_start, time_end)
+           VALUES ('43000-1','43-0-1','43000',43,1,'k001','Kovács Béla',1,0.0,5.0)""")
+    c.execute("INSERT INTO sentence (speech_id, ord, text) VALUES ('43000-1',0,?)",
+              ("A költségvetés régi témája.",))
+    c.commit(); c.close()
+
+
+def test_search_sort_by_date(client, db_path):
+    # SEA-10: results can be ordered by sitting date as well as relevance; the
+    # chosen ordering is echoed and an unknown value falls back to relevance
+    # (the ORDER BY comes from a whitelist, never from the raw request).
+    _seed_earlier_hit(db_path)   # a hit on 2026-04-01, older than 43001 (2026-05-09)
+    asc = client.get("/api/v1/proceedings/search",
+                     params={"q": "koltsegvetes", "sort": "date_asc"}).json()
+    desc = client.get("/api/v1/proceedings/search",
+                      params={"q": "koltsegvetes", "sort": "date_desc"}).json()
+    assert asc["sort"] == "date_asc" and desc["sort"] == "date_desc"
+    assert asc["results"][0]["date"] == "2026-04-01"    # oldest first
+    assert desc["results"][0]["date"] == "2026-05-09"   # newest first
+    bad = client.get("/api/v1/proceedings/search",
+                     params={"q": "koltsegvetes", "sort": "date_desc; DROP TABLE speech"}).json()
+    assert bad["sort"] == "relevance"                   # unknown value → relevance
+
+
 def test_filter_by_faction_and_agenda(client):
     # Filter to a faction with no costing-related hit.
     fac = client.get("/api/v1/representatives/factions").json()["factions"]

@@ -7,7 +7,7 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
 import { store, loadMeta, setCycle, currentCycleLabel } from '../../store.js'
-import { agendaLabel, formatDate } from '../../format.js'
+import { agendaLabel, formatDate, searchExcerptLines } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
@@ -32,6 +32,10 @@ const filters = reactive({
   agenda_type: route.query.agenda_type || '',
 })
 const showFilters = ref(false)
+// Result ordering (SEA-10): relevance (default) | date_desc | date_asc. Kept in
+// the URL like the other per-page filters so a sorted view is deep-linkable (CYC-5).
+const SORTS = ['relevance', 'date_desc', 'date_asc']
+const sort = ref(SORTS.includes(route.query.sort) ? route.query.sort : 'relevance')
 
 const data = ref(null)
 const trend = ref(null)
@@ -63,7 +67,17 @@ function submit(resetPage = true) {
   for (const k of ['date_from', 'date_to', 'faction_id', 'agenda_type']) {
     if (filters[k]) query[k] = filters[k]
   }
+  if (sort.value !== 'relevance') query.sort = sort.value
   if (!resetPage && route.query.offset) query.offset = route.query.offset
+  router.push({ name: 'search', query })
+}
+
+// Re-order the results: a new ordering always returns to the first page.
+function changeSort() {
+  const query = { ...route.query }
+  delete query.offset
+  if (sort.value === 'relevance') delete query.sort
+  else query.sort = sort.value
   router.push({ name: 'search', query })
 }
 
@@ -112,6 +126,7 @@ async function runFromRoute() {
   try {
     const res = await api.search({
       ...filterArgs,
+      sort: route.query.sort, // ordering (SEA-10); trend/breakdown are unaffected
       limit: PAGE,
       offset: route.query.offset || 0,
     })
@@ -130,12 +145,23 @@ watch(() => route.query, (q) => {
   filters.date_to = q.date_to || ''
   filters.faction_id = q.faction_id || ''
   filters.agenda_type = q.agenda_type || ''
+  sort.value = SORTS.includes(q.sort) ? q.sort : 'relevance'
   runFromRoute()
 })
 
 function viewerLink(r) {
   return { name: 'viewer', params: { uid: r.speech_uid }, query: { s: r.sentence_ord } }
 }
+
+// Each result rendered as a transcript excerpt (SEA-4): the matched sentence plus
+// its surrounding context, parsed exactly like the sitting-day transcript —
+// speaker label stripped, parenthetical stage directions / heckles lifted out as
+// italic asides, and a change of speaker in the spilled-in context attributed.
+// See searchExcerptLines() in format.js.
+const resultsView = computed(() => (data.value?.results || []).map((r) => ({
+  ...r,
+  lines: searchExcerptLines(r),
+})))
 
 // SEA-9 breakdown → BarChart rows. Factions keep their colour; each
 // representative links to their profile (REP-1).
@@ -216,10 +242,20 @@ const cycleScopeLabel = computed(() => currentCycleLabel())
     @retry="runFromRoute"
   >
     <div v-if="data">
-      <p class="muted small" aria-live="polite" style="margin:1rem 0 .5rem;">
-        <strong>{{ data.total_is_capped ? $t('search.resultsCapped', { n: data.total }) : data.total.toLocaleString('hu-HU') }}</strong>
-        {{ $t('search.results') }}
-      </p>
+      <div class="results-head">
+        <p class="muted small" aria-live="polite" style="margin:0;">
+          <strong>{{ data.total_is_capped ? $t('search.resultsCapped', { n: data.total }) : data.total.toLocaleString('hu-HU') }}</strong>
+          {{ $t('search.results') }}
+        </p>
+        <label class="sortctl small muted">
+          {{ $t('search.sort') }}
+          <select v-model="sort" @change="changeSort">
+            <option value="relevance">{{ $t('search.sortRelevance') }}</option>
+            <option value="date_desc">{{ $t('search.sortNewest') }}</option>
+            <option value="date_asc">{{ $t('search.sortOldest') }}</option>
+          </select>
+        </label>
+      </div>
 
       <section v-if="trend && trend.buckets.length > 1" class="card pad trendcard">
         <TrendChart
@@ -249,16 +285,21 @@ const cycleScopeLabel = computed(() => currentCycleLabel())
       </section>
 
       <ol class="results">
-        <li v-for="r in data.results" :key="r.sentence_id" class="card pad result">
-          <router-link :to="viewerLink(r)" class="result-sentence">
-            <span v-html="r.highlighted"></span>
-          </router-link>
+        <li v-for="r in resultsView" :key="r.sentence_id" class="card pad result">
           <div class="result-meta row">
             <SpeakerLink v-if="r.speaker" :speaker="r.speaker" />
             <FactionBadge :faction="r.faction" />
             <span class="muted small">{{ formatDate(r.date) }}</span>
             <span class="muted small" v-if="r.agenda_title">{{ $t('search.on') }} {{ r.agenda_title }}</span>
             <TimingBadge :timing="r.timing" />
+          </div>
+          <router-link :to="viewerLink(r)" class="result-excerpt">
+            <span v-for="(ln, i) in r.lines" :key="i" class="excerpt-line"
+                  :class="{ aside: ln.interjection }">
+              <span v-if="ln.speakerLabel" class="ctx-speaker">{{ ln.speakerLabel }}: </span><span v-html="ln.html"></span>
+            </span>
+          </router-link>
+          <div class="result-actions">
             <router-link :to="viewerLink(r)" class="btn secondary small watch">▶ {{ $t('search.watch') }}</router-link>
           </div>
         </li>
@@ -280,10 +321,26 @@ const cycleScopeLabel = computed(() => currentCycleLabel())
 .trendcard { margin: 0 0 .9rem; }
 .breakdowncard { margin: 0 0 .9rem; }
 .breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; }
+.results-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: 1rem 0 .5rem; }
+.sortctl { display: inline-flex; align-items: center; gap: .4rem; }
+.sortctl select { padding: .2rem .4rem; }
 .results { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .7rem; }
-.result-sentence { display: block; font-size: 1.12rem; color: var(--ink); line-height: 1.5; }
-.result-sentence:hover { text-decoration: none; color: var(--accent); }
-.result-meta { margin-top: .6rem; gap: .8rem; row-gap: .4rem; }
-.watch { margin-left: auto; }
+/* Card reads top-to-bottom: speaker/meta header → context around the match →
+   the watch action. A column gap spaces every part uniformly. */
+.result { display: flex; flex-direction: column; gap: .45rem; }
+/* The matched sentence + its surrounding context, read as a transcript excerpt
+   (SEA-4): each parsed line is its own block, the whole excerpt links to the
+   viewer at the match, and the highlighted term stays prominent via <mark>. */
+.result-excerpt { display: block; color: var(--ink); line-height: 1.6; }
+.result-excerpt:hover { text-decoration: none; }
+.result-excerpt:hover :deep(mark) { outline: 2px solid var(--accent-soft); }
+.excerpt-line { display: block; }
+.excerpt-line + .excerpt-line { margin-top: .4em; }
+/* Stage directions / heckles lifted out of the parentheses: italic, in a softer
+   tone so they read as asides, not speech (matches the sitting-day transcript). */
+.excerpt-line.aside { font-style: italic; color: var(--ink-soft); }
+.ctx-speaker { font-weight: 600; color: var(--ink); font-style: normal; }
+.result-meta { gap: .8rem; row-gap: .4rem; }
+.result-actions { display: flex; justify-content: flex-end; }
 .pager { display: flex; align-items: center; justify-content: center; gap: 1rem; margin: 1.5rem 0; }
 </style>

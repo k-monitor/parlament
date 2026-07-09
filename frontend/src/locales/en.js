@@ -40,6 +40,7 @@ export default {
     hint: 'Tip: use quotes for an exact phrase, e.g. "tisztelt ház".',
     filters: 'Filters', clearFilters: 'Clear filters', period: 'Term', dateFrom: 'From', dateTo: 'To',
     speaker: 'Speaker', faction: 'Faction', agendaType: 'Agenda type', all: 'All', watch: 'Watch', on: '·',
+    sort: 'Sort:', sortRelevance: 'Relevance', sortNewest: 'Newest first', sortOldest: 'Oldest first',
     trendCaption: 'Occurrences of “{q}” over time',
     breakdownFactions: 'Matches for “{q}” by faction',
     breakdownSpeakers: 'Matches for “{q}” by representative',

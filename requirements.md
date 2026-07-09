@@ -389,8 +389,20 @@ merely because an accent was omitted (or added).
   **agenda-item type**. Filters are combinable. The **electoral period** is set
   by the global cycle selector (§4A), not a per-search filter.
 - **SEA-4.** Each result shows: matched sentence with **highlighted** terms,
-  surrounding snippet, speaker (linked to profile), faction, date, agenda title,
-  and a thumbnail/affordance to play.
+  **surrounding transcript context** — a few sentences immediately before and
+  after the match so the moment reads in context without opening the viewer,
+  **spilling into the adjacent speeches** when the match sits at a speech
+  boundary (context drawn "from the speeches before/after", not only the one the
+  hit lands in), each context line attributed to its speaker so a **change of
+  speaker is visible** — speaker (linked to profile), faction, date, agenda
+  title, and a thumbnail/affordance to play. The excerpt is rendered with the
+  **same transcript parsing as the sitting-day reader (§5.5)**: the redundant
+  leading speaker label is stripped, parenthetical stage directions / heckles are
+  lifted out as italic asides, and numeric/date references stay inline — so a hit
+  on an interjection (e.g. *"(Derültség.)"*) reads cleanly instead of as raw text
+  with dangling parentheses. The matched term stays highlighted through the
+  parsing, and a parenthetical that spans the match/context boundary is lifted as
+  one aside.
 - **SEA-5.** Results are **paginated** (or infinite-scroll) and return within
   the performance budget in §8 for the full corpus.
 - **SEA-6.** Search is reachable and shareable via **URL query params**
@@ -413,6 +425,13 @@ merely because an accent was omitted (or added).
   busiest factions/speakers) to stay glanceable; factions render in their
   consistent colour (§4.1) and each representative links to their profile
   (REP-1), and matching honours the site-wide accent folding (§4B).
+- **SEA-10 (SHOULD).** Results can be **re-ordered**: by **relevance** (default,
+  the bm25 rank) or by **sitting date** (newest-first / oldest-first). The chosen
+  ordering is **per-page URL state** (§CYC-5) so a sorted view is deep-linkable,
+  and changing it returns to the first page. The order is applied server-side
+  from a **fixed whitelist** (never spliced from raw request input) and affects
+  only the paginated result list — the accompanying aggregates (SEA-8/SEA-9)
+  describe the whole result set regardless of order.
 
 ### 5.2 Proceedings viewer (sentence ↔ video sync)
 

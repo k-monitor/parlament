@@ -275,6 +275,108 @@ export function segmentSentences(sentences) {
   })
 }
 
+// Escape plain transcript text so it can be rendered with v-html alongside the
+// matched sentence (which already arrives as escaped HTML with <mark> tags). The
+// segmenter keys on ()/:/dashes only, and the <mark> tags contain none of those,
+// so escaping is inert to the parsing below.
+const escapeHtml = (s) => (s || '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+// Render a search hit's matched sentence together with its surrounding context
+// (SEA-4) the SAME way the sitting-day transcript reads (§5.5): the redundant
+// leading speaker label is stripped, parenthetical stage directions / heckles are
+// lifted out as italic asides, numeric/date references stay inline, and a change
+// of speaker in the spilled-in context is attributed. Returns a flat list of
+// render lines `[{ html, interjection, speakerLabel }]`, in reading order:
+//   • `html` is safe HTML (context escaped here; the match keeps its <mark>s);
+//   • `interjection: true` marks an aside the caller renders in italics;
+//   • `speakerLabel` (non-null) is the name to show as a prefix where the
+//     surrounding context switches to a different speaker.
+// The match sentence carries its highlight through unchanged — a parenthetical
+// that spans the match/context boundary ("… (" + "Derültség.)") is lifted as one
+// aside because the segmenter is threaded with carry state across the excerpt.
+// A sentence opens INSIDE a parenthetical when it holds a ")" with no "(" before
+// it — the "(" was in an earlier sentence the context window didn't reach. Such a
+// sentence is segmented as an aside-continuation so its orphaned close-paren
+// fragment (and stray ")") is lifted out instead of dangling in the spoken text.
+function startsInParen(text) {
+  const close = text.indexOf(')')
+  if (close < 0) return false
+  const open = text.indexOf('(')
+  return open < 0 || open > close
+}
+
+export function searchExcerptLines(result) {
+  const before = result.context?.before || []
+  const after = result.context?.after || []
+  const ownKey = result.speaker ? (result.speaker.person_id || result.speaker.label) : null
+  const speakerKey = (s) => (s && (s.person_id || s.speaker)) || null
+
+  // Ordered sentence items: escaped context, then the already-escaped/mark-tagged
+  // match, then escaped context. Each keeps its speaker so a spilled-in line by
+  // another speaker can be labelled.
+  const items = [
+    ...before.map((s) => ({ html: escapeHtml(s.text), key: speakerKey(s), label: s.speaker })),
+    { html: result.highlighted || '', key: ownKey, label: null, isMatch: true },
+    ...after.map((s) => ({ html: escapeHtml(s.text), key: speakerKey(s), label: s.speaker })),
+  ]
+  const beforeCount = before.length
+
+  // A context line shows its speaker only where it differs from the neighbour
+  // nearest the match — the match's own speaker (shown in the card header) seeds
+  // both walks, so context in the same speech carries no redundant label.
+  const showSpeaker = new Array(items.length).fill(false)
+  let ref = ownKey
+  for (let i = beforeCount - 1; i >= 0; i--) { showSpeaker[i] = items[i].key !== ref; ref = items[i].key }
+  ref = ownKey
+  for (let i = beforeCount + 1; i < items.length; i++) { showSpeaker[i] = items[i].key !== ref; ref = items[i].key }
+
+  // Segment every item, threading open-parenthesis + orphaned-punctuation state so
+  // a parenthetical spanning items is lifted whole. Reset the carry at a speaker
+  // change (a speech boundary) so punctuation/asides never bleed across speakers.
+  // Segments are mutated in place (punctuation reattachment) by LATER items, so
+  // collect references first and read their final text after the loop.
+  let inParen = false, prevSpoken = null, prevKey
+  const collected = []
+  items.forEach((item, idx) => {
+    const text = stripSpeakerLabel(item.html)
+    // At the excerpt's start or a speaker change we can't inherit carry state from
+    // a different speech, so drop it.
+    if (idx === 0 || item.key !== prevKey) { inParen = false; prevSpoken = null }
+    prevKey = item.key
+    // A sentence opening with an orphaned ")" (its "(" fell outside the ±N window,
+    // possibly several sentences back where no paren char reached the window) is
+    // continuing a parenthetical — force aside mode so the stray ")" is lifted out
+    // instead of dangling in the spoken text. Never a false trigger: a balanced
+    // "(…)" has its "(" first, so startsInParen is only true for a real orphan.
+    if (startsInParen(text)) inParen = true
+    const res = splitSegmentsCarry(text, inParen, prevSpoken)
+    inParen = res.inParen
+    prevSpoken = res.lastSpoken
+    let sawSpoken = false
+    for (const seg of res.segments) {
+      const firstSpoken = !seg.interjection && !sawSpoken
+      if (firstSpoken) sawSpoken = true
+      collected.push({ seg, idx, firstSpoken })
+    }
+  })
+
+  const lines = []
+  for (const { seg, idx, firstSpoken } of collected) {
+    const text = (seg.text || '').trim()
+    if (!text) continue
+    // A named heckle keeps its "Name:" attribution inline in the aside (both the
+    // name and remark come from already-escaped text).
+    const html = seg.interjection && seg.speaker ? `${seg.speaker}: ${text}` : text
+    lines.push({
+      html,
+      interjection: !!seg.interjection,
+      speakerLabel: firstSpoken && showSpeaker[idx] ? items[idx].label : null,
+    })
+  }
+  return lines
+}
+
 // --- Inline entity links (NEL, §10) ---------------------------------------
 //
 // The backend returns, per speech, the person + institution names recognized in

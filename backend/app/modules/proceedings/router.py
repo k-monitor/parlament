@@ -49,6 +49,67 @@ def _mark_html(s: str | None) -> str | None:
             .replace("\x02", "<mark>").replace("\x03", "</mark>"))
 
 
+# How many transcript sentences of surrounding context to attach to each search
+# hit on either side (SEA-4). Kept small so the result list stays scannable and
+# the per-page context fetch stays cheap; the window spills into the neighbouring
+# speech when the match sits at a speech boundary, so context is drawn from the
+# speeches *before/after*, not only the one the hit lands in.
+_SEARCH_CONTEXT_WINDOW = 2
+
+# Whitelisted result orderings (SEA-10). The value is spliced straight into the
+# ORDER BY, so it MUST come from this map — never from the raw request — and each
+# tie-breaks down to the sentence so paging is stable. `relevance` is the bm25
+# rank (best first); the date orderings read the sitting date then reading order.
+_SEARCH_SORTS = {
+    "relevance": "rank",
+    "date_desc": "ss.date DESC, sp.speech_index DESC, se.ord DESC",
+    "date_asc": "ss.date ASC, sp.speech_index ASC, se.ord ASC",
+}
+
+
+def _context_side(db, session_id, speech_index, ord, direction):
+    """Up to ``_SEARCH_CONTEXT_WINDOW`` transcript sentences flanking a matched
+    sentence on one side, in reading order (SEA-4).
+
+    ``direction`` is ``+1`` (the sentences *after* the hit) or ``-1`` (*before*).
+    The walk starts inside the hit's own speech and, when the hit sits at a speech
+    boundary, spills into the neighbouring speech(es) — so the context genuinely
+    comes "from the speeches before/after", not just the one the hit is in. Each
+    sentence carries its speaker so the UI can mark where the speaker changes."""
+    cmp, order = (">", "ASC") if direction > 0 else ("<", "DESC")
+    out: list[dict] = []
+    idx, cursor = speech_index, ord
+    while len(out) < _SEARCH_CONTEXT_WINDOW:
+        rows = db.execute(
+            f"""SELECT se.text, sp.person_id,
+                       COALESCE(p.label, sp.speaker_label) AS speaker
+                FROM sentence se
+                JOIN speech sp ON sp.uid = se.speech_id
+                LEFT JOIN person p ON p.person_id = sp.person_id
+                WHERE sp.session_id = :sid AND sp.speech_index = :idx
+                      AND se.ord {cmp} :cursor
+                ORDER BY se.ord {order} LIMIT :need""",
+            {"sid": session_id, "idx": idx, "cursor": cursor,
+             "need": _SEARCH_CONTEXT_WINDOW - len(out)}).fetchall()
+        out.extend({"text": r["text"], "speaker": r["speaker"],
+                    "person_id": r["person_id"]} for r in rows)
+        if len(out) >= _SEARCH_CONTEXT_WINDOW:
+            break
+        # Window not full — hop to the adjacent speech and keep going from its edge.
+        nb = db.execute(
+            f"""SELECT speech_index FROM speech
+                WHERE session_id = :sid AND speech_index {cmp} :idx
+                ORDER BY speech_index {order} LIMIT 1""",
+            {"sid": session_id, "idx": idx}).fetchone()
+        if not nb:
+            break
+        idx = nb["speech_index"]
+        cursor = -1 if direction > 0 else 1 << 62   # start at the new speech's edge
+    if direction < 0:
+        out.reverse()                               # collected outward → reading order
+    return out
+
+
 def _search_where(q, date_from, date_to, period, person_id, faction_id, agenda_type):
     """Build the shared FTS-match + filter clause for the search endpoints.
 
@@ -85,17 +146,21 @@ def search(
     person_id: Optional[str] = None,
     faction_id: Optional[int] = None,
     agenda_type: Optional[str] = None,
+    sort: str = Query("relevance", description="relevance | date_desc | date_asc"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    """Ranked sentence-level full-text search with combinable filters (SEA-1/3).
+    """Sentence-level full-text search with combinable filters (SEA-1/3).
 
-    Each hit carries the matched sentence (with `<mark>` highlights), a context
-    snippet, speaker/faction/date/agenda metadata, and the timing needed to open
-    the viewer at that moment (SEA-4)."""
+    Ordered by relevance by default, or by sitting date (SEA-10, `sort`). Each hit
+    carries the matched sentence (with `<mark>` highlights), a few sentences of
+    surrounding transcript context — spilling into the adjacent speeches at a
+    speech boundary — speaker/faction/date/agenda metadata, and the timing needed
+    to open the viewer at that moment (SEA-4)."""
     where_sql, params = _search_where(q, date_from, date_to, period,
                                       person_id, faction_id, agenda_type)
+    order_by = _SEARCH_SORTS.get(sort, _SEARCH_SORTS["relevance"])
 
     base_from = """
         FROM sentence_fts
@@ -120,7 +185,7 @@ def search(
                highlight(sentence_fts, 0, char(2), char(3)) AS highlighted,
                snippet(sentence_fts, 0, char(2), char(3), '…', 18) AS snippet,
                sp.uid AS speech_uid, sp.origin_id, sp.speaker_label,
-               sp.person_id, sp.confidence, sp.align_method,
+               sp.person_id, sp.confidence, sp.align_method, sp.speech_index,
                ai.title AS agenda_title, ai.type AS agenda_type,
                ss.id AS session_id, ss.date, ss.sitting, sp.period_number,
                p.label AS person_label, p.photo_uri,
@@ -128,7 +193,7 @@ def search(
                bm25(sentence_fts) AS rank
         {base_from}
         WHERE {where_sql}
-        ORDER BY rank
+        ORDER BY {order_by}
         LIMIT :limit OFFSET :offset
         """,
         {**params, "limit": limit, "offset": offset}).fetchall()
@@ -136,6 +201,7 @@ def search(
     return {
         "query": q,
         "match": params["match"],
+        "sort": sort if sort in _SEARCH_SORTS else "relevance",
         "total": min(total, settings.max_search_total),
         "total_is_capped": capped,
         "limit": limit,
@@ -146,6 +212,12 @@ def search(
                 "sentence_ord": r["sentence_ord"],
                 "highlighted": _mark_html(r["highlighted"]),
                 "snippet": _mark_html(r["snippet"]),
+                "context": {
+                    "before": _context_side(db, r["session_id"], r["speech_index"],
+                                            r["sentence_ord"], -1),
+                    "after": _context_side(db, r["session_id"], r["speech_index"],
+                                           r["sentence_ord"], +1),
+                },
                 "time_start": r["time_start"],
                 "time_end": r["time_end"],
                 "speech_uid": r["speech_uid"],

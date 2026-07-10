@@ -96,9 +96,44 @@ def test_list_votes_filters(client):
     assert client.get("/api/v1/votes", params={"bill": "bill-uuid-1"}).json()["total"] == 1
 
 
+def test_list_votes_filter_by_voting_mode(client):
+    """The voting-mode ("szavazás típusa") filter narrows to an exact mode."""
+    d = client.get("/api/v1/votes", params={"voting_mode": "Listás"}).json()
+    assert d["total"] == 1 and d["votes"][0]["id"] == "v-2"
+    assert client.get(
+        "/api/v1/votes", params={"voting_mode": "Gépi szavazás"}).json()["total"] == 1
+
+
+def test_list_votes_filter_by_date_range(client):
+    """Date bounds compare on the date part, so an upper bound is inclusive of the
+    whole day even though vote_datetime carries a time (v-1 is at T13:04:20Z)."""
+    # v-1 (05-26) only.
+    d = client.get("/api/v1/votes", params={"date_to": "2026-05-26"}).json()
+    assert d["total"] == 1 and d["votes"][0]["id"] == "v-1"
+    # v-2 (05-27) only.
+    assert client.get(
+        "/api/v1/votes", params={"date_from": "2026-05-27"}).json()["total"] == 1
+    # A window covering both.
+    assert client.get("/api/v1/votes", params={
+        "date_from": "2026-05-26", "date_to": "2026-05-27"}).json()["total"] == 2
+
+
+def test_list_votes_sort_order(client):
+    """Default is newest-first; date_asc flips it. Unknown values fall back to
+    the default (never spliced from raw input)."""
+    d = client.get("/api/v1/votes").json()
+    assert d["sort"] == "date_desc" and d["votes"][0]["id"] == "v-2"
+    asc = client.get("/api/v1/votes", params={"sort": "date_asc"}).json()
+    assert asc["sort"] == "date_asc" and asc["votes"][0]["id"] == "v-1"
+    bogus = client.get("/api/v1/votes", params={"sort": "; DROP TABLE vote"}).json()
+    assert bogus["sort"] == "date_desc" and bogus["votes"][0]["id"] == "v-2"
+
+
 def test_vote_facets(client):
     d = client.get("/api/v1/votes/facets").json()
     assert "Elfogadva" in d["results"] and "Elutasítva" in d["results"]
+    # Distinct voting modes for the "szavazás típusa" control.
+    assert set(d["voting_modes"]) == {"Gépi szavazás", "Listás"}
 
 
 def test_get_vote_rollcall(client):

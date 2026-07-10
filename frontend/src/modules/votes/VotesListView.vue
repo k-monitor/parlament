@@ -14,11 +14,13 @@ const route = useRoute()
 const router = useRouter()
 
 const PAGE = 50
+const SORTS = ['date_desc', 'date_asc']
 
 const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
 const results = ref([])
+const votingModes = ref([])
 
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
@@ -26,18 +28,45 @@ const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAG
 const f = reactive({
   q: route.query.q || '',
   result: route.query.result || '',
+  voting_mode: route.query.voting_mode || '',
+  date_from: route.query.date_from || '',
+  date_to: route.query.date_to || '',
 })
+const sort = ref(SORTS.includes(route.query.sort) ? route.query.sort : 'date_desc')
 
 // `bill` is not an interactive filter — it arrives via a link from a bill page.
 const bill = computed(() => route.query.bill || '')
+
+// Any interactive filter set? Drives the clear-filters affordance (the `bill`
+// scope arrives via a link, so it isn't counted as a user-cleared filter).
+const hasFilters = computed(() =>
+  !!(f.q || f.result || f.voting_mode || f.date_from || f.date_to))
 
 function apply() {
   const query = {}
   if (f.q) query.q = f.q
   if (f.result) query.result = f.result
+  if (f.voting_mode) query.voting_mode = f.voting_mode
+  if (f.date_from) query.date_from = f.date_from
+  if (f.date_to) query.date_to = f.date_to
   if (bill.value) query.bill = bill.value
+  if (sort.value !== 'date_desc') query.sort = sort.value
   // Changing a filter resets to the first page (offset is intentionally dropped).
   router.push({ name: 'votes', query })
+}
+
+// Re-order the list: a new ordering always returns to the first page.
+function changeSort() {
+  const query = { ...route.query }
+  delete query.offset
+  if (sort.value === 'date_desc') delete query.sort
+  else query.sort = sort.value
+  router.push({ name: 'votes', query })
+}
+
+function clearFilters() {
+  f.q = f.result = f.voting_mode = f.date_from = f.date_to = ''
+  apply()
 }
 
 function gotoPage(p) {
@@ -52,8 +81,10 @@ function voteParts(v) {
 
 async function loadFacets() {
   try {
-    results.value = (await api.voteFacets({ period: store.cycle })).results
-  } catch { results.value = [] }
+    const facets = await api.voteFacets({ period: store.cycle })
+    results.value = facets.results
+    votingModes.value = facets.voting_modes || []
+  } catch { results.value = []; votingModes.value = [] }
 }
 
 // Monotonic load id: overlapping fetches (filter watcher + cycle watcher) can
@@ -67,6 +98,9 @@ async function load() {
     // `period` comes from the global cycle chooser (store.cycle; null = all).
     const res = await api.votes({
       q: route.query.q, result: route.query.result, period: store.cycle,
+      voting_mode: route.query.voting_mode,
+      date_from: route.query.date_from, date_to: route.query.date_to,
+      sort: route.query.sort,
       bill: route.query.bill, limit: PAGE, offset: route.query.offset || 0,
     })
     if (seq === loadSeq) data.value = res
@@ -80,6 +114,9 @@ async function load() {
 onMounted(() => { loadMeta().catch(() => {}).finally(() => { loadFacets(); load() }) })
 watch(() => route.query, (q) => {
   f.q = q.q || ''; f.result = q.result || ''
+  f.voting_mode = q.voting_mode || ''
+  f.date_from = q.date_from || ''; f.date_to = q.date_to || ''
+  sort.value = SORTS.includes(q.sort) ? q.sort : 'date_desc'
   loadFacets(); load()
 })
 // Re-fetch when the global cycle changes.
@@ -107,6 +144,24 @@ onUnmounted(() => clearTimeout(t))
         <option v-for="r in results" :key="r" :value="r">{{ r }}</option>
       </select>
     </div>
+    <div>
+      <label for="v-mode">{{ $t('votes.votingMode') }}</label>
+      <select id="v-mode" v-model="f.voting_mode" @change="apply">
+        <option value="">{{ $t('votes.all') }}</option>
+        <option v-for="m in votingModes" :key="m" :value="m">{{ m }}</option>
+      </select>
+    </div>
+    <div>
+      <label for="v-from">{{ $t('votes.dateFrom') }}</label>
+      <input id="v-from" type="date" v-model="f.date_from" @change="apply" />
+    </div>
+    <div>
+      <label for="v-to">{{ $t('votes.dateTo') }}</label>
+      <input id="v-to" type="date" v-model="f.date_to" @change="apply" />
+    </div>
+    <button class="btn secondary small clearbtn" type="button" :disabled="!hasFilters" @click="clearFilters">
+      {{ $t('votes.clearFilters') }}
+    </button>
   </form>
 
   <StateBlock
@@ -115,7 +170,16 @@ onUnmounted(() => clearTimeout(t))
     @retry="load"
   >
     <div v-if="data">
-      <p class="muted small">{{ data.total }} {{ $t('votes.count') }}</p>
+      <div class="results-head">
+        <p class="muted small" aria-live="polite" style="margin:0;">{{ data.total }} {{ $t('votes.count') }}</p>
+        <label class="sortctl small muted">
+          {{ $t('votes.sort') }}
+          <select v-model="sort" @change="changeSort">
+            <option value="date_desc">{{ $t('votes.sortNewest') }}</option>
+            <option value="date_asc">{{ $t('votes.sortOldest') }}</option>
+          </select>
+        </label>
+      </div>
       <ul class="votelist">
         <li v-for="v in data.votes" :key="v.id" class="card pad votecard">
           <div class="vhead">
@@ -152,7 +216,11 @@ onUnmounted(() => clearTimeout(t))
 </template>
 
 <style scoped>
-.toolbar { display: grid; grid-template-columns: 2fr 1.4fr; gap: .8rem; align-items: end; margin: 1rem 0; }
+.toolbar { display: grid; grid-template-columns: 2fr 1.3fr 1.3fr 1fr 1fr; gap: .8rem; align-items: end; margin: 1rem 0; }
+.clearbtn { justify-self: start; align-self: end; }
+.results-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: .2rem 0 .6rem; }
+.sortctl { display: inline-flex; align-items: center; gap: .4rem; }
+.sortctl select { width: auto; }
 .votelist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
 .votecard { display: flex; flex-direction: column; gap: .45rem; }
 .vhead { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
@@ -172,5 +240,6 @@ onUnmounted(() => clearTimeout(t))
 .vcounts .c.yes { color: #2e7d32; }
 .vcounts .c.no { color: #c62828; }
 .vcounts .c.abstain { color: var(--ink-faint); }
-@media (max-width: 700px) { .toolbar { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .toolbar { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .toolbar { grid-template-columns: 1fr; } }
 </style>

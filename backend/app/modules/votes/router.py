@@ -21,6 +21,14 @@ from ...parlament_links import vote_page_url
 
 router = APIRouter(prefix="/votes", tags=["votes"])
 
+# Whitelisted orderings. The ORDER BY is spliced from this map only, never from
+# raw request input (cf. the proceedings search sort, SEA-10).
+_VOTE_SORTS = {
+    "date_desc": "v.vote_datetime DESC",
+    "date_asc": "v.vote_datetime ASC",
+}
+_DEFAULT_SORT = "date_desc"
+
 
 def _subjects_for(db: sqlite3.Connection, vote_ids: list[str]) -> dict[str, list]:
     """Vote subjects (the bills/motions decided) grouped by vote id."""
@@ -56,8 +64,11 @@ def list_votes(
     q: Optional[str] = None,
     period: Optional[int] = None,
     result: Optional[str] = None,
+    voting_mode: Optional[str] = None,      # szavazasiMod ("type" of vote)
+    date_from: Optional[str] = None,        # ISO date lower bound (inclusive)
+    date_to: Optional[str] = None,          # ISO date upper bound (inclusive)
     bill: Optional[str] = None,             # bill id — votes deciding this bill
-    sort: str = Query("date", pattern="^(date)$"),
+    sort: str = "date_desc",
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: sqlite3.Connection = Depends(get_db),
@@ -75,20 +86,32 @@ def list_votes(
         where.append("v.period_number = :per"); params["per"] = period
     if result:
         where.append("v.result = :res"); params["res"] = result
+    if voting_mode:
+        where.append("v.voting_mode = :vmode"); params["vmode"] = voting_mode
+    # vote_datetime is a full ISO timestamp ("…T10:00:51Z"); compare on the date
+    # part so an upper bound is inclusive of the whole day.
+    if date_from:
+        where.append("substr(v.vote_datetime, 1, 10) >= :date_from")
+        params["date_from"] = date_from
+    if date_to:
+        where.append("substr(v.vote_datetime, 1, 10) <= :date_to")
+        params["date_to"] = date_to
     if bill:
         where.append("EXISTS (SELECT 1 FROM vote_subject vs WHERE vs.vote_id=v.id "
                      "AND vs.iromany_id=:bill)"); params["bill"] = bill
     where_sql = " AND ".join(where)
 
+    order = _VOTE_SORTS.get(sort, _VOTE_SORTS[_DEFAULT_SORT])
     total = db.execute(f"SELECT COUNT(*) AS c FROM vote v WHERE {where_sql}",
                        params).fetchone()["c"]
     rows = db.execute(
         f"""SELECT * FROM vote v WHERE {where_sql}
-            ORDER BY v.vote_datetime DESC LIMIT :limit OFFSET :offset""",
+            ORDER BY {order} LIMIT :limit OFFSET :offset""",
         {**params, "limit": limit, "offset": offset}).fetchall()
     subjects = _subjects_for(db, [r["id"] for r in rows])
     return {
         "total": total, "limit": limit, "offset": offset,
+        "sort": sort if sort in _VOTE_SORTS else _DEFAULT_SORT,
         "votes": [{**_vote_brief(r), "subjects": subjects.get(r["id"], [])}
                   for r in rows],
     }
@@ -97,12 +120,16 @@ def list_votes(
 @router.get("/facets")
 def vote_facets(period: Optional[int] = None,
                 db: sqlite3.Connection = Depends(get_db)):
-    """Distinct results for the filter control (within a period)."""
+    """Distinct results and voting modes for the filter controls (within a period)."""
     where, par = ("WHERE period_number = ?", (period,)) if period is not None else ("", ())
+    kw = "AND" if where else "WHERE"
     results = [r["result"] for r in db.execute(
         f"SELECT DISTINCT result FROM vote {where} "
-        f"{'AND' if where else 'WHERE'} result IS NOT NULL ORDER BY result", par)]
-    return {"results": results}
+        f"{kw} result IS NOT NULL ORDER BY result", par)]
+    voting_modes = [r["voting_mode"] for r in db.execute(
+        f"SELECT DISTINCT voting_mode FROM vote {where} "
+        f"{kw} voting_mode IS NOT NULL ORDER BY voting_mode", par)]
+    return {"results": results, "voting_modes": voting_modes}
 
 
 @router.get("/{vote_id}")

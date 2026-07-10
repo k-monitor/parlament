@@ -59,6 +59,60 @@ def test_speech_text_not_found(client):
     assert client.get("/api/v1/proceedings/speeches/99999-1/text").status_code == 404
 
 
+# --- clip export window (VIE-10) -------------------------------------------
+
+# A real smil-format day URI so per_speech_clip can shift its offsets (the
+# conftest default URI is a bare .m3u8 with no smil offsets to crop).
+_SMIL_DAY = ("https://sgis.parlament.hu:446/vod/"
+             "smil:20260509.092628.2143172.24318900.smil/playlist.m3u8")
+
+
+def _seed_smil_day(conn):
+    conn.execute("UPDATE session SET video_uri = ?, video_playseq = ? WHERE id = '43001'",
+                 (_SMIL_DAY, "https://sgis.parlament.hu/archive/playseq.php?"
+                  "date1=20260509&time1=092628&offset1=003543.172"
+                  "&date2=20260509&time2=092628&offset2=064518.9&type=real"))
+    conn.commit()
+
+
+def test_speech_clip_defaults_to_whole_speech_window(client, conn):
+    """No start/end → the speech's own [video_start, video_end] window."""
+    _seed_smil_day(conn)
+    d = client.get("/api/v1/proceedings/speeches/43001-1/clip").json()
+    # Speech 43001-1 is day-relative [10, 40]; day stream starts at 2143172 ms,
+    # so the cropped smil is [2143172+10000, 2143172+40000].
+    assert d["start"] == 10.0 and d["end"] == 40.0 and d["duration"] == 30.0
+    assert "smil:20260509.092628.2153172.2183172.smil" in d["video_uri"]
+    assert "playseq.php" in d["video_playseq"]
+
+
+def test_speech_clip_crops_to_subrange(client, conn):
+    _seed_smil_day(conn)
+    d = client.get("/api/v1/proceedings/speeches/43001-1/clip",
+                   params={"start": 20, "end": 30}).json()
+    assert d["start"] == 20.0 and d["end"] == 30.0
+    assert "smil:20260509.092628.2163172.2173172.smil" in d["video_uri"]
+
+
+def test_speech_clip_clamps_request_into_the_speech(client, conn):
+    """A window reaching outside the speech is clamped to the speech bounds."""
+    _seed_smil_day(conn)
+    d = client.get("/api/v1/proceedings/speeches/43001-1/clip",
+                   params={"start": 0, "end": 9999}).json()
+    assert d["start"] == 10.0 and d["end"] == 40.0
+
+
+def test_speech_clip_rejects_empty_window(client, conn):
+    _seed_smil_day(conn)
+    r = client.get("/api/v1/proceedings/speeches/43001-1/clip",
+                   params={"start": 30, "end": 30})
+    assert r.status_code == 422
+
+
+def test_speech_clip_not_found(client):
+    assert client.get("/api/v1/proceedings/speeches/99999-1/clip").status_code == 404
+
+
 def test_session_browse_groups_by_agenda(client):
     d = client.get("/api/v1/proceedings/sessions/43001").json()
     titles = [a["title"] for a in d["agenda"]]

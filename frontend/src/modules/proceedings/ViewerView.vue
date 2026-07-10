@@ -24,6 +24,7 @@ import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
 import ShareButton from '../../components/ShareButton.vue'
+import ExportDialog from '../../components/ExportDialog.vue'
 
 const props = defineProps({ uid: String })
 const route = useRoute()
@@ -35,6 +36,7 @@ const error = ref(false)
 const videoEl = ref(null)
 const playerEl = ref(null)
 const currentOrd = ref(-1)
+const showExport = ref(false)   // clip-export dialog (VIE-10)
 // Custom-controls state. The player loads a per-speech clip (0-based timeline),
 // so currentTime/duration already describe just this speech — no windowing.
 const playing = ref(false)
@@ -391,9 +393,19 @@ onBeforeUnmount(() => {
         <router-link v-if="session" :to="{ name: 'session', params: { id: session.id } }" class="small">
           ‹ {{ $t('viewer.backToSession') }}
         </router-link>
-        <h1 v-if="speech">
-          <SpeakerLink :speaker="speech.speaker" size="" />
-        </h1>
+        <div class="vhead-main">
+          <h1 v-if="speech">
+            <SpeakerLink :speaker="speech.speaker" size="" />
+          </h1>
+          <!-- Primary actions: share this speech + export a clip (VIE-10),
+               aligned right on the same line as the speaker name. -->
+          <div class="vhead-actions" v-if="speech">
+            <ShareButton :title="speechShareTitle" :url="speechShareUrl" />
+            <button v-if="usingClip" class="btn secondary small" @click="showExport = true">
+              ⤓ {{ $t('clipExport.button') }}
+            </button>
+          </div>
+        </div>
         <div class="row small" style="gap:.8rem;">
           <FactionBadge :faction="speech.faction" />
           <span class="muted" v-if="session">{{ formatDate(session.date) }} · {{ session.sitting }}. {{ $t('viewer.sittingDay') }}</span>
@@ -432,7 +444,6 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="vactions row small">
-            <ShareButton :title="speechShareTitle" :url="speechShareUrl" />
             <a v-if="sourceLink" :href="sourceLink" target="_blank" rel="noopener" class="btn secondary small">
               ↗ {{ $t('viewer.viewOnParlament') }}
             </a>
@@ -491,13 +502,19 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+
+      <ExportDialog v-if="showExport && speech" :uid="props.uid" :speech="speech"
+                    :sentences="sentences" @close="showExport = false" />
     </div>
   </StateBlock>
 </template>
 
 <style scoped>
 .vhead { margin-bottom: 1rem; }
-.vhead h1 { margin: .4rem 0; font-size: 1.3rem; }
+/* Name on the left, primary actions (share + download) on the right, same line. */
+.vhead-main { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.vhead-main h1 { margin: .4rem 0; font-size: 1.3rem; }
+.vhead-actions { display: flex; align-items: center; gap: .6rem; flex-shrink: 0; }
 .badge.subtle { background: var(--line); color: var(--muted); font-weight: 400; }
 .vgrid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
 .vcol-video { position: sticky; top: 70px; }

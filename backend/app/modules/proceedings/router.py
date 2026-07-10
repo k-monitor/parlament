@@ -785,6 +785,69 @@ def get_speech_text(uid: str, db: sqlite3.Connection = Depends(get_db)):
     }
 
 
+# Upper bound on an exportable clip's length (seconds). The client-side exporter
+# (VIE-10) buffers every segment of the window into memory before muxing, so an
+# unbounded window could try to hold hours of video — cap it defensively. A
+# single speech is minutes long; 30 min is generous headroom for a sub-range that
+# spans an adjourned/rejoined stretch.
+_MAX_CLIP_SECONDS = 30 * 60
+
+
+@router.get("/speeches/{uid}/clip")
+def get_speech_clip(
+    uid: str,
+    start: Optional[float] = Query(None, description="window start, day-absolute seconds"),
+    end: Optional[float] = Query(None, description="window end, day-absolute seconds"),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """A cropped HLS clip URL for an arbitrary ``[start, end]`` window of the
+    speech, for the client-side exporter (VIE-10).
+
+    Generalises the per-speech clip (VIE-9): where ``/speeches/{uid}`` always
+    crops to the whole speech, this crops the day recording to any sub-window the
+    user selected (a range of sentences). ``start``/``end`` are day-absolute
+    seconds (the same coordinate as ``sentence.time_start`` and the speech's
+    ``video_start``); omitting them falls back to the whole speech. The heavy
+    lifting is the streaming server's on-demand smil cropping — this endpoint only
+    shifts the day stream's offsets, exactly as the viewer's clip does, so it adds
+    no scraping and no stored artefact.
+    """
+    sp = db.execute(
+        "SELECT session_id, video_start, video_end FROM speech WHERE uid = ?",
+        (uid,)).fetchone()
+    if not sp:
+        raise HTTPException(404, "Speech not found")
+    session = db.execute("SELECT video_uri, video_playseq FROM session WHERE id = ?",
+                         (sp["session_id"],)).fetchone()
+    if not session or not session["video_uri"]:
+        raise HTTPException(404, "No recording for this speech")
+
+    # Default to the speech's own window; clamp a requested sub-range into it so a
+    # client can't crop outside the speech it is viewing.
+    sp_start, sp_end = sp["video_start"], sp["video_end"]
+    lo = start if start is not None else sp_start
+    hi = end if end is not None else sp_end
+    if lo is None or hi is None:
+        raise HTTPException(422, "Speech has no usable video offsets")
+    if sp_start is not None and sp_end is not None and sp_end > sp_start:
+        lo = max(sp_start, min(lo, sp_end))
+        hi = max(sp_start, min(hi, sp_end))
+    if hi <= lo:
+        raise HTTPException(422, "Empty clip window")
+    if hi - lo > _MAX_CLIP_SECONDS:
+        raise HTTPException(422, f"Clip window exceeds {_MAX_CLIP_SECONDS}s cap")
+
+    clip = per_speech_clip(session["video_uri"], session["video_playseq"], lo, hi)
+    if not clip:
+        raise HTTPException(422, "Could not derive a clip for this window")
+    return {
+        "uid": uid,
+        "start": lo, "end": hi, "duration": hi - lo,
+        "video_uri": clip["video_uri"],
+        "video_playseq": clip["video_playseq"],
+    }
+
+
 def _speech_neighbours(db, session_id, idx):
     prev = db.execute(
         "SELECT uid FROM speech WHERE session_id=? AND speech_index<? "

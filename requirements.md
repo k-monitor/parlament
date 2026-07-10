@@ -482,6 +482,47 @@ merely because an accent was omitted (or added).
   playing; on the last speech of a sitting it rests at the end. The clip's smil
   VOD is generated on demand, so its activation endpoint is pinged before the
   playlist is requested.
+- **VIE-10 (SHOULD).** The viewer offers a **client-side clip exporter**: from the
+  speech being watched a user can **download a self-contained video file** of a
+  chosen segment, optionally with the official transcript as subtitles. The whole
+  export runs **in the browser** — no server-side transcoding job, no new stored
+  artefact — so it costs the deployment nothing but the (already public) video
+  bytes (NFR, §1.1 "cheap to run").
+  - **Segment selection.** The default range is the **whole speech**; the user may
+    narrow it to a **sub-range of the speech's sentences** (a start and an end
+    sentence). The exported window is `[start.time_start, end.time_end]`
+    (day-absolute), and the file is the stream cropped to exactly that window —
+    reusing the same server-side smil cropping that already backs the per-speech
+    clip (VIE-9), generalised to an arbitrary `[start, end]`. The selectable
+    length is **bounded** (a sane cap) so an export can't try to buffer hours of
+    video into memory.
+  - **Subtitle options (three, user-chosen).** (1) **No subtitles** — video only.
+    (2) **Soft subtitles** — the transcript muxed as a selectable, toggleable text
+    track inside the file (fast: the video/audio are **stream-copied**, not
+    re-encoded). (3) **Burned-in subtitles** — the transcript rendered permanently
+    into the picture (for platforms that ignore soft tracks, e.g. social video);
+    this **re-encodes** the video and is therefore **markedly slower**, which the
+    UI MUST disclose before the user commits. The subtitle text is the **official
+    transcript** (FTS/record source of truth, never an ASR hypothesis, cf. TIM-1),
+    its cue times derived from the sentences' stored `time_start`/`time_end`
+    rebased to the clip's `t=0`; only sentences overlapping the window are
+    included. A video-only speech (VIE-8) offers export with **no-subtitles only**.
+  - **Provenance & licence.** The export path surfaces the same source/licence
+    attribution the viewer shows (VIE-7): the produced file is derived from the
+    public `parlament.hu` recording and the official transcript, and the UI states
+    so. Subtitles carry the transcript verbatim.
+  - **Brand watermark.** The export MAY overlay the site's logo (top-right corner)
+    so a shared clip is attributable at a glance. It is **user-toggleable** and
+    default-on; because compositing the logo requires re-encoding the picture, the
+    UI notes that enabling it forgoes the fast stream-copy path (as burned-in
+    subtitles do). When the toggle is off, the file is un-watermarked.
+  - **Graceful degradation & disclosure.** Export is **progressively enhanced**:
+    where the browser cannot run the exporter (feature-gated) the affordance is
+    hidden, not broken. Long-running work (segment download, re-encode) shows
+    **progress** and is **cancellable**, and any failure surfaces a clear,
+    retryable error rather than a dead button. The heavy in-browser codec runtime
+    is **loaded on demand** (only when a user actually exports), so it never
+    weighs on normal viewing.
 
 ### 5.3 Sitting-day word cloud
 

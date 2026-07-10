@@ -26,5 +26,11 @@ export default defineConfig({
   // on module loads). Pre-bundling it up front makes dev startup deterministic.
   optimizeDeps: {
     include: ['hls.js'],
+    // @ffmpeg/ffmpeg spawns its worker via `new Worker(new URL('./worker.js',
+    // import.meta.url), {type:'module'})`. esbuild's dep pre-bundling mangles
+    // that pattern, breaking the worker; excluding it lets Vite/Rollup's worker
+    // plugin resolve it correctly. Only reached through the lazily-imported
+    // clip-exporter chunk (VIE-10), so excluding it costs normal viewing nothing.
+    exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
   },
 })

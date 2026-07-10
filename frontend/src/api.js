@@ -61,6 +61,9 @@ export const api = {
   sessionNewWords: (id) => get(`/proceedings/sessions/${id}/new-words`),
   speech: (uid) => get(`/proceedings/speeches/${uid}`),
   speechText: (uid) => get(`/proceedings/speeches/${uid}/text`),
+  // Cropped HLS clip URLs for an arbitrary [start,end] window of a speech, for
+  // the client-side exporter (VIE-10). start/end are day-absolute seconds.
+  speechClip: (uid, start, end) => get(`/proceedings/speeches/${uid}/clip`, { start, end }),
   // representatives
   representatives: (params) => get('/representatives', params),
   representative: (id, period) => get(`/representatives/${id}`, { period }),

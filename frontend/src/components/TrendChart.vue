@@ -11,6 +11,7 @@ const props = defineProps({
   granularity: { type: String, default: 'month' }, // 'day' | 'week' | 'month' | 'year'
   caption: { type: String, default: '' },
   unit: { type: String, default: '' },
+  height: { type: Number, default: 120 }, // plot height in px (compact teasers pass less)
 })
 
 const MONTHS = ['', 'jan', 'feb', 'márc', 'ápr', 'máj', 'jún',
@@ -60,7 +61,7 @@ const filled = computed(() => {
 const max = computed(() => Math.max(1, ...filled.value.map((b) => b.hits)))
 
 // --- Responsive geometry ---------------------------------------------------
-const H = 120          // chart height in px (excludes the axis-label row)
+const H = props.height // chart height in px (excludes the axis-label row)
 const PAD_TOP = 8      // headroom so the tallest bar isn't flush against the top
 const wrap = ref(null)
 const w = ref(320)     // container width, kept in sync by the ResizeObserver

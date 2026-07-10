@@ -53,6 +53,9 @@ export default {
     exploreRepsDesc: 'Böngéssze a képviselőket, nézze meg felszólalásaikat és aktivitásukat.',
     exploreSessions: 'Ülésnapok böngészése',
     exploreSessionsDesc: 'Olvassa végig egy ülésnap jegyzőkönyvét napirendi pontokra bontva.',
+    examplesTitle: 'Példakeresések',
+    examplesLead: 'Kattintson egy témára a teljes keresés megnyitásához; a diagram az adott kifejezés időbeli előfordulását mutatja.',
+    examplesEmpty: 'Nincs találat ebben a ciklusban.',
   },
   search: {
     title: 'Keresés a felszólalásokban',

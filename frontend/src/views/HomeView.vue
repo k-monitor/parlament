@@ -1,7 +1,9 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { store } from '../store.js'
+import { api } from '../api.js'
+import { store, loadMeta } from '../store.js'
+import TrendChart from '../components/TrendChart.vue'
 
 const router = useRouter()
 const q = ref('')
@@ -12,6 +14,47 @@ function go() {
 }
 const showProceedings = computed(() => store.moduleEnabled('proceedings'))
 const showReps = computed(() => store.moduleEnabled('representatives'))
+
+// Curated example searches (§SEA-8): a handful of evergreen topics, each shown
+// with its popularity-over-time histogram so the home page invites exploration
+// and previews the search's signature chart. Clicking one opens the full search.
+// These are literal Hungarian transcript queries, not UI text, so they are not
+// translated.
+const EXAMPLE_QUERIES = ['költségvetés', 'korrupció', 'oktatás', 'infláció', 'Ukrajna', 'demokrácia', 'egészségügy', 'migráció', 'kormányváltás', 'adózás']
+const examples = reactive(Object.fromEntries(
+  EXAMPLE_QUERIES.map((term) => [term, { trend: null, total: 0, ready: false }])))
+
+// The histograms honour the global cycle scope (§4A) like every other view.
+// Monotonic seq guards against out-of-order responses when the cycle switches;
+// loadedCycle dedupes the onMounted + watcher double-trigger for the same cycle.
+let exSeq = 0
+let loadedCycle
+async function loadExamples() {
+  if (loadedCycle === store.cycle) return
+  loadedCycle = store.cycle
+  const seq = ++exSeq
+  for (const term of EXAMPLE_QUERIES) examples[term].ready = false
+  await Promise.all(EXAMPLE_QUERIES.map(async (term) => {
+    try {
+      const t = await api.searchTrend({ q: term, period: store.cycle })
+      if (seq !== exSeq) return
+      examples[term].trend = t
+      examples[term].total = (t.buckets || []).reduce((s, b) => s + b.hits, 0)
+    } catch {
+      if (seq !== exSeq) return
+      examples[term].trend = null
+      examples[term].total = 0
+    } finally {
+      if (seq === exSeq) examples[term].ready = true
+    }
+  }))
+}
+
+onMounted(async () => {
+  await loadMeta().catch(() => {})
+  if (showProceedings.value) loadExamples()
+})
+watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
 </script>
 
 <template>
@@ -33,6 +76,36 @@ const showReps = computed(() => store.moduleEnabled('representatives'))
       <div><dt>{{ fmt(counts.sessions) }}</dt><dd>{{ $t('home.stats.sessions') }}</dd></div>
       <div><dt>{{ fmt(counts.representatives) }}</dt><dd>{{ $t('home.stats.representatives') }}</dd></div>
     </dl>
+  </section>
+
+  <section v-if="showProceedings" class="examples" aria-labelledby="examples-title">
+    <div class="examples__head">
+      <h2 id="examples-title">{{ $t('home.examplesTitle') }}</h2>
+      <p class="soft">{{ $t('home.examplesLead') }}</p>
+    </div>
+    <div class="grid examples-grid">
+      <router-link
+        v-for="term in EXAMPLE_QUERIES" :key="term"
+        :to="{ name: 'search', query: { q: term } }" class="card pad example"
+      >
+        <div class="example__head">
+          <span class="example__term">{{ term }}</span>
+          <span v-if="examples[term].ready && examples[term].total" class="example__count">
+            {{ fmt(examples[term].total) }} {{ $t('search.results') }}
+          </span>
+        </div>
+        <TrendChart
+          v-if="examples[term].trend && examples[term].trend.buckets.length"
+          :buckets="examples[term].trend.buckets"
+          :granularity="examples[term].trend.granularity"
+          :height="72" :unit="$t('search.results')"
+        />
+        <p v-else-if="examples[term].ready" class="soft small example__empty">
+          {{ $t('home.examplesEmpty') }}
+        </p>
+        <div v-else class="example__skeleton" aria-hidden="true"></div>
+      </router-link>
+    </div>
   </section>
 
   <section class="grid cards3">
@@ -82,6 +155,38 @@ const showReps = computed(() => store.moduleEnabled('representatives'))
 .stats dt { font-size: 1.6rem; font-weight: 800; color: var(--accent); }
 .stats dd { margin: 0; color: var(--ink-faint); font-size: .9rem; }
 .cards3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+
+/* Example searches: a curated set of topics, each with its popularity histogram
+   (§SEA-8) as a teaser. The card is a link into the full search for that term. */
+.examples { margin-bottom: 1.5rem; }
+.examples__head { margin-bottom: 1rem; }
+.examples__head h2 { margin: 0 0 .3rem; font-size: 1.25rem; }
+.examples__head p { margin: 0; max-width: 70ch; }
+.examples-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.example {
+  display: flex;
+  flex-direction: column;
+  color: var(--ink);
+  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.example:hover {
+  text-decoration: none;
+  border-color: var(--accent);
+  transform: translateY(-3px);
+  box-shadow: 0 2px 6px rgba(0,0,0,.07), 0 12px 28px rgba(0,0,0,.09);
+}
+.example__head { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; margin-bottom: .5rem; }
+.example__term { font-weight: 700; font-size: 1.05rem; }
+.example__term::before { content: '„'; color: var(--ink-faint); }
+.example__term::after { content: '”'; color: var(--ink-faint); }
+.example__count { color: var(--ink-faint); font-size: .8rem; white-space: nowrap; }
+.example__empty { margin: .3rem 0 0; }
+/* Reserve the histogram's height while its data loads so the grid doesn't jump. */
+.example__skeleton { height: calc(72px + 1.45rem); }
+@media (prefers-reduced-motion: reduce) {
+  .example { transition: none; }
+  .example:hover { transform: none; }
+}
 
 .feature {
   position: relative;

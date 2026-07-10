@@ -33,6 +33,9 @@ export default {
     exploreRepsDesc: 'Browse representatives, their speeches and activity.',
     exploreSessions: 'Browse sittings',
     exploreSessionsDesc: 'Read a full sitting transcript, segmented by agenda item.',
+    examplesTitle: 'Example searches',
+    examplesLead: 'Click a topic to open the full search; the chart shows how often the term came up over time.',
+    examplesEmpty: 'No matches in this cycle.',
   },
   search: {
     title: 'Search the proceedings', placeholder: 'Term or "exact phrase"…', button: 'Search',

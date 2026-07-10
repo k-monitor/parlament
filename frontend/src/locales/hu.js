@@ -135,6 +135,8 @@ export default {
     upcoming: 'Hamarosan',
     upcomingNote: 'Az ülésnap már szerepel az Országgyűlés napirendjén – a felvétel és a jegyzőkönyv hamarosan elérhető lesz.',
     notProcessed: 'Ez az ülésnap még nincs feldolgozva.',
+    notReady: 'Feldolgozás alatt',
+    notReadyNote: 'Ezt az ülésnapot az Országgyűlés még nem tette teljesen elérhetővé: a felszólalások időpontjai, a videó és a jegyzőkönyv még nem érhetők el. Amint közzéteszik, automatikusan megjelennek itt.',
   },
   reps: {
     title: 'Képviselők',

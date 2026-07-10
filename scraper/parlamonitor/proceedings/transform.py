@@ -291,11 +291,26 @@ def transform_day(raw: dict, *, words: list | None = None,
         e["session"]["dateEnd"] = date_end
 
     n_text = sum(1 for e in entries if e["textContents"])
-    # A day parlament.hu lists but has not yet populated with speeches is an
-    # announced/upcoming sitting; the site shows it as "coming" rather than an
-    # empty transcript. Once speeches exist the day is published (its transcript
-    # may still lag per speech — VIE-8 — but there is content to browse).
-    status = "published" if entries else "scheduled"
+    # Day status, in order of readiness:
+    #   scheduled       — announced sitting, no speeches listed yet ("coming").
+    #   awaiting_media  — held & speeches listed, but parlament.hu has published
+    #                     NO per-speech timing/video window (recording not yet
+    #                     segmented, so the whole-day-offset guard in scrape.py
+    #                     left every speech without offsets) AND no transcript.
+    #                     There is nothing meaningful to show — no durations, no
+    #                     per-speech clips, no text — so the UI presents it as
+    #                     not-yet-ready/disabled instead of a misleading page.
+    #                     Re-scraped automatically until ready (_awaiting_content).
+    #   published       — has per-speech media and/or transcript to browse (its
+    #                     transcript may still lag per speech, VIE-8).
+    has_media = any((e.get("media") or {}).get("videoStart") is not None
+                    for e in entries)
+    if not entries:
+        status = "scheduled"
+    elif not has_media and n_text == 0:
+        status = "awaiting_media"
+    else:
+        status = "published"
     return {
         "meta": {
             "session": raw.get("session") or f"{cycle}{sitting:03d}",

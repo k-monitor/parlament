@@ -27,6 +27,10 @@ const newWords = ref(null)
 const topSpeakers = ref(null)
 // Longest single speaking time, for sizing the (decorative) bars (TOPSPK-4).
 const topMax = computed(() => Math.max(1, ...(topSpeakers.value?.speakers || []).map((s) => s.seconds || 0)))
+// Held, but parlament.hu has not published per-speech timings/video/transcript yet:
+// there are no durations or clips, so suppress the (meaningless) toplist and show a
+// not-yet-ready notice instead (the sittings list also renders it disabled).
+const notReady = computed(() => data.value?.session?.status === 'awaiting_media')
 
 // Monotonic load id: navigating session A → B with A's requests still in
 // flight must not let A's transcript/word-cloud land on B's page.
@@ -64,14 +68,20 @@ function searchWord(word) {
       <h1>
         {{ formatDate(data.session.date) }} · {{ data.session.sitting }}. {{ $t('sessions.sitting').toLowerCase() }}
         <span class="badge upcoming" v-if="data.session.status === 'scheduled'">⏳ {{ $t('sessions.upcoming') }}</span>
+        <span class="badge upcoming" v-else-if="notReady">⏳ {{ $t('sessions.notReady') }}</span>
       </h1>
       <p class="muted small">
         <a v-if="data.session.source_page" :href="data.session.source_page" target="_blank" rel="noopener">↗ {{ $t('viewer.viewOnParlament') }}</a>
       </p>
 
+      <!-- Held but not-yet-available sitting: parlament.hu has published no
+           per-speech timings/video/transcript, so there is nothing to browse. -->
+      <section v-if="notReady" class="card pad empty-day">
+        <p>{{ $t('sessions.notReadyNote') }}</p>
+      </section>
       <!-- An announced/upcoming sitting (no speeches yet) or one parlament.hu has
            not populated: show it is coming instead of an empty transcript. -->
-      <section v-if="!data.agenda.length" class="card pad empty-day">
+      <section v-else-if="!data.agenda.length" class="card pad empty-day">
         <p>{{ data.session.status === 'scheduled' ? $t('sessions.upcomingNote') : $t('sessions.notProcessed') }}</p>
       </section>
 
@@ -98,7 +108,7 @@ function searchWord(word) {
         </ul>
       </section>
 
-      <section v-if="topSpeakers && topSpeakers.speakers.length" class="card pad toplist">
+      <section v-if="!notReady && topSpeakers && topSpeakers.speakers.length" class="card pad toplist">
         <div class="sechead">
           <h2 class="wcloud-title">{{ $t('sessions.topSpeakers') }}</h2>
           <HelpTip :label="$t('sessions.topSpeakers')"><p>{{ $t('sessions.topSpeakersCaption') }}</p></HelpTip>
@@ -117,15 +127,17 @@ function searchWord(word) {
         </ol>
       </section>
 
-      <section v-for="a in data.agenda" :key="a.id" class="agenda card">
-        <h2 class="pad agenda-title">
-          {{ a.official_title || a.title }}
-          <span class="badge" v-if="a.type">{{ agendaLabel(a.type) }}</span>
-        </h2>
-        <ul class="speeches">
-          <SpeechRow v-for="sp in a.speeches" :key="sp.uid" :speech="sp" />
-        </ul>
-      </section>
+      <template v-if="!notReady">
+        <section v-for="a in data.agenda" :key="a.id" class="agenda card">
+          <h2 class="pad agenda-title">
+            {{ a.official_title || a.title }}
+            <span class="badge" v-if="a.type">{{ agendaLabel(a.type) }}</span>
+          </h2>
+          <ul class="speeches">
+            <SpeechRow v-for="sp in a.speeches" :key="sp.uid" :speech="sp" />
+          </ul>
+        </section>
+      </template>
     </div>
   </StateBlock>
 </template>

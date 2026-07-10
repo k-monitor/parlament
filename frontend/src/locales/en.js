@@ -83,6 +83,8 @@ export default {
     upcoming: 'Upcoming',
     upcomingNote: 'This sitting is already on the Assembly\'s schedule — the recording and transcript will be available soon.',
     notProcessed: 'This sitting has not been processed yet.',
+    notReady: 'Being processed',
+    notReadyNote: 'The National Assembly has not fully published this sitting day yet: per-speech timings, video and transcript are not available. They will appear here automatically once released.',
   },
   reps: {
     title: 'Representatives', searchPlaceholder: 'Search representatives by name…', faction: 'Faction',

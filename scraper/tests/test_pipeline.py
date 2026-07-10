@@ -506,6 +506,35 @@ def test_scrape_day_skips_whole_day_offsets_for_unsegmented_sitting():
         assert "video_off_end" not in sp
 
 
+def test_transform_marks_unsegmented_day_awaiting_media():
+    # A held sitting parlament.hu lists but has not segmented per speech (whole-day
+    # offsets echoed, no transcript) has no timings/clips/text to show, so the
+    # transform marks it `awaiting_media` — the UI shows it not-yet-ready/disabled.
+    speeches = [
+        {"speech_uuid": "u1", "sorszam": 1, "speaker": "A"},
+        {"speech_uuid": "u2", "sorszam": 2, "speaker": "B"},
+    ]
+    fake = _FakeFelicitasDay(
+        speeches=speeches,
+        video={"m3u8": "x", "day_off1": 1200.0, "day_off2": 56251.0},
+        offsets={"u1": (1200.0, 56251.0), "u2": (1200.0, 56251.0)},
+    )
+    rec = transform_day(scrape_day(fake, 43, _felicitas_day()))
+    assert rec["meta"]["status"] == "awaiting_media"
+
+
+def test_transform_marks_segmented_day_published():
+    # Real per-speech windows → per-speech media exists → normal published day.
+    speeches = [{"speech_uuid": "u1", "sorszam": 1, "speaker": "A"}]
+    fake = _FakeFelicitasDay(
+        speeches=speeches,
+        video={"m3u8": "x", "day_off1": 1200.0, "day_off2": 56251.0},
+        offsets={"u1": (1200.0, 1320.0)},
+    )
+    rec = transform_day(scrape_day(fake, 43, _felicitas_day()))
+    assert rec["meta"]["status"] == "published"
+
+
 def test_scrape_day_keeps_real_per_speech_offsets():
     # A genuinely segmented day: each speech's window is a small slice inside the
     # recording, so offsets ARE kept (converted to day-stream-relative seconds).

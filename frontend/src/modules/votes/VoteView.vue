@@ -7,6 +7,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { api } from '../../api.js'
 import { formatDateTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
+import ShareButton from '../../components/ShareButton.vue'
 
 const props = defineProps({ id: String })
 
@@ -61,6 +62,7 @@ watch(() => props.id, load)
         <div class="row" style="gap:.5rem; align-items:center; flex-wrap:wrap;">
           <span class="vdate">{{ formatDateTime(vote.vote_datetime) }}</span>
           <span class="badge status" :class="{ ok: vote.result === $t('votes.accepted') }">{{ vote.result }}</span>
+          <ShareButton :title="vote.subject" align="right" style="margin-left:auto" />
         </div>
         <h1>{{ vote.subject }}</h1>
         <dl class="meta">

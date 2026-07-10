@@ -37,6 +37,16 @@ export default {
     showTable: 'Adatok táblázatként',
     hideTable: 'Táblázat elrejtése',
   },
+  share: {
+    label: 'Megosztás',
+    menu: 'Megosztási lehetőségek',
+    native: 'Megosztás…',
+    facebook: 'Facebook',
+    x: 'X',
+    bluesky: 'Bluesky',
+    copy: 'Hivatkozás másolása',
+    copied: 'Vágólapra másolva!',
+  },
   cycle: {
     label: 'Ciklus',
     all: 'Összes ciklus',

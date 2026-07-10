@@ -13,6 +13,7 @@ import BarChart from '../../components/BarChart.vue'
 import PieChart from '../../components/PieChart.vue'
 import ActivityBoard from '../../components/ActivityBoard.vue'
 import HelpTip from '../../components/HelpTip.vue'
+import ShareButton from '../../components/ShareButton.vue'
 
 const props = defineProps({ id: String })
 const { t } = useI18n()
@@ -234,6 +235,9 @@ watch(() => store.cycle, load)
             <a v-if="profile.wikipedia_url" :href="profile.wikipedia_url" target="_blank" rel="noopener"><span class="link-badge link-badge--w" aria-hidden="true">W</span> {{ $t('profile.wikipedia') }}</a>
             <a v-if="profile.kmonitor_url" :href="profile.kmonitor_url" target="_blank" rel="noopener"><span class="link-badge" aria-hidden="true"><img src="/kmonitor-badge.png" alt="" /></span> {{ $t('profile.kmonitor') }}</a>
             <a v-if="profile.wikidata_id" :href="'https://www.wikidata.org/wiki/' + profile.wikidata_id" target="_blank" rel="noopener">{{ $t('profile.wikidata') }}</a>
+          </div>
+          <div class="row" style="margin-top:.6rem;">
+            <ShareButton :title="profile.label" />
           </div>
         </div>
 

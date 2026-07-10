@@ -3,6 +3,7 @@
 // speech links into the viewer.
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { agendaLabel, formatDate, formatSpeakingTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
@@ -10,10 +11,12 @@ import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import WordCloud from '../../components/WordCloud.vue'
 import HelpTip from '../../components/HelpTip.vue'
+import ShareButton from '../../components/ShareButton.vue'
 import SpeechRow from './SpeechRow.vue'
 
 const props = defineProps({ id: String })
 const router = useRouter()
+const { t } = useI18n()
 const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
@@ -31,6 +34,11 @@ const topMax = computed(() => Math.max(1, ...(topSpeakers.value?.speakers || [])
 // there are no durations or clips, so suppress the (meaningless) toplist and show a
 // not-yet-ready notice instead (the sittings list also renders it disabled).
 const notReady = computed(() => data.value?.session?.status === 'awaiting_media')
+// Title used when sharing this sitting day (mirrors the page heading).
+const shareTitle = computed(() => {
+  const s = data.value?.session
+  return s ? `${formatDate(s.date)} · ${s.sitting}. ${t('sessions.sitting').toLowerCase()}` : ''
+})
 
 // Monotonic load id: navigating session A → B with A's requests still in
 // flight must not let A's transcript/word-cloud land on B's page.
@@ -122,13 +130,16 @@ function searchWord(word) {
   <StateBlock :loading="loading" :error="error" @retry="load">
     <div v-if="data" ref="rootEl">
       <router-link :to="{ name: 'sessions' }" class="small">‹ {{ $t('sessions.title') }}</router-link>
-      <h1>
-        {{ formatDate(data.session.date) }} · {{ data.session.sitting }}. {{ $t('sessions.sitting').toLowerCase() }}
-        <span class="badge upcoming" v-if="data.session.status === 'scheduled'">⏳ {{ $t('sessions.upcoming') }}</span>
-        <span class="badge upcoming" v-else-if="notReady">⏳ {{ $t('sessions.notReady') }}</span>
-      </h1>
-      <p class="muted small">
-        <a v-if="data.session.source_page" :href="data.session.source_page" target="_blank" rel="noopener">↗ {{ $t('viewer.viewOnParlament') }}</a>
+      <div class="titlebar">
+        <h1>
+          {{ formatDate(data.session.date) }} · {{ data.session.sitting }}. {{ $t('sessions.sitting').toLowerCase() }}
+          <span class="badge upcoming" v-if="data.session.status === 'scheduled'">⏳ {{ $t('sessions.upcoming') }}</span>
+          <span class="badge upcoming" v-else-if="notReady">⏳ {{ $t('sessions.notReady') }}</span>
+        </h1>
+        <ShareButton :title="shareTitle" align="right" />
+      </div>
+      <p class="muted small" v-if="data.session.source_page">
+        <a :href="data.session.source_page" target="_blank" rel="noopener">↗ {{ $t('viewer.viewOnParlament') }}</a>
       </p>
 
       <div class="session-body">
@@ -296,6 +307,10 @@ function searchWord(word) {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 
+/* Heading + share control on one line; the share button drops below the title
+   on narrow screens rather than crowding it. */
+.titlebar { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.titlebar h1 { margin-bottom: 0; }
 .wcloud { margin-bottom: 1rem; }
 .sechead { display: flex; align-items: center; gap: .35rem; margin-bottom: .6rem; }
 .sechead .wcloud-title { margin: 0; }

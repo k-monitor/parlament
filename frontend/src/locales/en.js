@@ -21,6 +21,11 @@ export default {
   },
   nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', about: 'About' },
   a11y: { showTable: 'Show data as a table', hideTable: 'Hide table' },
+  share: {
+    label: 'Share', menu: 'Share options', native: 'Share…',
+    facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
+    copy: 'Copy link', copied: 'Copied to clipboard!',
+  },
   cycle: { label: 'Cycle', all: 'All cycles',
            scope: '{cycle} data', scopeAll: 'All-cycles data' },
   home: {

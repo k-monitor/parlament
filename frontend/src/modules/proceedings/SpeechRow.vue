@@ -8,13 +8,15 @@
 // component, toggling a row re-renders only that row, so it's instant. The text
 // is fetched lazily on first expand and cached (kept once loaded). The ▶
 // affordance still opens the full viewer (video + karaoke transcript).
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '../../api.js'
 import { formatDuration, transcriptParagraphs } from '../../format.js'
 import EntityText from '../../components/EntityText.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
+import ShareButton from '../../components/ShareButton.vue'
 
 // `playable` is false for a not-yet-processed sitting day: there is no per-speech
 // video window, so the ▶ viewer link (which would just replay the whole day) and
@@ -23,6 +25,11 @@ const props = defineProps({
   speech: { type: Object, required: true },
   playable: { type: Boolean, default: true },
 })
+
+const router = useRouter()
+// Shareable deep link to this speech's viewer page + the speaker as post text.
+const shareUrl = computed(() => location.origin + router.resolve({ name: 'viewer', params: { uid: props.speech.uid } }).href)
+const shareTitle = computed(() => props.speech.speaker?.label || '')
 
 const open = ref(false)
 const loading = ref(false)
@@ -118,6 +125,8 @@ function paraText(p) {
           :to="{ name: 'viewer', params: { uid: speech.uid } }" class="play-affordance"
           :title="$t('sessions.openViewer')" :aria-label="$t('sessions.openViewer')"
         >▶</router-link>
+        <!-- Share this speech (always available, even before video is ready). -->
+        <ShareButton :title="shareTitle" :url="shareUrl" align="right" compact />
       </div>
     </div>
     <div v-if="open" class="speech-body">

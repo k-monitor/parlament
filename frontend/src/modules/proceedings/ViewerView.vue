@@ -15,7 +15,6 @@
 // * VIE-9: when the clip ends, auto-advance to the next speech and keep playing.
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useI18n } from 'vue-i18n'
 import Hls from 'hls.js'
 import { api } from '../../api.js'
 import { agendaLabel, formatDate, formatDuration, segmentSentences } from '../../format.js'
@@ -24,18 +23,11 @@ import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
+import ShareButton from '../../components/ShareButton.vue'
 
 const props = defineProps({ uid: String })
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
-
-// Hoisted out of the transcript v-for: the copy-link label is a constant, but as
-// an inline $t() it was re-translated twice PER SENTENCE on every re-render — and
-// the component re-renders on every `timeupdate` tick during playback. On a
-// long speech that made vue-i18n's translate ~94% of playback CPU (profiled).
-// A computed translates once (recomputing only when the locale changes).
-const copyLinkLabel = computed(() => t('viewer.copyLink'))
 
 const data = ref(null)
 const loading = ref(false)
@@ -43,7 +35,6 @@ const error = ref(false)
 const videoEl = ref(null)
 const playerEl = ref(null)
 const currentOrd = ref(-1)
-const copied = ref(false)
 // Custom-controls state. The player loads a per-speech clip (0-based timeline),
 // so currentTime/duration already describe just this speech — no windowing.
 const playing = ref(false)
@@ -78,7 +69,19 @@ const speakers = ref({})
 // Parenthesis state is threaded sentence-to-sentence so a stage direction split
 // across sentence boundaries ("…úrtól. (" / "A miniszterek felállnak." / "…tett
 // minisztereknek.)") is lifted out as asides instead of leaking stray "(" / ")".
-const segmentedSentences = computed(() => segmentSentences(sentences.value))
+// Each sentence carries a deep-link to itself (?s=<ord>, VIE-5) and its own text
+// as share/post copy. Built here (recomputes only on data change) rather than in
+// the template, which re-renders on every playback tick.
+const segmentedSentences = computed(() =>
+  segmentSentences(sentences.value).map((s) => ({
+    ...s,
+    shareUrl: location.origin + router.resolve({ name: 'viewer', params: { uid: props.uid }, query: { s: s.ord } }).href,
+    shareTitle: s.text || '',
+  })),
+)
+// Whole-speech share link (the canonical viewer URL, no sentence anchor).
+const speechShareUrl = computed(() => location.origin + router.resolve({ name: 'viewer', params: { uid: props.uid } }).href)
+const speechShareTitle = computed(() => speech.value?.speaker?.label || '')
 
 // Attribute named heckles ("Vitályos Eszter: …") to representatives so they get
 // a face + profile link. Best-effort: failure just leaves them as plain text.
@@ -320,14 +323,6 @@ function playSentence(s, play = true) {
   router.replace({ query: { ...route.query, s: s.ord, t: undefined } })
 }
 
-function copyLink(s) {
-  const url = location.origin + router.resolve({
-    name: 'viewer', params: { uid: props.uid }, query: { s: s.ord },
-  }).href
-  navigator.clipboard?.writeText(url).then(() => {
-    copied.value = true; setTimeout(() => (copied.value = false), 1800)
-  })
-}
 
 // --- Custom controls (scoped to the speech window, VIE-9) ---------------
 function togglePlay() {
@@ -437,6 +432,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="vactions row small">
+            <ShareButton :title="speechShareTitle" :url="speechShareUrl" />
             <a v-if="sourceLink" :href="sourceLink" target="_blank" rel="noopener" class="btn secondary small">
               ↗ {{ $t('viewer.viewOnParlament') }}
             </a>
@@ -490,13 +486,11 @@ onBeforeUnmount(() => {
                   </span>
                 </template>
               </div>
-              <button class="copybtn" :aria-label="copyLinkLabel" :title="copyLinkLabel" @click="copyLink(s)">🔗</button>
+              <ShareButton class="sentence-share" :url="s.shareUrl" :title="s.shareTitle" align="right" compact />
             </div>
           </div>
         </div>
       </div>
-
-      <div v-if="copied" class="toast" role="status">{{ $t('viewer.linkCopied') }}</div>
     </div>
   </StateBlock>
 </template>
@@ -552,12 +546,10 @@ onBeforeUnmount(() => {
 .aside.heckle { display: flex; align-items: center; gap: .45rem; }
 .heckle-who { flex: none; flex-wrap: nowrap; font-style: normal; font-weight: 600; gap: .35rem !important; }
 .aside-what { font-style: italic; }
-.copybtn { background: none; border: none; cursor: pointer; opacity: .25; padding: .4rem .3rem; font-size: .85rem; }
-.copybtn:hover { opacity: 1; }
-.toast {
-  position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
-  background: var(--ink); color: #fff; padding: .6rem 1.1rem; border-radius: 999px; box-shadow: var(--shadow);
-}
+/* Per-sentence share trigger: kept faint so a long transcript stays uncluttered,
+   and revealed when the sentence is hovered / is the active (playing) one. */
+.sentence-share { opacity: .3; transition: opacity .15s; }
+.sentence:hover .sentence-share, .sentence.active .sentence-share { opacity: 1; }
 @media (max-width: 820px) {
   /* Mobile: turn the viewer into a fixed pane that fills the screen below the
      sticky app header (52px). Everything but the transcript stays put — only

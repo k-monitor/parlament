@@ -55,15 +55,12 @@ watch(() => store.cycle, () => {
   <h1>{{ $t('sessions.title') }}</h1>
   <StateBlock :loading="loading" :error="error" @retry="load">
     <div v-if="data" class="grid sgrid">
-      <!-- A held sitting parlament.hu has not yet made available (no per-speech
-           timings/video/transcript) is rendered as a non-clickable, disabled card:
-           there is nothing to open yet. Announced upcoming sittings and normal days
-           stay clickable router-links. -->
-      <component
-        :is="s.status === 'awaiting_media' ? 'div' : 'router-link'"
+      <!-- Announced upcoming sittings and held-but-not-yet-processed sittings (no
+           per-speech timings/video/transcript yet) are both shown muted & dashed but
+           stay clickable — opening them shows whatever is already available. -->
+      <router-link
         v-for="s in data.sessions" :key="s.id"
-        v-bind="s.status === 'awaiting_media' ? { 'aria-disabled': 'true' } : { to: { name: 'session', params: { id: s.id } } }"
-        class="card pad scard"
+        :to="{ name: 'session', params: { id: s.id } }" class="card pad scard"
         :class="{ scheduled: s.status === 'scheduled', notready: s.status === 'awaiting_media' }"
       >
         <div class="sdate">{{ formatDate(s.date) }}</div>
@@ -81,7 +78,7 @@ watch(() => store.cycle, () => {
             {{ s.speeches }} {{ $t('sessions.speeches') }} · {{ s.agenda_items }} {{ $t('sessions.agendaItems') }}
           </div>
         </template>
-      </component>
+      </router-link>
     </div>
     <Pagination v-if="data" :page="page" :total-pages="totalPages" @goto="gotoPage" />
   </StateBlock>
@@ -94,9 +91,9 @@ watch(() => store.cycle, () => {
 .ssitting { font-size: .9rem; color: var(--ink-soft); margin-bottom: .3rem; }
 /* Announced upcoming sitting: dashed, muted, so it reads as "coming", not done. */
 .scard.scheduled { border-style: dashed; opacity: .85; }
-/* Held but not-yet-available sitting: disabled — dashed, dimmed, not clickable. */
-.scard.notready { border-style: dashed; opacity: .55; cursor: not-allowed; }
-.scard.notready:hover { border-color: var(--line); }
+/* Held but not-yet-processed sitting: muted & dashed like an upcoming card, but
+   still clickable (opens to whatever speaker/agenda data is already available). */
+.scard.notready { border-style: dashed; opacity: .85; }
 .badge.upcoming {
   display: inline-block; font-size: .78rem; font-weight: 600;
   padding: .12rem .5rem; border-radius: 999px;

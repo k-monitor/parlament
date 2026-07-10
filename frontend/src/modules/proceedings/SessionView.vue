@@ -127,17 +127,17 @@ function searchWord(word) {
         </ol>
       </section>
 
-      <template v-if="!notReady">
-        <section v-for="a in data.agenda" :key="a.id" class="agenda card">
-          <h2 class="pad agenda-title">
-            {{ a.official_title || a.title }}
-            <span class="badge" v-if="a.type">{{ agendaLabel(a.type) }}</span>
-          </h2>
-          <ul class="speeches">
-            <SpeechRow v-for="sp in a.speeches" :key="sp.uid" :speech="sp" />
-          </ul>
-        </section>
-      </template>
+      <!-- The agenda + speaker list is shown even for a not-yet-processed day
+           (names/order exist); only the timing toplist above is suppressed. -->
+      <section v-for="a in data.agenda" :key="a.id" class="agenda card">
+        <h2 class="pad agenda-title">
+          {{ a.official_title || a.title }}
+          <span class="badge" v-if="a.type">{{ agendaLabel(a.type) }}</span>
+        </h2>
+        <ul class="speeches">
+          <SpeechRow v-for="sp in a.speeches" :key="sp.uid" :speech="sp" />
+        </ul>
+      </section>
     </div>
   </StateBlock>
 </template>

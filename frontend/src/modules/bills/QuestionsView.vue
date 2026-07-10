@@ -65,8 +65,13 @@ async function load() {
   }
 }
 
-// --- drill-down: the questions behind one clicked flow --------------------
-const flow = ref(null)          // { index, faction, answerer, ministry, sourceLabel, targetLabel }
+// --- drill-down: the questions behind one clicked flow or node ------------
+// `flow` carries the query (faction / answerer / ministry) plus what to
+// highlight: `linkIndex` for a clicked ribbon, `nodeIndex` for a clicked node
+// (the other is -1). `segs` is the header trail (source → target, or a single
+// node). Clicking a node leaves its counterpart unset so the backend matches
+// every flow through that endpoint.
+const flow = ref(null)
 const flowData = ref(null)
 const flowLoading = ref(false)
 const flowError = ref(false)
@@ -81,19 +86,45 @@ function clearFlow() {
   flow.value = null; flowData.value = null; flowOffset.value = 0
 }
 
+function scrollToPanel() {
+  nextTick(() => panelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+}
+
 function onSelect(sel) {
   const src = sel.source, tgt = sel.target
   flow.value = {
-    index: sel.index,
+    linkIndex: sel.index,
+    nodeIndex: -1,
     faction: src.faction_id != null ? src.faction_id : 'none',
     answerer: tgt.kind,
     ministry: tgt.ministry || undefined,
-    sourceLabel: src.label,
-    targetLabel: tgt.label,
+    segs: [{ label: src.label, color: src.color }, { label: tgt.label, color: null }],
   }
   flowOffset.value = 0
   loadFlow()
-  nextTick(() => panelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  scrollToPanel()
+}
+
+// Clicking a node filters by that endpoint alone: an asker node fixes the
+// faction across every answerer, an answerer node fixes the answerer across
+// every faction. The unfixed side stays undefined so the query lists all of it.
+function onSelectNode(sel) {
+  const n = sel.node
+  flow.value = n.side === 'asker'
+    ? {
+        linkIndex: -1, nodeIndex: sel.index,
+        faction: n.faction_id != null ? n.faction_id : 'none',
+        answerer: undefined, ministry: undefined,
+        segs: [{ label: n.label, color: n.color }],
+      }
+    : {
+        linkIndex: -1, nodeIndex: sel.index,
+        faction: undefined, answerer: n.kind, ministry: n.ministry || undefined,
+        segs: [{ label: n.label, color: null }],
+      }
+  flowOffset.value = 0
+  loadFlow()
+  scrollToPanel()
 }
 
 // Same guard for the drill-down: clicking flows/pages quickly must not let an
@@ -123,7 +154,7 @@ async function loadFlow() {
 function gotoFlowPage(p) {
   flowOffset.value = p * PAGE
   loadFlow()
-  nextTick(() => panelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  scrollToPanel()
 }
 
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
@@ -151,12 +182,13 @@ watch(() => store.cycle, load)
       </p>
       <div class="card pad">
         <SankeyDiagram
-          :nodes="nodes" :links="data.links" :selected="flow ? flow.index : -1"
+          :nodes="nodes" :links="data.links"
+          :selected="flow ? flow.linkIndex : -1" :selected-node="flow ? flow.nodeIndex : -1"
           :caption="$t('questions.chartCaption')" :show-caption="false"
           :asker-heading="$t('questions.askerHeading')"
           :answerer-heading="$t('questions.answererHeading')"
           :value-label="$t('questions.count')"
-          @select="onSelect"
+          @select="onSelect" @select-node="onSelectNode"
         />
         <p class="muted small hint">{{ $t('questions.clickHint') }}</p>
       </div>
@@ -165,9 +197,10 @@ watch(() => store.cycle, load)
       <section v-if="flow" ref="panelRef" class="flowpanel">
         <div class="flowhead">
           <h2>
-            <span :style="{ color: nodes[data.links[flow.index].source]?.color }">{{ flow.sourceLabel }}</span>
-            <span class="arrow" aria-hidden="true"> → </span>
-            <span>{{ flow.targetLabel }}</span>
+            <template v-for="(seg, i) in flow.segs" :key="i">
+              <span v-if="i > 0" class="arrow" aria-hidden="true"> → </span>
+              <span :style="seg.color ? { color: seg.color } : undefined">{{ seg.label }}</span>
+            </template>
           </h2>
           <button type="button" class="btn secondary small" @click="clearFlow">✕ {{ $t('questions.close') }}</button>
         </div>

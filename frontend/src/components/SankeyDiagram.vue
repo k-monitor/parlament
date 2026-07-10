@@ -17,8 +17,9 @@ const props = defineProps({
   answererHeading: { type: String, default: '' },
   valueLabel: { type: String, default: '' },   // unit for the a11y table
   selected: { type: Number, default: -1 },       // index of the selected link
+  selectedNode: { type: Number, default: -1 },   // index of the selected node
 })
-const emit = defineEmits(['select'])
+const emit = defineEmits(['select', 'select-node'])
 
 function pick(linkIndex) {
   const l = props.links[linkIndex]
@@ -27,6 +28,14 @@ function pick(linkIndex) {
     index: linkIndex, value: l.value,
     source: props.nodes[l.source], target: props.nodes[l.target],
   })
+}
+
+// Clicking a node (a column bar or its label) filters by that endpoint alone —
+// every flow into/out of it — mirroring the ribbon drill-down.
+function pickNode(nodeIndex) {
+  const n = props.nodes[nodeIndex]
+  if (!n) return
+  emit('select-node', { index: nodeIndex, node: n })
 }
 
 const WIDTH = 860
@@ -157,8 +166,13 @@ const active = ref(-1)   // hovered/focused source node index (highlight its rib
         <path
           v-for="r in layout.ribbons" :key="'r' + r.key" :d="r.d"
           class="ribbon" :class="{
-            dim: selected !== -1 ? r.key !== selected : (active !== -1 && r.source.i !== active),
-            sel: r.key === selected,
+            dim: selected !== -1
+              ? r.key !== selected
+              : selectedNode !== -1
+                ? (r.source.i !== selectedNode && r.target.i !== selectedNode)
+                : (active !== -1 && r.source.i !== active && r.target.i !== active),
+            sel: r.key === selected
+              || (selectedNode !== -1 && (r.source.i === selectedNode || r.target.i === selectedNode)),
           }"
           :fill="r.color" role="button" tabindex="0"
           :aria-label="`${r.source.label} → ${r.target.label}: ${r.value}`"
@@ -167,10 +181,14 @@ const active = ref(-1)   // hovered/focused source node index (highlight its rib
           <title>{{ r.source.label }} → {{ r.target.label }}: {{ r.value }}</title>
         </path>
 
-        <!-- nodes -->
+        <!-- nodes (each is a clickable endpoint → filter by that node alone) -->
         <g
           v-for="b in layout.box" :key="'n' + b.i"
-          @mouseenter="b.side === 'asker' && (active = b.i)" @mouseleave="active = -1"
+          class="nodegrp" :class="{ selnode: b.i === selectedNode }"
+          role="button" tabindex="0" :aria-label="`${b.label}: ${b.total}`"
+          @mouseenter="active = b.i" @mouseleave="active = -1"
+          @click="pickNode(b.i)"
+          @keydown.enter.prevent="pickNode(b.i)" @keydown.space.prevent="pickNode(b.i)"
         >
           <rect
             :x="b.x" :y="b.y" :width="NODE_W" :height="b.h" rx="2"
@@ -224,9 +242,15 @@ const active = ref(-1)   // hovered/focused source node index (highlight its rib
 .ribbon:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ribbon.dim { opacity: .08; }
 .ribbon.sel { opacity: .82; }
-.node { stroke: rgba(0,0,0,.12); stroke-width: .5; }
+.node { stroke: rgba(0,0,0,.12); stroke-width: .5; transition: stroke .12s ease, stroke-width .12s ease; }
 .nlabel { font-size: 12px; fill: var(--ink); }
 .nval { fill: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.nodegrp { cursor: pointer; }
+.nodegrp:focus { outline: none; }
+.nodegrp:hover .node { stroke: var(--ink-soft); stroke-width: 1; }
+.nodegrp:focus-visible .node { stroke: var(--accent); stroke-width: 1.5; }
+.nodegrp.selnode .node { stroke: var(--accent); stroke-width: 2; }
+.nodegrp.selnode .nlabel { font-weight: 700; }
 .tabletoggle { margin-top: .6rem; background: none; border: 0; color: var(--accent); cursor: pointer; padding: .2rem 0; font-weight: 600; }
 .a11y-table { width: 100%; border-collapse: collapse; margin-top: .5rem; }
 .a11y-table th, .a11y-table td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid var(--line); }
@@ -234,5 +258,5 @@ const active = ref(-1)   // hovered/focused source node index (highlight its rib
 .rowlink { cursor: pointer; }
 .rowlink:hover { background: var(--accent-soft); }
 .rowlink.sel { background: var(--accent-soft); font-weight: 600; }
-@media (prefers-reduced-motion: reduce) { .ribbon { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .ribbon, .node { transition: none; } }
 </style>

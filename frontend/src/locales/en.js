@@ -196,7 +196,7 @@ export default {
     count: 'questions',
     noResults: 'No question data for this cycle.',
     chartCaption: 'Flow of questions from the asker’s faction to the answerer.',
-    clickHint: 'Click a flow to list the questions behind it.',
+    clickHint: 'Click a flow to list the questions behind it, or a node (faction / answerer) for all of its questions.',
     close: 'Close',
     askerHeading: 'Asker (faction)',
     answererHeading: 'Answerer',

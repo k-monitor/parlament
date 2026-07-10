@@ -300,7 +300,7 @@ export default {
     count: 'kérdés',
     noResults: 'Ebben a ciklusban nincs adat a kérdésekről.',
     chartCaption: 'A kérdések áramlása a kérdező frakciójától a válaszadóig.',
-    clickHint: 'Kattints egy folyamra a mögötte lévő kérdések megjelenítéséhez.',
+    clickHint: 'Kattints egy folyamra a mögötte lévő kérdések megjelenítéséhez, vagy egy csomópontra (frakció / válaszadó) az összes hozzá tartozó kérdésért.',
     close: 'Bezárás',
     askerHeading: 'Kérdező (frakció)',
     answererHeading: 'Válaszadó',

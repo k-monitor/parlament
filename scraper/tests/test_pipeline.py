@@ -449,10 +449,11 @@ def test_transform_marks_speechless_day_scheduled():
 class _FakeFelicitasDay:
     """Minimal Felicitas stand-in for scrape_day: an announced day has no speeches
     and no resolvable recording yet."""
-    def __init__(self, speeches, video=None, texts=None):
+    def __init__(self, speeches, video=None, texts=None, offsets=None):
         self._speeches = speeches
         self._video = video
         self._texts = texts or {}
+        self._offsets = offsets or {}
 
     def day_speeches(self, uuid):
         return list(self._speeches)
@@ -464,7 +465,7 @@ class _FakeFelicitasDay:
         return {"html": self._texts.get(uuid, "")}
 
     def speech_offsets(self, uuid):
-        return None
+        return self._offsets.get(uuid)
 
 
 def _felicitas_day():
@@ -481,6 +482,48 @@ def test_scrape_day_returns_placeholder_for_announced_day():
     assert bundle["speeches"] == []
     assert bundle["session"] == "43016"
     assert transform_day(bundle)["meta"]["status"] == "scheduled"
+
+
+def test_scrape_day_skips_whole_day_offsets_for_unsegmented_sitting():
+    # Regression (sitting 43015, 2026-07-07): a recently-held day whose recording
+    # is published but not yet cut per speech makes speech_offsets echo the
+    # WHOLE-DAY window [day_off1, day_off2] for every speech. Accepting it stamped
+    # videoStart=0 / videoEnd=day-span on each, so the loader derived a ≈15 h
+    # duration per speech and the speaker toplist summed to 152 h. Such offsets
+    # must be rejected → no per-speech offsets written.
+    speeches = [
+        {"speech_uuid": "u1", "sorszam": 1, "speaker": "A"},
+        {"speech_uuid": "u2", "sorszam": 2, "speaker": "B"},
+    ]
+    fake = _FakeFelicitasDay(
+        speeches=speeches,
+        video={"m3u8": "x", "day_off1": 1200.0, "day_off2": 56251.0},
+        offsets={"u1": (1200.0, 56251.0), "u2": (1200.0, 56251.0)},
+    )
+    bundle = scrape_day(fake, 43, _felicitas_day())
+    for sp in bundle["speeches"]:
+        assert "video_off_start" not in sp
+        assert "video_off_end" not in sp
+
+
+def test_scrape_day_keeps_real_per_speech_offsets():
+    # A genuinely segmented day: each speech's window is a small slice inside the
+    # recording, so offsets ARE kept (converted to day-stream-relative seconds).
+    speeches = [
+        {"speech_uuid": "u1", "sorszam": 1, "speaker": "A"},
+        {"speech_uuid": "u2", "sorszam": 2, "speaker": "B"},
+    ]
+    fake = _FakeFelicitasDay(
+        speeches=speeches,
+        video={"m3u8": "x", "day_off1": 1200.0, "day_off2": 56251.0},
+        offsets={"u1": (1200.0, 1320.0), "u2": (1320.0, 1500.0)},
+    )
+    bundle = scrape_day(fake, 43, _felicitas_day())
+    by_uuid = {sp["speech_uuid"]: sp for sp in bundle["speeches"]}
+    assert by_uuid["u1"]["video_off_start"] == 0.0
+    assert by_uuid["u1"]["video_off_end"] == 120.0
+    assert by_uuid["u2"]["video_off_start"] == 120.0
+    assert by_uuid["u2"]["video_off_end"] == 300.0
 
 
 def test_awaiting_content(tmp_path):

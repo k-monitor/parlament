@@ -242,8 +242,12 @@ class FelicitasClient:
 
     def day_video(self, day_uuid: str) -> dict | None:
         """Resolve a day's whole-recording HLS playlist: ``{m3u8, day_off1,
-        clip}``. ``day_off1`` (seconds) is the recording start offset that
-        per-speech offsets are measured against. ``None`` if no recording."""
+        day_off2, playseq}``. ``day_off1``/``day_off2`` (seconds) are the
+        recording start/end offsets; ``day_off1`` is what per-speech offsets are
+        measured against, and the pair delimits the whole-day window a not-yet-
+        segmented speech's offsets get spuriously echoed as (see
+        :func:`parlamonitor.proceedings.scrape.scrape_day`). ``None`` if no
+        recording."""
         payload = self._select(PLENARY_PROVIDER, "ulesnapok-video-query",
                                {"pId": day_uuid, "pTeljes": True})
         rows = rows_as_dicts(payload)
@@ -258,6 +262,7 @@ class FelicitasClient:
         return {
             "m3u8": self._playseq_to_m3u8(playseq),
             "day_off1": offs[0] if offs else None,
+            "day_off2": offs[1] if offs else None,
             "playseq": playseq,
         }
 

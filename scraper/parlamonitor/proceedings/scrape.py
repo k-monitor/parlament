@@ -53,6 +53,28 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# When a sitting's per-speech video is not yet segmented — a recently-held day
+# whose whole-day recording is published but not yet cut into per-speech clips —
+# ``ulesnapok-video-query`` echoes the WHOLE-DAY recording window ``[day_off1,
+# day_off2]`` as EVERY speech's offsets instead of that speech's real span. Left
+# unfiltered, each speech would be stamped ``videoEnd - videoStart == day
+# duration`` (≈15 h), and the loader (which derives a video-only speech's
+# duration from that window) would make the sitting-day speaker toplist sum to
+# absurd figures (e.g. 152 h on sitting 43015). A real single speech can never
+# span the whole recording, so treat offsets that (essentially) do as "not yet
+# available" and leave the speech without per-speech offsets.
+_WHOLE_DAY_OFFSET_EPS = 1.0  # seconds
+
+
+def _is_whole_day_window(offs: tuple[float, float],
+                         day_off1: float | None,
+                         day_off2: float | None) -> bool:
+    if day_off1 is None or day_off2 is None:
+        return False
+    return (offs[0] <= day_off1 + _WHOLE_DAY_OFFSET_EPS
+            and offs[1] >= day_off2 - _WHOLE_DAY_OFFSET_EPS)
+
+
 def scrape_day(felicitas: FelicitasClient, cycle: int, day: dict, *,
                resolve_offsets: bool = True) -> dict:
     """Build the raw bundle for one session day.
@@ -67,6 +89,7 @@ def scrape_day(felicitas: FelicitasClient, cycle: int, day: dict, *,
     speeches = felicitas.day_speeches(day_uuid)
     video = felicitas.day_video(day_uuid)
     day_off1 = (video or {}).get("day_off1")
+    day_off2 = (video or {}).get("day_off2")
 
     enriched: list[dict] = []
     for sp in speeches:
@@ -88,9 +111,13 @@ def scrape_day(felicitas: FelicitasClient, cycle: int, day: dict, *,
             sp = {**sp, "text_html": ""}
 
         # Real per-speech offsets — provenance only for v1 (kept for §10 swap).
+        # Skip offsets that merely echo the whole-day recording window (the
+        # sitting is not yet segmented per speech): using them would fabricate a
+        # ≈day-long duration for every speech (see _is_whole_day_window).
         if resolve_offsets and uuid and day_off1 is not None:
             offs = felicitas.speech_offsets(uuid)
-            if offs and offs[1] > offs[0]:
+            if (offs and offs[1] > offs[0]
+                    and not _is_whole_day_window(offs, day_off1, day_off2)):
                 sp["video_off_start"] = round(offs[0] - day_off1, 3)
                 sp["video_off_end"] = round(offs[1] - day_off1, 3)
         enriched.append(sp)

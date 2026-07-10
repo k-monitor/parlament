@@ -1,7 +1,7 @@
 <script setup>
 // One sitting day (use case 2): transcript segmented agenda item → speech, each
 // speech links into the viewer.
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api.js'
 import { agendaLabel, formatDate, formatSpeakingTime } from '../../format.js'
@@ -51,8 +51,65 @@ async function load() {
   api.sessionNewWords(props.id).then((n) => { if (seq === loadSeq) newWords.value = n }).catch(() => {})
   api.sessionTopSpeakers(props.id).then((t) => { if (seq === loadSeq) topSpeakers.value = t }).catch(() => {})
 }
-onMounted(load)
+// Agenda table of contents (TOC-1): a sticky right-hand outline shown only when
+// there is horizontal room (wide screens) and there are several items worth
+// jumping between. It stays in view as you scroll; a lightweight scroll-spy
+// highlights the section being read, and a long list auto-scrolls inside the
+// panel to keep that item visible.
+const rootEl = ref(null)
+const activeAgenda = ref(null)
+const showToc = computed(() => (data.value?.agenda?.length || 0) > 1)
+
+let spyRaf = 0
+function updateActive() {
+  spyRaf = 0
+  const sections = rootEl.value ? rootEl.value.querySelectorAll('section.agenda') : []
+  if (!sections.length) { activeAgenda.value = null; return }
+  // The last section whose top has scrolled above the sticky-header line is the
+  // one we're reading; default to the first before any has passed it.
+  let current = sections[0].dataset.agendaId
+  for (const s of sections) {
+    if (s.getBoundingClientRect().top - 80 <= 0) current = s.dataset.agendaId
+    else break
+  }
+  activeAgenda.value = current
+}
+function onScroll() { if (!spyRaf) spyRaf = requestAnimationFrame(updateActive) }
+
+function goToAgenda(id) {
+  const el = document.getElementById('agenda-' + id)
+  if (!el) return
+  const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' })
+  activeAgenda.value = String(id)
+}
+
+// Keep the highlighted entry visible inside the sticky panel as the active
+// section changes. Only ever adjusts the panel's own scroll — never the window
+// — so it can't fight the reader's page scroll.
+function scrollActiveIntoView() {
+  const panel = rootEl.value ? rootEl.value.querySelector('.toc-inner') : null
+  const link = rootEl.value ? rootEl.value.querySelector('.toc-link.active') : null
+  if (!panel || !link) return
+  const p = panel.getBoundingClientRect()
+  const l = link.getBoundingClientRect()
+  if (l.top < p.top) panel.scrollTop -= (p.top - l.top) + 8
+  else if (l.bottom > p.bottom) panel.scrollTop += (l.bottom - p.bottom) + 8
+}
+
+onMounted(() => {
+  load()
+  window.addEventListener('scroll', onScroll, { passive: true })
+})
+onUnmounted(() => {
+  window.removeEventListener('scroll', onScroll)
+  if (spyRaf) cancelAnimationFrame(spyRaf)
+})
 watch(() => props.id, load)
+// Re-evaluate the active section once a freshly loaded day has rendered.
+watch(data, () => { nextTick(updateActive) })
+// Track the highlight within the sticky panel whenever it changes.
+watch(activeAgenda, () => { nextTick(scrollActiveIntoView) })
 
 // Clicking a word opens proceedings search scoped to this sitting day (WCLOUD-4).
 function searchWord(word) {
@@ -63,7 +120,7 @@ function searchWord(word) {
 
 <template>
   <StateBlock :loading="loading" :error="error" @retry="load">
-    <div v-if="data">
+    <div v-if="data" ref="rootEl">
       <router-link :to="{ name: 'sessions' }" class="small">‹ {{ $t('sessions.title') }}</router-link>
       <h1>
         {{ formatDate(data.session.date) }} · {{ data.session.sitting }}. {{ $t('sessions.sitting').toLowerCase() }}
@@ -74,75 +131,171 @@ function searchWord(word) {
         <a v-if="data.session.source_page" :href="data.session.source_page" target="_blank" rel="noopener">↗ {{ $t('viewer.viewOnParlament') }}</a>
       </p>
 
-      <!-- Held but not-yet-available sitting: parlament.hu has published no
-           per-speech timings/video/transcript, so there is nothing to browse. -->
-      <section v-if="notReady" class="card pad empty-day">
-        <p>{{ $t('sessions.notReadyNote') }}</p>
-      </section>
-      <!-- An announced/upcoming sitting (no speeches yet) or one parlament.hu has
-           not populated: show it is coming instead of an empty transcript. -->
-      <section v-else-if="!data.agenda.length" class="card pad empty-day">
-        <p>{{ data.session.status === 'scheduled' ? $t('sessions.upcomingNote') : $t('sessions.notProcessed') }}</p>
-      </section>
+      <div class="session-body">
+        <div class="session-main">
+          <!-- Held but not-yet-available sitting: parlament.hu has published no
+               per-speech timings/video/transcript, so there is nothing to browse. -->
+          <section v-if="notReady" class="card pad empty-day">
+            <p>{{ $t('sessions.notReadyNote') }}</p>
+          </section>
+          <!-- An announced/upcoming sitting (no speeches yet) or one parlament.hu has
+               not populated: show it is coming instead of an empty transcript. -->
+          <section v-else-if="!data.agenda.length" class="card pad empty-day">
+            <p>{{ data.session.status === 'scheduled' ? $t('sessions.upcomingNote') : $t('sessions.notProcessed') }}</p>
+          </section>
 
-      <section v-if="cloud && cloud.words.length" class="card pad wcloud">
-        <div class="sechead">
-          <h2 class="wcloud-title">{{ $t('sessions.wordcloud') }}</h2>
-          <HelpTip :label="$t('sessions.wordcloud')"><p>{{ $t('sessions.wordcloudCaption') }}</p></HelpTip>
+          <section v-if="cloud && cloud.words.length" class="card pad wcloud">
+            <div class="sechead">
+              <h2 class="wcloud-title">{{ $t('sessions.wordcloud') }}</h2>
+              <HelpTip :label="$t('sessions.wordcloud')"><p>{{ $t('sessions.wordcloudCaption') }}</p></HelpTip>
+            </div>
+            <WordCloud :words="cloud.words" :caption="$t('sessions.wordcloudCaption')" :show-caption="false" @pick="searchWord" />
+          </section>
+
+          <section v-if="newWords && newWords.words.length" class="card pad newwords">
+            <div class="sechead">
+              <h2 class="wcloud-title">{{ $t('sessions.newWords') }}</h2>
+              <HelpTip :label="$t('sessions.newWords')"><p>{{ $t('sessions.newWordsCaption') }}</p></HelpTip>
+            </div>
+            <ul class="chips">
+              <li v-for="w in newWords.words" :key="w.text">
+                <button
+                  type="button" class="chip" :title="`${w.text}: ${w.count}`"
+                  @click="searchWord(w.text)"
+                >{{ w.text }}<span class="chip-count" v-if="w.count > 1">{{ w.count }}</span></button>
+              </li>
+            </ul>
+          </section>
+
+          <section v-if="!notReady && topSpeakers && topSpeakers.speakers.length" class="card pad toplist">
+            <div class="sechead">
+              <h2 class="wcloud-title">{{ $t('sessions.topSpeakers') }}</h2>
+              <HelpTip :label="$t('sessions.topSpeakers')"><p>{{ $t('sessions.topSpeakersCaption') }}</p></HelpTip>
+            </div>
+            <ol class="top-rows">
+              <li v-for="sp in topSpeakers.speakers" :key="sp.person_id" class="top-row">
+                <SpeakerLink :speaker="sp" size="sm" />
+                <FactionBadge v-if="sp.faction" :faction="sp.faction" />
+                <span v-else aria-hidden="true"></span>
+                <span class="bar-track" aria-hidden="true">
+                  <span class="bar-fill" :style="{ width: ((sp.seconds / topMax) * 100) + '%', background: sp.faction && sp.faction.color || 'var(--accent)' }"></span>
+                </span>
+                <span class="top-time">⏱ {{ formatSpeakingTime(sp.seconds) }}</span>
+                <span class="muted small top-count">{{ sp.speeches }} {{ $t('sessions.speeches') }}</span>
+              </li>
+            </ol>
+          </section>
+
+          <!-- The agenda + speaker list is shown even for a not-yet-processed day
+               (names/order exist); only the timing toplist above is suppressed. -->
+          <section
+            v-for="a in data.agenda" :key="a.id" class="agenda card"
+            :id="'agenda-' + a.id" :data-agenda-id="a.id"
+          >
+            <h2 class="pad agenda-title">
+              {{ a.official_title || a.title }}
+              <span class="badge" v-if="a.type">{{ agendaLabel(a.type) }}</span>
+            </h2>
+            <ul class="speeches">
+              <SpeechRow v-for="sp in a.speeches" :key="sp.uid" :speech="sp" :playable="!notReady" />
+            </ul>
+          </section>
         </div>
-        <WordCloud :words="cloud.words" :caption="$t('sessions.wordcloudCaption')" :show-caption="false" @pick="searchWord" />
-      </section>
 
-      <section v-if="newWords && newWords.words.length" class="card pad newwords">
-        <div class="sechead">
-          <h2 class="wcloud-title">{{ $t('sessions.newWords') }}</h2>
-          <HelpTip :label="$t('sessions.newWords')"><p>{{ $t('sessions.newWordsCaption') }}</p></HelpTip>
-        </div>
-        <ul class="chips">
-          <li v-for="w in newWords.words" :key="w.text">
-            <button
-              type="button" class="chip" :title="`${w.text}: ${w.count}`"
-              @click="searchWord(w.text)"
-            >{{ w.text }}<span class="chip-count" v-if="w.count > 1">{{ w.count }}</span></button>
-          </li>
-        </ul>
-      </section>
-
-      <section v-if="!notReady && topSpeakers && topSpeakers.speakers.length" class="card pad toplist">
-        <div class="sechead">
-          <h2 class="wcloud-title">{{ $t('sessions.topSpeakers') }}</h2>
-          <HelpTip :label="$t('sessions.topSpeakers')"><p>{{ $t('sessions.topSpeakersCaption') }}</p></HelpTip>
-        </div>
-        <ol class="top-rows">
-          <li v-for="sp in topSpeakers.speakers" :key="sp.person_id" class="top-row">
-            <SpeakerLink :speaker="sp" size="sm" />
-            <FactionBadge v-if="sp.faction" :faction="sp.faction" />
-            <span v-else aria-hidden="true"></span>
-            <span class="bar-track" aria-hidden="true">
-              <span class="bar-fill" :style="{ width: ((sp.seconds / topMax) * 100) + '%', background: sp.faction && sp.faction.color || 'var(--accent)' }"></span>
-            </span>
-            <span class="top-time">⏱ {{ formatSpeakingTime(sp.seconds) }}</span>
-            <span class="muted small top-count">{{ sp.speeches }} {{ $t('sessions.speeches') }}</span>
-          </li>
-        </ol>
-      </section>
-
-      <!-- The agenda + speaker list is shown even for a not-yet-processed day
-           (names/order exist); only the timing toplist above is suppressed. -->
-      <section v-for="a in data.agenda" :key="a.id" class="agenda card">
-        <h2 class="pad agenda-title">
-          {{ a.official_title || a.title }}
-          <span class="badge" v-if="a.type">{{ agendaLabel(a.type) }}</span>
-        </h2>
-        <ul class="speeches">
-          <SpeechRow v-for="sp in a.speeches" :key="sp.uid" :speech="sp" :playable="!notReady" />
-        </ul>
-      </section>
+        <!-- Agenda jump list (TOC-1). Hidden on narrow screens (see CSS); a
+             sticky outline of the day's agenda items, current one highlighted. -->
+        <aside v-if="showToc" class="session-toc">
+          <nav class="toc-inner" :aria-label="$t('sessions.agenda')">
+            <p class="toc-title">{{ $t('sessions.agenda') }}</p>
+            <ol class="toc-list">
+              <li v-for="(a, i) in data.agenda" :key="a.id">
+                <a
+                  :href="'#agenda-' + a.id" class="toc-link"
+                  :class="{ active: activeAgenda === String(a.id) }"
+                  :aria-current="activeAgenda === String(a.id) ? 'true' : undefined"
+                  @click.prevent="goToAgenda(a.id)"
+                >
+                  <span class="toc-num" aria-hidden="true">{{ i + 1 }}</span>
+                  <span class="toc-text">{{ a.official_title || a.title }}</span>
+                </a>
+              </li>
+            </ol>
+          </nav>
+        </aside>
+      </div>
     </div>
   </StateBlock>
 </template>
 
 <style scoped>
+/* Two-column layout: transcript + a sticky agenda ToC. Single column by
+   default; the ToC appears alongside the content once there is horizontal room
+   (≥1100px). The content column stays left-aligned with the page header — the
+   sidebar is what gives ground, never the alignment. */
+.session-body { display: block; }
+/* No room for a sidebar on narrow screens — the outline is desktop-only. */
+.session-toc { display: none; }
+@media (min-width: 1100px) {
+  .session-body {
+    --toc-w: 240px;
+    --toc-gap: 2rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--toc-w);
+    gap: var(--toc-gap);
+    align-items: start;
+  }
+  .session-toc { display: block; }
+}
+/* On wide screens the transcript would be needlessly narrow, so let the sidebar
+   spill into the right gutter and hand the content its full container width
+   back. Extends right only (never left) so the content stays aligned with the
+   header above it. Enabled only once the gutter is wide enough to hold it. */
+@media (min-width: 1650px) {
+  .session-body { margin-right: calc(-1 * (var(--toc-w) + var(--toc-gap))); }
+}
+
+/* The outline is a self-contained panel pinned below the site header so it
+   stays with the reader; a long list scrolls inside the panel (never chaining
+   to the page) rather than growing past the viewport. The column must stretch
+   to the full transcript height (align-self: stretch, overriding the grid's
+   align-items: start) — otherwise it collapses to the panel's height and
+   `position: sticky` has no room to travel, so the panel scrolls away. */
+.session-toc { align-self: stretch; }
+.toc-inner {
+  position: sticky; top: 72px;
+  max-height: calc(100vh - 72px - 1rem);
+  overflow-y: auto; overscroll-behavior: contain;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: .85rem 1rem 1rem;
+}
+.toc-title {
+  margin: 0 0 .5rem; padding-bottom: .5rem; border-bottom: 1px solid var(--line);
+  font-size: .72rem; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.toc-list { list-style: none; margin: 0; padding: 0; }
+.toc-link {
+  display: flex; gap: .55rem; align-items: baseline;
+  /* Negative side margin lets the hover/active fill reach the panel's padding
+     edges while the text keeps a comfortable inset. */
+  margin: 0 -.5rem; padding: .32rem .5rem;
+  color: var(--ink-soft); font-size: .86rem; line-height: 1.35;
+  border-radius: 6px; border-left: 2px solid transparent;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.toc-link:hover { background: var(--bg); color: var(--ink); text-decoration: none; }
+.toc-link.active {
+  background: var(--accent-soft); color: var(--accent); font-weight: 600;
+  border-left-color: var(--accent);
+}
+.toc-num { flex: none; color: var(--ink-faint); font-variant-numeric: tabular-nums; font-size: .78rem; min-width: 1.3em; text-align: right; }
+.toc-link.active .toc-num { color: var(--accent); }
+.toc-text {
+  /* Clamp long agenda titles to two lines so the outline stays scannable. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
 .wcloud { margin-bottom: 1rem; }
 .sechead { display: flex; align-items: center; gap: .35rem; margin-bottom: .6rem; }
 .sechead .wcloud-title { margin: 0; }
@@ -181,7 +334,8 @@ function searchWord(word) {
 }
 .empty-day { color: var(--ink-soft); text-align: center; }
 .empty-day p { margin: .3rem 0; }
-.agenda { margin-bottom: 1rem; }
+/* scroll-margin keeps a jumped-to section clear of the sticky site header. */
+.agenda { margin-bottom: 1rem; scroll-margin-top: 72px; }
 .agenda-title { font-size: 1.05rem; margin: 0; border-bottom: 1px solid var(--line); display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .speeches { list-style: none; margin: 0; padding: .3rem; }
 </style>

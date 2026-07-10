@@ -160,6 +160,42 @@ def test_get_vote_404(client):
     assert client.get("/api/v1/votes/nope").status_code == 404
 
 
+def test_cohesion_aggregate(client):
+    """The cohesion aggregate over the filtered roll-call set (VOTE-8): the
+    per-faction internal cohesion (matrix diagonal) and the inter-faction
+    agreement (off-diagonal), computed from the per-faction tallies."""
+    d = client.get("/api/v1/votes/cohesion").json()
+    # Only v-1 has a roll call (has_per_mp); v-2 (a list vote) contributes nothing.
+    assert d["vote_count"] == 1
+    # Two real factions survive; the upstream "Összesen (…)" summary pseudo-row and
+    # any sub-threshold lone group are excluded.
+    names = [f["name"] for f in d["factions"]]
+    assert names == ["Fidesz", "TISZA"]                 # largest-first
+    assert not any(str(n).startswith("Összesen") for n in names)
+    fidesz = d["factions"][0]
+    assert fidesz["size"] == 3 and fidesz["votes"] == 1
+    assert fidesz["cohesion"] == 1.0                    # all Fidesz voters cast Igen
+    assert fidesz["defectors"] == 0.0                   # "0 fő" parsed
+    assert fidesz["color"]                              # resolved via faction id
+    # The matrix is square, diagonal = cohesion, and the two factions split (Igen
+    # vs Nem) so they never vote together.
+    m = d["matrix"]
+    assert len(m) == 2 and all(len(row) == 2 for row in m)
+    assert m[0][0] == 1.0 and m[1][1] == 1.0
+    assert m[0][1] == 0.0 and m[1][0] == 0.0
+
+
+def test_cohesion_honors_filters_not_person(client):
+    """The aggregate honours the shared filters (a result with no roll call
+    yields an empty set) but is house-wide — it takes no person/value scope."""
+    # v-2 (Elutasítva) has no roll call → no cohesion data under that filter.
+    empty = client.get("/api/v1/votes/cohesion", params={"result": "Elutasítva"}).json()
+    assert empty["vote_count"] == 0 and empty["factions"] == []
+    # A person param is simply ignored (house-wide), not applied.
+    scoped = client.get("/api/v1/votes/cohesion", params={"person": "k001"}).json()
+    assert scoped["vote_count"] == 1
+
+
 def test_bill_links_to_vote(client):
     """The bill's vote tally resolves a vote_ref to the full roll call when the
     Votes module has ingested that szavazasId (bill <-> vote, EXT-2)."""

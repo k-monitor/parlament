@@ -6,6 +6,9 @@ const props = defineProps({
   items: { type: Array, default: () => [] },
   unit: { type: String, default: '' },
   caption: { type: String, default: '' },
+  // When false the caption still labels the chart for assistive tech but isn't
+  // shown as a visible figcaption (the parent provides its own heading).
+  showCaption: { type: Boolean, default: true },
   valueFormat: { type: Function, default: (v) => String(v) },
 })
 const max = computed(() => Math.max(1, ...props.items.map((i) => i.value || 0)))
@@ -13,7 +16,7 @@ const max = computed(() => Math.max(1, ...props.items.map((i) => i.value || 0)))
 
 <template>
   <figure style="margin:0;">
-    <figcaption v-if="caption" class="small soft" style="margin-bottom:.4rem;">{{ caption }}</figcaption>
+    <figcaption v-if="caption && showCaption" class="small soft" style="margin-bottom:.4rem;">{{ caption }}</figcaption>
     <div class="bars" role="img" :aria-label="caption">
       <div v-for="(it, i) in items" :key="i" class="bar-row">
         <router-link v-if="it.to" :to="it.to" class="bar-label" :title="it.label">{{ it.label }}</router-link>

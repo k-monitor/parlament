@@ -81,4 +81,5 @@ export const api = {
   votes: (params) => get('/votes', params),
   vote: (id) => get(`/votes/${id}`),
   voteFacets: (params) => get('/votes/facets', params),
+  voteCohesion: (params) => get('/votes/cohesion', params),
 }

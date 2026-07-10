@@ -239,10 +239,10 @@ def _votes_registry():
                       "factionName": "független", "voteValue": "Tartózkodás"}],
                  "factionStats": [
                      {"factionName": "Fidesz", "factionId": 7, "againstFaction": "0 fő",
-                      "total": 1, "yes": 1, "no": 0, "abstain": 0, "absent": 0,
+                      "total": 3, "yes": 1, "no": 0, "abstain": 0, "absent": 2,
                       "notVoting": 0},
                      {"factionName": "TISZA", "factionId": None, "againstFaction": "0 fő",
-                      "total": 1, "yes": 0, "no": 1, "abstain": 0, "absent": 0,
+                      "total": 2, "yes": 0, "no": 1, "abstain": 0, "absent": 1,
                       "notVoting": 0}],
              }},
             {"voteId": "v-2", "datetime": "2026-05-27T10:00:00Z",

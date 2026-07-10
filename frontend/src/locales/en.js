@@ -71,6 +71,7 @@ export default {
     wordcloudCaption: 'Words most characteristic of this day: frequent here but rare on the cycle\'s other sitting days (TF·IDF). Words are shown as their lemma (inflected forms merged) and recognized names (people, places, organisations) appear in italics. Chairing and common filler words excluded. Click a word to search that day.',
     wordcloudCount: 'occurrences',
     wordcloudEntity: 'name',
+    topicsPreview: 'Topics of the day',
     topSpeakers: 'Who spoke the most on this day?',
     topSpeakersCaption: 'Representatives by total speaking time on this sitting day (chairing and procedural speeches excluded). Click a name to open the representative\'s profile.',
     newWords: 'Which words were said for the first time?',

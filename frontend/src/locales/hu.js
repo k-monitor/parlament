@@ -123,6 +123,7 @@ export default {
     wordcloudCaption: 'A napra leginkább jellemző szavak: amelyek ezen a napon gyakoriak, de a ciklus többi ülésnapján ritkák (TF·IDF). A szavak szótövükre vonatkoznak (a ragozott alakok összevonva), a felismert nevek (személyek, helyek, szervezetek) dőlten jelennek meg. Az ülésvezetés és a gyakori töltelékszavak kihagyva. Kattintásra rákeres az adott napra.',
     wordcloudCount: 'előfordulás',
     wordcloudEntity: 'név',
+    topicsPreview: 'A nap témái',
     topSpeakers: 'Ki beszélt a legtöbbet ezen a napon?',
     topSpeakersCaption: 'A képviselők összes felszólalási ideje szerint ezen az ülésnapon (az ülésvezetői és rendészeti felszólalások nélkül). A névre kattintva a képviselő profilja nyílik meg.',
     newWords: 'Mely szavak hangzottak el először?',

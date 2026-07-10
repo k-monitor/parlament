@@ -347,6 +347,8 @@ export default {
     clearFilters: 'Szűrők törlése',
     remark: 'Megjegyzés',
     accepted: 'Elfogadva',
+    personScopeSuffix: 'szavazatai',
+    clearPersonScope: 'Összes szavazás',
   },
   about: {
     title: 'A projektről',

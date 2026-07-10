@@ -21,6 +21,9 @@ const loading = ref(false)
 const error = ref(false)
 const results = ref([])
 const votingModes = ref([])
+// The MP's name for the person-scope header; kept as its own ref so the header
+// survives an empty result set (when StateBlock replaces the list) and a load.
+const personName = ref('')
 
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
@@ -37,6 +40,17 @@ const sort = ref(SORTS.includes(route.query.sort) ? route.query.sort : 'date_des
 // `bill` is not an interactive filter — it arrives via a link from a bill page.
 const bill = computed(() => route.query.bill || '')
 
+// `person` + `value` scope the list to one MP's roll-call participation; they
+// arrive via a link from the profile's statistics (like `bill`), not the toolbar.
+const person = computed(() => route.query.person || '')
+const scopeValue = computed(() => route.query.value || '')
+// Localised label for the participation segment being shown (voted/novote/…).
+const PART_LABELS = {
+  voted: 'profile.vbVoted', novote: 'profile.vbNovote',
+  absent: 'profile.vbAbsent', not_present: 'profile.vbNotPresent',
+}
+const scopeValueLabel = computed(() => PART_LABELS[scopeValue.value] || '')
+
 // Any interactive filter set? Drives the clear-filters affordance (the `bill`
 // scope arrives via a link, so it isn't counted as a user-cleared filter).
 const hasFilters = computed(() =>
@@ -50,8 +64,19 @@ function apply() {
   if (f.date_from) query.date_from = f.date_from
   if (f.date_to) query.date_to = f.date_to
   if (bill.value) query.bill = bill.value
+  // Keep the person scope while refining with the toolbar filters.
+  if (person.value) query.person = person.value
+  if (scopeValue.value) query.value = scopeValue.value
   if (sort.value !== 'date_desc') query.sort = sort.value
   // Changing a filter resets to the first page (offset is intentionally dropped).
+  router.push({ name: 'votes', query })
+}
+
+// Leave the per-MP scope (and its value segment) back to the full vote list,
+// keeping any interactive filters the user set within it.
+function clearPersonScope() {
+  const query = { ...route.query }
+  delete query.person; delete query.value; delete query.offset
   router.push({ name: 'votes', query })
 }
 
@@ -72,6 +97,10 @@ function clearFilters() {
 function gotoPage(p) {
   router.push({ name: 'votes', query: { ...route.query, offset: p * PAGE } })
 }
+
+// Chip colour for an MP's own cast value (matches the roll-call palette); a
+// "nem volt jelen" vote has no record, so it falls through to the neutral class.
+const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote', absent: 'absent' }
 
 function voteParts(v) {
   const yes = v.yes || 0, no = v.no || 0, abstain = v.abstain || 0
@@ -101,9 +130,14 @@ async function load() {
       voting_mode: route.query.voting_mode,
       date_from: route.query.date_from, date_to: route.query.date_to,
       sort: route.query.sort,
-      bill: route.query.bill, limit: PAGE, offset: route.query.offset || 0,
+      bill: route.query.bill,
+      person: route.query.person, value: route.query.value,
+      limit: PAGE, offset: route.query.offset || 0,
     })
-    if (seq === loadSeq) data.value = res
+    if (seq === loadSeq) {
+      data.value = res
+      personName.value = res.person ? res.person.label : ''
+    }
   } catch {
     if (seq === loadSeq) error.value = true
   } finally {
@@ -164,6 +198,17 @@ onUnmounted(() => clearTimeout(t))
     </button>
   </form>
 
+  <!-- Person scope banner (arrives via a link from a profile's statistics):
+       names the MP + which participation segment is shown, with a way back to
+       the full list. Lives outside StateBlock so it stays put on an empty set. -->
+  <div v-if="person" class="card pad personscope">
+    <p class="ps-title">
+      <router-link :to="{ name: 'profile', params: { id: person } }">{{ personName || person }}</router-link>
+      {{ $t('votes.personScopeSuffix') }}<template v-if="scopeValueLabel"> · <span class="ps-seg">{{ $t(scopeValueLabel) }}</span></template>
+    </p>
+    <button type="button" class="btn secondary small" @click="clearPersonScope">{{ $t('votes.clearPersonScope') }}</button>
+  </div>
+
   <StateBlock
     :loading="loading" :error="error"
     :empty="!!data && data.votes.length === 0" :empty-text="$t('votes.noResults')"
@@ -186,6 +231,10 @@ onUnmounted(() => clearTimeout(t))
             <router-link :to="{ name: 'vote', params: { id: v.id } }" class="vdate">{{ formatDateTime(v.vote_datetime) }}</router-link>
             <span class="badge" :class="{ ok: v.result === $t('votes.accepted') }">{{ v.result }}</span>
             <span v-if="v.has_per_mp" class="badge rollcall">{{ $t('votes.rollCall') }}</span>
+            <!-- How this MP voted (only in the person-scoped list). -->
+            <span v-if="person" class="mpvote" :class="VOTE_CLASS[v.person_value_code] || 'notpresent'">
+              {{ v.person_value_code ? $t('votes.' + v.person_value_code) : $t('profile.vbNotPresent') }}
+            </span>
           </div>
           <router-link :to="{ name: 'vote', params: { id: v.id } }" class="vsubject">{{ v.subject }}</router-link>
           <div v-if="v.subjects.length" class="vbills small">
@@ -218,6 +267,14 @@ onUnmounted(() => clearTimeout(t))
 <style scoped>
 .toolbar { display: grid; grid-template-columns: 2fr 1.3fr 1.3fr 1fr 1fr; gap: .8rem; align-items: end; margin: 1rem 0; }
 .clearbtn { justify-self: start; align-self: end; }
+.personscope { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 1rem 0 .2rem; }
+.personscope .ps-title { margin: 0; font-weight: 600; }
+.personscope .ps-seg { color: var(--accent); }
+/* the MP's own cast value on each card, in the roll-call palette */
+.mpvote { font-size: .72rem; font-weight: 700; line-height: 1.6; padding: 0 .5rem; border-radius: 999px; color: #fff; white-space: nowrap; }
+.mpvote.yes { background: #2e7d32; } .mpvote.no { background: #c62828; }
+.mpvote.abstain { background: #8a8780; } .mpvote.novote { background: #c79a2e; }
+.mpvote.absent { background: #7c8288; } .mpvote.notpresent { background: #3f434a; }
 .results-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: .2rem 0 .6rem; }
 .sortctl { display: inline-flex; align-items: center; gap: .4rem; }
 .sortctl select { width: auto; }

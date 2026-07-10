@@ -136,10 +136,23 @@ const VB_LABEL = {
 const voteBreakdownSegments = computed(() => {
   const b = stats.value?.totals?.vote_breakdown
   if (!b) return []
+  // Each segment links to the Votes list scoped to this MP + that participation
+  // category (voted/novote/absent/not_present) — a shareable, filtered roll call.
   return VOTE_BREAKDOWN_SEGMENTS.map((s) => ({
     ...s, label: t(VB_LABEL[s.key]), value: b[s.key] || 0,
+    to: showVotes.value
+      ? { name: 'votes', query: { person: props.id, value: s.key } }
+      : undefined,
   }))
 })
+
+// "Felszólalások száma" / "Összes beszédidő" jump to the speeches list already
+// on this (shareable) profile — there is no standalone per-MP speech page.
+const speechesSection = ref(null)
+function scrollToSpeeches() {
+  expanded.days = true
+  speechesSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 // Monotonic load id: profile switches (props.id / cycle watchers) can overlap
 // in flight; only the latest request may write state, or a slow earlier load
@@ -243,15 +256,23 @@ watch(() => store.cycle, load)
               </HelpTip>
             </div>
             <div class="bignums">
-              <div><span class="num">{{ stats.totals.speech_count }}</span><span class="lbl">{{ $t('profile.totalSpeeches') }}</span></div>
-              <div><span class="num">{{ formatSpeakingTime(stats.totals.speaking_seconds) }}</span><span class="lbl">{{ $t('profile.totalSpeakingTime') }}</span></div>
+              <div>
+                <button type="button" class="num biglink asbtn" @click="scrollToSpeeches">{{ stats.totals.speech_count }}</button>
+                <span class="lbl">{{ $t('profile.totalSpeeches') }}</span>
+              </div>
+              <div>
+                <button type="button" class="num biglink asbtn" @click="scrollToSpeeches">{{ formatSpeakingTime(stats.totals.speaking_seconds) }}</button>
+                <span class="lbl">{{ $t('profile.totalSpeakingTime') }}</span>
+              </div>
               <div v-if="stats.totals.bills_available">
                 <router-link :to="{ name: 'bills', query: { sponsor: id } }" class="num biglink">{{ stats.totals.bills_submitted }}</router-link>
                 <span class="lbl">{{ $t('profile.billsSubmitted') }}</span>
               </div>
-              <!-- Attendance (REP-3): absences from roll-call votes, nominal + % -->
+              <!-- Attendance (REP-3): absences from roll-call votes, nominal + %.
+                   Links to this MP's absent roll calls (shareable, filtered). -->
               <div v-if="stats.totals.votes_available && stats.totals.votes_total">
-                <span class="num">{{ stats.totals.votes_absent }}<span class="pct" v-if="stats.totals.votes_absent_pct !== null"> · {{ stats.totals.votes_absent_pct }}%</span></span>
+                <router-link v-if="showVotes" :to="{ name: 'votes', query: { person: id, value: 'absent' } }" class="num biglink">{{ stats.totals.votes_absent }}<span class="pct" v-if="stats.totals.votes_absent_pct !== null"> · {{ stats.totals.votes_absent_pct }}%</span></router-link>
+                <span v-else class="num">{{ stats.totals.votes_absent }}<span class="pct" v-if="stats.totals.votes_absent_pct !== null"> · {{ stats.totals.votes_absent_pct }}%</span></span>
                 <span class="lbl">{{ $t('profile.votesAbsent') }}</span>
               </div>
             </div>
@@ -381,7 +402,7 @@ watch(() => store.cycle, load)
 
           <!-- Speeches grouped by sitting day; each day is a spoiler that lazily
                loads its speeches on first expand (REP-2). -->
-          <section class="card pad">
+          <section class="card pad" ref="speechesSection">
             <h2>{{ $t('profile.speeches') }} <span class="muted small" v-if="speechDays">({{ speechDays.total }})</span></h2>
             <p v-if="speechDays && speechDays.total === 0" class="muted">{{ $t('profile.noSpeeches') }}</p>
             <ul v-else-if="speechDays" class="daylist">
@@ -445,6 +466,10 @@ watch(() => store.cycle, load)
 .bignums .biglink { text-decoration: none; }
 .bignums .pct { font-size: 1rem; font-weight: 700; color: var(--ink-soft); }
 .bignums .biglink:hover { text-decoration: underline; }
+/* a stat number that acts as a link but scrolls in-page (a <button>): strip the
+   native chrome so it reads identically to the router-link stats around it */
+.bignums .asbtn { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; text-align: left; }
+.bignums .asbtn.num { font-size: 1.8rem; font-weight: 800; color: var(--accent); display: block; }
 .bills-note { margin-top: .8rem; }
 /* heading + help-icon row; the icon carries the section's description (REP-5) */
 .sechead { display: flex; align-items: center; gap: .35rem; margin-bottom: .6rem; }

@@ -284,3 +284,51 @@ def test_representative_vote_lists_exclude_quorum_checks(client, db_path):
     assert votes["total"] == 1
     assert all(v["result"] not in ("Határozatképes", "Határozatképtelen")
                for v in votes["votes"])
+
+
+def test_votes_list_person_scope_matches_breakdown(client, db_path):
+    """The Votes list scoped to one MP + a participation segment (the link each
+    profile-pie slice points to) returns exactly that segment's votes, so the
+    count matches the pie. Reuses the breakdown fixture: v-1 Igen, v-3 abstain,
+    v-4 novote, v-5 absent, v-6 no record (nem volt jelen), v-q quorum check."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    for vid, value, code in (("v-3", "Tartózkodás", "abstain"),
+                             ("v-4", "Nem szavazott", "novote"),
+                             ("v-5", "Előre bejelentett hiányzó", "absent")):
+        c.execute("INSERT INTO vote (id, period_number, vote_datetime, result, has_per_mp) "
+                  "VALUES (?, 43, '2026-05-28T10:00:00Z', 'Elfogadva', 1)", (vid,))
+        c.execute("INSERT INTO vote_record (vote_id, person_id, name, value, value_code) "
+                  "VALUES (?, 'k001', 'Kovács Béla', ?, ?)", (vid, value, code))
+    c.execute("INSERT INTO vote (id, period_number, vote_datetime, result, has_per_mp) "
+              "VALUES ('v-6', 43, '2026-05-29T10:00:00Z', 'Elfogadva', 1)")
+    c.execute("INSERT INTO vote (id, period_number, vote_datetime, result, has_per_mp) "
+              "VALUES ('v-q', 43, '2026-05-09T08:45:00Z', 'Határozatképes', 1)")
+    c.execute("INSERT INTO vote_record (vote_id, person_id, name, value, value_code) "
+              "VALUES ('v-q', 'k001', 'Kovács Béla', 'Igen', 'yes')")
+    c.commit(); c.close()
+
+    def scope(value):
+        return client.get("/api/v1/votes",
+                          params={"person": "k001", "value": value}).json()
+
+    # One page per pie segment; counts equal the breakdown's.
+    assert scope("voted")["total"] == 2          # v-1 + v-3
+    assert scope("novote")["total"] == 1         # v-4
+    assert scope("absent")["total"] == 1         # v-5
+    assert scope("not_present")["total"] == 1    # v-6, no record
+
+    voted = scope("voted")
+    # The list carries the MP's own cast value per vote, and their name.
+    assert voted["person"]["id"] == "k001" and voted["person"]["label"]
+    assert {v["person_value_code"] for v in voted["votes"]} <= {"yes", "abstain"}
+    # "nem volt jelen" votes have no record → null cast value, and it's v-6.
+    np = scope("not_present")
+    assert np["votes"][0]["id"] == "v-6"
+    assert np["votes"][0]["person_value_code"] is None
+    # The quorum check is never listed, in any segment.
+    all_ids = {v["id"] for seg in ("voted", "novote", "absent", "not_present")
+               for v in scope(seg)["votes"]}
+    assert "v-q" not in all_ids
+    # No value → every substantive vote the MP has a record in (voted+novote+absent).
+    assert scope("")["total"] == 4

@@ -1,11 +1,13 @@
 <script setup>
-// Dependency-free SVG pie chart with a legend and an a11y table fallback,
-// matching the BarChart/TrendChart conventions. `segments` = [{ key, label,
-// value, color }]; zero-value segments are dropped from the pie but kept in the
-// legend/table so every category stays visible and comparable. When a single
-// segment holds the whole total (a common case — an MP who voted in every
-// roll call), the wedge is drawn as a full circle so the arc math stays valid.
-import { ref, computed } from 'vue'
+// Dependency-free SVG pie chart with a legend, matching the BarChart/TrendChart
+// conventions. `segments` = [{ key, label, value, color, to? }]; zero-value
+// segments are dropped from the pie but kept in the legend so every category
+// stays visible and comparable. A segment with a `to` (a router location) turns
+// its legend row into a filter link (the legend already carries every label +
+// value in text, so it doubles as the accessible data view). When a single
+// segment holds the whole total (a common case — an MP who voted in every roll
+// call), the wedge is drawn as a full circle so the arc math stays valid.
+import { computed } from 'vue'
 const props = defineProps({
   segments: { type: Array, default: () => [] },
   caption: { type: String, default: '' },
@@ -46,7 +48,6 @@ function wedge(start, end) {
     `A ${R} ${R} 0 ${large} 1 ${x2.toFixed(3)} ${y2.toFixed(3)} Z`
 }
 
-const showTable = ref(false)
 function fmtPct(v) {
   const p = pct(v)
   // No decimals for whole-ish shares; one decimal for small slivers.
@@ -74,26 +75,17 @@ function fmtPct(v) {
 
       <ul class="legend">
         <li v-for="(s, i) in segments" :key="s.key || i" :class="{ zero: !s.value }">
-          <span class="swatch" :style="{ background: s.color }" aria-hidden="true"></span>
-          <span class="lg-label">{{ s.label }}</span>
-          <span class="lg-val">{{ (s.value || 0).toLocaleString('hu-HU') }}</span>
-          <span class="lg-pct">{{ fmtPct(s.value || 0) }}</span>
+          <component :is="(s.to && s.value) ? 'router-link' : 'span'"
+                     :to="(s.to && s.value) ? s.to : undefined"
+                     class="lg-row" :class="{ 'lg-link': s.to && s.value }">
+            <span class="swatch" :style="{ background: s.color }" aria-hidden="true"></span>
+            <span class="lg-label">{{ s.label }}</span>
+            <span class="lg-val">{{ (s.value || 0).toLocaleString('hu-HU') }}</span>
+            <span class="lg-pct">{{ fmtPct(s.value || 0) }}</span>
+          </component>
         </li>
       </ul>
     </div>
-
-    <button type="button" class="table-toggle small" @click="showTable = !showTable">
-      {{ showTable ? $t('a11y.hideTable') : $t('a11y.showTable') }}
-    </button>
-    <table v-if="showTable" class="a11y-table small">
-      <tbody>
-        <tr v-for="(s, i) in segments" :key="s.key || i">
-          <th scope="row">{{ s.label }}</th>
-          <td>{{ (s.value || 0).toLocaleString('hu-HU') }}</td>
-          <td>{{ fmtPct(s.value || 0) }}</td>
-        </tr>
-      </tbody>
-    </table>
   </figure>
 </template>
 
@@ -103,16 +95,16 @@ function fmtPct(v) {
 .pie-total { font-size: 17px; font-weight: 800; fill: var(--ink); font-variant-numeric: tabular-nums; }
 .pie-total-lbl { font-size: 8.5px; fill: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; }
 
-.legend { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 190px; display: flex; flex-direction: column; gap: .3rem; }
-.legend li { display: grid; grid-template-columns: auto 1fr auto auto; align-items: baseline; gap: .5rem; font-size: .84rem; }
+.legend { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 190px; display: flex; flex-direction: column; gap: .2rem; }
 .legend li.zero { opacity: .5; }
+.lg-row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: baseline; gap: .5rem; font-size: .84rem; }
+/* A segment that carries a `to` becomes a filter link: keep the row layout,
+   just add an affordance (hover surface + the label turns accent). */
+.lg-link { text-decoration: none; color: inherit; padding: .18rem .35rem; margin: -.18rem -.35rem; border-radius: 6px; }
+.lg-link:hover { background: var(--accent-soft); }
+.lg-link:hover .lg-label { color: var(--accent); }
 .swatch { width: .72rem; height: .72rem; border-radius: 3px; flex: none; align-self: center; }
 .lg-label { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lg-val { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--ink); }
 .lg-pct { font-variant-numeric: tabular-nums; color: var(--ink-soft); min-width: 3ch; text-align: right; }
-
-.table-toggle { display: inline-block; margin-top: .7rem; background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; }
-.a11y-table { margin-top: .5rem; border-collapse: collapse; width: 100%; }
-.a11y-table th, .a11y-table td { text-align: left; padding: .2rem .5rem .2rem 0; border-bottom: 1px solid var(--line); }
-.a11y-table td { font-variant-numeric: tabular-nums; }
 </style>

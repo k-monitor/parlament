@@ -29,6 +29,11 @@ _VOTE_SORTS = {
 }
 _DEFAULT_SORT = "date_desc"
 
+# Procedural quorum-check votes are excluded from a person-scoped list so its
+# counts match the profile's participation pie (see the representatives router's
+# _exclude_quorum, kept in sync deliberately).
+_QUORUM_RESULTS = ("Határozatképes", "Határozatképtelen")
+
 
 def _subjects_for(db: sqlite3.Connection, vote_ids: list[str]) -> dict[str, list]:
     """Vote subjects (the bills/motions decided) grouped by vote id."""
@@ -68,12 +73,21 @@ def list_votes(
     date_from: Optional[str] = None,        # ISO date lower bound (inclusive)
     date_to: Optional[str] = None,          # ISO date upper bound (inclusive)
     bill: Optional[str] = None,             # bill id — votes deciding this bill
+    person: Optional[str] = None,           # person_id — scope to one MP's roll call (EXT-2)
+    value: Optional[str] = None,            # with `person`: participation segment
+                                            # (voted|novote|absent|not_present) or a raw value_code
     sort: str = "date_desc",
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    """Browsable, filterable vote list. Filters combine."""
+    """Browsable, filterable vote list. Filters combine.
+
+    `person` scopes the list to one MP's roll-call participation (the votes they
+    took part in), reciprocating the profile's participation pie (EXT-2): quorum
+    checks are excluded and `value` selects a single pie segment, so the list a
+    segment links to matches its count exactly. Each returned vote then also
+    carries that MP's own cast value (`person_value` / `person_value_code`)."""
     where = ["1=1"]
     params: dict = {}
     if q:
@@ -99,6 +113,26 @@ def list_votes(
     if bill:
         where.append("EXISTS (SELECT 1 FROM vote_subject vs WHERE vs.vote_id=v.id "
                      "AND vs.iromany_id=:bill)"); params["bill"] = bill
+    if person:
+        # Mirror the profile pie's universe: drop the procedural quorum checks so
+        # the person-scoped counts line up with it.
+        qvals = ",".join(f"'{r}'" for r in _QUORUM_RESULTS)
+        where.append(f"v.result NOT IN ({qvals})")
+        params["person"] = person
+        if value == "not_present":
+            # "nem volt jelen": a roll-call vote (has_per_mp) the MP has no
+            # record in at all — an anti-join, the pie's derived fifth category.
+            where.append("v.has_per_mp = 1")
+            where.append("NOT EXISTS (SELECT 1 FROM vote_record vr "
+                         "WHERE vr.vote_id=v.id AND vr.person_id=:person)")
+        else:
+            cond = "vr.person_id=:person"
+            if value == "voted":  # igen/nem/tartózkodás all count as voting
+                cond += " AND vr.value_code IN ('yes','no','abstain')"
+            elif value in ("yes", "no", "abstain", "novote", "absent"):
+                cond += " AND vr.value_code=:pvalue"; params["pvalue"] = value
+            where.append("EXISTS (SELECT 1 FROM vote_record vr "
+                         f"WHERE vr.vote_id=v.id AND {cond})")
     where_sql = " AND ".join(where)
 
     order = _VOTE_SORTS.get(sort, _VOTE_SORTS[_DEFAULT_SORT])
@@ -109,11 +143,37 @@ def list_votes(
             ORDER BY {order} LIMIT :limit OFFSET :offset""",
         {**params, "limit": limit, "offset": offset}).fetchall()
     subjects = _subjects_for(db, [r["id"] for r in rows])
+
+    # When scoped to an MP, resolve their name (for the list's header) and their
+    # own cast value per listed vote (for a chip beside each) in one pass — a
+    # "not_present" vote simply has no record, so it stays null.
+    person_meta = None
+    person_vals: dict[str, sqlite3.Row] = {}
+    if person:
+        prow = db.execute("SELECT label FROM person WHERE person_id=?",
+                          (person,)).fetchone()
+        person_meta = {"id": person, "label": prow["label"] if prow else person}
+        ids = [r["id"] for r in rows]
+        if ids:
+            ph = ",".join("?" * len(ids))
+            person_vals = {vr["vote_id"]: vr for vr in db.execute(
+                f"""SELECT vote_id, value, value_code FROM vote_record
+                    WHERE person_id=? AND vote_id IN ({ph})""",
+                [person, *ids]).fetchall()}
+
+    def _vote_out(r: sqlite3.Row) -> dict:
+        out = {**_vote_brief(r), "subjects": subjects.get(r["id"], [])}
+        if person:
+            pv = person_vals.get(r["id"])
+            out["person_value"] = pv["value"] if pv else None
+            out["person_value_code"] = pv["value_code"] if pv else None
+        return out
+
     return {
         "total": total, "limit": limit, "offset": offset,
         "sort": sort if sort in _VOTE_SORTS else _DEFAULT_SORT,
-        "votes": [{**_vote_brief(r), "subjects": subjects.get(r["id"], [])}
-                  for r in rows],
+        "person": person_meta,
+        "votes": [_vote_out(r) for r in rows],
     }
 
 

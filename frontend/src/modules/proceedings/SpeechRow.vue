@@ -16,7 +16,13 @@ import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
 
-const props = defineProps({ speech: { type: Object, required: true } })
+// `playable` is false for a not-yet-processed sitting day: there is no per-speech
+// video window, so the ▶ viewer link (which would just replay the whole day) and
+// the "video only" note are hidden and the row is a plain list entry.
+const props = defineProps({
+  speech: { type: Object, required: true },
+  playable: { type: Boolean, default: true },
+})
 
 const open = ref(false)
 const loading = ref(false)
@@ -79,7 +85,7 @@ function paraText(p) {
            inline before the actions; on mobile it drops to its own line under the
            speaker so the long "video only" note never squeezes the name. -->
       <div class="speech-meta">
-        <span class="muted small" v-if="!speech.has_text">📼 {{ $t('viewer.videoOnly') }}</span>
+        <span class="muted small" v-if="playable && !speech.has_text">📼 {{ $t('viewer.videoOnly') }}</span>
         <TimingBadge :timing="speech.timing" />
         <span class="muted small nowrap" v-if="speech.duration">⏱ {{ formatDuration(speech.duration) }}</span>
       </div>
@@ -105,8 +111,10 @@ function paraText(p) {
             <line x1="8" y1="16" x2="13" y2="16" />
           </svg>
         </button>
-        <!-- Still opens the full viewer (video + karaoke transcript). -->
+        <!-- Opens the full viewer (video + karaoke transcript). Hidden when the
+             day has no per-speech video yet — it would only replay the whole day. -->
         <router-link
+          v-if="playable"
           :to="{ name: 'viewer', params: { uid: speech.uid } }" class="play-affordance"
           :title="$t('sessions.openViewer')" :aria-label="$t('sessions.openViewer')"
         >▶</router-link>

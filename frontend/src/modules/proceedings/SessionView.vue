@@ -135,7 +135,7 @@ function searchWord(word) {
           <span class="badge" v-if="a.type">{{ agendaLabel(a.type) }}</span>
         </h2>
         <ul class="speeches">
-          <SpeechRow v-for="sp in a.speeches" :key="sp.uid" :speech="sp" />
+          <SpeechRow v-for="sp in a.speeches" :key="sp.uid" :speech="sp" :playable="!notReady" />
         </ul>
       </section>
     </div>

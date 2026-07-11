@@ -21,7 +21,12 @@ const props = defineProps({
   caption: { type: String, default: '' },
   unit: { type: String, default: '' },
   height: { type: Number, default: 120 }, // plot height in px (compact teasers pass less)
+  // When true, clicking a bar emits `select` with the inclusive date range that
+  // bucket covers, so a host can drill the query into that timeframe. Left off
+  // by default (e.g. the home teasers, whose whole card is already a link).
+  selectable: { type: Boolean, default: false },
 })
+const emit = defineEmits(['select'])
 
 const MONTHS = ['', 'jan', 'feb', 'márc', 'ápr', 'máj', 'jún',
   'júl', 'aug', 'szept', 'okt', 'nov', 'dec']
@@ -181,6 +186,33 @@ function onMove(e) {
 }
 function onLeave() { hover.value = -1 }
 const hoverBar = computed(() => (hover.value >= 0 ? bars.value[hover.value] : null))
+
+// The inclusive ISO date range [from, to] a bucket covers, per granularity —
+// emitted on click so a `selectable` chart can filter the query to that slot.
+function bucketRange(b) {
+  const iso = (y, m, d) =>
+    `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+  const g = props.granularity
+  if (g === 'year') return { from: `${b.y}-01-01`, to: `${b.y}-12-31` }
+  if (g === 'month') {
+    const last = new Date(Date.UTC(b.y, b.m, 0)).getUTCDate() // day 0 of next month
+    return { from: iso(b.y, b.m, 1), to: iso(b.y, b.m, last) }
+  }
+  if (g === 'week') { // period key is the Monday; the week runs Mon–Sun
+    const end = new Date(`${b.period}T00:00:00Z`)
+    end.setUTCDate(end.getUTCDate() + 6)
+    return { from: b.period, to: end.toISOString().slice(0, 10) }
+  }
+  return { from: b.period, to: b.period } // day
+}
+function onClick(e) {
+  if (!props.selectable || !wrap.value || n.value === 0) return
+  const rect = wrap.value.getBoundingClientRect()
+  const i = Math.max(0, Math.min(n.value - 1,
+    Math.floor((e.clientX - rect.left) / slotW.value)))
+  const b = filled.value[i]
+  if (b) emit('select', { ...bucketRange(b), label: b.label })
+}
 const tipPct = computed(() => (hoverBar.value
   ? ((hoverBar.value.x + barW.value / 2) / w.value) * 100 : 0))
 </script>
@@ -189,7 +221,8 @@ const tipPct = computed(() => (hoverBar.value
   <figure v-if="filled.length" class="trend" style="margin:0;">
     <figcaption v-if="caption" class="small soft" style="margin-bottom:.5rem;">{{ caption }}</figcaption>
 
-    <div ref="wrap" class="plot" @mousemove="onMove" @mouseleave="onLeave">
+    <div ref="wrap" class="plot" :class="{ selectable }"
+         @mousemove="onMove" @mouseleave="onLeave" @click="onClick">
       <svg :viewBox="`0 0 ${w} ${H}`" :height="H" width="100%"
            preserveAspectRatio="none" role="img" :aria-label="caption" class="svg">
         <line :x1="0" :y1="H - 0.5" :x2="w" :y2="H - 0.5" class="baseline" />
@@ -217,6 +250,7 @@ const tipPct = computed(() => (hoverBar.value
 
 <style scoped>
 .plot { position: relative; width: 100%; }
+.plot.selectable { cursor: pointer; }
 .svg { display: block; }
 .baseline { stroke: var(--line); stroke-width: 1; }
 .cycle-mark { stroke: var(--ink-faint); stroke-width: 1; stroke-dasharray: 2 3; opacity: .8; }

@@ -6,7 +6,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
-import { store, loadMeta, setCycle, currentCycleLabel } from '../../store.js'
+import { store, loadMeta, setCycle, currentCycleLabel, periodLabel } from '../../store.js'
 import { agendaLabel, formatDate, searchExcerptLines } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -182,6 +182,30 @@ const hasBreakdown = computed(() =>
 // When a specific cycle is selected globally, the search is scoped to it; offer a
 // one-click switch back to "all cycles" (null) which re-runs the active search.
 const cycleScopeLabel = computed(() => currentCycleLabel())
+
+// On the all-cycles view the trend spans the whole corpus, so mark each electoral
+// cycle's start/end with a reference line to keep the eras legible. Empty for a
+// single-cycle scope (the axis is then just that one cycle). Mirrors the home page.
+const cycleMarkers = computed(() => {
+  if (store.cycle !== null || !store.meta) return []
+  const out = []
+  for (const p of store.meta.periods || []) {
+    const label = periodLabel(p)
+    if (p.date_start) out.push({ date: p.date_start, label })
+    if (p.date_end) out.push({ date: p.date_end, label })
+  }
+  return out
+})
+
+// Drill the search into a clicked histogram bucket's timeframe by applying its
+// date range as the date_from/date_to filters. The trend then re-anchors to that
+// span (a finer granularity), so a click zooms in; clearing the filters zooms out.
+function onTrendSelect({ from, to }) {
+  filters.date_from = from
+  filters.date_to = to
+  showFilters.value = true // reveal the now-active date range
+  submit()
+}
 </script>
 
 <template>
@@ -262,9 +286,12 @@ const cycleScopeLabel = computed(() => currentCycleLabel())
       <section v-if="trend && trend.buckets.length > 1" class="card pad trendcard">
         <TrendChart
           :buckets="trend.buckets" :granularity="trend.granularity"
+          :start="trend.start" :end="trend.end" :markers="cycleMarkers"
           :caption="$t('search.trendCaption', { q: data.query })"
           :unit="$t('search.results')"
+          selectable @select="onTrendSelect"
         />
+        <p class="small muted trendhint">{{ $t('search.trendHint') }}</p>
       </section>
 
       <section v-if="hasBreakdown" class="card pad breakdowncard">
@@ -320,6 +347,7 @@ const cycleScopeLabel = computed(() => currentCycleLabel())
 /* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
 .cyclenotice { margin: .6rem 0 0; }
 .trendcard { margin: 0 0 .9rem; }
+.trendhint { margin: .5rem 0 0; }
 .breakdowncard { margin: 0 0 .9rem; }
 .breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; }
 .results { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .7rem; }

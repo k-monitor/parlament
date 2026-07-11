@@ -2,7 +2,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api.js'
-import { store, loadMeta } from '../store.js'
+import { store, loadMeta, periodLabel } from '../store.js'
 import TrendChart from '../components/TrendChart.vue'
 
 const router = useRouter()
@@ -23,6 +23,20 @@ const showReps = computed(() => store.moduleEnabled('representatives'))
 const EXAMPLE_QUERIES = ['költségvetés', 'korrupció', 'oktatás', 'infláció', 'Ukrajna', 'demokrácia', 'egészségügy', 'migráció', 'kormányváltás', 'adózás']
 const examples = reactive(Object.fromEntries(
   EXAMPLE_QUERIES.map((term) => [term, { trend: null, total: 0, ready: false }])))
+
+// On the all-cycles view the histograms span the whole corpus, so mark each
+// electoral cycle's start and end with a line to keep the eras legible. Empty
+// for a single-cycle scope (the axis is then just that cycle).
+const cycleMarkers = computed(() => {
+  if (store.cycle !== null || !store.meta) return []
+  const out = []
+  for (const p of store.meta.periods || []) {
+    const label = periodLabel(p)
+    if (p.date_start) out.push({ date: p.date_start, label })
+    if (p.date_end) out.push({ date: p.date_end, label })
+  }
+  return out
+})
 
 // The histograms honour the global cycle scope (§4A) like every other view.
 // Monotonic seq guards against out-of-order responses when the cycle switches;
@@ -98,6 +112,9 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
           v-if="examples[term].trend && examples[term].trend.buckets.length"
           :buckets="examples[term].trend.buckets"
           :granularity="examples[term].trend.granularity"
+          :start="examples[term].trend.start"
+          :end="examples[term].trend.end"
+          :markers="cycleMarkers"
           :height="72" :unit="$t('search.results')"
         />
         <p v-else-if="examples[term].ready" class="soft small example__empty">

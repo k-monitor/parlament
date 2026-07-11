@@ -9,6 +9,15 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 const props = defineProps({
   buckets: { type: Array, default: () => [] },
   granularity: { type: String, default: 'month' }, // 'day' | 'week' | 'month' | 'year'
+  // ISO-date axis domain (server-supplied). When set, the timeline spans this
+  // whole range so sibling charts share an identical axis; otherwise it spans
+  // the first-to-last populated bucket.
+  start: { type: String, default: '' },
+  end: { type: String, default: '' },
+  // Vertical reference lines, e.g. electoral-cycle boundaries on the all-cycles
+  // view. Each is `{ date: 'YYYY-MM-DD', label? }`; drawn at the start of the
+  // bucket that contains the date, deduped when several share one bucket.
+  markers: { type: Array, default: () => [] },
   caption: { type: String, default: '' },
   unit: { type: String, default: '' },
   height: { type: Number, default: 120 }, // plot height in px (compact teasers pass less)
@@ -24,7 +33,17 @@ function fullLabel(g, y, m, d) {
   return `${y}. ${MONTHS[m]} ${d}.` // day / week (week = its Monday)
 }
 
+// Monday (UTC) of the ISO week containing `iso`, so a week-domain lower bound
+// lands on the same grid as the server's week keys (which are Mondays).
+function weekStart(iso) {
+  const d = new Date(`${iso}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7))
+  return d.toISOString().slice(0, 10)
+}
+
 // Fill the zero-gap periods so a quiet stretch reads as zero, not as missing.
+// Bounds come from the explicit start/end domain when given (so sibling charts
+// align), else from the first/last populated bucket.
 const filled = computed(() => {
   const src = props.buckets
   if (!src.length) return []
@@ -35,11 +54,14 @@ const filled = computed(() => {
     out.push({ period, y, m, d, label: fullLabel(g, y, m, d), hits: byPeriod.get(period) || 0 })
 
   if (g === 'year') {
-    const lo = +src[0].period, hi = +src[src.length - 1].period
+    const lo = props.start ? +props.start.slice(0, 4) : +src[0].period
+    const hi = props.end ? +props.end.slice(0, 4) : +src[src.length - 1].period
     for (let y = lo; y <= hi; y++) push(String(y), y, 1, 1)
   } else if (g === 'month') {
-    const [ly, lm] = src[0].period.split('-').map(Number)
-    const [hy, hm] = src[src.length - 1].period.split('-').map(Number)
+    const loKey = props.start ? props.start.slice(0, 7) : src[0].period
+    const hiKey = props.end ? props.end.slice(0, 7) : src[src.length - 1].period
+    const [ly, lm] = loKey.split('-').map(Number)
+    const [hy, hm] = hiKey.split('-').map(Number)
     for (let y = ly, m = lm; y < hy || (y === hy && m <= hm);) {
       push(`${y}-${String(m).padStart(2, '0')}`, y, m, 1)
       if (++m > 12) { m = 1; y++ }
@@ -47,8 +69,10 @@ const filled = computed(() => {
   } else {
     // day / week — step over real dates (week keys are Mondays, so step 7 days).
     const step = g === 'week' ? 7 : 1
-    const cur = new Date(`${src[0].period}T00:00:00Z`)
-    const end = new Date(`${src[src.length - 1].period}T00:00:00Z`)
+    let loIso = props.start || src[0].period
+    if (g === 'week') loIso = weekStart(loIso)
+    const cur = new Date(`${loIso}T00:00:00Z`)
+    const end = new Date(`${(props.end || src[src.length - 1].period)}T00:00:00Z`)
     for (let guard = 0; cur <= end && guard < 20000; guard++) {
       push(cur.toISOString().slice(0, 10),
         cur.getUTCFullYear(), cur.getUTCMonth() + 1, cur.getUTCDate())
@@ -89,6 +113,36 @@ const bars = computed(() => filled.value.map((b, i) => {
   // Centre the bar in its time-slot so positions stay true even when capped.
   return { ...b, x: i * slotW.value + (slotW.value - barW.value) / 2, y: H - h, h }
 }))
+
+// --- Reference lines (cycle boundaries) ------------------------------------
+// Map each marker date onto the bucket grid and draw a line at that slot's left
+// edge. Markers that resolve to the same slot (e.g. one cycle's end and the
+// next one's start, a day apart) collapse into a single line, and the axis
+// origin (slot 0) is skipped since the chart already begins there.
+const periodOfDate = (iso) => {
+  const g = props.granularity
+  if (g === 'year') return iso.slice(0, 4)
+  if (g === 'month') return iso.slice(0, 7)
+  if (g === 'week') return weekStart(iso)
+  return iso.slice(0, 10)
+}
+const indexByPeriod = computed(() => {
+  const m = new Map()
+  filled.value.forEach((b, i) => m.set(b.period, i))
+  return m
+})
+const markerLines = computed(() => {
+  const seen = new Set()
+  const out = []
+  for (const mk of props.markers) {
+    if (!mk || !mk.date) continue
+    const i = indexByPeriod.value.get(periodOfDate(mk.date))
+    if (i == null || i === 0 || seen.has(i)) continue
+    seen.add(i)
+    out.push({ x: i * slotW.value, label: mk.label || '' })
+  }
+  return out
+})
 
 // --- Axis labels -----------------------------------------------------------
 // Years for long spans, month names for short ones, so labels stay meaningful
@@ -142,6 +196,10 @@ const tipPct = computed(() => (hoverBar.value
         <rect v-for="(b, i) in bars" :key="b.period" v-show="b.h"
               :x="b.x" :y="b.y" :width="barW" :height="b.h"
               class="bar" :class="{ on: i === hover }" />
+        <line v-for="(mk, k) in markerLines" :key="'mk' + k"
+              :x1="mk.x" :y1="0" :x2="mk.x" :y2="H" class="cycle-mark">
+          <title v-if="mk.label">{{ mk.label }}</title>
+        </line>
       </svg>
 
       <div v-if="hoverBar" class="tip" :style="{ left: tipPct + '%' }">
@@ -161,6 +219,7 @@ const tipPct = computed(() => (hoverBar.value
 .plot { position: relative; width: 100%; }
 .svg { display: block; }
 .baseline { stroke: var(--line); stroke-width: 1; }
+.cycle-mark { stroke: var(--ink-faint); stroke-width: 1; stroke-dasharray: 2 3; opacity: .8; }
 .bar { fill: var(--accent); opacity: .82; }
 .bar.on { opacity: 1; }
 .plot:hover .bar:not(.on) { opacity: .55; }

@@ -283,10 +283,33 @@ def search_trend(
     if not span or not span["lo"]:
         return {"query": q, "granularity": "month", "buckets": []}
 
-    # Pick the interval from the span so the histogram stays dense at every
-    # zoom: daily up to a few months, weekly up to a couple of years, monthly
-    # beyond. Each `period_expr` yields a sortable key the client can step over.
-    days = (date.fromisoformat(span["hi"]) - date.fromisoformat(span["lo"])).days + 1
+    # Anchor the chart's time axis to the *scope*, not to this query's own first
+    # and last hit, so every card sharing a cycle draws one identical timeline
+    # (otherwise a rare term and a common one show visibly different axes). With a
+    # cycle in scope the axis runs cycle-start → cycle-end, or → today for the
+    # ongoing cycle; the all-cycles view runs earliest-sitting → today. Explicit
+    # date filters tighten these bounds, and real hits are never clipped.
+    today = date.today().isoformat()
+    if period is not None:
+        prow = db.execute(
+            "SELECT date_start, date_end FROM electoral_period WHERE number = :p",
+            {"p": period}).fetchone()
+        dom_lo = prow["date_start"] if prow else None
+        dom_hi = min(prow["date_end"] or today, today) if prow else None
+    else:
+        dom_lo = db.execute("SELECT MIN(date) AS lo FROM session").fetchone()["lo"]
+        dom_hi = today
+    if date_from:
+        dom_lo = max(dom_lo, date_from) if dom_lo else date_from
+    if date_to:
+        dom_hi = min(dom_hi, date_to) if dom_hi else date_to
+    lo = min(dom_lo, span["lo"]) if dom_lo else span["lo"]
+    hi = max(dom_hi, span["hi"]) if dom_hi else span["hi"]
+
+    # Pick the interval from the (anchored) span so the histogram stays dense at
+    # every zoom: daily up to a few months, weekly up to a couple of years,
+    # monthly beyond. Each `period_expr` yields a sortable key the client steps over.
+    days = (date.fromisoformat(hi) - date.fromisoformat(lo)).days + 1
     if days <= 120:
         granularity = "day"
         period_expr = "strftime('%Y-%m-%d', ss.date)"
@@ -305,6 +328,8 @@ def search_trend(
     return {
         "query": q,
         "granularity": granularity,
+        "start": lo,   # axis domain (scope-anchored) so sibling charts align
+        "end": hi,
         "buckets": [{"period": r["period"], "hits": r["hits"]} for r in rows],
     }
 

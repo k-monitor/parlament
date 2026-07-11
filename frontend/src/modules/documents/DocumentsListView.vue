@@ -34,6 +34,15 @@ const f = reactive({
   status: route.query.status || '',
   sort: route.query.sort || 'number',
 })
+// Open the filter panel on load when a filter is already active (e.g. a shared
+// or deep-linked list), so its filters are visible rather than hidden.
+const showFilters = ref(!!(route.query.type || route.query.status))
+
+function clearFilters() {
+  f.type = ''
+  f.status = ''
+  apply()
+}
 
 function apply() {
   const query = {}
@@ -98,32 +107,39 @@ onUnmounted(() => clearTimeout(t))
   <h1>{{ $t('documents.title') }}</h1>
   <p class="muted">{{ $t('documents.subtitle') }}</p>
 
-  <form class="card pad toolbar" role="search" @submit.prevent="apply">
-    <div>
-      <label for="d-q">{{ $t('documents.searchPlaceholder') }}</label>
-      <input id="d-q" type="search" v-model="f.q" :placeholder="$t('documents.searchPlaceholder')" @input="onSearchInput" />
+  <form class="card pad searchform" role="search" @submit.prevent="apply">
+    <div class="row" style="gap:.5rem;">
+      <input
+        id="d-q" type="search" v-model="f.q" :placeholder="$t('documents.searchPlaceholder')"
+        :aria-label="$t('documents.searchPlaceholder')" @input="onSearchInput" style="flex:1;min-width:200px;"
+      />
+      <button class="btn secondary" type="button" :aria-expanded="showFilters" @click="showFilters = !showFilters">
+        {{ $t('search.filters') }}
+      </button>
     </div>
-    <div>
-      <label for="d-type">{{ $t('documents.type') }}</label>
-      <select id="d-type" v-model="f.type" @change="apply">
-        <option value="">{{ $t('search.all') }}</option>
-        <option v-for="ty in types" :key="ty" :value="ty">{{ ty }}</option>
-      </select>
-    </div>
-    <div>
-      <label for="d-status">{{ $t('documents.status') }}</label>
-      <select id="d-status" v-model="f.status" @change="apply">
-        <option value="">{{ $t('search.all') }}</option>
-        <option v-for="s in statuses" :key="s" :value="s">{{ s }}</option>
-      </select>
-    </div>
-    <div>
-      <label for="d-sort">↕</label>
-      <select id="d-sort" v-model="f.sort" @change="apply">
-        <option value="number">{{ $t('documents.sortNumber') }}</option>
-        <option value="date">{{ $t('documents.sortDate') }}</option>
-      </select>
-    </div>
+
+    <fieldset v-show="showFilters" class="filters">
+      <legend class="visually-hidden">{{ $t('search.filters') }}</legend>
+      <div class="filter-grid">
+        <div>
+          <label for="d-type">{{ $t('documents.type') }}</label>
+          <select id="d-type" v-model="f.type" @change="apply">
+            <option value="">{{ $t('search.all') }}</option>
+            <option v-for="ty in types" :key="ty" :value="ty">{{ ty }}</option>
+          </select>
+        </div>
+        <div>
+          <label for="d-status">{{ $t('documents.status') }}</label>
+          <select id="d-status" v-model="f.status" @change="apply">
+            <option value="">{{ $t('search.all') }}</option>
+            <option v-for="s in statuses" :key="s" :value="s">{{ s }}</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn secondary small" type="button" style="margin-top:.6rem;" @click="clearFilters">
+        {{ $t('search.clearFilters') }}
+      </button>
+    </fieldset>
   </form>
 
   <StateBlock
@@ -132,7 +148,16 @@ onUnmounted(() => clearTimeout(t))
     @retry="load"
   >
     <div v-if="data">
-      <p class="muted small">{{ data.total }} {{ $t('documents.count') }}</p>
+      <div class="results-head">
+        <p class="muted small" aria-live="polite" style="margin:0;">{{ data.total }} {{ $t('documents.count') }}</p>
+        <label class="sortctl small muted">
+          {{ $t('search.sort') }}
+          <select v-model="f.sort" @change="apply">
+            <option value="number">{{ $t('documents.sortNumber') }}</option>
+            <option value="date">{{ $t('documents.sortDate') }}</option>
+          </select>
+        </label>
+      </div>
       <ul class="billlist">
         <li v-for="b in data.bills" :key="b.id" class="card pad billcard">
           <div class="billhead">
@@ -159,7 +184,7 @@ onUnmounted(() => clearTimeout(t))
 </template>
 
 <style scoped>
-.toolbar { display: grid; grid-template-columns: 2fr 1.4fr 1.4fr 1fr; gap: .8rem; align-items: end; margin: 1rem 0; }
+/* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
 .billlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
 .billcard { display: flex; flex-direction: column; gap: .4rem; }
 .billhead { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
@@ -168,5 +193,4 @@ onUnmounted(() => clearTimeout(t))
 .billtitle:hover { color: var(--accent); }
 .sponsors { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
 .badge.status { background: var(--accent-soft); }
-@media (max-width: 700px) { .toolbar { grid-template-columns: 1fr; } }
 </style>

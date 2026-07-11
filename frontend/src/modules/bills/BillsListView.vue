@@ -29,6 +29,14 @@ const f = reactive({
   status: route.query.status || '',
   sort: route.query.sort || 'number',
 })
+// Open the filter panel on load when a filter is already active (e.g. a shared
+// or deep-linked list), so its filters are visible rather than hidden.
+const showFilters = ref(!!route.query.status)
+
+function clearFilters() {
+  f.status = ''
+  apply()
+}
 
 // `sponsor` is not an interactive filter — it arrives via a link from an MP
 // (the headline stat / profile bills section). It's carried in the URL and
@@ -110,25 +118,32 @@ onUnmounted(() => clearTimeout(t))
   <h1>{{ $t('bills.title') }}</h1>
   <p class="muted">{{ $t('bills.subtitle') }}</p>
 
-  <form class="card pad toolbar" role="search" @submit.prevent="apply">
-    <div>
-      <label for="b-q">{{ $t('bills.searchPlaceholder') }}</label>
-      <input id="b-q" type="search" v-model="f.q" :placeholder="$t('bills.searchPlaceholder')" @input="onSearchInput" />
+  <form class="card pad searchform" role="search" @submit.prevent="apply">
+    <div class="row" style="gap:.5rem;">
+      <input
+        id="b-q" type="search" v-model="f.q" :placeholder="$t('bills.searchPlaceholder')"
+        :aria-label="$t('bills.searchPlaceholder')" @input="onSearchInput" style="flex:1;min-width:200px;"
+      />
+      <button class="btn secondary" type="button" :aria-expanded="showFilters" @click="showFilters = !showFilters">
+        {{ $t('search.filters') }}
+      </button>
     </div>
-    <div>
-      <label for="b-status">{{ $t('bills.status') }}</label>
-      <select id="b-status" v-model="f.status" @change="apply">
-        <option value="">{{ $t('search.all') }}</option>
-        <option v-for="s in statuses" :key="s" :value="s">{{ s }}</option>
-      </select>
-    </div>
-    <div>
-      <label for="b-sort">↕</label>
-      <select id="b-sort" v-model="f.sort" @change="apply">
-        <option value="number">{{ $t('bills.sortNumber') }}</option>
-        <option value="date">{{ $t('bills.sortDate') }}</option>
-      </select>
-    </div>
+
+    <fieldset v-show="showFilters" class="filters">
+      <legend class="visually-hidden">{{ $t('search.filters') }}</legend>
+      <div class="filter-grid">
+        <div>
+          <label for="b-status">{{ $t('bills.status') }}</label>
+          <select id="b-status" v-model="f.status" @change="apply">
+            <option value="">{{ $t('search.all') }}</option>
+            <option v-for="s in statuses" :key="s" :value="s">{{ s }}</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn secondary small" type="button" style="margin-top:.6rem;" @click="clearFilters">
+        {{ $t('search.clearFilters') }}
+      </button>
+    </fieldset>
   </form>
 
   <p v-if="sponsor" class="card pad sponsorfilter">
@@ -143,7 +158,16 @@ onUnmounted(() => clearTimeout(t))
     @retry="load"
   >
     <div v-if="data">
-      <p class="muted small">{{ data.total }} {{ $t('bills.count') }}</p>
+      <div class="results-head">
+        <p class="muted small" aria-live="polite" style="margin:0;">{{ data.total }} {{ $t('bills.count') }}</p>
+        <label class="sortctl small muted">
+          {{ $t('search.sort') }}
+          <select v-model="f.sort" @change="apply">
+            <option value="number">{{ $t('bills.sortNumber') }}</option>
+            <option value="date">{{ $t('bills.sortDate') }}</option>
+          </select>
+        </label>
+      </div>
       <ul class="billlist">
         <li v-for="b in data.bills" :key="b.id" class="card pad billcard">
           <div class="billhead">
@@ -169,7 +193,7 @@ onUnmounted(() => clearTimeout(t))
 </template>
 
 <style scoped>
-.toolbar { display: grid; grid-template-columns: 2fr 1.4fr 1fr; gap: .8rem; align-items: end; margin: 1rem 0; }
+/* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
 .sponsorfilter { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; background: var(--accent-soft); }
 .sponsorfilter .clear { margin-left: auto; }
 .billlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
@@ -179,5 +203,4 @@ onUnmounted(() => clearTimeout(t))
 .billtitle { color: var(--ink); font-weight: 600; }
 .billtitle:hover { color: var(--accent); }
 .sponsors { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
-@media (max-width: 700px) { .toolbar { grid-template-columns: 1fr; } }
 </style>

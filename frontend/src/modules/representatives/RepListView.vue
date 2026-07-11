@@ -38,6 +38,14 @@ const f = reactive({
   faction_id: route.query.faction_id || '',
   sort: route.query.sort || 'speaking_time',
 })
+// Open the filter panel on load when a filter is already active (e.g. a shared
+// or deep-linked list), so its filters are visible rather than hidden.
+const showFilters = ref(!!route.query.faction_id)
+
+function clearFilters() {
+  f.faction_id = ''
+  apply()
+}
 
 function apply() {
   const query = {}
@@ -98,26 +106,32 @@ onUnmounted(() => clearTimeout(searchTimer))
 <template>
   <h1>{{ $t('reps.title') }}</h1>
 
-  <form class="card pad toolbar" role="search" @submit.prevent="apply">
-    <div>
-      <label for="r-q">{{ $t('reps.searchPlaceholder') }}</label>
-      <input id="r-q" type="search" v-model="f.q" :placeholder="$t('reps.searchPlaceholder')" @input="onSearchInput" />
+  <form class="card pad searchform" role="search" @submit.prevent="apply">
+    <div class="row" style="gap:.5rem;">
+      <input
+        id="r-q" type="search" v-model="f.q" :placeholder="$t('reps.searchPlaceholder')"
+        :aria-label="$t('reps.searchPlaceholder')" @input="onSearchInput" style="flex:1;min-width:200px;"
+      />
+      <button class="btn secondary" type="button" :aria-expanded="showFilters" @click="showFilters = !showFilters">
+        {{ $t('search.filters') }}
+      </button>
     </div>
-    <div>
-      <label for="r-faction">{{ $t('reps.faction') }}</label>
-      <select id="r-faction" v-model="f.faction_id" @change="apply">
-        <option value="">{{ $t('search.all') }}</option>
-        <option v-for="x in factions" :key="x.id" :value="x.id">{{ x.label }}</option>
-      </select>
-    </div>
-    <div>
-      <label for="r-sort">↕</label>
-      <select id="r-sort" v-model="f.sort" @change="apply">
-        <option value="name">{{ $t('reps.sortName') }}</option>
-        <option value="speeches">{{ $t('reps.sortSpeeches') }}</option>
-        <option value="speaking_time">{{ $t('reps.sortSpeakingTime') }}</option>
-      </select>
-    </div>
+
+    <fieldset v-show="showFilters" class="filters">
+      <legend class="visually-hidden">{{ $t('search.filters') }}</legend>
+      <div class="filter-grid">
+        <div>
+          <label for="r-faction">{{ $t('reps.faction') }}</label>
+          <select id="r-faction" v-model="f.faction_id" @change="apply">
+            <option value="">{{ $t('search.all') }}</option>
+            <option v-for="x in factions" :key="x.id" :value="x.id">{{ x.label }}</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn secondary small" type="button" style="margin-top:.6rem;" @click="clearFilters">
+        {{ $t('search.clearFilters') }}
+      </button>
+    </fieldset>
   </form>
 
   <StateBlock
@@ -126,7 +140,17 @@ onUnmounted(() => clearTimeout(searchTimer))
     @retry="load"
   >
     <div v-if="data">
-      <p class="muted small">{{ data.total }} {{ $t('home.stats.representatives') }} · {{ scopeText }}</p>
+      <div class="results-head">
+        <p class="muted small" aria-live="polite" style="margin:0;">{{ data.total }} {{ $t('home.stats.representatives') }} · {{ scopeText }}</p>
+        <label class="sortctl small muted">
+          {{ $t('search.sort') }}
+          <select v-model="f.sort" @change="apply">
+            <option value="name">{{ $t('reps.sortName') }}</option>
+            <option value="speeches">{{ $t('reps.sortSpeeches') }}</option>
+            <option value="speaking_time">{{ $t('reps.sortSpeakingTime') }}</option>
+          </select>
+        </label>
+      </div>
       <ul class="replist grid">
         <li v-for="r in data.representatives" :key="r.person_id" class="card pad repcard">
           <SpeakerLink :speaker="{ person_id: r.person_id, label: r.label, photo_uri: r.photo_uri }" />
@@ -147,10 +171,9 @@ onUnmounted(() => clearTimeout(searchTimer))
 </template>
 
 <style scoped>
-.toolbar { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: .8rem; align-items: end; margin-bottom: 1rem; }
+/* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
 .replist { list-style: none; padding: 0; margin: 0; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
 .repcard { display: flex; flex-direction: column; gap: .5rem; }
 .repmeta { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
 .repstats { display: flex; gap: .4rem; }
-@media (max-width: 640px) { .toolbar { grid-template-columns: 1fr; } }
 </style>

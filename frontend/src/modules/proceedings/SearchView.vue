@@ -31,7 +31,9 @@ const filters = reactive({
   faction_id: route.query.faction_id || '',
   agenda_type: route.query.agenda_type || '',
 })
-const showFilters = ref(false)
+// Open the filter panel on load when a filter is already active (e.g. a shared
+// or deep-linked query), so its filters are visible rather than hidden.
+const showFilters = ref(!!(filters.date_from || filters.date_to || filters.faction_id || filters.agenda_type))
 // Result ordering (SEA-10): relevance (default) | date_desc | date_asc. Kept in
 // the URL like the other per-page filters so a sorted view is deep-linkable (CYC-5).
 const SORTS = ['relevance', 'date_desc', 'date_asc']
@@ -315,15 +317,11 @@ const cycleScopeLabel = computed(() => currentCycleLabel())
 </template>
 
 <style scoped>
-.filters { border: none; border-top: 1px solid var(--line); margin-top: .8rem; padding: .8rem 0 0; }
-.filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .7rem; }
+/* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
 .cyclenotice { margin: .6rem 0 0; }
 .trendcard { margin: 0 0 .9rem; }
 .breakdowncard { margin: 0 0 .9rem; }
 .breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; }
-.results-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: 1rem 0 .5rem; }
-.sortctl { display: inline-flex; align-items: center; gap: .4rem; }
-.sortctl select { padding: .2rem .4rem; }
 .results { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .7rem; }
 /* Card reads top-to-bottom: speaker/meta header → context around the match →
    the watch action. A column gap spaces every part uniformly. */

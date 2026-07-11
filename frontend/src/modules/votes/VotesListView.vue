@@ -47,6 +47,9 @@ const f = reactive({
   date_to: route.query.date_to || '',
 })
 const sort = ref(SORTS.includes(route.query.sort) ? route.query.sort : 'date_desc')
+// Open the filter panel on load when a filter is already active (e.g. a shared
+// or deep-linked list), so its filters are visible rather than hidden.
+const showFilters = ref(!!(route.query.result || route.query.voting_mode || route.query.date_from || route.query.date_to))
 
 // `bill` is not an interactive filter — it arrives via a link from a bill page.
 const bill = computed(() => route.query.bill || '')
@@ -198,36 +201,47 @@ onUnmounted(() => clearTimeout(searchTimer))
   <h1>{{ $t('votes.title') }}</h1>
   <p class="muted">{{ $t('votes.subtitle') }}</p>
 
-  <form class="card pad toolbar" role="search" @submit.prevent="apply">
-    <div>
-      <label for="v-q">{{ $t('votes.searchPlaceholder') }}</label>
-      <input id="v-q" type="search" v-model="f.q" :placeholder="$t('votes.searchPlaceholder')" @input="onSearchInput" />
+  <form class="card pad searchform" role="search" @submit.prevent="apply">
+    <div class="row" style="gap:.5rem;">
+      <input
+        id="v-q" type="search" v-model="f.q" :placeholder="$t('votes.searchPlaceholder')"
+        :aria-label="$t('votes.searchPlaceholder')" @input="onSearchInput" style="flex:1;min-width:200px;"
+      />
+      <button class="btn secondary" type="button" :aria-expanded="showFilters" @click="showFilters = !showFilters">
+        {{ $t('search.filters') }}
+      </button>
     </div>
-    <div>
-      <label for="v-result">{{ $t('votes.result') }}</label>
-      <select id="v-result" v-model="f.result" @change="apply">
-        <option value="">{{ $t('votes.all') }}</option>
-        <option v-for="r in results" :key="r" :value="r">{{ r }}</option>
-      </select>
-    </div>
-    <div>
-      <label for="v-mode">{{ $t('votes.votingMode') }}</label>
-      <select id="v-mode" v-model="f.voting_mode" @change="apply">
-        <option value="">{{ $t('votes.all') }}</option>
-        <option v-for="m in votingModes" :key="m" :value="m">{{ m }}</option>
-      </select>
-    </div>
-    <div>
-      <label for="v-from">{{ $t('votes.dateFrom') }}</label>
-      <input id="v-from" type="date" v-model="f.date_from" @change="apply" />
-    </div>
-    <div>
-      <label for="v-to">{{ $t('votes.dateTo') }}</label>
-      <input id="v-to" type="date" v-model="f.date_to" @change="apply" />
-    </div>
-    <button class="btn secondary small clearbtn" type="button" :disabled="!hasFilters" @click="clearFilters">
-      {{ $t('votes.clearFilters') }}
-    </button>
+
+    <fieldset v-show="showFilters" class="filters">
+      <legend class="visually-hidden">{{ $t('search.filters') }}</legend>
+      <div class="filter-grid">
+        <div>
+          <label for="v-result">{{ $t('votes.result') }}</label>
+          <select id="v-result" v-model="f.result" @change="apply">
+            <option value="">{{ $t('votes.all') }}</option>
+            <option v-for="r in results" :key="r" :value="r">{{ r }}</option>
+          </select>
+        </div>
+        <div>
+          <label for="v-mode">{{ $t('votes.votingMode') }}</label>
+          <select id="v-mode" v-model="f.voting_mode" @change="apply">
+            <option value="">{{ $t('votes.all') }}</option>
+            <option v-for="m in votingModes" :key="m" :value="m">{{ m }}</option>
+          </select>
+        </div>
+        <div>
+          <label for="v-from">{{ $t('votes.dateFrom') }}</label>
+          <input id="v-from" type="date" v-model="f.date_from" @change="apply" />
+        </div>
+        <div>
+          <label for="v-to">{{ $t('votes.dateTo') }}</label>
+          <input id="v-to" type="date" v-model="f.date_to" @change="apply" />
+        </div>
+      </div>
+      <button class="btn secondary small" type="button" style="margin-top:.6rem;" :disabled="!hasFilters" @click="clearFilters">
+        {{ $t('votes.clearFilters') }}
+      </button>
+    </fieldset>
   </form>
 
   <!-- Person scope banner (arrives via a link from a profile's statistics):
@@ -305,8 +319,7 @@ onUnmounted(() => clearTimeout(searchTimer))
 </template>
 
 <style scoped>
-.toolbar { display: grid; grid-template-columns: 2fr 1.3fr 1.3fr 1fr 1fr; gap: .8rem; align-items: end; margin: 1rem 0; }
-.clearbtn { justify-self: start; align-self: end; }
+/* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
 .personscope { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 1rem 0 .2rem; }
 .personscope .ps-title { margin: 0; font-weight: 600; }
 .personscope .ps-seg { color: var(--accent); }
@@ -315,9 +328,6 @@ onUnmounted(() => clearTimeout(searchTimer))
 .mpvote.yes { background: #2e7d32; } .mpvote.no { background: #c62828; }
 .mpvote.abstain { background: #8a8780; } .mpvote.novote { background: #c79a2e; }
 .mpvote.absent { background: #7c8288; } .mpvote.notpresent { background: #3f434a; }
-.results-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: .2rem 0 .6rem; }
-.sortctl { display: inline-flex; align-items: center; gap: .4rem; }
-.sortctl select { width: auto; }
 .votelist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
 .votecard { display: flex; flex-direction: column; gap: .45rem; }
 .vhead { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
@@ -337,6 +347,4 @@ onUnmounted(() => clearTimeout(searchTimer))
 .vcounts .c.yes { color: #2e7d32; }
 .vcounts .c.no { color: #c62828; }
 .vcounts .c.abstain { color: var(--ink-faint); }
-@media (max-width: 900px) { .toolbar { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 560px) { .toolbar { grid-template-columns: 1fr; } }
 </style>

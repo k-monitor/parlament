@@ -115,6 +115,17 @@ mark { background: var(--mark); color: var(--mark-ink); padding: 0 .1em; border-
 .grid { display: grid; gap: 1rem; }
 .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
 
+/* search / filter toolbar — a prominent search box with a collapsible filter
+   panel (opened by the "Szűrők" button) and a results-head below carrying the
+   result count and the sort control. Shared by the full-text search page and
+   every browsable list (representatives, bills, documents, votes) so they read
+   as one system. */
+.filters { border: none; border-top: 1px solid var(--line); margin-top: .8rem; padding: .8rem 0 0; }
+.filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .7rem; }
+.results-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: 1rem 0 .5rem; }
+.sortctl { display: inline-flex; align-items: center; gap: .4rem; }
+.sortctl select { width: auto; padding: .3rem .5rem; }
+
 /* spinner / states */
 .state { padding: 3rem 1rem; text-align: center; color: var(--ink-faint); }
 .spinner {

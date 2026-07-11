@@ -79,18 +79,29 @@ export function cancel() {
 
 const X264 = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p']
 
-// Logo placement: scaled to ~24% of the video width, pinned top-right with a
-// small margin. The renditions are 16:9, so width ≈ height·16/9.
-function watermarkGeom(height) {
-  const vidW = height ? Math.round((height * 16) / 9) : 854
-  return { logoW: Math.round(vidW * 0.24), margin: Math.max(8, Math.round(vidW * 0.02)) }
+// Center-crop the 16:9 source to a 9:16 portrait frame (for TikTok/Reels/Shorts):
+// keep the full height, take the middle slice of the width. `trunc(.../2)*2` keeps
+// the width even (yuv420p requires it). The speaker sits centre-frame, so the
+// podium survives the crop.
+const PORTRAIT_CROP = "crop='trunc(ih*9/16/2)*2':ih"
+
+// Logo placement: scaled to a fraction of the (output) video width, pinned
+// top-right with a small margin. The renditions are 16:9 (width ≈ height·16/9);
+// a portrait crop narrows the frame to height·9/16, so the logo takes a bigger
+// share of that width and the margin tracks it.
+function watermarkGeom(height, portrait) {
+  const h = height || 480
+  const vidW = portrait ? Math.round((h * 9) / 16) : Math.round((h * 16) / 9)
+  const frac = portrait ? 0.42 : 0.24
+  return { logoW: Math.round(vidW * frac), margin: Math.max(8, Math.round(vidW * (portrait ? 0.03 : 0.02))) }
 }
 
-function argsFor(mode, { watermark, height }) {
+function argsFor(mode, { watermark, portrait, height }) {
   const OUT = ['-movflags', '+faststart', 'output.mp4']
 
-  // No watermark: keep the fast paths — "none"/"soft" stream-COPY the video.
-  if (!watermark) {
+  // Neither watermark nor portrait crop: keep the fast paths — "none"/"soft"
+  // stream-COPY the video, "burn" needs only a simple -vf filtergraph.
+  if (!watermark && !portrait) {
     const IN = ['-i', 'input.ts']
     if (mode === 'soft') {
       return [...IN, '-i', 'subs.srt',
@@ -107,23 +118,34 @@ function argsFor(mode, { watermark, height }) {
     return [...IN, '-map', '0:v:0', '-map', '0:a:0', '-c', 'copy', ...OUT]
   }
 
-  // Watermark ON: overlay the logo top-right. That needs the picture composited,
-  // so the video is re-encoded (audio still copied). Inputs: 0=input.ts,
-  // 1=logo.png, and 2=subs.srt only when the soft text track is also muxed.
-  const { logoW, margin } = watermarkGeom(height)
-  const inputs = ['-i', 'input.ts', '-i', 'logo.png']
-  const subInput = mode === 'soft' ? 2 : -1
+  // Watermark and/or portrait: the picture is filtered, so the video is
+  // re-encoded (audio still copied). Inputs: 0=input.ts, then the logo (only
+  // with a watermark) and subs.srt (only when the soft text track is muxed).
+  const inputs = ['-i', 'input.ts']
+  let logoInput = -1
+  if (watermark) { logoInput = inputs.length / 2; inputs.push('-i', 'logo.png') }
+  const subInput = mode === 'soft' ? inputs.length / 2 : -1
   if (subInput >= 0) inputs.push('-i', 'subs.srt')
 
+  // Build the main video chain, ending at a named pad; a watermark (if any) is
+  // overlaid onto that pad. Crop to portrait FIRST so burned-in subtitles wrap to
+  // the narrow frame instead of being rendered wide and then chopped by the crop.
+  const chain = []
+  if (portrait) chain.push(PORTRAIT_CROP)
+  if (mode === 'burn') chain.push(`subtitles=subs.srt:fontsdir=fonts:force_style='${BURN_STYLE}'`)
+
   let fc = ''
-  let vsrc = '[0:v]'
-  if (mode === 'burn') {
-    fc += `[0:v]subtitles=subs.srt:fontsdir=fonts:force_style='${BURN_STYLE}'[vs];`
-    vsrc = '[vs]'
+  if (watermark) {
+    const vmain = chain.length ? '[vmain]' : '[0:v]'
+    if (chain.length) fc += `[0:v]${chain.join(',')}[vmain];`
+    const { logoW, margin } = watermarkGeom(height, portrait)
+    // Slight transparency (aa) so it reads as a watermark, not a UI element.
+    fc += `[${logoInput}:v]scale=${logoW}:-1,format=rgba,colorchannelmixer=aa=0.92[wm];`
+    fc += `${vmain}[wm]overlay=W-w-${margin}:${margin}[vout]`
+  } else {
+    // Portrait crop (± burn) with no watermark: a plain linear chain.
+    fc = `[0:v]${chain.join(',')}[vout]`
   }
-  // Slight transparency (aa) so it reads as a watermark, not a UI element.
-  fc += `[1:v]scale=${logoW}:-1,format=rgba,colorchannelmixer=aa=0.92[wm];`
-  fc += `${vsrc}[wm]overlay=W-w-${margin}:${margin}[vout]`
 
   const subMap = subInput >= 0
     ? ['-map', `${subInput}:0`, '-c:s', 'mov_text', '-metadata:s:s:0', 'language=hun']
@@ -140,12 +162,13 @@ function argsFor(mode, { watermark, height }) {
  * @param {string}  o.srt          SRT subtitle text (ignored when mode === 'none')
  * @param {'none'|'soft'|'burn'} o.mode
  * @param {boolean} o.watermark    overlay the Parlamonitor logo top-right (re-encodes)
+ * @param {boolean} o.portrait     center-crop to a 9:16 portrait frame (re-encodes)
  * @param {number}  o.height       the video's height (to size the watermark)
  * @param {(p:number)=>void} o.onProgress   encode progress 0..1 (meaningful when re-encoding)
  * @param {(m:string)=>void} o.onLog
  * @returns {Promise<Blob>} the MP4
  */
-export async function muxClip({ tsData, srt, mode, watermark = false, height = 0, onProgress, onLog }) {
+export async function muxClip({ tsData, srt, mode, watermark = false, portrait = false, height = 0, onProgress, onLog }) {
   const ff = await ensureLoaded({ onLog })
 
   let progressHandler = null
@@ -162,7 +185,7 @@ export async function muxClip({ tsData, srt, mode, watermark = false, height = 0
     }
     if (watermark) await ff.writeFile('logo.png', await fetchFile(watermarkURL))
 
-    const code = await ff.exec(argsFor(mode, { watermark, height }))
+    const code = await ff.exec(argsFor(mode, { watermark, portrait, height }))
     if (code !== 0) throw new Error(`ffmpeg exited ${code}`)
 
     const out = await ff.readFile('output.mp4')

@@ -72,6 +72,16 @@ const QUALITIES = [
 ]
 const quality = ref('medium')
 const qualityHeight = computed(() => (QUALITIES.find((q) => q.key === quality.value) || QUALITIES[1]).height)
+// Aspect ratio: landscape keeps the 16:9 source; portrait center-crops to a 9:16
+// frame for TikTok/Reels/Shorts. Portrait re-encodes (the crop is a filter).
+const ORIENTATIONS = [
+  { key: 'landscape', ratio: '16:9',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="6.5" width="18" height="11" rx="1.5"/></svg>' },
+  { key: 'portrait', ratio: '9:16',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="7.5" y="3" width="9" height="18" rx="1.5"/></svg>' },
+]
+const orientation = ref('landscape')
+const portrait = computed(() => orientation.value === 'portrait')
 // Brand watermark (Parlamonitor logo, top-right). On by default; overlaying it
 // re-encodes the video, so turning it off keeps the fast stream-copy paths.
 const watermark = ref(true)
@@ -93,7 +103,8 @@ let engine = null                // the lazily-imported clipExport module
 function fileName() {
   const a = Math.round(startSec.value ?? 0)
   const b = Math.round(endSec.value ?? 0)
-  return `parlamonitor-${props.uid}-${a}-${b}.mp4`
+  const orient = portrait.value ? '-portrait' : ''
+  return `parlamonitor-${props.uid}-${a}-${b}${orient}.mp4`
 }
 function formatBytes(n) {
   if (!n) return ''
@@ -145,7 +156,7 @@ async function runExport() {
     // 5. Mux/encode into MP4.
     phase.value = 'encoding'; progress.value = 0
     const blob = await engine.muxClip({
-      tsData: data, srt, mode, watermark: watermark.value, height,
+      tsData: data, srt, mode, watermark: watermark.value, portrait: portrait.value, height,
       onProgress: (p) => { progress.value = p },
     })
     if (abortCtrl.signal.aborted) return
@@ -274,6 +285,22 @@ onBeforeUnmount(() => {
           <p v-else-if="subtitleMode === 'burn'" class="ex-alert warn small">⚠ {{ $t('clipExport.burnWarn') }}</p>
         </section>
 
+        <!-- Format: aspect ratio tiles -->
+        <section class="ex-field">
+          <div class="ex-legend"><span>{{ $t('clipExport.format') }}</span></div>
+          <div class="ex-orient" role="radiogroup" :aria-label="$t('clipExport.format')">
+            <button v-for="o in ORIENTATIONS" :key="o.key" type="button" class="ex-orient-btn"
+                    :class="{ active: orientation === o.key }"
+                    role="radio" :aria-checked="orientation === o.key" @click="orientation = o.key">
+              <span class="ex-orient-ic" v-html="o.icon"></span>
+              <span class="ex-orient-tx">
+                <strong>{{ $t('clipExport.orient_' + o.key) }}</strong>
+                <em>{{ o.ratio }} · {{ $t('clipExport.orientHint_' + o.key) }}</em>
+              </span>
+            </button>
+          </div>
+        </section>
+
         <!-- Quality: segmented -->
         <section class="ex-field">
           <div class="ex-legend"><span>{{ $t('clipExport.quality') }}</span></div>
@@ -367,6 +394,22 @@ onBeforeUnmount(() => {
 .ex-seg-btn small { font-size: .68rem; color: var(--muted); }
 .ex-seg-btn.active { background: var(--accent); color: var(--accent-ink); }
 .ex-seg-btn.active small { color: var(--accent-ink); opacity: .85; }
+
+/* Orientation tiles */
+.ex-orient { display: flex; gap: .45rem; }
+.ex-orient-btn {
+  flex: 1; display: flex; align-items: center; gap: .55rem; text-align: left; min-width: 0;
+  padding: .55rem .6rem; border: 1.5px solid var(--line); border-radius: 10px;
+  background: var(--bg); color: var(--ink); cursor: pointer; font: inherit; transition: border-color .12s, background .12s;
+}
+.ex-orient-btn:hover { border-color: var(--accent); }
+.ex-orient-btn.active { border-color: var(--accent); background: var(--accent-soft); }
+.ex-orient-ic { flex: none; width: 22px; height: 22px; color: var(--muted); }
+.ex-orient-btn.active .ex-orient-ic { color: var(--accent); }
+.ex-orient-ic svg { width: 100%; height: 100%; display: block; }
+.ex-orient-tx { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.ex-orient-tx strong { font-weight: 600; font-size: .9rem; }
+.ex-orient-tx em { font-style: normal; font-size: .74rem; color: var(--muted); }
 
 .ex-alert { margin: 0; padding: .5rem .6rem; border-radius: 8px; font-size: .82rem; }
 .ex-alert.warn, .ex-alert.error { background: #fbeceb; color: #a11; }

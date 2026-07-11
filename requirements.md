@@ -516,6 +516,13 @@ merely because an accent was omitted (or added).
     default-on; because compositing the logo requires re-encoding the picture, the
     UI notes that enabling it forgoes the fast stream-copy path (as burned-in
     subtitles do). When the toggle is off, the file is un-watermarked.
+  - **Aspect ratio.** The export offers a **portrait (9:16)** option alongside the
+    original **landscape (16:9)**, so a clip drops straight into vertical-video
+    feeds (TikTok/Reels/Shorts). Portrait is a **centre crop** of the source (the
+    speaker sits centre-frame, so the podium survives); like the watermark it
+    re-encodes. When burned-in subtitles and portrait combine, the crop is applied
+    **before** the subtitle render so captions wrap to the narrow frame rather than
+    being drawn wide and clipped. Landscape is the default.
   - **Graceful degradation & disclosure.** Export is **progressively enhanced**:
     where the browser cannot run the exporter (feature-gated) the affordance is
     hidden, not broken. Long-running work (segment download, re-encode) shows

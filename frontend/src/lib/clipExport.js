@@ -5,11 +5,14 @@
 // deployment pays nothing but the bytes the user already streamed.
 //
 // The single-thread @ffmpeg/core is used deliberately: the "none"/"soft" paths
-// only stream-COPY the H.264 video + MP3 audio into MP4 (fast, seconds), and a
-// single-thread core needs no SharedArrayBuffer — so the app avoids the
-// COOP/COEP cross-origin-isolation headers that would otherwise break the
-// cross-origin parliament video and MP photos. Only "burned-in" re-encodes with
-// libx264 (slower) — the UI warns before that path.
+// stream-COPY the H.264 video (fast, seconds), and a single-thread core needs no
+// SharedArrayBuffer — so the app avoids the COOP/COEP cross-origin-isolation
+// headers that would otherwise break the cross-origin parliament video and MP
+// photos. Only "burned-in" re-encodes the video with libx264 (slower) — the UI
+// warns before that path.
+//
+// Audio is ALWAYS transcoded to AAC (see the AAC constant below), never copied:
+// the parliament source is MP3, and MP3-in-MP4 plays silently on iOS/Safari.
 //
 // The core is built WITHOUT fontconfig (verified in the wasm), so libass can't
 // discover system fonts. For burn-in we therefore bundle a Hungarian-capable
@@ -79,6 +82,15 @@ export function cancel() {
 
 const X264 = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p']
 
+// The parliament HLS source carries MP3 audio, but Apple's AVFoundation (iOS
+// Safari, and iOS apps like Discord that must use the system media stack) cannot
+// decode MP3 inside an MP4/MOV container — it plays the video with no sound.
+// (The same MP3 plays fine on iOS inside the original HLS/TS stream, which is why
+// the live player works but a remuxed MP4 didn't.) So every path transcodes the
+// audio to AAC — universally supported in MP4 — instead of stream-copying it.
+// Audio-only transcode is cheap, so the "fast" video-copy paths stay fast.
+const AAC = ['-c:a', 'aac', '-b:a', '160k']
+
 // Center-crop the 16:9 source to a 9:16 portrait frame (for TikTok/Reels/Shorts):
 // keep the full height, take the middle slice of the width. `trunc(.../2)*2` keeps
 // the width even (yuv420p requires it). The speaker sits centre-frame, so the
@@ -106,20 +118,20 @@ function argsFor(mode, { watermark, portrait, height }) {
     if (mode === 'soft') {
       return [...IN, '-i', 'subs.srt',
         '-map', '0:v:0', '-map', '0:a:0', '-map', '1:0',
-        '-c:v', 'copy', '-c:a', 'copy', '-c:s', 'mov_text',
+        '-c:v', 'copy', ...AAC, '-c:s', 'mov_text',
         '-metadata:s:s:0', 'language=hun', ...OUT]
     }
     if (mode === 'burn') {
       return [...IN, '-map', '0:v:0', '-map', '0:a:0',
         '-vf', `subtitles=subs.srt:fontsdir=fonts:force_style='${BURN_STYLE}'`,
-        ...X264, '-c:a', 'copy', ...OUT]
+        ...X264, ...AAC, ...OUT]
     }
-    // none: pure remux. Drop the TS timed-id3 data stream (0:v/0:a only).
-    return [...IN, '-map', '0:v:0', '-map', '0:a:0', '-c', 'copy', ...OUT]
+    // none: video remux + AAC audio. Drop the TS timed-id3 data stream (0:v/0:a only).
+    return [...IN, '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'copy', ...AAC, ...OUT]
   }
 
   // Watermark and/or portrait: the picture is filtered, so the video is
-  // re-encoded (audio still copied). Inputs: 0=input.ts, then the logo (only
+  // re-encoded (audio transcoded to AAC, as everywhere). Inputs: 0=input.ts, then the logo (only
   // with a watermark) and subs.srt (only when the soft text track is muxed).
   const inputs = ['-i', 'input.ts']
   let logoInput = -1
@@ -151,7 +163,7 @@ function argsFor(mode, { watermark, portrait, height }) {
     ? ['-map', `${subInput}:0`, '-c:s', 'mov_text', '-metadata:s:s:0', 'language=hun']
     : []
   return [...inputs, '-filter_complex', fc, '-map', '[vout]', '-map', '0:a:0',
-    ...subMap, ...X264, '-c:a', 'copy', ...OUT]
+    ...subMap, ...X264, ...AAC, ...OUT]
 }
 
 /**

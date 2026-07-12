@@ -243,8 +243,6 @@ export default {
     activityHelp: 'Napi aktivitás: az adott napon elhangzott felszólalások és benyújtott irományok száma. A sötétebb szín nagyobb aktivitást jelez.',
     activityAriaLabel: 'Aktivitási naptár: {days} aktív nap',
     activityDocs: 'iromány',
-    activityLess: 'kevesebb',
-    activityMore: 'több',
     methodology: 'Módszertan',
     scope: 'Az adatok köre',
     sessionsCovered: 'feldolgozott ülésnap',

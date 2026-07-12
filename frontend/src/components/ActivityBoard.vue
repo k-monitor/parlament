@@ -87,7 +87,7 @@ const weeks = computed(() => {
     let monthLabel = ''
     if (m !== prevMonth) {
       monthLabel = monthFmt.value.format(mDate)
-      if (m === 0 || prevMonth === null) monthLabel += ` ’${String(mDate.getUTCFullYear()).slice(2)}`
+      if (m === 0 || prevMonth === null) monthLabel = `’${String(mDate.getUTCFullYear()).slice(2)} ` + monthLabel
       prevMonth = m
     }
     out.push({ start: cur, cells, monthLabel })
@@ -123,6 +123,7 @@ const summary = computed(() =>
 
 <template>
   <figure class="board" v-if="days.length">
+    <figcaption class="cap">{{ $t('profile.activity') }}</figcaption>
     <div class="board-main">
       <div class="scroll">
         <div class="grid-wrap" role="img" :aria-label="summary">
@@ -148,7 +149,7 @@ const summary = computed(() =>
         </div>
       </div>
 
-      <!-- vertical legend (more → less, top to bottom) + help -->
+      <!-- right rail: help icon (the popup explains the intensity scale) -->
       <div class="aside">
         <button type="button" class="help" :title="$t('profile.activityHelp')"
                 :aria-label="$t('profile.activityHelp')">
@@ -157,16 +158,6 @@ const summary = computed(() =>
             <text x="8" y="11.7" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor">?</text>
           </svg>
         </button>
-        <div class="legend small soft" role="img"
-             :aria-label="$t('profile.activityLess') + ' – ' + $t('profile.activityMore')">
-          <span>{{ $t('profile.activityMore') }}</span>
-          <span class="cell l4"></span>
-          <span class="cell l3"></span>
-          <span class="cell l2"></span>
-          <span class="cell l1"></span>
-          <span class="cell l0"></span>
-          <span>{{ $t('profile.activityLess') }}</span>
-        </div>
       </div>
     </div>
   </figure>
@@ -174,9 +165,10 @@ const summary = computed(() =>
 
 <style scoped>
 .board { margin: 0; }
+.cap { font-size: .82rem; font-weight: 600; color: var(--ink-soft); margin: 0 0 .4rem; }
 .board-main { display: flex; gap: .55rem; align-items: flex-start; }
 .scroll { overflow-x: auto; padding-bottom: .4rem; min-width: 0; }
-/* right rail: help icon on top, vertical legend below */
+/* right rail: help icon (its popup explains the intensity scale) */
 .aside { display: flex; flex-direction: column; align-items: center; gap: .5rem; padding-top: 2px; flex: none; }
 .help { display: inline-flex; padding: 0; border: 0; background: none; cursor: help; color: var(--ink-faint); line-height: 0; }
 .help:hover { color: var(--accent); }
@@ -198,7 +190,4 @@ const summary = computed(() =>
 .cell.l3 { opacity: .72; }
 .cell.l4 { opacity: 1; }
 .cell[data-empty] { background: transparent; opacity: 1; }
-/* vertical legend: "több" at top, cells descending, "kevesebb" at bottom */
-.legend { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: .62rem; }
-.legend .cell { width: 11px; height: 11px; }
 </style>

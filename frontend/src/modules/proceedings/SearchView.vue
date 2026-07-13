@@ -178,6 +178,9 @@ const speakerItems = computed(() =>
   })))
 const hasBreakdown = computed(() =>
   factionItems.value.length > 0 || speakerItems.value.length > 0)
+// The breakdown is a secondary aid, not the primary result — keep it collapsed by
+// default so it doesn't push the result list down the page.
+const showBreakdown = ref(false)
 
 // When a specific cycle is selected globally, the search is scoped to it; offer a
 // one-click switch back to "all cycles" (null) which re-runs the active search.
@@ -295,7 +298,14 @@ function onTrendSelect({ from, to }) {
       </section>
 
       <section v-if="hasBreakdown" class="card pad breakdowncard">
-        <div class="breakdown-grid">
+        <button
+          class="breakdown-toggle" type="button"
+          :aria-expanded="showBreakdown" @click="showBreakdown = !showBreakdown"
+        >
+          <span class="chev" :class="{ open: showBreakdown }" aria-hidden="true">▸</span>
+          {{ $t('search.breakdown') }}
+        </button>
+        <div v-show="showBreakdown" class="breakdown-grid">
           <BarChart
             v-if="factionItems.length"
             :items="factionItems"
@@ -349,7 +359,14 @@ function onTrendSelect({ from, to }) {
 .trendcard { margin: 0 0 .9rem; }
 .trendhint { margin: .5rem 0 0; }
 .breakdowncard { margin: 0 0 .9rem; }
-.breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; }
+.breakdown-toggle {
+  display: flex; align-items: center; gap: .45rem; width: 100%;
+  padding: 0; background: none; border: 0; cursor: pointer;
+  font: inherit; font-weight: 600; color: inherit; text-align: left;
+}
+.breakdown-toggle .chev { font-size: .8em; opacity: .6; transition: transform .15s ease; }
+.breakdown-toggle .chev.open { transform: rotate(90deg); }
+.breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; margin-top: 1rem; }
 .results { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .7rem; }
 /* Card reads top-to-bottom: speaker/meta header → context around the match →
    the watch action. A column gap spaces every part uniformly. */

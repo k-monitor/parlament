@@ -92,6 +92,7 @@ export default {
     sortOldest: 'Legrégebbi elöl',
     trendCaption: 'A(z) „{q}” előfordulása az időben',
     trendHint: 'Kattints egy oszlopra az adott időszakra szűkítéshez.',
+    breakdown: 'Találatok megoszlása',
     breakdownFactions: 'A(z) „{q}” találatok frakciónként',
     breakdownSpeakers: 'A(z) „{q}” találatok felszólalónként',
     cycleScope: 'A keresés a(z) {cycle} felszólalásaira szűkül.',

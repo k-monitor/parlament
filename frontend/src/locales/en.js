@@ -51,6 +51,7 @@ export default {
     sort: 'Sort:', sortRelevance: 'Relevance', sortNewest: 'Newest first', sortOldest: 'Oldest first',
     trendCaption: 'Occurrences of “{q}” over time',
     trendHint: 'Click a bar to narrow the search to that period.',
+    breakdown: 'Breakdown of matches',
     breakdownFactions: 'Matches for “{q}” by faction',
     breakdownSpeakers: 'Matches for “{q}” by representative',
     cycleScope: 'Search is limited to speeches from {cycle}.',

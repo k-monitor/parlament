@@ -153,7 +153,7 @@ export default {
     otherDocuments: 'Other submitted documents',
     statistics: 'Statistics', biography: 'Details', constituency: 'Constituency',
     education: 'Highest education', email: 'Email', website: 'Website', committees: 'Committee memberships',
-    factionHistory: 'Faction history', wikidata: 'Wikidata', wikipedia: 'Wikipedia', kmonitor: 'K-Monitor', totalSpeeches: 'Number of speeches',
+    factionHistory: 'Faction history', wikipedia: 'Wikipedia', kmonitor: 'K-Monitor', totalSpeeches: 'Number of speeches',
     totalSpeakingTime: 'Total speaking time', billsSubmitted: 'Bills submitted',
     votesAbsent: 'Absences from votes',
     voteBreakdown: 'Voting participation',

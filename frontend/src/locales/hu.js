@@ -224,7 +224,6 @@ export default {
     website: 'Honlap',
     committees: 'Bizottsági tagságok',
     factionHistory: 'Frakciótörténet',
-    wikidata: 'Wikidata',
     wikipedia: 'Wikipédia',
     kmonitor: 'K-Monitor',
     totalSpeeches: 'Felszólalások száma',

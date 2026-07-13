@@ -222,22 +222,27 @@ watch(() => store.cycle, load)
       <router-link :to="{ name: 'representatives' }" class="small">‹ {{ $t('reps.title') }}</router-link>
 
       <header class="phead card pad">
-        <img class="avatar lg" :src="profile.photo_uri || PLACEHOLDER" @error="onImgErr" alt="" />
-        <div class="pinfo">
-          <h1>{{ profile.label }}</h1>
-          <div class="row" style="gap:.8rem;">
-            <FactionBadge :faction="profile.current_faction" link />
-            <span v-if="profile.constituency" class="muted">📍 {{ profile.constituency }}</span>
-          </div>
-          <div class="row small links" style="gap:1rem;margin-top:.5rem;">
-            <a v-if="profile.website" :href="profile.website" target="_blank" rel="noopener">🌐 {{ $t('profile.website') }}</a>
-            <a v-if="profile.email" :href="'mailto:' + profile.email">✉ {{ profile.email }}</a>
-            <a v-if="profile.wikipedia_url" :href="profile.wikipedia_url" target="_blank" rel="noopener"><span class="link-badge link-badge--w" aria-hidden="true">W</span> {{ $t('profile.wikipedia') }}</a>
-            <a v-if="profile.kmonitor_url" :href="profile.kmonitor_url" target="_blank" rel="noopener"><span class="link-badge" aria-hidden="true"><img src="/kmonitor-badge.png" alt="" /></span> {{ $t('profile.kmonitor') }}</a>
-            <a v-if="profile.wikidata_id" :href="'https://www.wikidata.org/wiki/' + profile.wikidata_id" target="_blank" rel="noopener">{{ $t('profile.wikidata') }}</a>
-          </div>
-          <div class="row" style="margin-top:.6rem;">
+        <div class="pmain">
+          <div class="pname">
+            <h1>{{ profile.label }}</h1>
             <ShareButton :title="profile.label" />
+          </div>
+          <div class="pident">
+            <img class="avatar lg" :src="profile.photo_uri || PLACEHOLDER" @error="onImgErr" alt="" />
+            <div class="pinfo">
+              <div class="row" style="gap:.8rem;">
+                <FactionBadge :faction="profile.current_faction" link />
+                <span v-if="profile.constituency" class="muted">📍 {{ profile.constituency }}</span>
+              </div>
+              <div class="row small links" style="gap:1rem;margin-top:.5rem;">
+                <a v-if="profile.website" :href="profile.website" target="_blank" rel="noopener">🌐 {{ $t('profile.website') }}</a>
+                <a v-if="profile.email" :href="'mailto:' + profile.email">✉ {{ profile.email }}</a>
+              </div>
+              <div class="row small links" style="gap:1rem;margin-top:.35rem;" v-if="profile.wikipedia_url || profile.kmonitor_url">
+                <a v-if="profile.wikipedia_url" :href="profile.wikipedia_url" target="_blank" rel="noopener"><span class="link-badge link-badge--w" aria-hidden="true">W</span> {{ $t('profile.wikipedia') }}</a>
+                <a v-if="profile.kmonitor_url" :href="profile.kmonitor_url" target="_blank" rel="noopener"><span class="link-badge" aria-hidden="true"><img src="/kmonitor-badge.png" alt="" /></span> {{ $t('profile.kmonitor') }}</a>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -448,8 +453,13 @@ watch(() => store.cycle, load)
 </template>
 
 <style scoped>
-.phead { display: flex; gap: 1.2rem; align-items: center; margin: .8rem 0 1rem; flex-wrap: wrap; }
-.phead h1 { margin: 0 0 .4rem; }
+.phead { display: flex; gap: 1.2rem; align-items: flex-start; margin: .8rem 0 1rem; flex-wrap: wrap; }
+.phead h1 { margin: 0; }
+/* name on top (with the share button beside it), then the portrait and bio
+   side by side below it */
+.pname { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: .6rem; }
+.pmain { min-width: 0; }
+.pident { display: flex; gap: 1.2rem; align-items: flex-start; }
 /* Brand marks in the header links row (Wikipedia serif "W", K-Monitor logo) —
    small "logo chips" matching the inline transcript entity badges. */
 .link-badge { display: inline-flex; align-items: center; justify-content: center;

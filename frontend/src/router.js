@@ -73,6 +73,12 @@ const routes = [
     component: () => import('./modules/votes/VotesListView.vue'),
   },
   {
+    // Frakcióelemzés — the party co-voting charts (VOTE-8), a sub-tab of Votes.
+    // Declared before /votes/:id so "cohesion" isn't captured as a vote id.
+    path: '/votes/cohesion', name: 'cohesion', meta: { module: 'votes' },
+    component: () => import('./modules/votes/CohesionView.vue'),
+  },
+  {
     path: '/votes/:id', name: 'vote', meta: { module: 'votes' },
     component: () => import('./modules/votes/VoteView.vue'), props: true,
   },

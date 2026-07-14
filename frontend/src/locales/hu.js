@@ -31,6 +31,7 @@ export default {
     documents: 'Egyéb irományok',
     questions: 'Kérdések',
     votes: 'Szavazások',
+    cohesion: 'Frakcióelemzés',
     about: 'A projektről',
   },
   a11y: {
@@ -410,6 +411,7 @@ export default {
     clearPersonScope: 'Összes szavazás',
     cohesion: {
       title: 'Frakciók együtt- és szétszavazása',
+      subtitle: 'Mennyire szavaznak együtt — és mennyire külön — a frakciók a ciklus név szerinti szavazásain.',
       basis: '{n} név szerinti szavazás alapján',
       empty: 'Ehhez a szűréshez nincs elég név szerinti szavazás a frakcióelemzéshez.',
       tab_matrix: 'Egyetértési mátrix',

@@ -36,6 +36,13 @@ const NAV_SECTIONS = {
       { name: 'documents', key: 'documents', detail: ['document'] },
     ],
   },
+  votes: {
+    match: ['votes', 'cohesion', 'vote'],
+    tabs: [
+      { name: 'votes', key: 'votes', detail: ['vote'] },
+      { name: 'cohesion', key: 'cohesion' },
+    ],
+  },
 }
 const currentSection = computed(() =>
   Object.values(NAV_SECTIONS).find((s) => s.match.includes(route.name)) || null)
@@ -82,7 +89,8 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
                      :class="{ 'router-link-active': sectionActive('reps') }">{{ $t('nav.representatives') }}</router-link>
         <router-link v-if="showBills" :to="{ name: 'bills' }"
                      :class="{ 'router-link-active': sectionActive('bills') }">{{ $t('nav.bills') }}</router-link>
-        <router-link v-if="showVotes" :to="{ name: 'votes' }">{{ $t('nav.votes') }}</router-link>
+        <router-link v-if="showVotes" :to="{ name: 'votes' }"
+                     :class="{ 'router-link-active': sectionActive('votes') }">{{ $t('nav.votes') }}</router-link>
       </nav>
       <div class="header-controls">
         <router-link :to="{ name: 'about' }" class="infolink" :title="$t('nav.about')" :aria-label="$t('nav.about')">

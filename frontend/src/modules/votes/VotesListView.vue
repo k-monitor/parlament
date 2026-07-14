@@ -4,17 +4,14 @@
 // (the per-MP roll call) and each decided bill links to the Bills module (EXT-2).
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
-import { store, loadMeta, currentCycleLabel } from '../../store.js'
+import { store, loadMeta } from '../../store.js'
 import { formatDateTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import Pagination from '../../components/Pagination.vue'
-import CohesionPanel from './CohesionPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
 
 const PAGE = 50
 const SORTS = ['date_desc', 'date_asc']
@@ -27,14 +24,6 @@ const votingModes = ref([])
 // The MP's name for the person-scope header; kept as its own ref so the header
 // survives an empty result set (when StateBlock replaces the list) and a load.
 const personName = ref('')
-
-// The dynamic cohesion/agreement panel (VOTE-8): a house-wide aggregate over the
-// filtered set, shown between the filter and the list — never in the per-MP scope.
-const cohesion = ref(null)
-const scopeLabel = computed(() => {
-  const c = currentCycleLabel()
-  return c ? t('cycle.scope', { cycle: c }) : t('cycle.scopeAll')
-})
 
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
@@ -159,37 +148,16 @@ async function load() {
   }
 }
 
-// The cohesion panel is house-wide, so it ignores the per-MP scope (and isn't
-// fetched there). It honours the same shared filters as the list and is computed
-// over the whole filtered set by the backend (not one page), like the list's
-// companion aggregates elsewhere.
-let cohesionSeq = 0
-async function loadCohesion() {
-  if (person.value) { cohesion.value = null; return }
-  const seq = ++cohesionSeq
-  try {
-    const res = await api.voteCohesion({
-      q: route.query.q, result: route.query.result, period: store.cycle,
-      voting_mode: route.query.voting_mode,
-      date_from: route.query.date_from, date_to: route.query.date_to,
-      bill: route.query.bill,
-    })
-    if (seq === cohesionSeq) cohesion.value = res
-  } catch {
-    if (seq === cohesionSeq) cohesion.value = null
-  }
-}
-
-onMounted(() => { loadMeta().catch(() => {}).finally(() => { loadFacets(); load(); loadCohesion() }) })
+onMounted(() => { loadMeta().catch(() => {}).finally(() => { loadFacets(); load() }) })
 watch(() => route.query, (q) => {
   f.q = q.q || ''; f.result = q.result || ''
   f.voting_mode = q.voting_mode || ''
   f.date_from = q.date_from || ''; f.date_to = q.date_to || ''
   sort.value = SORTS.includes(q.sort) ? q.sort : 'date_desc'
-  loadFacets(); load(); loadCohesion()
+  loadFacets(); load()
 })
 // Re-fetch when the global cycle changes.
-watch(() => store.cycle, () => { loadFacets(); load(); loadCohesion() })
+watch(() => store.cycle, () => { loadFacets(); load() })
 let searchTimer = null
 function onSearchInput() { clearTimeout(searchTimer); searchTimer = setTimeout(apply, 300) }
 // The debounce survives the component: clear it, or typing then clicking a
@@ -254,14 +222,6 @@ onUnmounted(() => clearTimeout(searchTimer))
     </p>
     <button type="button" class="btn secondary small" @click="clearPersonScope">{{ $t('votes.clearPersonScope') }}</button>
   </div>
-
-  <!-- Dynamic vote-analysis (VOTE-8): faction cohesion & inter-faction agreement
-       over the current filtered set. House-wide, so hidden in the per-MP scope
-       and when there aren't at least two factions to compare. -->
-  <CohesionPanel
-    v-if="!person && cohesion && cohesion.factions.length >= 2"
-    :data="cohesion" :scope-label="scopeLabel"
-  />
 
   <StateBlock
     :loading="loading" :error="error"

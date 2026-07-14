@@ -19,7 +19,7 @@ export default {
       status: 'Page {page} of {total}',
     },
   },
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
   a11y: { showTable: 'Show data as a table', hideTable: 'Hide table' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
@@ -302,6 +302,7 @@ export default {
     accepted: 'Elfogadva',
     cohesion: {
       title: 'How factions vote together — and apart',
+      subtitle: 'How closely — or how differently — the factions vote across the cycle’s roll-call divisions.',
       basis: 'based on {n} roll-call votes',
       empty: 'Not enough roll-call votes in this filter for a faction analysis.',
       tab_matrix: 'Agreement matrix',

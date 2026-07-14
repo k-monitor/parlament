@@ -17,6 +17,9 @@ import { classicalMDS } from './mds.js'
 const props = defineProps({
   data: { type: Object, default: null },   // { vote_count, factions, matrix }
   scopeLabel: { type: String, default: '' },
+  // When the host page already renders the title + methodology (its own <h1>),
+  // suppress the panel's internal header so it isn't shown twice.
+  hideHeader: { type: Boolean, default: false },
 })
 const { t } = useI18n()
 
@@ -60,7 +63,7 @@ const mapPoints = computed(() => {
 
 <template>
   <section v-if="data" class="card pad cohesion">
-    <div class="chead">
+    <div v-if="!hideHeader" class="chead">
       <h2>{{ $t('votes.cohesion.title') }}</h2>
       <HelpTip :label="$t('votes.cohesion.title')">
         <p>{{ $t('votes.cohesion.methodology') }}</p>

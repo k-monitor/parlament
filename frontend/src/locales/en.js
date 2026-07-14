@@ -171,6 +171,7 @@ export default {
     activityHelp: 'Daily activity: the number of speeches given and documents submitted on that day. Darker means more activity.',
     activityAriaLabel: 'Activity calendar: {days} active days',
     activityDocs: 'documents',
+    activityWindow: 'Shows at most the last 200 days.',
     methodology: 'Methodology', scope: 'Data scope',
     sessionsCovered: 'sittings covered', noSpeeches: 'No speeches on record.', viewSpeech: 'View',
     speechesDayCount: 'speeches', speechesLoadError: 'Could not load speeches.',

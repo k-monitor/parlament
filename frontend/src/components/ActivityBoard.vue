@@ -160,12 +160,14 @@ const summary = computed(() =>
         </button>
       </div>
     </div>
+    <p class="note">{{ $t('profile.activityWindow') }}</p>
   </figure>
 </template>
 
 <style scoped>
 .board { margin: 0; }
 .cap { font-size: .82rem; font-weight: 600; color: var(--ink-soft); margin: 0 0 .4rem; }
+.note { font-size: .68rem; color: var(--ink-faint); margin: .35rem 0 0; }
 .board-main { display: flex; gap: .55rem; align-items: flex-start; }
 .scroll { overflow-x: auto; padding-bottom: .4rem; min-width: 0; }
 /* right rail: help icon (its popup explains the intensity scale) */

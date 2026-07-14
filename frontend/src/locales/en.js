@@ -326,6 +326,15 @@ export default {
     privacyTitle: 'Privacy', privacyBody: 'This site uses no third-party advertising or tracking scripts. Any visit statistics are anonymous and GDPR-compliant.',
     apiTitle: 'API', apiBody: 'The data is available through a documented, open API for developers.', apiLink: 'API documentation',
   },
+  donate: {
+    title: 'Support Parlamonitor',
+    description: 'Parlamonitor is a free and independent project, built and maintained by the NGO K-Monitor. If you find it useful, a small donation helps keep it running and improving.',
+    amountsLabel: 'Donation amount',
+    paypalButton: 'Donate with PayPal',
+    moreOptionsButton: 'More ways to support',
+    footer: 'Support us',
+    close: 'Close',
+  },
   agendaTypes: {
     opening: 'Opening', procedural: 'Procedural', regular: 'Debate', oath: 'Oath', voting: 'Voting',
     rules_of_procedure: 'Rules of procedure', questioning_of_the_government: 'Interpellation',

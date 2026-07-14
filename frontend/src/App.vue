@@ -122,8 +122,8 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
   </main>
 
   <footer class="site-footer">
-    <div class="container">
-      <p class="small soft">
+    <div class="container footer-bar">
+      <p class="small soft" style="margin:0;">
         {{ $t('app.sourceNote') }}
         <template v-if="store.meta">
           ·
@@ -133,6 +133,13 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
         </template>
         · <a href="/api/docs" target="_blank" rel="noopener">API</a>
       </p>
+      <a
+        class="donate-link"
+        href="https://tamogatas.k-monitor.hu/?utm_source=parlamonitor"
+        target="_blank" rel="noopener noreferrer"
+      >
+        <span aria-hidden="true">❤️</span> {{ $t('donate.footer') }}
+      </a>
     </div>
   </footer>
 </template>
@@ -187,6 +194,13 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
   font-weight: 700; font-size: .8rem;
 }
 .site-footer { border-top: 1px solid var(--line); padding: 1.5rem 0; margin-top: 2rem; background: var(--surface); }
+.footer-bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.donate-link {
+  display: inline-flex; align-items: center; gap: .4rem; flex-shrink: 0;
+  padding: .4rem .9rem; border-radius: 999px; font-weight: 700; font-size: .9rem;
+  color: var(--accent); background: var(--accent-soft); border: 1px solid #f0cfc9;
+}
+.donate-link:hover, .donate-link:focus-visible { background: #f4d8d3; text-decoration: none; }
 
 /* Hamburger toggle: hidden on desktop, revealed at the mobile breakpoint where
    the five nav links no longer fit on one row. */

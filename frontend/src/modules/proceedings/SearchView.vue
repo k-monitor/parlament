@@ -14,6 +14,7 @@ import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
 import TrendChart from '../../components/TrendChart.vue'
 import BarChart from '../../components/BarChart.vue'
+import DonateCard from '../../components/DonateCard.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -349,6 +350,8 @@ function onTrendSelect({ from, to }) {
         <span class="muted small">{{ page + 1 }} / {{ totalPages }}</span>
         <button class="btn secondary" :disabled="page + 1 >= totalPages" @click="gotoPage(page + 1)">›</button>
       </nav>
+
+      <DonateCard class="search-donate" dismissible storage-key="parlamonitor.donate.search" />
     </div>
   </StateBlock>
 </template>
@@ -356,6 +359,7 @@ function onTrendSelect({ from, to }) {
 <style scoped>
 /* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
 .cyclenotice { margin: .6rem 0 0; }
+.search-donate { margin-top: 1.2rem; }
 .trendcard { margin: 0 0 .9rem; }
 .trendhint { margin: .5rem 0 0; }
 .breakdowncard { margin: 0 0 .9rem; }

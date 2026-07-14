@@ -1,5 +1,6 @@
 <script setup>
 import { store } from '../store.js'
+import DonateCard from '../components/DonateCard.vue'
 </script>
 
 <template>
@@ -23,4 +24,10 @@ import { store } from '../store.js'
       <a :href="store.meta.source_attribution.license_url" target="_blank" rel="noopener">{{ $t('viewer.license') }}</a>
     </p>
   </article>
+
+  <DonateCard class="about-donate" />
 </template>
+
+<style scoped>
+.about-donate { max-width: 75ch; margin-top: 1.5rem; }
+</style>

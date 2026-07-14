@@ -438,6 +438,15 @@ export default {
     apiBody: 'Az adatok dokumentált, nyílt API-n keresztül is elérhetők fejlesztők számára.',
     apiLink: 'API-dokumentáció',
   },
+  donate: {
+    title: 'Támogasd a Parlamonitort',
+    description: 'A Parlamonitor ingyenes és független projekt, amelyet a K-Monitor civil szervezet fejleszt és tart fenn. Ha hasznosnak találod, egy kisebb adománnyal segíthetsz, hogy megmaradjon és tovább fejlődjön.',
+    amountsLabel: 'Adomány összege',
+    paypalButton: 'Adományozok PayPallal',
+    moreOptionsButton: 'További támogatási lehetőségek',
+    footer: 'Támogatás',
+    close: 'Bezárás',
+  },
   agendaTypes: {
     opening: 'Ülésnap megnyitása',
     procedural: 'Ügyrendi',

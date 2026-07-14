@@ -1,5 +1,26 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { loadMeta, store } from './store.js'
+import { loadMeta, setCycle, store } from './store.js'
+
+// The global electoral cycle is carried in a `?cycle=` query param so that a
+// shared link reproduces the exact scope the sharer was viewing (a period
+// number, or `all` for the "all cycles" scope — matching the localStorage
+// sentinel in store.js). The guard below keeps it in sync in both directions.
+const CYCLE_QUERY = 'cycle'
+
+// Parse a `?cycle=` value into a store cycle, validating against known periods.
+// `undefined` = absent or invalid (caller falls back to the current cycle),
+// `null` = the explicit "all cycles" sentinel, otherwise the period number.
+function cycleFromQuery(raw, periods) {
+  if (raw === undefined || raw === null) return undefined
+  if (raw === 'all') return null
+  const n = Number(raw)
+  return Number.isFinite(n) && periods.some((p) => p.number === n) ? n : undefined
+}
+
+// Serialise a store cycle (null = all) into its `?cycle=` query value.
+function cycleToQuery(cycle) {
+  return cycle === null ? 'all' : String(cycle)
+}
 
 // Core routes are always present. Feature-module views are **lazily loaded**
 // (separate chunks, EXT-4) and gated on the module being enabled (EXT-6).
@@ -110,6 +131,25 @@ router.beforeEach(async (to) => {
       params: { pathMatch: to.path.substring(1).split('/') },
       query: to.query,
       hash: to.hash,
+    }
+  }
+
+  // Sync the global cycle with the URL. A valid `?cycle=` wins — adopt it so a
+  // shared link overrides the visitor's saved default. Otherwise write the
+  // current cycle (set by loadMeta→initCycle from localStorage/latest) back
+  // into the URL, so every address carries an explicit, shareable scope. The
+  // in-guard redirect commits once (no extra history entry), and views that
+  // rebuild the query on filter/pagination simply get the param re-added.
+  if (store.loaded) {
+    const periods = (store.meta && store.meta.periods) || []
+    const fromUrl = cycleFromQuery(to.query[CYCLE_QUERY], periods)
+    if (fromUrl !== undefined) {
+      if (store.cycle !== fromUrl) setCycle(fromUrl)
+    } else {
+      const desired = cycleToQuery(store.cycle)
+      if (to.query[CYCLE_QUERY] !== desired) {
+        return { path: to.path, query: { ...to.query, [CYCLE_QUERY]: desired }, hash: to.hash }
+      }
     }
   }
   return true

@@ -1,12 +1,13 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { store, loadMeta, setCycle, periodLabel } from './store.js'
 import { setLocale } from './i18n.js'
 import { useI18n } from 'vue-i18n'
 
 const { locale } = useI18n()
 const route = useRoute()
+const router = useRouter()
 onMounted(() => { loadMeta().catch(() => {}) })
 
 // Nav is built from the live module manifest (EXT-4): a disabled module's link
@@ -56,8 +57,11 @@ function tabActive(tab) {
 const periods = computed(() => (store.meta && store.meta.periods) || [])
 const cycleValue = computed(() => (store.cycle === null ? 'all' : String(store.cycle)))
 function onCycleChange(e) {
-  const v = e.target.value
+  const v = e.target.value // 'all' | period number as string — the query value too
   setCycle(v === 'all' ? null : Number(v))
+  // Reflect the new scope in the URL (replace, so it doesn't pile up history)
+  // so the address stays shareable. The router guard keeps store ↔ URL in sync.
+  router.replace({ query: { ...route.query, cycle: v } })
 }
 
 function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }

@@ -299,6 +299,55 @@ def test_representative_vote_breakdown(client, db_path):
     # total = every substantive roll-call vote in scope (v-1,3,4,5,6); v-2 has no
     # roll call and v-q is a quorum check — both excluded.
     assert b["total"] == 5
+    # k001 served the whole scope (no election history in the fixture → no window
+    # filter), so nothing is attributed to "nem volt képviselő".
+    assert b["not_mp"] == 0
+
+
+def test_vote_breakdown_excludes_pre_mandate_votes(client, db_path):
+    """Roll-call votes from outside the MP's mandate window (before they took
+    their seat, or after they left) are counted as "nem volt képviselő" — split
+    out from a genuine "nem volt jelen" and left out of the 100% base. Give k001
+    a mandate starting 2026-05-25: the fixture's v-1 (05-26, Igen) is inside it, a
+    vote before (05-10, no record) is pre-mandate, and one inside (05-30, no
+    record) is a real absence."""
+    import json, sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("UPDATE person SET election_history_json=? WHERE person_id='k001'",
+              (json.dumps([{"cycle": "2026-", "mandateStart": "2026-05-25T00:00:00Z",
+                            "mandateEnd": None}]),))
+    # A roll-call vote BEFORE the mandate — k001 has no record → "nem volt képviselő".
+    c.execute("INSERT INTO vote (id, period_number, vote_datetime, result, has_per_mp) "
+              "VALUES ('v-pre', 43, '2026-05-10T10:00:00Z', 'Elfogadva', 1)")
+    # A roll-call vote INSIDE the mandate k001 has no record in → "nem volt jelen".
+    c.execute("INSERT INTO vote (id, period_number, vote_datetime, result, has_per_mp) "
+              "VALUES ('v-in', 43, '2026-05-30T10:00:00Z', 'Elfogadva', 1)")
+    c.commit(); c.close()
+
+    b = client.get("/api/v1/representatives/k001/statistics").json()["totals"]["vote_breakdown"]
+    assert b["voted"] == 1        # v-1 Igen (inside the mandate)
+    assert b["not_present"] == 1  # v-in, inside the mandate, no record
+    assert b["not_mp"] == 1       # v-pre, before the mandate
+    # The 100% base excludes not_mp: voted + novote + absent + not_present.
+    assert b["total"] == 2
+
+
+def test_non_mp_has_no_vote_breakdown(client, db_path):
+    """A non-representative (a minister/guest, is_mp=0) has no mandate to attend
+    roll calls, so the whole participation section is suppressed — otherwise every
+    roll-call vote would read as "nem volt jelen 100%"."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("INSERT INTO person (person_id, label, is_mp) VALUES ('m001', 'Miniszter Márta', 0)")
+    # A roll-call vote exists in scope but m001 has no record in it.
+    c.execute("INSERT INTO vote (id, period_number, vote_datetime, result, has_per_mp) "
+              "VALUES ('v-m', 43, '2026-05-28T10:00:00Z', 'Elfogadva', 1)")
+    c.commit(); c.close()
+
+    totals = client.get("/api/v1/representatives/m001/statistics").json()["totals"]
+    assert totals["vote_breakdown"] is None
+    assert totals["votes_total"] == 0
+    assert totals["votes_absent_pct"] is None
 
 
 def test_representative_vote_lists_exclude_quorum_checks(client, db_path):

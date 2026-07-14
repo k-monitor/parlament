@@ -13,6 +13,13 @@ const props = defineProps({
   caption: { type: String, default: '' },
   // Small label rendered under the total in the pie's centre (e.g. "vote").
   totalLabel: { type: String, default: '' },
+  // Extra legend rows [{ key?, label, value, color }] shown below a divider but
+  // EXCLUDED from the total, the wedges and the percentages — for a category
+  // that belongs to the picture yet must not skew the 100% base (e.g. roll-call
+  // votes from before an MP took their seat).
+  extra: { type: Array, default: () => [] },
+  // Optional caption under the extra rows explaining why they don't count.
+  extraNote: { type: String, default: '' },
 })
 
 const total = computed(() =>
@@ -84,6 +91,18 @@ function fmtPct(v) {
             <span class="lg-pct">{{ fmtPct(s.value || 0) }}</span>
           </component>
         </li>
+        <template v-if="extra.length">
+          <li class="lg-sep" role="presentation"></li>
+          <li v-for="(s, i) in extra" :key="s.key || ('x' + i)" class="lg-extra">
+            <span class="lg-row">
+              <span class="swatch" :style="{ background: s.color }" aria-hidden="true"></span>
+              <span class="lg-label">{{ s.label }}</span>
+              <span class="lg-val">{{ (s.value || 0).toLocaleString('hu-HU') }}</span>
+              <span class="lg-pct" aria-hidden="true">—</span>
+            </span>
+          </li>
+          <li v-if="extraNote" class="lg-note small soft">{{ extraNote }}</li>
+        </template>
       </ul>
     </div>
   </figure>
@@ -107,4 +126,10 @@ function fmtPct(v) {
 .lg-label { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lg-val { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--ink); }
 .lg-pct { font-variant-numeric: tabular-nums; color: var(--ink-soft); min-width: 3ch; text-align: right; }
+/* Extra rows: shown but not part of the 100% — muted, under a hairline. */
+.lg-sep { height: 1px; background: var(--line); margin: .35rem 0; }
+.legend li.lg-extra .lg-row { color: var(--ink-soft); }
+.legend li.lg-extra .lg-val, .legend li.lg-extra .lg-label { color: var(--ink-soft); font-weight: 500; }
+.legend li.lg-extra .lg-pct { opacity: .5; }
+.lg-note { display: block; margin-top: .15rem; line-height: 1.3; }
 </style>

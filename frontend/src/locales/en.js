@@ -163,6 +163,8 @@ export default {
     vbNovote: 'Present, did not vote',
     vbAbsent: 'Excused absence',
     vbNotPresent: 'Not present',
+    vbNotMp: 'Not an MP at the time',
+    vbNotMpNote: 'These votes took place before (or after) their mandate, so they are not counted in the participation total.',
     billsUnavailable: 'Bills-submitted data will be available once the Bills module ships.',
     speechesOverTime: 'Speeches per sitting',
     activity: 'Activity',

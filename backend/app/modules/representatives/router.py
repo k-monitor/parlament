@@ -264,8 +264,8 @@ def get_statistics(person_id: str, period: Optional[int] = None,
     to the selected cycle (§4A): with ``period`` set, the headline totals,
     over-time chart and session count cover ONLY that cycle; otherwise all
     cycles. The ``scope.description`` names the cycle so the scope is explicit."""
-    p = db.execute("SELECT person_id, external_stats_json FROM person WHERE person_id=?",
-                   (person_id,)).fetchone()
+    p = db.execute("SELECT person_id, is_mp, external_stats_json, election_history_json "
+                   "FROM person WHERE person_id=?", (person_id,)).fetchone()
     if not p:
         raise HTTPException(404, "Representative not found")
 
@@ -322,11 +322,16 @@ def get_statistics(person_id: str, period: Optional[int] = None,
     # roll-call record for in scope (each MP has one record per vote, present or
     # not). Only meaningful — and only queried — when the Votes module is live
     # (EXT-6); its tables may not exist otherwise.
+    # Voting statistics are only shown for actual MPs (is_mp): a minister or other
+    # non-representative has no mandate to attend roll calls, so the whole
+    # participation section (the absence metric AND the pie) is suppressed for
+    # them — otherwise every roll-call vote would read as "nem volt jelen 100%".
+    is_mp = bool(p["is_mp"])
     votes_available = settings.module_enabled("votes")
     votes_total = votes_absent = 0
     votes_absent_pct = None
     vote_breakdown = None
-    if votes_available:
+    if votes_available and is_mp:
         extra = " AND v.period_number = :per" if period is not None else ""
         vparams: dict = {"pid": person_id}
         if period is not None:
@@ -348,12 +353,11 @@ def get_statistics(person_id: str, period: Optional[int] = None,
         votes_absent = vrow["absent"] or 0
         votes_absent_pct = round(100.0 * votes_absent / votes_total, 1) if votes_total else None
 
-        # "Nem volt jelen" is derived: of all roll-call votes in scope (those
-        # with a per-MP list, has_per_mp = 1 — voice/list votes are excluded so
-        # they don't inflate everyone's absence, and quorum checks likewise),
-        # the ones the MP has no record in at all. Clamped at 0 for the rare
-        # case where the record count exceeds the roll-call universe (e.g. votes
-        # lacking the flag in a test or partial import).
+        # The votes the MP has no record in at all split into two categories.
+        # First, of all roll-call votes in scope (those with a per-MP list,
+        # has_per_mp = 1 — voice/list votes are excluded so they don't inflate
+        # everyone's absence, and quorum checks likewise) count the whole
+        # universe.
         rc_where = "has_per_mp = 1" + _exclude_quorum("")
         rc_params: dict = {}
         if period is not None:
@@ -362,14 +366,47 @@ def get_statistics(person_id: str, period: Optional[int] = None,
         total_rollcall = (db.execute(
             f"SELECT COUNT(*) AS n FROM vote WHERE {rc_where}",
             rc_params).fetchone()["n"] or 0)
+
+        # Of that universe, the ones that fell WITHIN the MP's mandate window(s)
+        # are the votes they could actually have taken part in ("eligible"). The
+        # windows come from election_history_json's mandateStart/mandateEnd (ISO
+        # UTC, so a lexicographic datetime compare is chronological); an MP who
+        # took their seat mid-cycle (a replacement) or resigned early has votes
+        # outside their mandate. Those are "nem volt képviselő" — kept separate
+        # from a genuine absence and excluded from the participation denominator.
+        windows = [(e.get("mandateStart"), e.get("mandateEnd"))
+                   for e in (_loads(p["election_history_json"]) or [])
+                   if e.get("mandateStart")]
+        eligible_rollcall = total_rollcall
+        if windows:
+            conds, wparams = [], dict(rc_params)
+            for i, (start, end) in enumerate(windows):
+                wparams[f"ms{i}"] = start
+                cond = f"vote_datetime >= :ms{i}"
+                if end:
+                    wparams[f"me{i}"] = end
+                    cond += f" AND vote_datetime <= :me{i}"
+                conds.append(f"({cond})")
+            eligible_rollcall = (db.execute(
+                f"SELECT COUNT(*) AS n FROM vote "
+                f"WHERE {rc_where} AND ({' OR '.join(conds)})",
+                wparams).fetchone()["n"] or 0)
+
         voted = vrow["voted"] or 0
         novote = vrow["novote"] or 0
-        not_present = max(0, total_rollcall - votes_total)
+        # Clamped at 0 for the rare case where the record count exceeds the
+        # eligible universe (e.g. a vote right on the mandate boundary, or votes
+        # lacking the flag in a test/partial import).
+        not_present = max(0, eligible_rollcall - votes_total)
+        not_mp = max(0, total_rollcall - eligible_rollcall)
         vote_breakdown = {
             "voted": voted,              # szavazott (igen + nem + tartózkodás)
             "novote": novote,            # jelen, nem szavazott
             "absent": votes_absent,      # igazoltan távol
-            "not_present": not_present,  # nem volt jelen (no roll-call record)
+            "not_present": not_present,  # nem volt jelen (MP, but no record)
+            "not_mp": not_mp,            # nem volt képviselő (outside mandate)
+            # `total` is the participation denominator (the 100% base) — it does
+            # NOT include not_mp, so time before/after the mandate never counts.
             "total": voted + novote + votes_absent + not_present,
         }
 

@@ -147,6 +147,14 @@ const voteBreakdownSegments = computed(() => {
   }))
 })
 
+// Roll-call votes from before the MP took their seat (or after they left) —
+// shown as a separate, greyed legend row and deliberately kept OUT of the pie's
+// 100% base (the backend already excludes `not_mp` from `vote_breakdown.total`).
+const voteBreakdownExtra = computed(() => {
+  const n = stats.value?.totals?.vote_breakdown?.not_mp || 0
+  return n ? [{ key: 'not_mp', label: t('profile.vbNotMp'), value: n, color: '#c3c7cc' }] : []
+})
+
 // "Felszólalások száma" / "Összes beszédidő" jump to the speeches list already
 // on this (shareable) profile — there is no standalone per-MP speech page.
 const speechesSection = ref(null)
@@ -295,6 +303,8 @@ watch(() => store.cycle, load)
                  style="margin-top:1.2rem;">
               <PieChart
                 :segments="voteBreakdownSegments"
+                :extra="voteBreakdownExtra"
+                :extra-note="voteBreakdownExtra.length ? $t('profile.vbNotMpNote') : ''"
                 :caption="$t('profile.voteBreakdown')"
                 :total-label="$t('profile.vbUnit')"
               />

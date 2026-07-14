@@ -237,6 +237,8 @@ export default {
     vbNovote: 'Nem szavazott',
     vbAbsent: 'Igazoltan távol',
     vbNotPresent: 'Nem volt jelen',
+    vbNotMp: 'Nem volt képviselő',
+    vbNotMpNote: 'Ezek a szavazások a képviselői mandátuma előtt (vagy után) zajlottak, ezért nem számítanak bele a részvételbe.',
     billsUnavailable: 'A benyújtott indítványok adatai a Törvényjavaslatok modul bevezetése után lesznek elérhetők.',
     speechesOverTime: 'Felszólalások ülésnaponként',
     activity: 'Aktivitás',

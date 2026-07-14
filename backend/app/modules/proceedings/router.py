@@ -246,6 +246,31 @@ def search(
     }
 
 
+# The electoral mandate is four years (Fundamental Law) — the widest an ongoing
+# cycle's trend axis ever grows.
+_TERM_YEARS = 4
+
+
+def _plus_years(iso: str, n: int) -> str:
+    """ISO date `n` years later, clamping Feb 29 → Feb 28 in non-leap years."""
+    d = date.fromisoformat(iso)
+    try:
+        return d.replace(year=d.year + n).isoformat()
+    except ValueError:  # 29 Feb landing on a common year
+        return d.replace(year=d.year + n, day=28).isoformat()
+
+
+def _ongoing_axis_end(start_iso: str, today_iso: str) -> str:
+    """Synthesised end date for the *ongoing* cycle's trend axis (it has no real
+    end yet). The window is a whole number of years wide — enough to cover the time
+    elapsed so far, at least one year and at most the full mandate. So a young cycle
+    shows a ~1-year axis with its data left-aligned and room to grow, and the window
+    widens a year at a time as the cycle ages rather than sitting mostly empty."""
+    elapsed = (date.fromisoformat(today_iso) - date.fromisoformat(start_iso)).days
+    years = min(_TERM_YEARS, max(1, -(-elapsed // 365)))  # ceil(elapsed/365), 1..term
+    return _plus_years(start_iso, years)
+
+
 @router.get("/search/trend")
 def search_trend(
     q: str = Query(..., min_length=1, description="Free-text query; \"…\" = exact phrase"),
@@ -286,16 +311,25 @@ def search_trend(
     # Anchor the chart's time axis to the *scope*, not to this query's own first
     # and last hit, so every card sharing a cycle draws one identical timeline
     # (otherwise a rare term and a common one show visibly different axes). With a
-    # cycle in scope the axis runs cycle-start → cycle-end, or → today for the
-    # ongoing cycle; the all-cycles view runs earliest-sitting → today. Explicit
-    # date filters tighten these bounds, and real hits are never clipped.
+    # cycle in scope the axis spans that whole cycle: a finished one runs
+    # cycle-start → cycle-end; the ongoing one runs cycle-start → a synthesised end
+    # that grows a year at a time (see `_ongoing_axis_end`), so its data sits
+    # left-aligned with the not-yet-happened remainder empty on the right and the
+    # axis widens as the term progresses. The all-cycles view runs earliest-sitting
+    # → today. Explicit date filters tighten these bounds, and real hits are never
+    # clipped.
     today = date.today().isoformat()
     if period is not None:
         prow = db.execute(
             "SELECT date_start, date_end FROM electoral_period WHERE number = :p",
             {"p": period}).fetchone()
         dom_lo = prow["date_start"] if prow else None
-        dom_hi = min(prow["date_end"] or today, today) if prow else None
+        if prow and prow["date_end"]:
+            dom_hi = min(prow["date_end"], today)
+        elif prow and prow["date_start"]:
+            dom_hi = _ongoing_axis_end(prow["date_start"], today)  # ongoing → growing
+        else:
+            dom_hi = None
     else:
         dom_lo = db.execute("SELECT MIN(date) AS lo FROM session").fetchone()["lo"]
         dom_hi = today

@@ -81,6 +81,44 @@ def test_search_trend_buckets_hits_over_time(client):
     assert empty["buckets"] == []
 
 
+def _freeze_today(monkeypatch, y, m, d):
+    # Pin date.today() in the router so the ongoing-cycle window is deterministic.
+    import app.modules.proceedings.router as router_mod
+    from datetime import date as _date
+
+    class _Frozen(_date):
+        @classmethod
+        def today(cls):
+            return cls(y, m, d)
+
+    monkeypatch.setattr(router_mod, "date", _Frozen)
+
+
+def test_search_trend_ongoing_cycle_window_grows_over_time(client, monkeypatch):
+    # SEA-8: a cycle-scoped chart spans the whole cycle. The ongoing cycle (43,
+    # started 2026-05-09, no end date) gets a synthesised end a whole number of
+    # years out — enough to cover the elapsed time, min one year, max the mandate —
+    # so young data sits left-aligned with room to grow and the axis widens with age.
+    _freeze_today(monkeypatch, 2026, 7, 14)  # ~2 months in → a 1-year window
+    d1 = client.get("/api/v1/proceedings/search/trend",
+                    params={"q": "koltsegvetes", "period": 43}).json()
+    assert d1["buckets"], "fixture must have cycle-43 hits for this to test anchoring"
+    assert d1["start"] == "2026-05-09"   # cycle start, not the first hit
+    assert d1["end"] == "2027-05-09"     # start + 1 year (elapsed < 1y)
+    assert d1["granularity"] == "week"   # a ~1-year span buckets weekly
+
+    _freeze_today(monkeypatch, 2028, 11, 1)  # ~2.5 years in → widened to 3 years
+    d2 = client.get("/api/v1/proceedings/search/trend",
+                    params={"q": "koltsegvetes", "period": 43}).json()
+    assert d2["end"] == "2029-05-09"     # start + ceil(elapsed) = 3 years
+    assert d2["granularity"] == "month"  # a ~3-year span buckets monthly
+
+    _freeze_today(monkeypatch, 2035, 1, 1)  # long past the mandate → capped at 4y
+    d3 = client.get("/api/v1/proceedings/search/trend",
+                    params={"q": "koltsegvetes", "period": 43}).json()
+    assert d3["end"] == "2030-05-09"     # start + 4 years, never wider
+
+
 def test_search_breakdown_groups_by_faction_and_speaker(client):
     # SEA-9: the breakdown counts matching sentences per faction and per
     # representative, honouring the same filters as /search.

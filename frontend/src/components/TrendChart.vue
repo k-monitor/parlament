@@ -215,6 +215,13 @@ function onClick(e) {
 }
 const tipPct = computed(() => (hoverBar.value
   ? ((hoverBar.value.x + barW.value / 2) / w.value) * 100 : 0))
+
+// Centre each axis label on its slot, but pin the domain-edge labels to the
+// plot edges (via CSS) so their outer half doesn't spill past the chart.
+function tickStyle(t) {
+  if (t.i === 0 || t.i === n.value - 1) return {}
+  return { left: ((t.i * slotW.value + slotW.value / 2) / w.value * 100) + '%' }
+}
 </script>
 
 <template>
@@ -243,7 +250,8 @@ const tipPct = computed(() => (hoverBar.value
 
     <div class="axis" aria-hidden="true">
       <span v-for="t in ticks" :key="t.i" class="axis-lbl"
-            :style="{ left: ((t.i * slotW + slotW / 2) / w * 100) + '%' }">{{ t.text }}</span>
+            :class="{ 'at-start': t.i === 0, 'at-end': t.i === n - 1 }"
+            :style="tickStyle(t)">{{ t.text }}</span>
     </div>
   </figure>
 </template>
@@ -273,4 +281,8 @@ const tipPct = computed(() => (hoverBar.value
   position: absolute; transform: translateX(-50%); top: 0;
   font-size: .62rem; color: var(--ink-soft); white-space: nowrap;
 }
+/* Edge ticks align to the plot edge instead of centring on their slot, so the
+   first/last month label doesn't overhang the chart's left/right boundary. */
+.axis-lbl.at-start { left: 0; transform: none; }
+.axis-lbl.at-end { right: 0; left: auto; transform: none; }
 </style>

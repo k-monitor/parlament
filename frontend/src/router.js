@@ -151,6 +151,15 @@ router.beforeEach(async (to) => {
         return { path: to.path, query: { ...to.query, [CYCLE_QUERY]: desired }, hash: to.hash }
       }
     }
+
+    // Frakcióelemzés (cohesion) is a single-cycle analysis — co-voting compared
+    // across different cycles is meaningless — so under the "all cycles" scope
+    // its sub-tab is hidden (App.vue) and its route is unreachable: bounce to the
+    // vote list, keeping the scope. Also fires when the user switches to "all
+    // cycles" while already viewing the page.
+    if (to.name === 'cohesion' && store.cycle === null) {
+      return { name: 'votes', query: to.query, hash: to.hash }
+    }
   }
   return true
 })

@@ -48,6 +48,15 @@ const NAV_SECTIONS = {
 const currentSection = computed(() =>
   Object.values(NAV_SECTIONS).find((s) => s.match.includes(route.name)) || null)
 function sectionActive(id) { return NAV_SECTIONS[id].match.includes(route.name) }
+
+// The Frakcióelemzés (cohesion) sub-tab compares how factions vote *within one
+// cycle*; across all cycles that comparison is meaningless, so it's hidden while
+// the global scope is "all cycles" (router.js bounces the route to match). That
+// can leave the Votes section with a single tab, in which case the sub-tab bar
+// is redundant with the top nav and hidden entirely (see the `v-if` below).
+const sectionTabs = computed(() =>
+  (currentSection.value ? currentSection.value.tabs : []).filter(
+    (t) => !(t.name === 'cohesion' && store.cycle === null)))
 function tabActive(tab) {
   return route.name === tab.name || (tab.detail || []).includes(route.name)
 }
@@ -118,10 +127,10 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
     </div>
   </header>
 
-  <nav v-if="currentSection" class="subheader" :aria-label="$t('nav.submenu')">
+  <nav v-if="sectionTabs.length > 1" class="subheader" :aria-label="$t('nav.submenu')">
     <div class="container subnav">
       <router-link
-        v-for="t in currentSection.tabs" :key="t.name" :to="{ name: t.name }"
+        v-for="t in sectionTabs" :key="t.name" :to="{ name: t.name }"
         class="subtab" :class="{ active: tabActive(t) }"
       >{{ $t('nav.' + t.key) }}</router-link>
     </div>

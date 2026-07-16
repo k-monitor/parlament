@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { api } from '../api.js'
 import { store, loadMeta, periodLabel } from '../store.js'
 import TrendChart from '../components/TrendChart.vue'
+import DonateCard from '../components/DonateCard.vue'
 
 const router = useRouter()
 const q = ref('')
@@ -125,6 +126,8 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
     </div>
   </section>
 
+  <DonateCard class="home-donate" />
+
   <section class="grid cards3">
     <router-link v-if="showProceedings" :to="{ name: 'search' }" class="card feature">
       <span class="feature__icon" aria-hidden="true">
@@ -172,6 +175,7 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
 .stats dt { font-size: 1.6rem; font-weight: 800; color: var(--accent); }
 .stats dd { margin: 0; color: var(--ink-faint); font-size: .9rem; }
 .cards3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.home-donate { margin-bottom: 1.5rem; }
 
 /* Example searches: a curated set of topics, each with its popularity histogram
    (§SEA-8) as a teaser. The card is a link into the full search for that term. */

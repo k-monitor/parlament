@@ -150,6 +150,30 @@ def test_non_mp_speaker_office_stored(db_path):
     c.close()
 
 
+def test_wire_nonmp_photos(db_path, tmp_path):
+    """A non-MP speaker's downloaded portrait (`<pid>.jpg` on disk) is wired onto
+    their profile; an MP's roster photo and a non-MP with no file are untouched."""
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    (photos / "004L.jpg").write_bytes(b"jpegbytes")   # nationality advocate, has a file
+    (photos / "0052.jpg").exists()                     # (minister, no file — 404 upstream)
+    c = loader.connect(db_path)
+    c.execute("INSERT INTO person(person_id, label, is_mp) VALUES ('004L','Gallai Gergely',0)")
+    c.execute("INSERT INTO person(person_id, label, is_mp) VALUES ('0052','Egy Miniszter',0)")
+    c.execute("INSERT INTO person(person_id, label, is_mp, photo_uri) "
+              "VALUES ('k009','Egy Képviselő',1,'/media/photos/k009.jpg')")
+    (photos / "k009.jpg").write_bytes(b"x")            # an MP file must NOT be re-wired here
+    wired = loader.wire_nonmp_photos(c, photos)
+    assert wired == 1
+    assert c.execute("SELECT photo_uri FROM person WHERE person_id='004L'").fetchone()[0] \
+        == "/media/photos/004L.jpg"
+    assert c.execute("SELECT photo_uri FROM person WHERE person_id='0052'").fetchone()[0] is None
+    # The MP keeps their roster photo (function only touches non-MP rows).
+    assert c.execute("SELECT photo_uri FROM person WHERE person_id='k009'").fetchone()[0] \
+        == "/media/photos/k009.jpg"
+    c.close()
+
+
 def test_faction_colors_assigned(conn):
     rows = dict(conn.execute("SELECT label, color FROM faction"))
     assert rows["Fidesz"] == "#FF6A13"

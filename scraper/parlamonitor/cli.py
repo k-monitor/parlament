@@ -42,6 +42,7 @@ from .votes.scrape import fetch_votes, save_votes
 from .proceedings.scrape import download_period
 from .proceedings.transform import transform_day
 from .representatives.scrape import fetch_representatives, save_representatives
+from .speaker_photos import fetch_nonroster_photos
 from .sync import DEFAULT_REPS_MAX_AGE, latest_cycle, run_sync
 
 logger = logging.getLogger("parlamonitor")
@@ -291,6 +292,15 @@ def cmd_sync(args) -> None:
                 no_detail=args.no_detail, no_offsets=args.no_offsets,
                 reps_max_age=reps_max_age, skip_bills=args.skip_bills,
                 skip_votes=args.skip_votes, skip_reps=args.skip_reps)
+            # Top up portraits for non-roster speakers of this cycle (ministers /
+            # nationality advocates who aren't in the MP roster). Cheap on an idle
+            # poll: already-downloaded ids are skipped and 404s are negative-cached,
+            # so only a genuinely new speaker triggers a request.
+            try:
+                summary["speakerPhotos"] = fetch_nonroster_photos(
+                    felicitas, paths, cycle)
+            except Exception as e:  # never let a photo hiccup fail the sync (SCR-5)
+                logger.warning("non-roster photo top-up failed: %s", e)
     finally:
         felicitas.close()
 
@@ -308,6 +318,24 @@ def cmd_sync(args) -> None:
                       "errors": summary["errors"]}))
     if summary["errors"]:
         sys.exit(1)
+
+
+def cmd_speaker_photos(args) -> None:
+    """Download portraits for speakers who aren't in the MP roster (REP-2).
+
+    Ministers and nationality advocates (nemzetiségi szószólók) speak in plenary
+    but aren't in the roster, so they otherwise show only a placeholder. This
+    fetches whatever portrait the image resource has for each (advocates resolve;
+    portrait-less ministers 404 and are negative-cached). The loader wires the
+    on-disk file onto the person row on the next build/update."""
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    felicitas = _client(args)
+    try:
+        result = fetch_nonroster_photos(felicitas, paths, args.cycle)
+    finally:
+        felicitas.close()
+    print(json.dumps(result))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -416,6 +444,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--skip-votes", action="store_true")
     sp.add_argument("--skip-reps", action="store_true")
     sp.set_defaults(func=cmd_sync)
+
+    sp = sub.add_parser("speaker-photos",
+                        help="download portraits for non-roster speakers "
+                             "(ministers / nationality advocates)")
+    _common(sp, cycle_required=False)
+    sp.set_defaults(func=cmd_speaker_photos)
     return p
 
 

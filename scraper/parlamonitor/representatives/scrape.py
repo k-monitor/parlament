@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .. import wikidata
 from ..config import Paths
@@ -233,6 +234,61 @@ def _save_photo(felicitas: FelicitasClient, photos_dir, pid: str, rec: dict) -> 
     out = photos_dir / f"{pid}.jpg"
     out.write_bytes(data)
     rec["photoFile"] = out.name
+
+
+# --- portraits for speakers who are NOT in the MP roster --------------------
+# Ministers and nationality advocates (nemzetiségi szószólók) speak in the House
+# but are not returned by the MP roster query, so they never get a portrait the
+# way roster MPs do (`_save_photo`). Many of them DO have a portrait in the very
+# same Felicitas image resource, keyed by their kepviseloId (a nationality
+# advocate like Gallai Gergely resolves; a minister with no portrait 404s). We
+# fetch those here and cache the 404s so a repeat run stays polite (SCR-4).
+
+_PHOTO_MISSING_FILE = "photos-missing.json"
+
+
+def _photo_negcache_path(photos_dir: Path) -> Path:
+    return photos_dir / _PHOTO_MISSING_FILE
+
+
+def load_photo_negcache(photos_dir) -> set[str]:
+    """Ids known to have no portrait (a definitive 404), so they aren't re-fetched."""
+    try:
+        return set(json.loads(_photo_negcache_path(Path(photos_dir)).read_text()))
+    except (OSError, ValueError):
+        return set()
+
+
+def fetch_missing_photos(felicitas: FelicitasClient, photos_dir, ids) -> dict:
+    """Download portraits for ``ids`` that aren't already on disk.
+
+    Skips ids whose ``<pid>.jpg`` already exists or that are in the negative
+    cache. A definitive 404 (``felicitas.photo`` returns ``None``) is recorded in
+    the negative cache so a later run doesn't re-request it; a transient error
+    (raises) is left uncached so it is retried next time. Returns counts.
+    """
+    photos_dir = Path(photos_dir)
+    photos_dir.mkdir(parents=True, exist_ok=True)
+    missing = load_photo_negcache(photos_dir)
+    fetched = 0
+    for pid in ids:
+        if not pid:
+            continue
+        if (photos_dir / f"{pid}.jpg").exists() or pid in missing:
+            continue
+        try:
+            data = felicitas.photo(pid)
+        except Exception as e:  # transient (5xx / network) — retry next run
+            logger.debug("speaker photo fetch failed for %s: %s", pid, e)
+            continue
+        if data:
+            (photos_dir / f"{pid}.jpg").write_bytes(data)
+            fetched += 1
+        else:
+            missing.add(pid)  # definitive 404 — no portrait upstream
+    _photo_negcache_path(photos_dir).write_text(
+        json.dumps(sorted(missing), ensure_ascii=False))
+    return {"fetched": fetched, "cached_missing": len(missing)}
 
 
 def save_representatives(paths: Paths, cycle: int, registry: dict) -> None:

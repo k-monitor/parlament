@@ -67,6 +67,15 @@ case "${1:-serve}" in
     sync)
         exec /usr/local/bin/sync-once.sh
         ;;
+    speaker-photos)
+        # Download portraits for non-roster speakers (ministers / nationality
+        # advocates) into $PHOTOS_DIR; the loader wires them on the next update.
+        # Needs a read-write /data mount, so run via the `sync` service, e.g.:
+        #   podman-compose run --rm sync speaker-photos --cycle 43
+        shift
+        cd /app/scraper
+        exec python -m parlamonitor speaker-photos "$DATA_DIR" "$@"
+        ;;
     sync-loop)
         exec /usr/local/bin/sync-loop.sh
         ;;

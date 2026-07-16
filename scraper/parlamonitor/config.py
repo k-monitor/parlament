@@ -121,6 +121,7 @@ class Paths:
         self.data = Path(data_dir)
         self.raw_plenary = self.data / "original" / "plenary"
         self.processed = self.data / "processed"
+        self.photos = self.data / "media" / "photos"
         self.logs = self.data / "logs"
         self.lockfile = self.data / "parlamonitor.lock"
         # Small state file for the continuous `sync` watcher: the per-day / bills /

@@ -67,6 +67,51 @@ def test_build_person_no_office_when_absent():
     assert "office" not in build_person("Ágh Péter (Fidesz)", office="  ")
 
 
+# --- non-roster speaker portraits ------------------------------------------
+
+class _PhotoFelicitas:
+    """A fake whose ``photo`` returns bytes for known ids, None (404) for
+    ``missing`` ids, and raises for ``flaky`` ids (a transient error)."""
+    def __init__(self, have, missing, flaky=()):
+        self.have, self.missing, self.flaky = set(have), set(missing), set(flaky)
+        self.calls = []
+
+    def photo(self, pid):
+        self.calls.append(pid)
+        if pid in self.flaky:
+            raise HttpError("boom")
+        if pid in self.have:
+            return b"jpegbytes"
+        return None  # 404
+
+
+def test_fetch_missing_photos_downloads_and_negative_caches(tmp_path):
+    from parlamonitor.representatives.scrape import (fetch_missing_photos,
+                                                     load_photo_negcache)
+    photos = tmp_path / "photos"
+    f = _PhotoFelicitas(have={"004L"}, missing={"0052"})
+    res = fetch_missing_photos(f, photos, ["004L", "0052"])
+    assert res["fetched"] == 1
+    assert (photos / "004L.jpg").read_bytes() == b"jpegbytes"    # advocate portrait saved
+    assert not (photos / "0052.jpg").exists()                    # minister: no portrait
+    assert load_photo_negcache(photos) == {"0052"}               # 404 remembered
+
+    # A second run skips the already-downloaded id AND the negative-cached 404.
+    f2 = _PhotoFelicitas(have={"004L"}, missing={"0052"})
+    fetch_missing_photos(f2, photos, ["004L", "0052"])
+    assert f2.calls == []
+
+
+def test_fetch_missing_photos_retries_transient_errors(tmp_path):
+    from parlamonitor.representatives.scrape import (fetch_missing_photos,
+                                                     load_photo_negcache)
+    photos = tmp_path / "photos"
+    f = _PhotoFelicitas(have=set(), missing=set(), flaky={"x1"})
+    fetch_missing_photos(f, photos, ["x1"])
+    # A transient failure is NOT negative-cached, so it will be retried next run.
+    assert load_photo_negcache(photos) == set()
+
+
 # --- magyarkozlony (promulgated-bill gazette link) -------------------------
 
 # The schema.org meta tag on a real magyarkozlony.hu issue-listing page.

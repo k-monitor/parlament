@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { store, loadMeta, setCycle, periodLabel } from './store.js'
 import { setLocale } from './i18n.js'
+import { formatLongDate } from './format.js'
 import { useI18n } from 'vue-i18n'
 
 const { locale } = useI18n()
@@ -75,6 +76,14 @@ function onCycleChange(e) {
 
 function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
 
+// "Utolsó adatfrissítés" — the loader stamps build_meta.data_updated_at on every
+// (re)build/incremental update; older DBs lack it, so the footer line is hidden
+// until a fresh load populates it. Re-formats when the language toggles.
+const dataUpdatedAt = computed(() => {
+  const iso = store.meta && store.meta.build && store.meta.build.data_updated_at
+  return iso ? formatLongDate(iso, locale.value) : ''
+})
+
 // Mobile: the main nav collapses behind a hamburger toggle. Any navigation
 // closes the panel so it never lingers over the new page.
 const menuOpen = ref(false)
@@ -143,16 +152,65 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
   </main>
 
   <footer class="site-footer">
+    <div class="container footer-main">
+      <div class="footer-brand">
+        <a
+          class="footer-logo" href="https://k-monitor.hu"
+          target="_blank" rel="noopener noreferrer" :aria-label="$t('footer.kmonitorHome')"
+        >
+          <img src="/kmonitor-logo.jpg" alt="K-Monitor" />
+        </a>
+        <div class="footer-social">
+          <a
+            class="social-link" href="https://www.instagram.com/kmonitorhu/"
+            target="_blank" rel="noopener noreferrer" :aria-label="$t('footer.instagram')"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+                 stroke-width="1.8" aria-hidden="true" focusable="false">
+              <rect x="3" y="3" width="18" height="18" rx="5" />
+              <circle cx="12" cy="12" r="4" />
+              <circle cx="17.4" cy="6.6" r="1.1" fill="currentColor" stroke="none" />
+            </svg>
+          </a>
+          <a
+            class="social-link" href="https://www.facebook.com/Kmonitor/"
+            target="_blank" rel="noopener noreferrer" :aria-label="$t('footer.facebook')"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"
+                 aria-hidden="true" focusable="false">
+              <path d="M14 8.5V6.9c0-.7.2-1.1 1.2-1.1h1.5V3.1C16.3 3 15.4 3 14.5 3 12 3 10.4 4.5 10.4 7v1.5H8v2.9h2.4V21H14v-9.6h2.4l.4-2.9H14z" />
+            </svg>
+          </a>
+        </div>
+      </div>
+
+      <nav class="footer-col" :aria-label="$t('footer.aboutHeading')">
+        <h2 class="footer-h">{{ $t('footer.aboutHeading') }}</h2>
+        <router-link :to="{ name: 'about' }">{{ $t('footer.about') }}</router-link>
+        <a href="/api/docs" target="_blank" rel="noopener">API</a>
+        <a
+          v-if="store.meta" :href="store.meta.source_attribution.url"
+          target="_blank" rel="noopener"
+        >parlament.hu</a>
+      </nav>
+
+      <div class="footer-col">
+        <h2 class="footer-h">{{ $t('footer.contact') }}</h2>
+        <a href="mailto:info@k-monitor.hu">info@k-monitor.hu</a>
+        <a href="tel:+3617895005">+36 1 789 5005</a>
+      </div>
+    </div>
+
     <div class="container footer-bar">
       <p class="small soft" style="margin:0;">
         {{ $t('app.sourceNote') }}
         <template v-if="store.meta">
           ·
-          <a :href="store.meta.source_attribution.url" target="_blank" rel="noopener">parlament.hu</a>
-          ·
-          <a :href="store.meta.source_attribution.license_url" target="_blank" rel="noopener">{{ $t('viewer.license') }}</a>
+          <a :href="store.meta.source_attribution.license_url" target="_blank" rel="noopener">{{ $t('app.terms') }}</a>
         </template>
-        · <a href="/api/docs" target="_blank" rel="noopener">API</a>
+        <template v-if="dataUpdatedAt">
+          · {{ $t('footer.lastUpdate') }}: {{ dataUpdatedAt }}
+        </template>
       </p>
       <a
         class="donate-link"
@@ -214,7 +272,29 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
   display: inline-flex; align-items: center; padding: 0 .7rem; cursor: pointer;
   font-weight: 700; font-size: .8rem;
 }
-.site-footer { border-top: 1px solid var(--line); padding: 1.5rem 0; margin-top: 2rem; background: var(--surface); }
+.site-footer { border-top: 1px solid var(--line); padding: 2rem 0 1.5rem; margin-top: 2rem; background: var(--surface); }
+
+/* Upper footer: K-Monitor brand + socials, an "about" link column and a contact
+   column. Columns wrap onto their own rows on narrow screens. */
+.footer-main {
+  display: flex; flex-wrap: wrap; gap: 2rem 3rem; align-items: flex-start;
+  padding-bottom: 1.25rem; margin-bottom: 1.25rem; border-bottom: 1px solid var(--line);
+}
+.footer-brand { display: flex; flex-direction: column; gap: .8rem; }
+.footer-logo { display: inline-block; }
+.footer-logo img { height: 52px; width: auto; display: block; }
+.footer-social { display: flex; gap: .5rem; }
+.social-link {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 8px; color: var(--ink-soft);
+  border: 1px solid var(--line); background: var(--surface);
+}
+.social-link:hover, .social-link:focus-visible { color: var(--accent); border-color: var(--accent); text-decoration: none; }
+.footer-col { display: flex; flex-direction: column; gap: .35rem; }
+.footer-h { font-size: .95rem; font-weight: 700; color: var(--ink); margin: 0 0 .35rem; }
+.footer-col a { color: var(--ink-soft); font-size: .9rem; }
+.footer-col a:hover, .footer-col a:focus-visible { color: var(--accent); }
+
 .footer-bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .donate-link {
   display: inline-flex; align-items: center; gap: .4rem; flex-shrink: 0;

@@ -12,6 +12,7 @@ export default {
     source: 'Source',
     sourceNote: 'Data is sourced from parlament.hu; processing by Parlamonitor.',
     openData: 'Open data',
+    terms: 'Terms of use',
     pager: {
       nav: 'Pagination',
       prev: 'Previous page',
@@ -336,6 +337,15 @@ export default {
     moreOptionsButton: 'More ways to support',
     footer: 'Support us',
     close: 'Close',
+  },
+  footer: {
+    aboutHeading: 'Parlamonitor',
+    about: 'About us',
+    contact: 'Contact',
+    lastUpdate: 'Last data update',
+    kmonitorHome: 'K-Monitor website',
+    instagram: 'K-Monitor on Instagram',
+    facebook: 'K-Monitor on Facebook',
   },
   agendaTypes: {
     opening: 'Opening', procedural: 'Procedural', regular: 'Debate', oath: 'Oath', voting: 'Voting',

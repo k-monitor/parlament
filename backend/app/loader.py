@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import kmonitor, nlp, nlp_modal, wikidata
@@ -1343,6 +1344,10 @@ def build_database(data_dir: str | Path, db_path: str | Path, *,
                      ("sessions_loaded", str(loaded)))
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("source_dir", str(data_dir)))
+        # When the data was last (re)built — surfaced in /meta so the UI can show
+        # an "utolsó adatfrissítés" line. Timezone-aware UTC; the SPA localises it.
+        conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
+                     ("data_updated_at", datetime.now(timezone.utc).isoformat()))
         # Record every processed file's (mtime, size) so a later `--update` can
         # tell which sittings/registries changed and reload only those (SCR-2).
         _seed_load_state(conn, data_dir)
@@ -1528,6 +1533,10 @@ def update_database(data_dir: str | Path, db_path: str | Path, *,
                 _write_load_state(conn, p)
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("last_update_sessions", ",".join(loaded_sessions)))
+        # Bump the data-freshness timestamp only when an incremental update
+        # actually changed something (this path returns early when nothing did).
+        conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
+                     ("data_updated_at", datetime.now(timezone.utc).isoformat()))
         conn.commit()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         conn.execute("ANALYZE")

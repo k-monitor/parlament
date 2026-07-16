@@ -27,6 +27,23 @@ export function formatDate(iso) {
   return iso.slice(0, 10)
 }
 
+// Long, localised calendar date (no time) — "2026. július 15." (hu) /
+// "July 15, 2026" (en). Used for the footer's "utolsó adatfrissítés" line.
+// Interpreted in Budapest time so the shown day matches the Hungarian date
+// boundary even though the stored timestamp is UTC.
+export function formatLongDate(iso, locale = 'hu') {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  try {
+    return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'hu-HU', {
+      year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Europe/Budapest',
+    }).format(d)
+  } catch {
+    return iso.slice(0, 10)
+  }
+}
+
 // Date + HH:MM for events/votes that carry a time-of-day (e.g. "2026-05-27 08:34").
 export function formatDateTime(iso) {
   if (!iso) return ''

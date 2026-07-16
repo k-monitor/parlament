@@ -12,6 +12,7 @@ export default {
     source: 'Forrás',
     sourceNote: 'Az adatok forrása a parlament.hu; a feldolgozást a Parlamonitor végzi.',
     openData: 'Nyílt adat',
+    terms: 'Felhasználási feltételek',
     pager: {
       nav: 'Lapozás',
       prev: 'Előző oldal',
@@ -450,6 +451,15 @@ export default {
     moreOptionsButton: 'További támogatási lehetőségek',
     footer: 'Támogatás',
     close: 'Bezárás',
+  },
+  footer: {
+    aboutHeading: 'Parlamonitor',
+    about: 'Rólunk',
+    contact: 'Kapcsolat',
+    lastUpdate: 'Utolsó adatfrissítés',
+    kmonitorHome: 'K-Monitor honlap',
+    instagram: 'K-Monitor az Instagramon',
+    facebook: 'K-Monitor a Facebookon',
   },
   agendaTypes: {
     opening: 'Ülésnap megnyitása',

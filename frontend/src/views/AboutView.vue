@@ -21,7 +21,7 @@ import DonateCard from '../components/DonateCard.vue'
     <p v-if="store.meta">
       <a :href="store.meta.source_attribution.url" target="_blank" rel="noopener">{{ store.meta.source_attribution.name }}</a>
       —
-      <a :href="store.meta.source_attribution.license_url" target="_blank" rel="noopener">{{ $t('viewer.license') }}</a>
+      <a :href="store.meta.source_attribution.license_url" target="_blank" rel="noopener">{{ $t('app.terms') }}</a>
     </p>
   </article>
 

@@ -62,12 +62,17 @@ function tabActive(tab) {
   return route.name === tab.name || (tab.detail || []).includes(route.name)
 }
 
-// Global electoral-cycle chooser. The selected cycle scopes every period-aware
-// view; "all" (the empty value) drops the period filter site-wide.
+// Global electoral-cycle chooser, rendered as a bar under the main nav. The
+// selected cycle scopes every period-aware view; "all" drops the period filter
+// site-wide. Periods arrive newest-first from /meta; the bar shows them
+// oldest→newest (after "all cycles") so it reads left-to-right like a timeline.
 const periods = computed(() => (store.meta && store.meta.periods) || [])
+const periodsAsc = computed(() => [...periods.value].reverse())
+// The chip timeline collapses into a native <select> on narrow screens; it binds
+// to this string ('all' | period number) and hands it straight to selectCycle.
 const cycleValue = computed(() => (store.cycle === null ? 'all' : String(store.cycle)))
-function onCycleChange(e) {
-  const v = e.target.value // 'all' | period number as string — the query value too
+function selectCycle(value) {
+  const v = value === 'all' ? 'all' : String(value) // 'all' | period number — the query value too
   setCycle(v === 'all' ? null : Number(v))
   // Reflect the new scope in the URL (replace, so it doesn't pile up history)
   // so the address stays shareable. The router guard keeps store ↔ URL in sync.
@@ -122,19 +127,44 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
             <rect x="11" y="10.5" width="2" height="6.5" rx="1" fill="currentColor" />
           </svg>
         </router-link>
-        <select
-          v-if="periods.length" class="cyclesel" :value="cycleValue" @change="onCycleChange"
-          :title="$t('cycle.label')" :aria-label="$t('cycle.label')"
-        >
-          <option value="all">{{ $t('cycle.all') }}</option>
-          <option v-for="p in periods" :key="p.number" :value="p.number">{{ periodLabel(p) }}</option>
-        </select>
         <button class="lang" @click="toggleLang" :aria-label="'Language: ' + locale">
           {{ locale === 'hu' ? 'EN' : 'HU' }}
         </button>
       </div>
     </div>
   </header>
+
+  <nav v-if="periods.length" class="cyclebar" :aria-label="$t('cycle.label')">
+    <div class="container cyclebar-inner">
+      <svg class="cyclebar-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+        <rect x="3" y="4.5" width="18" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+        <path d="M3 9.5h18M8 2.5v4M16 2.5v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      </svg>
+      <!-- Wide screens: the full period timeline as chips. -->
+      <div class="cyclechips">
+        <span class="cyclesep" aria-hidden="true"></span>
+        <button
+          class="cyclechip" :class="{ active: store.cycle === null }"
+          :aria-pressed="store.cycle === null ? 'true' : 'false'" @click="selectCycle('all')"
+        >{{ $t('cycle.all') }}</button>
+        <template v-for="p in periodsAsc" :key="p.number">
+          <span class="cyclesep" aria-hidden="true"></span>
+          <button
+            class="cyclechip" :class="{ active: store.cycle === p.number }"
+            :aria-pressed="store.cycle === p.number ? 'true' : 'false'" @click="selectCycle(p.number)"
+          >{{ periodLabel(p) }}</button>
+        </template>
+      </div>
+      <!-- Narrow screens: the same choice as a styled dropdown. -->
+      <select
+        class="cyclesel" :value="cycleValue" @change="selectCycle($event.target.value)"
+        :aria-label="$t('cycle.label')"
+      >
+        <option value="all">{{ $t('cycle.all') }}</option>
+        <option v-for="p in periodsAsc" :key="p.number" :value="p.number">{{ periodLabel(p) }}</option>
+      </select>
+    </div>
+  </nav>
 
   <nav v-if="sectionTabs.length > 1" class="subheader" :aria-label="$t('nav.submenu')">
     <div class="container subnav">
@@ -255,8 +285,47 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 .subtab:hover { color: var(--accent); background: var(--accent-soft); text-decoration: none; }
 .subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-/* The three header controls share one height + box model so they line up. */
-.infolink, .cyclesel, .lang {
+/* Global electoral-cycle bar, directly under the main nav. Reads like a
+   timeline — a calendar icon, then "all cycles" and each period oldest→newest,
+   with the active scope shown as a solid pill. On narrow screens the chips give
+   way to a styled dropdown (see the breakpoint below). */
+.cyclebar { background: var(--accent-soft); border-bottom: 1px solid #f0cfc9; }
+.cyclebar-inner {
+  display: flex; align-items: center; gap: .3rem;
+  padding-top: .4rem; padding-bottom: .4rem;
+}
+.cyclebar-icon { color: var(--accent); flex-shrink: 0; margin-right: .05rem; }
+/* The chip row absorbs its own overflow, so a growing period list scrolls
+   sideways here rather than pushing the layout wide. */
+.cyclechips { display: flex; align-items: center; gap: .3rem; min-width: 0; overflow-x: auto; }
+.cyclesep { width: 1px; height: 1.05rem; background: #e6b9b1; flex-shrink: 0; }
+.cyclechip {
+  appearance: none; border: none; background: transparent; cursor: pointer;
+  color: var(--accent); font-family: inherit; font-weight: 700; font-size: .82rem;
+  line-height: 1; white-space: nowrap; padding: .35rem .65rem; border-radius: 999px;
+}
+.cyclechip:hover { background: rgba(178,40,23,.1); }
+.cyclechip.active, .cyclechip.active:hover { background: var(--accent); color: #fff; }
+
+/* Mobile form of the same chooser: a pill-shaped native select tinted to match
+   the bar, with a custom accent chevron (appearance:none drops the default one). */
+.cyclesel { display: none; }
+.cyclesel option { color: var(--ink); }
+@media (max-width: 640px) {
+  .cyclechips { display: none; }
+  .cyclesel {
+    display: inline-flex; align-items: center; box-sizing: border-box; height: 32px; width: auto;
+    appearance: none; -webkit-appearance: none;
+    border: 1px solid #e6b9b1; background-color: var(--surface); color: var(--accent);
+    border-radius: 999px; font-family: inherit; font-weight: 700; font-size: .82rem;
+    padding: 0 1.9rem 0 .75rem; cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23B22817' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right .65rem center;
+  }
+}
+
+/* The header controls share one height + box model so they line up. */
+.infolink, .lang {
   box-sizing: border-box; height: 34px; border: 1px solid rgba(255,255,255,.35);
   background: rgba(255,255,255,.15); border-radius: 8px; color: #fff;
 }
@@ -264,10 +333,6 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
   display: inline-flex; align-items: center; justify-content: center; padding: 0 .6rem;
 }
 .infolink:hover { background: rgba(255,255,255,.28); text-decoration: none; }
-.cyclesel {
-  padding: 0 .6rem; cursor: pointer; font-weight: 700; font-size: .8rem; vertical-align: middle;
-}
-.cyclesel option { color: var(--ink); }
 .lang {
   display: inline-flex; align-items: center; padding: 0 .7rem; cursor: pointer;
   font-weight: 700; font-size: .8rem;

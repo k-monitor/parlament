@@ -120,6 +120,36 @@ def test_procedural_speech_excluded_from_stats_but_stored(db_path):
     c.close()
 
 
+def test_non_mp_speaker_office_stored(db_path):
+    """A speaker who is not in the MP roster (a minister) is created as a non-MP
+    stub, and the government office (tisztség) reported on their speech is stored
+    on the speech so their profile can identify them by their post."""
+    c = loader.connect(db_path)
+    rec = {
+        "meta": {"session": "43015", "electoralPeriod": 43, "sitting": 15,
+                 "date": "2026-06-30", "dayVideoURI": "https://example/p.m3u8",
+                 "timingMethod": "estimated-day-offset"},
+        "data": [
+            {"originID": "43-15-1", "speechIndex": 1,
+             "agendaItem": {"title": "Interpelláció", "type": "regular"},
+             "people": [{"label": "Törőcsikné Görög Márta", "context": "main-speaker",
+                         "personID": "0052", "office": "igazságügyi miniszter"}],
+             "media": {"videoFileURI": "https://example/p.m3u8", "duration": 7200},
+             "textContents": [{"textBody": [{"sentences": [
+                 {"text": "Tisztelt Ház!", "timeStart": 0.0, "timeEnd": 30.0}]}]}],
+             "debug": {"confidence": 0.7, "align-method": "estimated-day-offset",
+                       "felszolalasTipusa": "válasz"}},
+        ],
+    }
+    loader.load_session(c, rec)
+    # The office is stored on the speech...
+    assert c.execute("SELECT speaker_office FROM speech WHERE uid='43015-1'"
+                     ).fetchone()[0] == "igazságügyi miniszter"
+    # ...and the speaker is a non-MP stub (never appeared in a roster).
+    assert c.execute("SELECT is_mp FROM person WHERE person_id='0052'").fetchone()[0] == 0
+    c.close()
+
+
 def test_faction_colors_assigned(conn):
     rows = dict(conn.execute("SELECT label, color FROM faction"))
     assert rows["Fidesz"] == "#FF6A13"

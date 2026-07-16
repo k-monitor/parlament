@@ -50,6 +50,23 @@ def test_build_person_links_id():
     assert p["type"] == "memberOfParliament"
 
 
+def test_build_person_office_from_tisztseg():
+    # A non-MP minister: the speaker string carries no faction, but the per-speech
+    # tisztség (Felicitas `tisztseg`) names the office. It rides through as `office`
+    # so the profile can identify a speaker who holds no mandate.
+    p = build_person("Dr. Törőcsikné Dr. Görög Márta ()", person_id="0052",
+                     office="igazságügyi miniszter")
+    assert p["office"] == "igazságügyi miniszter"
+    assert "faction" not in p
+
+
+def test_build_person_no_office_when_absent():
+    p = build_person("Ágh Péter (Fidesz)", person_id="a011", office=None)
+    assert "office" not in p
+    # An empty/whitespace tisztség is dropped, not stored as a blank office.
+    assert "office" not in build_person("Ágh Péter (Fidesz)", office="  ")
+
+
 # --- magyarkozlony (promulgated-bill gazette link) -------------------------
 
 # The schema.org meta tag on a real magyarkozlony.hu issue-listing page.

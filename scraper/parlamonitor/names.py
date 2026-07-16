@@ -120,12 +120,21 @@ def person_type_for(role: str | None) -> str:
     return "memberOfGovernment" if role == "miniszter" else "memberOfParliament"
 
 
-def build_person(speaker_raw: str, *, person_id: str | None = None) -> dict:
+def build_person(speaker_raw: str, *, person_id: str | None = None,
+                 office: str | None = None) -> dict:
     """Build a normalised ``people[]`` entry from a raw speaker string.
 
     ``person_id`` is the Felicitas ``kepviseloId`` when known — it cross-links a
     speech to the representative registry (requirements EXT-2), so the frontend
     can join a speech to an MP profile without name matching.
+
+    ``office`` is the speaker's full government office (*tisztség*) as the source
+    reports it per speech — e.g. ``"igazságügyi miniszter"`` or ``"Pénzügy-
+    minisztérium államtitkára"`` (Felicitas ``tisztseg``, see
+    ``felicitas.speech_text``). Unlike the coarse ``role`` parsed from the
+    speaker string (``"miniszter"`` / ``"elnök"``), it names the specific post,
+    so a non-MP speaker's profile can show *who they are* (their office) even
+    though they carry no faction or constituency.
     """
     label, faction, role = split_speaker(speaker_raw)
     firstname, lastname = split_name(label)
@@ -145,6 +154,9 @@ def build_person(speaker_raw: str, *, person_id: str | None = None) -> dict:
         person["role"] = "elnök"
     elif role == "miniszter":
         person["role"] = "miniszter"
+    office = (office or "").strip()
+    if office:
+        person["office"] = office
     if faction:
         person["faction"] = {"label": faction}
     return person

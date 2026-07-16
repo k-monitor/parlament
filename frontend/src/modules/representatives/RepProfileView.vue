@@ -238,6 +238,13 @@ watch(() => store.cycle, load)
           <div class="pident">
             <img class="avatar lg" :src="profile.photo_uri || PLACEHOLDER" @error="onImgErr" alt="" />
             <div class="pinfo">
+              <!-- Government office (tisztség), e.g. "igazságügyi miniszter". Shown
+                   for office-holders; it is the primary identity of a non-MP speaker
+                   (a minister/state secretary with no faction or constituency). -->
+              <div v-if="profile.office" class="office">
+                <span class="office-label">{{ $t('profile.office') }}</span>
+                <span class="office-val">{{ profile.office }}</span>
+              </div>
               <div class="row" style="gap:.8rem;">
                 <FactionBadge :faction="profile.current_faction" link />
                 <span v-if="profile.constituency" class="muted">📍 {{ profile.constituency }}</span>
@@ -470,6 +477,12 @@ watch(() => store.cycle, load)
 .pname { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: .6rem; }
 .pmain { min-width: 0; }
 .pident { display: flex; gap: 1.2rem; align-items: flex-start; }
+/* Government office (tisztség) line: a muted label above the office name, so a
+   non-MP speaker (minister/state secretary) reads as clearly identified. */
+.office { margin-bottom: .55rem; }
+.office-label { display: block; font-size: .72rem; font-weight: 600; letter-spacing: .02em;
+  text-transform: uppercase; color: var(--ink-faint); }
+.office-val { font-size: 1.02rem; font-weight: 700; color: var(--ink); }
 /* Brand marks in the header links row (Wikipedia serif "W", K-Monitor logo) —
    small "logo chips" matching the inline transcript entity badges. */
 .link-badge { display: inline-flex; align-items: center; justify-content: center;

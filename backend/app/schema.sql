@@ -123,6 +123,11 @@ CREATE TABLE speech (
     person_id      TEXT REFERENCES person(person_id),
     speaker_label  TEXT,
     speaker_status TEXT,
+    -- the speaker's government office (tisztség) as reported per speech, e.g.
+    -- "igazságügyi miniszter" / "Pénzügyminisztérium államtitkára". Present only
+    -- for office-holders; surfaced on a speaker's profile so a non-MP (a minister
+    -- or state secretary who is not a representative) is identifiable by their office.
+    speaker_office TEXT,
     -- upstream per-speech type (felszólalás típusa, e.g. "ülésvezetés"); drives
     -- the `procedural` flag below.
     felszolalas_tipus TEXT,

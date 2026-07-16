@@ -235,6 +235,7 @@ def get_representative(person_id: str, period: Optional[int] = None,
                      "label": h.get("label"), "color": colors.get(h.get("label"))}
                     if h.get("label") else None}
         for h in _loads(p["faction_history_json"])]
+    office = _current_office(db, person_id, period)
     return {
         "person_id": p["person_id"], "label": p["label"],
         "label_full": p["label_full"], "firstname": p["firstname"],
@@ -245,6 +246,12 @@ def get_representative(person_id: str, period: Optional[int] = None,
         "seat": p["seat"], "email": p["email"], "website": p["website"],
         "highest_education": p["highest_education"], "active": p["active"],
         "is_mp": bool(p["is_mp"]),
+        # The speaker's government office (tisztség), e.g. "igazságügyi miniszter".
+        # Present for office-holders (ministers/state secretaries); it identifies a
+        # non-MP speaker — someone who spoke in the House but holds no mandate, so
+        # has no faction or constituency — by their post (REP-2). Derived from their
+        # speeches (see `_current_office`), scoped to the selected cycle (§4A).
+        "office": office,
         "current_faction": {"id": current["faction_id"], "label": current["faction_label"],
                             "color": current["faction_color"]} if current and current["faction_label"] else None,
         "faction_history": faction_history,
@@ -672,6 +679,31 @@ def get_votes(person_id: str, period: Optional[int] = None,
             "subjects": subjects.get(r["id"], []),
         } for r in rows],
     }
+
+
+def _current_office(db: sqlite3.Connection, person_id: str,
+                    period: Optional[int]) -> Optional[str]:
+    """The speaker's most recent government office (tisztség) in scope, or None.
+
+    A speaker's office is recorded per speech (``speech.speaker_office``, from the
+    upstream *tisztség* — see the loader). Most office-holders keep one office, but
+    a promotion mid-cycle would leave two, so we take the **most recent** one (latest
+    sitting date, then latest speech within the day). Scoped to the selected cycle
+    (§4A) when ``period`` is set, matching the rest of the profile. Returns None for
+    a speaker who never held one (every ordinary MP), so the UI shows it only for the
+    ministers / state secretaries who do."""
+    extra = " AND sp.period_number = :per" if period is not None else ""
+    params: dict = {"pid": person_id}
+    if period is not None:
+        params["per"] = period
+    row = db.execute(
+        f"""SELECT sp.speaker_office
+            FROM speech sp JOIN session ss ON ss.id = sp.session_id
+            WHERE sp.person_id = :pid
+              AND sp.speaker_office IS NOT NULL AND sp.speaker_office <> ''{extra}
+            ORDER BY ss.date DESC, sp.speech_index DESC
+            LIMIT 1""", params).fetchone()
+    return row["speaker_office"] if row else None
 
 
 def _own_bills_for_cycle(by_cycle: list, period: int) -> Optional[int]:

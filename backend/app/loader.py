@@ -559,6 +559,19 @@ def _ensure_session_status(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE session ADD COLUMN status TEXT DEFAULT 'published'")
 
 
+def _ensure_speaker_office(conn: sqlite3.Connection) -> None:
+    """Add ``speech.speaker_office`` to a pre-existing DB, so the speaker-office
+    feature lands via the incremental ``--update`` path too (which snapshots the
+    live DB rather than re-running the schema). Without this, the first
+    ``_load_speech`` INSERT after a code deploy would fail on the missing column
+    on a DB built by the old schema. A no-op on a freshly-built DB. NB this only
+    adds the column; existing speeches are back-filled by ``migrate_speaker_office``
+    (a re-scrape/re-transform repopulates it from the raw ``role`` on its own)."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(speech)")]
+    if cols and "speaker_office" not in cols:
+        conn.execute("ALTER TABLE speech ADD COLUMN speaker_office TEXT")
+
+
 def load_session(conn: sqlite3.Connection, record: dict) -> str:
     """Load one sitting-day session record atomically (ING-3). Re-ingesting a
     session replaces all of its derived rows (ING-4)."""
@@ -567,6 +580,7 @@ def load_session(conn: sqlite3.Connection, record: dict) -> str:
     period = meta.get("electoralPeriod")
     try:
         _ensure_session_status(conn)
+        _ensure_speaker_office(conn)
         # delete-then-insert keyed on session id => idempotent replace (ING-4).
         _delete_session(conn, sid)
 
@@ -679,14 +693,15 @@ def _load_speech(conn, sid, period, sp, agenda_cache) -> None:
     conn.execute(
         """INSERT INTO speech(uid, origin_id, speech_uuid, session_id, agenda_item_id,
                period_number, speech_index, person_id, speaker_label,
-               speaker_status, felszolalas_tipus, procedural, faction_id,
+               speaker_status, speaker_office, felszolalas_tipus, procedural, faction_id,
                time_start, time_end, video_start,
                video_end, duration, confidence, align_method, has_text,
                source_uri, source_page)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (uid, origin_id, debug.get("speechUUID"), sid, agenda_id, period,
          speech_index, pid,
-         speaker.get("label"), speaker.get("context"), speech_type, procedural,
+         speaker.get("label"), speaker.get("context"), speaker.get("office"),
+         speech_type, procedural,
          faction_id,
          time_start, time_end, media.get("videoStart"), media.get("videoEnd"),
          duration, debug.get("confidence"), debug.get("align-method"),
@@ -698,6 +713,35 @@ def _load_speech(conn, sid, period, sp, agenda_cache) -> None:
             "VALUES (?,?,?,?,?,?)",
             (uid, i, s["text"], s.get("timeStart"), s.get("timeEnd"),
              s.get("paragraph")))
+
+
+def wire_nonmp_photos(conn: sqlite3.Connection, photos_dir) -> int:
+    """Point non-MP speakers' profiles at their downloaded portrait (REP-2).
+
+    Ministers and nationality advocates (nemzetiségi szószólók) who aren't in the
+    MP roster are created as bare stubs (``_ensure_person``) with no photo. The
+    scraper's ``speaker-photos`` step drops ``<pid>.jpg`` into the photos dir for
+    those that have a portrait upstream (an advocate like Gallai Gergely does; a
+    portrait-less minister does not). Here we set ``photo_uri``/``photo_file`` to
+    that file wherever it exists on disk. Idempotent and global (not per-session),
+    so it wires every downloaded portrait whenever any load runs — only touches
+    non-MP rows that don't already have a photo, and never overrides an MP's
+    roster portrait."""
+    photos = Path(photos_dir)
+    if not photos.is_dir():
+        return 0
+    rows = conn.execute(
+        "SELECT person_id FROM person WHERE COALESCE(is_mp, 0) = 0 "
+        "AND (photo_uri IS NULL OR photo_uri = '')").fetchall()
+    wired = 0
+    for r in rows:
+        pid = r[0]
+        if (photos / f"{pid}.jpg").exists():
+            conn.execute(
+                "UPDATE person SET photo_uri = ?, photo_file = ? WHERE person_id = ?",
+                (f"/media/photos/{pid}.jpg", f"{pid}.jpg", pid))
+            wired += 1
+    return wired
 
 
 # ---------------------------------------------------------------------------
@@ -1294,6 +1338,7 @@ def build_database(data_dir: str | Path, db_path: str | Path, *,
             rebuild_entity_mentions(conn, db_path.parent)
             resolve_entity_links(conn, db_path.parent)
         rebuild_aggregates(conn)
+        wire_nonmp_photos(conn, Path(data_dir) / "media" / "photos")
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("sessions_loaded", str(loaded)))
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
@@ -1467,6 +1512,9 @@ def update_database(data_dir: str | Path, db_path: str | Path, *,
                 rebuild_entity_mentions(conn, db_path.parent,
                                         only_sessions=set(loaded_sessions))
             rebuild_aggregates(conn)
+            # Wire any non-MP speaker portraits the scraper has downloaded since
+            # the last load (global, cheap — see wire_nonmp_photos).
+            wire_nonmp_photos(conn, Path(data_dir) / "media" / "photos")
         # Re-resolve entity links when the transcript OR the MP roster changed: new
         # mentions need resolving, and a reps change can flip a name from a Wikipedia
         # link to an internal profile (or set an MP's K-Monitor link). Cheap when

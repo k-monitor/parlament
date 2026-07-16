@@ -220,6 +220,7 @@ export default {
     otherDocuments: 'Egyéb benyújtott irományok',
     statistics: 'Statisztikák',
     biography: 'Adatok',
+    office: 'Tisztség',
     constituency: 'Választókerület',
     education: 'Legmagasabb végzettség',
     email: 'E-mail',

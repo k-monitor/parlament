@@ -146,7 +146,8 @@ def _speech_entry(cycle: int, sitting: int, sp: dict, date: str,
                   day_video: dict | None) -> dict:
     sorszam = sp.get("sorszam")
     oid = origin_id(cycle, sitting, sorszam)
-    person = build_person(sp.get("speaker") or "", person_id=sp.get("person_id"))
+    person = build_person(sp.get("speaker") or "", person_id=sp.get("person_id"),
+                          office=sp.get("role"))
 
     text = html_to_text(sp.get("text_html") or "")
     sentences = split_sentences(text)

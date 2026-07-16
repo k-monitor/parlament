@@ -152,7 +152,7 @@ export default {
     questions: 'Submitted questions & interpellations',
     bills: 'Submitted bills & resolution proposals',
     otherDocuments: 'Other submitted documents',
-    statistics: 'Statistics', biography: 'Details', constituency: 'Constituency',
+    statistics: 'Statistics', biography: 'Details', office: 'Office', constituency: 'Constituency',
     education: 'Highest education', email: 'Email', website: 'Website', committees: 'Committee memberships',
     factionHistory: 'Faction history', wikipedia: 'Wikipedia', kmonitor: 'K-Monitor', totalSpeeches: 'Number of speeches',
     totalSpeakingTime: 'Total speaking time', billsSubmitted: 'Bills submitted',

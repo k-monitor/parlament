@@ -280,6 +280,34 @@ def test_representative_profile(client):
     assert client.get("/api/v1/representatives/n002").json()["wikipedia_url"] is None
 
 
+def test_profile_shows_office_for_non_mp_speaker(client, db_path):
+    """A non-MP speaker (a minister who holds no mandate, so has no faction or
+    constituency) is identified on their profile by their government office
+    (tisztség), derived from their speeches. An ordinary MP has none."""
+    from app import loader
+    c = loader.connect(db_path)
+    loader.load_session(c, {
+        "meta": {"session": "43015", "electoralPeriod": 43, "sitting": 15,
+                 "date": "2026-06-30", "dayVideoURI": "https://example/p.m3u8",
+                 "timingMethod": "estimated-day-offset"},
+        "data": [{"originID": "43-15-1", "speechIndex": 1,
+                  "agendaItem": {"title": "Interpelláció", "type": "regular"},
+                  "people": [{"label": "Törőcsikné Görög Márta", "context": "main-speaker",
+                              "personID": "0052", "office": "igazságügyi miniszter"}],
+                  "media": {"videoFileURI": "https://example/p.m3u8", "duration": 7200},
+                  "textContents": [{"textBody": [{"sentences": [
+                      {"text": "Tisztelt Ház!", "timeStart": 0.0, "timeEnd": 30.0}]}]}],
+                  "debug": {"confidence": 0.7, "align-method": "estimated-day-offset",
+                            "felszolalasTipusa": "válasz"}}]})
+    c.close()
+    d = client.get("/api/v1/representatives/0052").json()
+    assert d["is_mp"] is False
+    assert d["office"] == "igazságügyi miniszter"
+    assert d["current_faction"] is None
+    # An ordinary MP (no government office) reports no office.
+    assert client.get("/api/v1/representatives/k001").json()["office"] is None
+
+
 def test_representative_statistics_shows_bills_when_module_enabled(client):
     """REP-3: with the Bills module live, the bills-submitted metric is shown."""
     d = client.get("/api/v1/representatives/k001/statistics").json()

@@ -68,6 +68,8 @@ export default {
   home: {
     searchPlaceholder: 'Keress egy kifejezésre a felszólalásokban…',
     searchButton: 'Keresés',
+    statsLead: 'Böngészd {year} óta a Magyar Országgyűlés munkájának adatait!',
+    statsLeadNoYear: 'Böngészd a Magyar Országgyűlés munkájának adatait!',
     stats: { sessions: 'ülésnap', speeches: 'felszólalás', sentences: 'mondat', representatives: 'képviselő' },
     exploreSearch: 'Teljes szövegű keresés',
     exploreSearchDesc: 'Keress bármilyen kifejezésre, és ugorj egyenesen az elhangzás pillanatára a videóban.',

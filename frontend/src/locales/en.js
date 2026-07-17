@@ -42,6 +42,8 @@ export default {
   home: {
     searchPlaceholder: 'Search for a phrase in the proceedings…',
     searchButton: 'Search',
+    statsLead: 'Browse data on the work of the Hungarian National Assembly since {year}!',
+    statsLeadNoYear: 'Browse data on the work of the Hungarian National Assembly!',
     stats: { sessions: 'sittings', speeches: 'speeches', sentences: 'sentences', representatives: 'representatives' },
     exploreSearch: 'Full-text search',
     exploreSearchDesc: 'Search any phrase and jump straight to the moment it was spoken on video.',

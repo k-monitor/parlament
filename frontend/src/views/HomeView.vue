@@ -10,6 +10,17 @@ const router = useRouter()
 const q = ref('')
 const counts = computed(() => (store.meta && store.meta.counts) || {})
 function fmt(n) { return (n ?? 0).toLocaleString('hu-HU') }
+
+// Earliest year the corpus reaches back to, taken from the electoral periods so
+// the framing line above the stats reflects whatever data is actually loaded
+// (e.g. "1990" once the full archive is in, "2014" on a partial dev DB) rather
+// than a hard-coded date. null when no dated period is known.
+const startYear = computed(() => {
+  const years = ((store.meta && store.meta.periods) || [])
+    .map((p) => (p.date_start ? Number(String(p.date_start).slice(0, 4)) : null))
+    .filter((y) => Number.isFinite(y))
+  return years.length ? Math.min(...years) : null
+})
 function go() {
   if (q.value.trim()) router.push({ name: 'search', query: { q: q.value.trim() } })
 }
@@ -85,6 +96,9 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
       <button class="btn" type="submit">{{ $t('home.searchButton') }}</button>
     </form>
 
+    <p v-if="store.meta" class="stats-lead">
+      {{ startYear ? $t('home.statsLead', { year: startYear }) : $t('home.statsLeadNoYear') }}
+    </p>
     <dl v-if="store.meta" class="stats" aria-label="corpus statistics">
       <div><dt>{{ fmt(counts.sentences) }}</dt><dd>{{ $t('home.stats.sentences') }}</dd></div>
       <div><dt>{{ fmt(counts.speeches) }}</dt><dd>{{ $t('home.stats.speeches') }}</dd></div>
@@ -172,7 +186,8 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
 .hero { margin-bottom: 1.5rem; }
 .searchbar { display: flex; gap: .5rem; margin: 1.2rem 0; max-width: 640px; }
 .searchbar input { flex: 1; font-size: 1.05rem; padding: .7rem .8rem; }
-.stats { display: flex; flex-wrap: wrap; gap: 2rem; margin: 1rem 0 0; }
+.stats-lead { margin: 1.2rem 0 .6rem; color: var(--ink); font-size: 1.05rem; }
+.stats { display: flex; flex-wrap: wrap; gap: 2rem; margin: 0; }
 .stats div { margin: 0; }
 .stats dt { font-size: 1.6rem; font-weight: 800; color: var(--accent); }
 .stats dd { margin: 0; color: var(--ink-faint); font-size: .9rem; }

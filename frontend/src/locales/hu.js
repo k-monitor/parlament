@@ -460,7 +460,7 @@ export default {
   },
   donate: {
     title: 'Támogasd a Parlamonitort',
-    description: 'A Parlamonitor ingyenes és független projekt, amelyet a K-Monitor civil szervezet fejleszt és tart fenn. Ha hasznosnak találod, egy kisebb adománnyal segíthetsz, hogy megmaradjon és tovább fejlődjön.',
+    description: 'A Parlamonitor a K-Monitor által fejlesztett és fenntartott ingyenes, független projekt. Ha hasznosnak találod, támogasd egyszeri vagy rendszeres adománnyal, hogy hosszú távon is elérhető maradjon és tovább fejlődhessen.',
     amountsLabel: 'Adomány összege',
     paypalButton: 'Adományozok PayPallal',
     moreOptionsButton: 'További támogatási lehetőségek',

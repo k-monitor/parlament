@@ -126,9 +126,11 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
     </div>
   </section>
 
-  <DonateCard class="home-donate" />
+  <section class="grid explore-grid home-donate-row">
+    <DonateCard class="home-donate" />
+  </section>
 
-  <section class="grid cards3">
+  <section class="grid explore-grid">
     <router-link v-if="showProceedings" :to="{ name: 'search' }" class="card feature">
       <span class="feature__icon" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -174,8 +176,16 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
 .stats div { margin: 0; }
 .stats dt { font-size: 1.6rem; font-weight: 800; color: var(--accent); }
 .stats dd { margin: 0; color: var(--ink-faint); font-size: .9rem; }
-.cards3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-.home-donate { margin-bottom: 1.5rem; }
+/* Shared column tracks for the donate row + the three feature cards, so the
+   donate card's edges line up exactly with the cards below it. */
+.explore-grid { grid-template-columns: 1fr; }
+@media (min-width: 520px) { .explore-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 780px) { .explore-grid { grid-template-columns: repeat(3, 1fr); } }
+
+.home-donate-row { margin-bottom: 1.5rem; }
+/* Full width until three columns exist, then 2/3 (two of the three tracks). */
+.home-donate { grid-column: 1 / -1; }
+@media (min-width: 780px) { .home-donate { grid-column: span 2; } }
 
 /* Example searches: a curated set of topics, each with its popularity histogram
    (§SEA-8) as a teaser. The card is a link into the full search for that term. */

@@ -122,9 +122,6 @@ function dismiss() {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-.donate__actions { display: flex; flex-wrap: wrap; gap: .6rem; }
-.donate__actions .btn { flex: 1 1 auto; text-align: center; min-width: 12rem; }
-@media (max-width: 480px) {
-  .donate__actions .btn { flex-basis: 100%; min-width: 0; }
-}
+.donate__actions { display: flex; flex-direction: column; gap: .6rem; }
+.donate__actions .btn { width: 100%; text-align: center; }
 </style>

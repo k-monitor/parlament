@@ -27,6 +27,16 @@ export default {
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
     copy: 'Copy link', copied: 'Copied to clipboard!',
   },
+  embed: {
+    label: 'Embed',
+    title: 'Embed this figure',
+    cycleNote: 'The embed code shows data for {cycle}.',
+    copy: 'Copy code',
+    copied: 'Copied!',
+    preview: 'Preview ↗',
+    openInteractive: 'Interactive version ↗',
+    noData: 'No data to display.',
+  },
   cycle: { label: 'Cycle', all: 'All cycles',
            scope: '{cycle} data', scopeAll: 'All-cycles data' },
   home: {

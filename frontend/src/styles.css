@@ -93,6 +93,14 @@ label { font-weight: 600; font-size: .85rem; color: var(--ink-soft); display: bl
 
 mark { background: var(--mark); color: var(--mark-ink); padding: 0 .1em; border-radius: 3px; }
 
+/* Bottom footer row for an embeddable figure: holds the EmbedButton flush in the
+   chart card's bottom-right corner (and, optionally, a hint on the left). Being a
+   normal flow row it never overlaps the chart content above it. */
+.fig-foot {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: .8rem; flex-wrap: wrap; margin-top: .6rem;
+}
+
 /* faction color chip */
 .chip {
   display: inline-flex; align-items: center; gap: .4rem;

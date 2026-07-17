@@ -116,6 +116,11 @@ const mapPoints = computed(() => {
         />
       </div>
     </template>
+
+    <!-- Optional bottom-right footer control (e.g. the EmbedButton). -->
+    <div v-if="$slots.corner" class="fig-foot">
+      <slot name="corner" />
+    </div>
   </section>
 </template>
 

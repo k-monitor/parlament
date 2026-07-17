@@ -104,6 +104,16 @@ const routes = [
     component: () => import('./modules/votes/VoteView.vue'), props: true,
   },
 
+  // --- embeddable figures ---
+  // Chrome-free single-chart views meant to be dropped into a third-party page
+  // via <iframe> (see EmbedButton). `meta.embed` tells App.vue to render the bare
+  // chart with no site header/nav/footer, and the guard below to leave the URL
+  // untouched (the embed carries its own explicit `?cycle=` + chart params).
+  {
+    path: '/embed/:kind', name: 'embed', meta: { embed: true },
+    component: () => import('./views/EmbedView.vue'), props: true,
+  },
+
   { path: '/:pathMatch(.*)*', name: 'notfound', component: () => import('./views/NotFoundView.vue') },
 ]
 
@@ -123,6 +133,10 @@ router.beforeEach(async (to) => {
   } catch {
     /* meta failed; let the view render its own error state */
   }
+  // Embed routes are self-contained (their own `?cycle=` + params) and must not
+  // adopt the visitor's saved cycle or have their URL rewritten — the iframe
+  // snippet has to stay byte-for-byte what the sharer copied. Let them through.
+  if (to.meta.embed) return true
   if (to.meta.module && store.loaded && !store.moduleEnabled(to.meta.module)) {
     // Render the 404 view *at the requested URL* — a named catch-all resolved
     // without its repeatable param would rewrite the address bar to "/".

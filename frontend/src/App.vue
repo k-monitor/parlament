@@ -11,6 +11,11 @@ const route = useRoute()
 const router = useRouter()
 onMounted(() => { loadMeta().catch(() => {}) })
 
+// Embeddable figures (see EmbedView) render inside a third-party <iframe> with no
+// site chrome: the whole header / cycle bar / sub-nav / footer are suppressed so
+// only the chart shows. Detected from the matched route's meta.embed flag.
+const isEmbed = computed(() => route.meta.embed === true)
+
 // Nav is built from the live module manifest (EXT-4): a disabled module's link
 // never appears. The brand links home; "about" is a small info icon.
 const showProceedings = computed(() => store.moduleEnabled('proceedings'))
@@ -96,8 +101,8 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 </script>
 
 <template>
-  <a class="skip-link" href="#main">{{ $t('app.skipToContent') }}</a>
-  <header class="site-header">
+  <a v-if="!isEmbed" class="skip-link" href="#main">{{ $t('app.skipToContent') }}</a>
+  <header v-if="!isEmbed" class="site-header">
     <div class="container header-bar">
       <router-link :to="{ name: 'home' }" class="brand" aria-label="Parlamonitor">
         <img class="brand-mark" src="/parlamonitor.png" alt="" aria-hidden="true" />
@@ -134,7 +139,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
     </div>
   </header>
 
-  <nav v-if="periods.length" class="cyclebar" :aria-label="$t('cycle.label')">
+  <nav v-if="!isEmbed && periods.length" class="cyclebar" :aria-label="$t('cycle.label')">
     <div class="container cyclebar-inner">
       <svg class="cyclebar-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
         <rect x="3" y="4.5" width="18" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
@@ -166,7 +171,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
     </div>
   </nav>
 
-  <nav v-if="sectionTabs.length > 1" class="subheader" :aria-label="$t('nav.submenu')">
+  <nav v-if="!isEmbed && sectionTabs.length > 1" class="subheader" :aria-label="$t('nav.submenu')">
     <div class="container subnav">
       <router-link
         v-for="t in sectionTabs" :key="t.name" :to="{ name: t.name }"
@@ -175,13 +180,13 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
     </div>
   </nav>
 
-  <main id="main" class="container page">
+  <main id="main" :class="isEmbed ? 'embed-main' : 'container page'">
     <router-view v-slot="{ Component }">
       <component :is="Component" />
     </router-view>
   </main>
 
-  <footer class="site-footer">
+  <footer v-if="!isEmbed" class="site-footer">
     <div class="container footer-main">
       <div class="footer-brand">
         <a
@@ -337,6 +342,10 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
   display: inline-flex; align-items: center; padding: 0 .7rem; cursor: pointer;
   font-weight: 700; font-size: .8rem;
 }
+/* Embed layout: no site chrome, no page gutters — the EmbedView fills the whole
+   iframe viewport (it supplies its own compact padding). */
+.embed-main { display: block; }
+
 .site-footer { border-top: 1px solid var(--line); padding: 2rem 0 1.5rem; margin-top: 2rem; background: var(--surface); }
 
 /* Upper footer: K-Monitor brand + socials, an "about" link column and a contact

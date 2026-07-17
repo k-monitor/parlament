@@ -376,6 +376,50 @@ merely because an accent was omitted (or added).
 
 ---
 
+## 4C. Cross-cutting: Embeddable Figures
+
+The site's charts are civic-data assets: a journalist or NGO should be able to
+drop one straight into their own article or page. Each headline visualization
+therefore offers a one-click **embed** that yields a self-contained `<iframe>`
+snippet — a site-wide capability, not a per-module feature.
+
+- **EMBED-1 (SHOULD).** Designated charts carry an **embed affordance** in their
+  **bottom-right corner**: a small button that opens a popover with a
+  ready-to-paste `<iframe>` snippet. At minimum the embeddable figures are the
+  **proceedings search popularity histogram** (SEA-8), the **faction vote
+  analysis** — party cohesion / co-voting (VOTE-8), the **faction speaking-time**
+  chart (REP-4), the **Kérdések questions Sankey** (BILL-11), and a
+  **representative's vote-participation** breakdown (REP-3). A future chart opts
+  into the same affordance rather than reinventing it.
+- **EMBED-2 (MUST).** An embed renders **chrome-free**: the `<iframe>` points at a
+  dedicated embed view (`/embed/<figure>`) that shows **only** the figure — its
+  title, the active electoral-cycle scope, and a compact attribution line — with
+  **no site header, navigation, cycle bar, or footer**.
+- **EMBED-3 (MUST).** The snippet **captures the currently selected electoral
+  cycle** (§4A): the embed URL carries an **explicit** cycle, so the embedded
+  figure always shows the data for the cycle the sharer was viewing, **independent
+  of the reader's own saved scope** — an embed on a third-party page has no access
+  to, and MUST NOT depend on, the visitor's preference. The URL likewise carries
+  the figure's active parameters (e.g. the search query + filters, or the
+  representative id) so the embed reproduces exactly what the sharer saw, and the
+  active language (`?lang=`).
+- **EMBED-4.** The embed view is **self-contained and deep-linkable**: it reads
+  everything it needs from its own URL and calls the same public read-only API as
+  the site, so the link works both standing alone (shareable / citable) and inside
+  an `<iframe>`. It reuses the site's existing chart components, so an embedded
+  figure is visually identical to its on-site counterpart.
+- **EMBED-5.** The embed **attributes** the figure: a visible Parlamonitor mark
+  and a link back to the **full interactive version** of that figure on the site
+  (same cycle + parameters), opened in a new tab so a reader can explore the live
+  chart. The underlying `parlament.hu` source attribution remains available
+  (TRUST-1).
+- **EMBED-6.** The embed is **cheap to run** (§1.1): it adds no server-side
+  rendering and no new stored artefacts — the embed view is served by the same
+  SPA shell + aggregate endpoints as every other page, and the host embeds it as
+  a static snippet loaded lazily (`loading="lazy"`).
+
+---
+
 ## 5. Functional Requirements — Module: Proceedings Search & Viewer
 
 ### 5.1 Search
@@ -414,7 +458,8 @@ merely because an accent was omitted (or added).
   The chart describes the **same result set** — it honors all active filters
   (§SEA-3) — and is computed over **all** matches, not just the current page. It
   is a separate aggregate from the paginated results, so it never slows the
-  result list. Quiet periods render as zero, not as gaps.
+  result list. Quiet periods render as zero, not as gaps. The chart is
+  **embeddable** (§4C).
 - **SEA-9 (SHOULD).** A **result-breakdown chart** accompanies a query: the
   number of matching sentences grouped **by faction** and **by representative**,
   so a user sees at a glance *who* and *which side of the house* a term comes
@@ -682,7 +727,8 @@ merely because an accent was omitted (or added).
     disabled (EXT-6) the metric is hidden, not faked.
 - **REP-4.** **Faction-level** aggregate statistics (totals and averages per MP),
   with each faction rendered in a consistent color. Like REP-3, these are
-  computed over statistics-eligible speeches only (STAT-1).
+  computed over statistics-eligible speeches only (STAT-1). The faction
+  speaking-time chart is **embeddable** (§4C).
 - **REP-5.** Statistics MUST state their **time scope** (which period/date range)
   and **how they are computed** (a short methodology note), and be consistent with
   the underlying speech records a user can click through to verify.
@@ -861,6 +907,7 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   methodology note (TRUST-1). It is part of the Bills module's vertical slice
   (BILL-5): new `/api/v1/bills/questions/sankey` and `/api/v1/bills/questions/list`
   routes and a new frontend sub-tab, disabled with the rest of the module (EXT-6).
+  The Sankey diagram is **embeddable** (§4C).
 
 ---
 
@@ -925,12 +972,17 @@ header).
   fetching (roll call + faction breakdown) is a separately-skippable scraper step
   (`--no-detail`) for a fast list-only refresh.
 - **VOTE-8 (scope).** v1 covers the current cycle's votes with their per-MP roll
-  call, per-faction breakdown and bill links. Remaining future work: **the
-  hemicycle seating chart** (the Felicitas `szavazas-patko-query` returns per-seat
-  SVG geometry + each MP's vote — out of scope for v1), and the remaining
-  **vote-based statistics** (party cohesion, defection rates). A first such
-  statistic is already shipped: the **per-MP vote-absence count and percentage**
-  on the representative profile (REP-3).
+  call, per-faction breakdown and bill links, plus a **party-cohesion analysis**
+  (*Frakcióelemzés*, a Votes sub-tab): computed house-wide over the cycle's
+  roll-call set, it shows how factions vote together three ways — an **agreement
+  matrix**, cohesion/alignment **bars**, and an MDS **bloc map** — each with an
+  accessible table fallback (A11Y-1) and a methodology note (TRUST-1). This
+  faction vote analysis is **embeddable** (§4C). Also shipped: the **per-MP
+  vote-absence count and percentage** on the representative profile (REP-3), whose
+  roll-call **participation breakdown** is likewise embeddable (§4C). Remaining
+  future work: **the hemicycle seating chart** (the Felicitas
+  `szavazas-patko-query` returns per-seat SVG geometry + each MP's vote — out of
+  scope for v1) and further vote-based statistics (e.g. per-MP defection rates).
 
 ---
 
@@ -1123,8 +1175,9 @@ rework of existing features.
   answer → debate speech, beyond the document-level listing already provided by
   §6A) remain planned future **modules** (§7); the architecture
   already accommodates them, with Bills and Votes as the worked examples.
-  Within Votes, the **hemicycle seating chart** and **vote-based statistics**
-  (cohesion, attendance, defection rates) remain future work (VOTE-8).
+  Within Votes, the **party-cohesion analysis** has since shipped (VOTE-8,
+  *Frakcióelemzés*); the **hemicycle seating chart** and further vote-based
+  statistics (defection rates) remain future work (VOTE-8).
 - **Precise sentence ↔ video sync — ✅ realized (§3.4).** The originally-planned
   progression of the swappable timing stage (TIM-4) is now shipped:
   1. **Real per-speech offsets** via the Felicitas per-speech video query

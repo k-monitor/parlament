@@ -14,6 +14,7 @@ import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
 import TrendChart from '../../components/TrendChart.vue'
 import BarChart from '../../components/BarChart.vue'
+import EmbedButton from '../../components/EmbedButton.vue'
 import DonateCard from '../../components/DonateCard.vue'
 
 const route = useRoute()
@@ -201,6 +202,17 @@ const cycleMarkers = computed(() => {
   return out
 })
 
+// Params carried into the embeddable histogram (EmbedView `search-trend`): the
+// executed query plus the active filters, so the embed shows the same result set.
+// The cycle is added by EmbedButton from the global scope.
+const trendEmbedParams = computed(() => ({
+  q: data.value?.query,
+  date_from: route.query.date_from,
+  date_to: route.query.date_to,
+  faction_id: route.query.faction_id,
+  agenda_type: route.query.agenda_type,
+}))
+
 // Drill the search into a clicked histogram bucket's timeframe by applying its
 // date range as the date_from/date_to filters. The trend then re-anchors to that
 // span (a finer granularity), so a click zooms in; clearing the filters zooms out.
@@ -295,7 +307,13 @@ function onTrendSelect({ from, to }) {
           :unit="$t('search.results')"
           selectable @select="onTrendSelect"
         />
-        <p class="small muted trendhint">{{ $t('search.trendHint') }}</p>
+        <div class="fig-foot">
+          <p class="small muted trendhint">{{ $t('search.trendHint') }}</p>
+          <EmbedButton
+            kind="search-trend" :params="trendEmbedParams"
+            :title="$t('search.trendCaption', { q: data.query })" :height="300"
+          />
+        </div>
       </section>
 
       <section v-if="hasBreakdown" class="card pad breakdowncard">
@@ -361,7 +379,8 @@ function onTrendSelect({ from, to }) {
 .cyclenotice { margin: .6rem 0 0; }
 .search-donate { margin-top: 1.2rem; }
 .trendcard { margin: 0 0 .9rem; }
-.trendhint { margin: .5rem 0 0; }
+/* In the figure footer row the hint sits left, pushing the embed button right. */
+.trendhint { margin: 0; margin-right: auto; }
 .breakdowncard { margin: 0 0 .9rem; }
 .breakdown-toggle {
   display: flex; align-items: center; gap: .45rem; width: 100%;

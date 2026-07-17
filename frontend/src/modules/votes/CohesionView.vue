@@ -11,6 +11,7 @@ import { api } from '../../api.js'
 import { store, loadMeta, currentCycleLabel } from '../../store.js'
 import StateBlock from '../../components/StateBlock.vue'
 import HelpTip from '../../components/HelpTip.vue'
+import EmbedButton from '../../components/EmbedButton.vue'
 import CohesionPanel from './CohesionPanel.vue'
 
 const { t } = useI18n()
@@ -63,7 +64,14 @@ watch(() => store.cycle, load)
     :empty="!!data && !ready" :empty-text="$t('votes.cohesion.empty')"
     @retry="load"
   >
-    <CohesionPanel v-if="ready" :data="data" :scope-label="scopeLabel" hide-header />
+    <CohesionPanel v-if="ready" :data="data" :scope-label="scopeLabel" hide-header>
+      <template #corner>
+        <EmbedButton
+          kind="faction-cohesion" :title="$t('votes.cohesion.title')"
+          :height="580" :max-width="900"
+        />
+      </template>
+    </CohesionPanel>
   </StateBlock>
 </template>
 

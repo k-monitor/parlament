@@ -13,6 +13,7 @@ import { store, loadMeta, currentCycleLabel } from '../../store.js'
 import { formatDate } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import SankeyDiagram from '../../components/SankeyDiagram.vue'
+import EmbedButton from '../../components/EmbedButton.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import HelpTip from '../../components/HelpTip.vue'
 import Pagination from '../../components/Pagination.vue'
@@ -190,7 +191,13 @@ watch(() => store.cycle, load)
           :value-label="$t('questions.count')"
           @select="onSelect" @select-node="onSelectNode"
         />
-        <p class="muted small hint">{{ $t('questions.clickHint') }}</p>
+        <div class="fig-foot">
+          <p class="muted small hint">{{ $t('questions.clickHint') }}</p>
+          <EmbedButton
+            kind="questions-sankey" :title="$t('questions.title')"
+            :height="560" :max-width="900"
+          />
+        </div>
       </div>
 
       <!-- drill-down: the questions making up the clicked flow -->
@@ -243,7 +250,8 @@ watch(() => store.cycle, load)
 <style scoped>
 .sechead { display: flex; align-items: center; gap: .35rem; }
 .sechead h1 { margin: 0; }
-.hint { margin: .6rem 0 0; }
+/* In the figure footer row the hint sits left, pushing the embed button right. */
+.hint { margin: 0; margin-right: auto; }
 .flowpanel { margin-top: 1.5rem; scroll-margin-top: 5rem; }
 .flowhead { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: .5rem; }
 .flowhead h2 { margin: 0; font-size: 1.15rem; }

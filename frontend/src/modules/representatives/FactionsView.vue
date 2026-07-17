@@ -7,6 +7,7 @@ import { store, loadMeta } from '../../store.js'
 import { formatSpeakingTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import BarChart from '../../components/BarChart.vue'
+import EmbedButton from '../../components/EmbedButton.vue'
 
 const data = ref(null)
 const loading = ref(false)
@@ -52,6 +53,12 @@ const chartItems = computed(() =>
           unit="perc"
           :value-format="(v) => v + ' p'"
         />
+        <div class="fig-foot">
+          <EmbedButton
+            kind="faction-speaking" :title="$t('factions.speakingTime')"
+            :height="360"
+          />
+        </div>
       </section>
 
       <div class="grid fgrid">

@@ -49,6 +49,16 @@ export default {
     copy: 'Hivatkozás másolása',
     copied: 'Vágólapra másolva!',
   },
+  embed: {
+    label: 'Beágyazás',
+    title: 'Ábra beágyazása',
+    cycleNote: 'A beágyazott kód a(z) {cycle} adatait mutatja.',
+    copy: 'Kód másolása',
+    copied: 'Másolva!',
+    preview: 'Előnézet ↗',
+    openInteractive: 'Interaktív változat ↗',
+    noData: 'Nincs megjeleníthető adat.',
+  },
   cycle: {
     label: 'Ciklus',
     all: 'Összes ciklus',

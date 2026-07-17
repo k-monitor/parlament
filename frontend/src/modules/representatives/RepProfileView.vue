@@ -14,6 +14,7 @@ import PieChart from '../../components/PieChart.vue'
 import ActivityBoard from '../../components/ActivityBoard.vue'
 import HelpTip from '../../components/HelpTip.vue'
 import ShareButton from '../../components/ShareButton.vue'
+import EmbedButton from '../../components/EmbedButton.vue'
 
 const props = defineProps({ id: String })
 const { t } = useI18n()
@@ -315,6 +316,13 @@ watch(() => store.cycle, load)
                 :caption="$t('profile.voteBreakdown')"
                 :total-label="$t('profile.vbUnit')"
               />
+              <div class="fig-foot">
+                <EmbedButton
+                  kind="vote-participation" :params="{ id: props.id }"
+                  :title="(profile && profile.label ? profile.label + ' — ' : '') + $t('profile.voteBreakdown')"
+                  :height="330" :max-width="520"
+                />
+              </div>
             </div>
 
             <div v-if="overTimeItems.length" style="margin-top:1rem;">

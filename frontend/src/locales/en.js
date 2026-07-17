@@ -129,6 +129,7 @@ export default {
     profile: 'Profile',
     kmonitor: 'K-Monitor database',
     wikipedia: 'Wikipedia',
+    timeMarker: 'Time in the proceedings',
   },
   sessions: {
     title: 'Sittings', date: 'Date', sitting: 'Sitting', speeches: 'speeches', agendaItems: 'agenda items',

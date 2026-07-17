@@ -402,16 +402,30 @@ export function searchExcerptLines(result) {
 // splits a rendered text run into an ordered token list the template renders inline:
 //   { t: 'text', value }          — a plain run
 //   { t: 'link', value, entity }  — a recognized name → its link
+//   { t: 'time', value, label }   — a "(HH.MM)" clock stamp → a time chip
 // Surfaces are the EXACT spans HuSpaCy found in the source text, so matching is a
 // plain substring scan (no offset bookkeeping through the paragraph transforms).
 // Longest surface first, so an inflected form ("Orbán Viktornak") wins over a
 // bare surname; matches must sit on word boundaries so a name never links inside
 // a longer word. Non-overlapping, left-to-right.
 const IS_LETTER = /\p{L}/u
+
+// A wall-clock timestamp the record inserts periodically into the proceedings —
+// "(15.30)", hour then minute, dot-separated (the only form the record uses). It
+// is lifted out of the running text and rendered as a small clock chip instead of
+// a literal "(15.30)". The tight ranges (hour 00–24, minute 00–59) keep it from
+// ever matching a legal reference — "(2)", a date "(V. 9.)" — which stay inline.
+// Sticky (`y`) so it only matches anchored at the current scan position.
+const TIME_MARKER = /\(\s*([01]?\d|2[0-4])\.([0-5]\d)\s*\)/y
+
 export function linkifyEntities(text, entities) {
-  if (!text || !entities || !entities.length) return [{ t: 'text', value: text || '' }]
-  const surfaces = [...new Map(entities.filter((e) => e.surface).map((e) => [e.surface, e])).values()]
-    .sort((a, b) => b.surface.length - a.surface.length)
+  if (!text) return [{ t: 'text', value: '' }]
+  // Entity surfaces, longest first (see above). Empty when the speech resolved
+  // none — the scan still runs so "(HH.MM)" time markers are always lifted out.
+  const surfaces = (entities && entities.length)
+    ? [...new Map(entities.filter((e) => e.surface).map((e) => [e.surface, e])).values()]
+        .sort((a, b) => b.surface.length - a.surface.length)
+    : []
   const tokens = []
   const pushText = (ch) => {
     const last = tokens[tokens.length - 1]
@@ -420,6 +434,17 @@ export function linkifyEntities(text, entities) {
   }
   let i = 0
   while (i < text.length) {
+    // A "(HH.MM)" clock stamp → its own token, shown as a time chip. Hours lose a
+    // leading zero, minutes keep both digits: "(09.05)" → "9:05".
+    if (text[i] === '(') {
+      TIME_MARKER.lastIndex = i
+      const m = TIME_MARKER.exec(text)
+      if (m) {
+        tokens.push({ t: 'time', value: m[0], label: `${Number(m[1])}:${m[2]}` })
+        i += m[0].length
+        continue
+      }
+    }
     let hit = null
     for (const e of surfaces) {
       if (!text.startsWith(e.surface, i)) continue

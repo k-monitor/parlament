@@ -181,6 +181,7 @@ export default {
     profile: 'Profil',
     kmonitor: 'K-Monitor adatbázis',
     wikipedia: 'Wikipédia',
+    timeMarker: 'Időpont a jegyzőkönyvben',
   },
   sessions: {
     title: 'Ülésnapok',

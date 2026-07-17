@@ -30,6 +30,9 @@ function badgeTitle(link) {
 </script>
 
 <template><template v-for="(tok, i) in tokens" :key="i"><template v-if="tok.t === 'text'">{{ tok.value }}</template><span
+    v-else-if="tok.t === 'time'" class="time-chip" :title="t('entity.timeMarker')"
+  ><svg class="time-chip__clock" viewBox="0 0 24 24" aria-hidden="true"><circle
+    cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 1.8" /></svg>{{ tok.label }}</span><span
     v-else class="entity" :class="{ ambiguous: tok.entity.ambiguous }"
     :title="tok.entity.ambiguous ? t('entity.uncertain') : null"
   ><span class="entity-name">{{ tok.value }}</span><template
@@ -54,6 +57,22 @@ function badgeTitle(link) {
    entity, with a small cluster of destination badges after it. Ambiguous matches
    (several candidates) get a dotted underline; each candidate is its own badge. */
 .entity { white-space: normal; }
+
+/* A wall-clock stamp the record inserts periodically — "(15.30)" — shown as a
+   small, quiet clock chip so it reads as a timestamp aside rather than literal
+   parenthesised text in the flow of speech. */
+.time-chip {
+  display: inline-flex; align-items: center; gap: .3em;
+  padding: .04em .5em .04em .42em; margin: 0 .1em;
+  border-radius: 999px; vertical-align: baseline;
+  background: var(--accent-soft); color: var(--muted);
+  font-size: .82em; font-weight: 600; font-variant-numeric: tabular-nums;
+  line-height: 1.45; white-space: nowrap;
+}
+.time-chip__clock {
+  width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
 .entity-name { text-decoration: underline; text-decoration-color: var(--accent);
   text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .entity.ambiguous .entity-name { text-decoration-style: dotted; }

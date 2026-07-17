@@ -151,7 +151,7 @@ const markerLines = computed(() => {
 
 // --- Axis labels -----------------------------------------------------------
 // Years for long spans, month names for short ones, so labels stay meaningful
-// and plentiful at every zoom. Evenly spaced, then de-duplicated.
+// and plentiful at every zoom.
 const tickMode = computed(() => {
   const g = props.granularity
   if (g === 'year') return 'year'
@@ -161,17 +161,63 @@ const tickMode = computed(() => {
 function tickText(b) {
   return tickMode.value === 'year' ? `${b.y}` : `${MONTHS[b.m]} ${b.y}`
 }
-const ticks = computed(() => {
-  const f = filled.value
-  if (!f.length) return []
-  const count = Math.min(f.length, Math.max(2, Math.floor(w.value / 60)))
-  const idxs = [...new Set(Array.from({ length: count }, (_, k) =>
-    count === 1 ? 0 : Math.round((k * (f.length - 1)) / (count - 1))))]
+
+// The index of the first bucket in each calendar unit (month or year, per
+// tickMode). Anchoring ticks to unit starts is what keeps the labels on an
+// even calendar grid: when buckets are finer than the label unit (weekly/daily
+// buckets labelled by month), sampling raw bucket indices would drop each label
+// at an arbitrary point *inside* its month, so month-to-month gaps looked random.
+const unitStarts = computed(() => {
+  const byYear = tickMode.value === 'year'
   const out = []
   let last = null
-  for (const i of idxs) {
-    const text = tickText(f[i])
-    if (text !== last) { out.push({ i, text }); last = text }
+  filled.value.forEach((b, i) => {
+    const key = byYear ? b.y : `${b.y}-${b.m}`
+    if (key !== last) { out.push(i); last = key }
+  })
+  return out
+})
+
+// Label every Nth unit for a "nice" stride N (whole months / years) chosen so
+// the labels fit the width — a uniform calendar stride, so the gaps read as even
+// (e.g. every 3 months) rather than as an arbitrary alternating pattern.
+//
+// Each tick also carries `frac`, its position as a fraction of the plot width.
+// On day/week charts the label unit (month/year) is coarser than the bucket, so
+// snapping a label to its first bucket left it up to a bucket off true — and
+// since months span 4 *or* 5 weeks, the gaps still alternated. We instead place
+// the label at the unit's real calendar position on the (linear) time axis, so
+// consecutive months sit ~4.3 slots apart every time. Month/year buckets are one
+// unit each, so their slot centre already is the exact position.
+const ticks = computed(() => {
+  const f = filled.value
+  const starts = unitStarts.value
+  if (!f.length || !starts.length) return []
+  // Year labels ("2022") take about half the room of month labels ("szept 2026"),
+  // so they get a tighter budget — else a 4-year cycle drops to every-other-year
+  // on the narrow home teasers.
+  const pxPerLabel = tickMode.value === 'year' ? 44 : 60
+  const maxTicks = Math.max(2, Math.floor(w.value / pxPerLabel))
+  const steps = tickMode.value === 'year'
+    ? [1, 2, 5, 10, 20, 25, 50, 100]
+    : [1, 2, 3, 4, 6, 12]
+  let stride = steps[steps.length - 1]
+  for (const s of steps) { if (Math.ceil(starts.length / s) <= maxTicks) { stride = s; break } }
+
+  const g = props.granularity
+  const timeAxis = g === 'day' || g === 'week' // slot index is linear in time
+  const stepMs = (g === 'week' ? 7 : 1) * 86400000
+  const base = timeAxis ? Date.UTC(f[0].y, f[0].m - 1, f[0].d) : 0
+  const slotOf = (b) => { // fractional slot of this unit's true calendar start
+    const ud = tickMode.value === 'year'
+      ? Date.UTC(b.y, 0, 1) : Date.UTC(b.y, b.m - 1, 1)
+    return Math.max(0, (ud - base) / stepMs)
+  }
+  const out = []
+  for (let k = 0; k < starts.length; k += stride) {
+    const i = starts[k]
+    const frac = (timeAxis ? slotOf(f[i]) : i + 0.5) / n.value
+    out.push({ i, text: tickText(f[i]), frac })
   }
   return out
 })
@@ -216,11 +262,12 @@ function onClick(e) {
 const tipPct = computed(() => (hoverBar.value
   ? ((hoverBar.value.x + barW.value / 2) / w.value) * 100 : 0))
 
-// Centre each axis label on its slot, but pin the domain-edge labels to the
-// plot edges (via CSS) so their outer half doesn't spill past the chart.
+// Position each axis label at its computed fraction of the width, but pin the
+// domain-edge labels to the plot edges (via CSS) so their outer half doesn't
+// spill past the chart.
 function tickStyle(t) {
   if (t.i === 0 || t.i === n.value - 1) return {}
-  return { left: ((t.i * slotW.value + slotW.value / 2) / w.value * 100) + '%' }
+  return { left: (t.frac * 100) + '%' }
 }
 </script>
 

@@ -81,6 +81,7 @@ export default {
   },
   clipExport: {
     button: 'Download video',
+    segmentButton: 'Download this sentence as a video clip',
     title: 'Download a video clip',
     close: 'Close',
     segment: 'Segment',
@@ -97,7 +98,7 @@ export default {
     wholeSpeech: 'Whole speech',
     keepOpen: 'Keep this window open until it finishes.',
     watermark: 'Parlamonitor watermark',
-    watermarkHint: 'logo in the top-right corner (re-encodes the video)',
+    watermarkHint: 'logo top-right, date top-left (re-encodes the video)',
     noTextNote: 'This speech has no transcript, so it can only be exported without subtitles.',
     burnWarn: 'Burned-in subtitles re-encode the video and can be markedly slower.',
     format: 'Format',

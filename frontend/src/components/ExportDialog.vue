@@ -9,21 +9,32 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../api.js'
-import { formatDuration } from '../format.js'
+import { formatDuration, formatLongDate } from '../format.js'
 
 const props = defineProps({
   uid: { type: String, required: true },
   speech: { type: Object, required: true },   // needs video_start / video_end
   sentences: { type: Array, default: () => [] },
+  // Pre-select a segment when opening (e.g. the download button on a single
+  // transcript sentence). Null → default to the whole speech. Indices into
+  // `sentences`; out-of-range / null values fall back to the whole-speech range.
+  initialStartIdx: { type: Number, default: null },
+  initialEndIdx: { type: Number, default: null },
+  // Sitting-day ISO date; baked into the watermark (top-left) when it's enabled.
+  date: { type: String, default: '' },
 })
 const emit = defineEmits(['close'])
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const hasText = computed(() => props.sentences.length > 0)
 
 // --- segment selection -----------------------------------------------------
-const startIdx = ref(0)
-const endIdx = ref(Math.max(0, props.sentences.length - 1))
+const lastIdx = Math.max(0, props.sentences.length - 1)
+const clampIdx = (v, fallback) =>
+  v == null || Number.isNaN(v) ? fallback : Math.min(Math.max(0, Math.floor(v)), lastIdx)
+const startIdx = ref(clampIdx(props.initialStartIdx, 0))
+const endIdx = ref(clampIdx(props.initialEndIdx, lastIdx))
+if (endIdx.value < startIdx.value) endIdx.value = startIdx.value
 function onStartChange() { if (endIdx.value < startIdx.value) endIdx.value = startIdx.value }
 function onEndChange() { if (startIdx.value > endIdx.value) startIdx.value = endIdx.value }
 const isWholeSpeech = computed(() =>
@@ -84,7 +95,9 @@ const orientation = ref('landscape')
 const portrait = computed(() => orientation.value === 'portrait')
 // Brand watermark (Parlamonitor logo, top-right). On by default; overlaying it
 // re-encodes the video, so turning it off keeps the fast stream-copy paths.
+// When on, the sitting-day date is baked into the top-left corner.
 const watermark = ref(true)
+const dateLabel = computed(() => (props.date ? formatLongDate(props.date, locale.value) : ''))
 
 // --- run state -------------------------------------------------------------
 // idle | loading (engine) | fetching (segments) | encoding | done | error | cancelled
@@ -157,6 +170,7 @@ async function runExport() {
     phase.value = 'encoding'; progress.value = 0
     const blob = await engine.muxClip({
       tsData: data, srt, mode, watermark: watermark.value, portrait: portrait.value, height,
+      date: dateLabel.value,
       onProgress: (p) => { progress.value = p },
     })
     if (abortCtrl.signal.aborted) return

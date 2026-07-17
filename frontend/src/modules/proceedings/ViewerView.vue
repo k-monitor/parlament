@@ -37,6 +37,11 @@ const videoEl = ref(null)
 const playerEl = ref(null)
 const currentOrd = ref(-1)
 const showExport = ref(false)   // clip-export dialog (VIE-10)
+// Which segment the export dialog opens on. Null = whole speech (header button);
+// set to a sentence index by the per-sentence download button so the dialog
+// opens pre-scoped to that sentence.
+const exportStartIdx = ref(null)
+const exportEndIdx = ref(null)
 // Custom-controls state. The player loads a per-speech clip (0-based timeline),
 // so currentTime/duration already describe just this speech — no windowing.
 const playing = ref(false)
@@ -103,6 +108,21 @@ async function resolveHecklers(seq) {
 // An interjection whose "Name:" prefix didn't resolve is shown verbatim.
 function asideText(seg) {
   return seg.speaker ? `${seg.speaker}: ${seg.text}` : seg.text
+}
+
+// Open the clip-export dialog for the whole speech (header button).
+function openExport() {
+  exportStartIdx.value = null
+  exportEndIdx.value = null
+  showExport.value = true
+}
+// Open it pre-scoped to a single transcript sentence (per-sentence download). The
+// segmentedSentences list maps 1:1 onto `sentences`, so its index is the index
+// the dialog selects on.
+function openExportForSentence(i) {
+  exportStartIdx.value = i
+  exportEndIdx.value = i
+  showExport.value = true
 }
 
 // Person names recognized in the transcript, resolved to Wikidata/Wikipedia
@@ -401,7 +421,7 @@ onBeforeUnmount(() => {
                aligned right on the same line as the speaker name. -->
           <div class="vhead-actions" v-if="speech">
             <ShareButton :title="speechShareTitle" :url="speechShareUrl" />
-            <button v-if="usingClip" class="btn secondary small" @click="showExport = true">
+            <button v-if="usingClip" class="btn secondary small" @click="openExport()">
               ⤓ {{ $t('clipExport.button') }}
             </button>
           </div>
@@ -472,7 +492,7 @@ onBeforeUnmount(() => {
 
           <div v-else class="transcript" @scroll.passive="onUserScroll">
             <div
-              v-for="s in segmentedSentences" :key="s.ord" :id="'s-' + s.ord"
+              v-for="(s, i) in segmentedSentences" :key="s.ord" :id="'s-' + s.ord"
               :class="['sentence', { active: s.ord === currentOrd }]"
             >
               <div class="scontent">
@@ -497,14 +517,25 @@ onBeforeUnmount(() => {
                   </span>
                 </template>
               </div>
-              <ShareButton class="sentence-share" :url="s.shareUrl" :title="s.shareTitle" align="right" compact />
+              <div class="sentence-actions">
+                <button v-if="usingClip" type="button" class="sentence-dl"
+                        :title="$t('clipExport.segmentButton')" :aria-label="$t('clipExport.segmentButton')"
+                        @click="openExportForSentence(i)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" />
+                  </svg>
+                </button>
+                <ShareButton :url="s.shareUrl" :title="s.shareTitle" align="right" compact />
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       <ExportDialog v-if="showExport && speech" :uid="props.uid" :speech="speech"
-                    :sentences="sentences" @close="showExport = false" />
+                    :sentences="sentences" :initial-start-idx="exportStartIdx" :initial-end-idx="exportEndIdx"
+                    :date="session && session.date" @close="showExport = false" />
     </div>
   </StateBlock>
 </template>
@@ -563,10 +594,18 @@ onBeforeUnmount(() => {
 .aside.heckle { display: flex; align-items: center; gap: .45rem; }
 .heckle-who { flex: none; flex-wrap: nowrap; font-style: normal; font-weight: 600; gap: .35rem !important; }
 .aside-what { font-style: italic; }
-/* Per-sentence share trigger: kept faint so a long transcript stays uncluttered,
-   and revealed when the sentence is hovered / is the active (playing) one. */
-.sentence-share { opacity: .3; transition: opacity .15s; }
-.sentence:hover .sentence-share, .sentence.active .sentence-share { opacity: 1; }
+/* Per-sentence actions (download this segment + share): kept faint so a long
+   transcript stays uncluttered, revealed when the sentence is hovered / is the
+   active (playing) one. */
+.sentence-actions { flex: none; display: flex; align-items: center; gap: .05rem; opacity: .3; transition: opacity .15s; }
+.sentence:hover .sentence-actions, .sentence.active .sentence-actions { opacity: 1; }
+/* Download-this-clip trigger — matches the ShareButton's compact icon button. */
+.sentence-dl {
+  display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+  padding: .4rem; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
+}
+.sentence-dl:hover, .sentence-dl:focus-visible { background: var(--line); color: var(--accent); outline: none; }
+.sentence-dl svg { width: 16px; height: 16px; display: block; }
 @media (max-width: 820px) {
   /* Mobile: turn the viewer into a fixed pane that fills the screen below the
      sticky app header (52px). Everything but the transcript stays put — only

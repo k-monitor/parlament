@@ -133,6 +133,7 @@ export default {
   },
   clipExport: {
     button: 'Videó letöltése',
+    segmentButton: 'Ez a mondat letöltése videórészletként',
     title: 'Videórészlet letöltése',
     close: 'Bezárás',
     segment: 'Szakasz',
@@ -149,7 +150,7 @@ export default {
     wholeSpeech: 'Teljes felszólalás',
     keepOpen: 'Ne zárd be ezt az ablakot, amíg elkészül.',
     watermark: 'Parlamonitor vízjel',
-    watermarkHint: 'a logó a jobb felső sarokba kerül (a videó ilyenkor újrakódolódik)',
+    watermarkHint: 'a logó a jobb felső, a dátum a bal felső sarokba kerül (a videó ilyenkor újrakódolódik)',
     noTextNote: 'Ehhez a felszólaláshoz nincs szövegezett jegyzőkönyv, ezért csak felirat nélkül tölthető le.',
     burnWarn: 'A ráégetett felirat újrakódolja a videót, ezért lényegesen lassabb lehet.',
     format: 'Formátum',

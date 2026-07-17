@@ -17,7 +17,24 @@ const props = defineProps({
   entities: { type: Array, default: () => [] },
 })
 const { t } = useI18n()
-const tokens = computed(() => linkifyEntities(props.text, props.entities))
+
+// TEMPORARY SWITCH: Wikipedia badges are hidden in the transcript while we work
+// out some quality issues with the Wikipedia entity links. Flip back to `true`
+// to re-enable them — nothing else needs to change.
+const SHOW_WIKIPEDIA_BADGES = false
+
+const tokens = computed(() => {
+  const toks = linkifyEntities(props.text, props.entities)
+  if (SHOW_WIKIPEDIA_BADGES) return toks
+  // Strip Wikipedia links. A name whose ONLY destination was Wikipedia degrades
+  // to plain text so it isn't left underlined with nowhere to go.
+  return toks.map((tok) => {
+    if (tok.t !== 'link') return tok
+    const links = (tok.entity.links || []).filter((l) => l.type !== 'wikipedia')
+    if (!links.length) return { t: 'text', value: tok.value }
+    return { ...tok, entity: { ...tok.entity, links } }
+  })
+})
 
 // The K-Monitor brand mark (public/ asset, cropped to the circular "K").
 const KMONITOR_ICON = '/kmonitor-badge.png'

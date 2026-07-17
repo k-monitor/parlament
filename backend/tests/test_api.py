@@ -525,6 +525,55 @@ def test_cache_control_headers(client):
     assert "cache-control" not in missing.headers
 
 
+def test_spa_shell_fallback_only_for_client_routes():
+    """A missing *asset*/file must 404, never the HTML shell — else the edge
+    caches HTML under an immutable .css/.js URL and poisons the site (Firefox
+    strict-MIME refuses it). Client routes still resolve to the shell."""
+    from app.main import _should_serve_shell
+    # Client-side routes (deep links / refresh) → shell.
+    assert _should_serve_shell("proceedings/43001-1")
+    assert _should_serve_shell("search")
+    assert _should_serve_shell("representatives/factions")
+    # Files / namespaced paths → real 404, no shell.
+    assert not _should_serve_shell("assets/index-DJ02fr_5.css")
+    assert not _should_serve_shell("assets/index-639Umro7.js")
+    assert not _should_serve_shell("favicon.ico")
+    assert not _should_serve_shell("api/v1/nope")
+    assert not _should_serve_shell("media/photos/1.jpg")
+
+
+def test_html_never_cached_immutable():
+    """Defense-in-depth: the cache middleware must never stamp an HTML body
+    `immutable`, even under /assets/ — a year-long HTML-as-CSS entry is exactly
+    the poisoning this guards against (backend/app/caching.py)."""
+    from app import caching
+    # An /assets/ path normally earns the immutable, year-long policy...
+    assert caching._policy_for("/assets/x.css") == caching.ASSET_CACHE_CONTROL
+
+    async def run(content_type):
+        captured = {}
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200,
+                        "headers": [(b"content-type", content_type)]})
+
+        async def send(message):
+            if message["type"] == "http.response.start":
+                captured["headers"] = dict(message["headers"])
+
+        mw = caching.CacheControlMiddleware(app)
+        await mw({"type": "http", "method": "GET", "path": "/assets/x.css"},
+                 None, send)
+        return captured["headers"][b"cache-control"]
+
+    import asyncio
+    # A real hashed asset keeps the immutable, year-long TTL.
+    assert asyncio.run(run(b"text/css")) == caching.ASSET_CACHE_CONTROL.encode()
+    # The SPA shell leaking through under /assets/ is cached as HTML instead.
+    assert asyncio.run(run(b"text/html; charset=utf-8")) == \
+        caching.HTML_CACHE_CONTROL.encode()
+
+
 def test_gzip_compression(client):
     """Large JSON responses are gzip-compressed toward clients/CDN."""
     r = client.get("/api/v1/proceedings/sessions",

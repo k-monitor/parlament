@@ -67,7 +67,18 @@ class CacheControlMiddleware:
                     and message["status"] in (200, 304)):
                 headers = message.setdefault("headers", [])
                 if not any(k.lower() == b"cache-control" for k, _ in headers):
-                    headers.append((b"cache-control", policy.encode("latin-1")))
+                    chosen = policy
+                    # Never mark an HTML body `immutable`: only genuine hashed
+                    # assets earn the year-long TTL. If an /assets/ URL ever
+                    # yields the SPA shell (a fallback bug, a proxy error page),
+                    # caching that for a year poisons the site — a stylesheet was
+                    # cached as HTML and Firefox refused it. Cache HTML as HTML.
+                    if chosen is ASSET_CACHE_CONTROL:
+                        ctype = next((v for k, v in headers
+                                      if k.lower() == b"content-type"), b"")
+                        if ctype.lower().startswith(b"text/html"):
+                            chosen = HTML_CACHE_CONTROL
+                    headers.append((b"cache-control", chosen.encode("latin-1")))
             await send(message)
 
         await self.app(scope, receive, send_with_cache_header)

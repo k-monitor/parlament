@@ -130,20 +130,42 @@ if settings.photos_dir and os.path.isdir(settings.photos_dir):
 
 # Optionally serve the built SPA so the whole thing runs from one process
 # (OPS-1: single stateless backend). In dev the SPA runs under Vite instead.
+
+# Namespaces whose 404s must NEVER become the SPA shell. `api/`/`media/` stay
+# JSON. `assets/` is the dangerous one: it holds Vite's content-hashed bundles,
+# which the cache layer stamps `immutable` for a year (caching.py). If a missing
+# hashed asset (e.g. a request racing a blue-green deploy) returned the HTML
+# shell with 200, Cloudflare/browsers would cache HTML under a .css/.js URL for
+# a YEAR — poisoning the site until the entry expired. That actually happened to
+# a stylesheet, so Firefox (strict MIME) refused to apply it. A missing asset
+# must be a real 404, which the cache middleware never stamps immutable.
+_NON_SHELL_PREFIXES = ("api/", "media/", "assets/")
+_NON_SHELL_EXACT = frozenset({"api", "media", "assets"})
+
+
+def _should_serve_shell(path: str) -> bool:
+    """Whether a 404 for `path` (mount-relative, no leading slash) should
+    resolve to the SPA shell. True only for client-side *routes* — extensionless
+    paths outside the api/media/assets namespaces. Anything that looks like a
+    file (has an extension in its last segment) is a real static request: a miss
+    must 404, not hand back HTML under a file URL (see _NON_SHELL_PREFIXES)."""
+    if path.startswith(_NON_SHELL_PREFIXES) or path in _NON_SHELL_EXACT:
+        return False
+    return "." not in path.rsplit("/", 1)[-1]
+
+
 class SPAStaticFiles(StaticFiles):
-    """Static files with HTML5-history fallback: unknown paths (the SPA's
-    client-side routes, e.g. /proceedings/43001-1) return index.html so a
-    deep link / refresh resolves to the app shell (VIE-5)."""
+    """Static files with HTML5-history fallback: unknown *client routes* (e.g.
+    /proceedings/43001-1) return index.html so a deep link / refresh resolves to
+    the app shell (VIE-5). Missing *files* (assets, images, …) stay a real 404 —
+    returning the shell for them lets the edge cache HTML under a file URL."""
 
     async def get_response(self, path, scope):
         from starlette.exceptions import HTTPException as StarletteHTTPException
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            # Never mask API/media 404s with the SPA shell — those must stay JSON.
-            is_app_route = not (path.startswith("api/") or path.startswith("media/")
-                                or path in ("api", "media"))
-            if exc.status_code == 404 and is_app_route:
+            if exc.status_code == 404 and _should_serve_shell(path):
                 return await super().get_response("index.html", scope)
             raise
 

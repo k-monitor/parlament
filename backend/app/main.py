@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,12 +18,27 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .analytics import search_analytics
 from .caching import CacheControlMiddleware
 from .config import settings
 from .db import get_db
 from .modules.registry import load_modules
 
 API_PREFIX = "/api/v1"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start the privacy-respecting search-analytics flush thread (PRIV-1). It
+    # runs per worker process; a no-op / graceful self-disable when turned off or
+    # unwritable. Only runs in a real server — the test client doesn't enter the
+    # lifespan, so the suite never spawns the thread or writes the file.
+    search_analytics.start()
+    try:
+        yield
+    finally:
+        search_analytics.stop()  # flush the in-progress hour on shutdown
+
 
 app = FastAPI(
     title="Parlamonitor API",
@@ -35,6 +51,7 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

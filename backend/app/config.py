@@ -46,6 +46,22 @@ class Settings:
         (os.environ.get("PARLAMONITOR_SITE_URL") or "").strip().rstrip("/") or None)
     # Cap on reported search totals so a pathological query can't scan forever.
     max_search_total: int = int(os.environ.get("PARLAMONITOR_MAX_SEARCH_TOTAL", "5000"))
+    # Search analytics (PRIV-1). Privacy-respecting, GDPR-friendly logging of what
+    # people search for — the search KEYWORDS and the FILTERS combined with them —
+    # WITHOUT any personal data: no IP addresses, no user agents, no cookies, and
+    # NO exact timestamps (events are counted into whole-hour buckets). Only the
+    # aggregate per-hour COUNT is persisted, and to a SEPARATE SQLite file (never
+    # the read-only content DB, app/analytics.py). Enabled by default; set
+    # PARLAMONITOR_SEARCH_ANALYTICS=0 to turn it off.
+    search_analytics: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_SEARCH_ANALYTICS", "1").strip().lower()
+         not in ("0", "false", "no", "")))
+    # Where the aggregated search-analytics file lives. Point it at a host-mounted
+    # volume so the aggregates are readable from OUTSIDE the container. Unset →
+    # `search-analytics.db` next to the main DB (resolved lazily in analytics.py so
+    # it honours a db_path overridden after construction, e.g. in tests).
+    analytics_db: str | None = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_ANALYTICS_DB") or None)
     # Folded set of speech types excluded from statistics (STAT-1).
     procedural_speech_types: frozenset = field(default_factory=lambda: _procedural_speech_types())
     # Word-cloud term-extraction backend (WCLOUD-2). "huspacy" lemmatizes and

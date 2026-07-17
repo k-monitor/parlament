@@ -14,6 +14,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ...analytics import search_analytics
 from ...config import settings
 from ...db import get_db, like_contains
 from ...media import per_speech_clip
@@ -177,6 +178,18 @@ def search(
         f"LIMIT {settings.max_search_total + 1})", params).fetchone()
     total = total_row["c"]
     capped = total > settings.max_search_total
+
+    # Privacy-respecting analytics (PRIV-1): count this search — its keyword and
+    # filters — into the current hour's aggregate. No IP / no exact timestamp; the
+    # request's network metadata is never touched. Only `/search` is instrumented
+    # (not trend/breakdown/suggest, which the SPA fires for the same query), so one
+    # user search is one recorded event. Best-effort — never affects the response.
+    search_analytics.record(
+        query=q, date_from=date_from, date_to=date_to, period=period,
+        person_id=person_id, faction_id=faction_id, agenda_type=agenda_type,
+        sort=sort if sort in _SEARCH_SORTS else "relevance",
+        zero_results=(total == 0),
+    )
 
     rows = db.execute(
         f"""

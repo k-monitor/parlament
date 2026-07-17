@@ -331,6 +331,8 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_PHOTOS_DIR` | `/data/media/photos` | MP portrait directory |
 | `PARLAMONITOR_FRONTEND_DIST` | `/app/frontend/dist` | built SPA served by the backend |
 | `PARLAMONITOR_MAX_SEARCH_TOTAL` | `5000` | cap on reported search totals |
+| `PARLAMONITOR_SEARCH_ANALYTICS` | `1` | privacy-friendly search-keyword logging (PRIV-1); `0` to disable (see [Search analytics](#search-analytics-privacy-friendly)) |
+| `PARLAMONITOR_ANALYTICS_DB` | `/analytics/search-analytics.db` | where the aggregated search stats are written (bind-mounted from `./analytics` on the host) |
 | `PARLAMONITOR_WEB_WORKERS` | _(one per core)_ | uvicorn worker processes (see [Handling high traffic](#handling-high-traffic-cloudflare--tuning)) |
 | `PARLAMONITOR_FORWARDED_ALLOW_IPS` | `*` | which proxy IPs uvicorn trusts `X-Forwarded-*` from |
 | `PARLAMONITOR_API_CACHE_CONTROL` | `public, max-age=60, s-maxage=300, stale-while-revalidate=600` | Cache-Control stamped on API responses |
@@ -353,6 +355,50 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` | — | Modal auth (required when backend=`modal`) |
 | `PARLAMONITOR_MODAL_APP` | `parlamonitor-nlp` | deployed Modal app name (must match `modal_app.py`) |
 | `PARLAMONITOR_MODAL_BATCH_SENTENCES` | `5000` | sentences per Modal batch (host side) |
+
+## Search analytics (privacy-friendly)
+
+The API keeps a **GDPR-friendly, aggregated log of what people search for** — the
+search *keywords* and the *filters* combined with them — to help improve coverage
+and the search itself (PRIV-1). It is designed to be non-personal by construction:
+
+- **No IP addresses, user agents, cookies or session identifiers** are read or
+  stored. The endpoint never even inspects the request's network metadata.
+- **No exact timestamps.** Events are counted into **whole-hour buckets** (UTC);
+  the finest time resolution ever persisted is "term X was searched N times in the
+  14:00–15:00 hour".
+- Only the **aggregate count** per `(hour, keyword, filters, zero-result flag)`
+  tuple is written — there is no per-request row to correlate back to anyone.
+
+It writes to a **separate SQLite file** (never the read-only content DB), flushed
+once an hour. `./deploy.sh` bind-mounts the host directory **`./analytics`** to
+`/analytics` on the serving containers, so the file is readable **from outside the
+container**:
+
+```bash
+# on the host, next to docker-compose.yml
+sqlite3 ./analytics/search-analytics.db \
+  'SELECT hour, query, period, faction_id, zero_results, searches
+     FROM search_query_hourly ORDER BY hour DESC, searches DESC LIMIT 20;'
+
+# most-searched keywords overall
+sqlite3 ./analytics/search-analytics.db \
+  'SELECT query, SUM(searches) AS n FROM search_query_hourly
+     GROUP BY query ORDER BY n DESC LIMIT 20;'
+
+# searches that found nothing (coverage gaps)
+sqlite3 ./analytics/search-analytics.db \
+  'SELECT query, SUM(searches) AS n FROM search_query_hourly
+     WHERE zero_results=1 GROUP BY query ORDER BY n DESC LIMIT 20;'
+```
+
+The table columns are `hour, query, date_from, date_to, period, person_id,
+faction_id, agenda_type, sort, zero_results, searches` (filter columns are `''`
+when the filter was not used). Multiple uvicorn workers and both blue/green
+colors write the same file concurrently; every write is an accumulating UPSERT, so
+their counts add up rather than clobber. Turn the whole thing off with
+`PARLAMONITOR_SEARCH_ANALYTICS=0` in `.env`. The privacy notice on the site's
+"About" page discloses this logging (PRIV-1).
 
 ## Common operations
 

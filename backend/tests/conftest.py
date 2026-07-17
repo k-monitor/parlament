@@ -21,6 +21,10 @@ os.environ.setdefault("PARLAMONITOR_WORDCLOUD_BACKEND", "regex")
 # tests opt back in explicitly (with injected fetchers).
 os.environ.setdefault("PARLAMONITOR_ENTITY_LINKS", "0")
 os.environ.setdefault("PARLAMONITOR_KMONITOR_LINKS", "0")
+# Disable search analytics by default so the suite writes no analytics file and
+# spawns no flush thread. The `/search` endpoint's record() call becomes a no-op;
+# test_analytics.py exercises the aggregator directly with its own temp DB.
+os.environ.setdefault("PARLAMONITOR_SEARCH_ANALYTICS", "0")
 
 import pytest
 from fastapi.testclient import TestClient

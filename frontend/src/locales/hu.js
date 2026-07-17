@@ -438,7 +438,7 @@ export default {
     dataTitle: 'Adatok és pontosság',
     dataBody: 'A felszólalások videóidőzítését alapesetben beszédfelismeréssel (whisper-large-v3-turbo modell) illesztjük a videóhoz: a felismert szöveg időbélyegeit mondatszinten összekötjük a hivatalos jegyzőkönyv szövegével, így a mondatokra pontos időzítés jön létre. Ahol nincs elérhető átirat, pozícióalapú becslésre esünk vissza (a napi videó hosszát a szöveg karakterarányában osztja el) — ez csak a passzus környékére pontos, és minden ilyen mondatnál jelezzük a becsült pontosságot.',
     privacyTitle: 'Adatvédelem',
-    privacyBody: 'Az oldal nem használ harmadik feles hirdetési vagy követő szkripteket. Esetleges látogatottsági statisztika kizárólag anonim, GDPR-konform módon készül.',
+    privacyBody: 'Az oldal nem használ harmadik feles hirdetési vagy követő szkripteket. Esetleges látogatottsági statisztika kizárólag anonim, GDPR-konform módon készül. A keresések javítása érdekében a beírt keresőkifejezéseket és szűrőket összesített formában, óránkénti bontásban, IP-cím és pontos időbélyeg nélkül tároljuk — az adatok nem köthetők egyénhez.',
     apiTitle: 'API',
     apiBody: 'Az adatok dokumentált, nyílt API-n keresztül is elérhetők fejlesztők számára.',
     apiLink: 'API-dokumentáció',

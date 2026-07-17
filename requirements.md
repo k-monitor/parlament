@@ -432,6 +432,9 @@ merely because an accent was omitted (or added).
   from a **fixed whitelist** (never spliced from raw request input) and affects
   only the paginated result list — the accompanying aggregates (SEA-8/SEA-9)
   describe the whole result set regardless of order.
+- **SEA-11.** Each executed search (the canonical `/search` request) is counted
+  into the **anonymous, aggregated search analytics** — keyword + active filters,
+  no personal data — see **PRIV-2** (§8.4).
 
 ### 5.2 Proceedings viewer (sentence ↔ video sync)
 
@@ -1036,6 +1039,20 @@ rework of existing features.
 - **PRIV-1 (MUST).** No tracking of users beyond privacy-respecting, anonymized
   analytics; **no third-party ad/marketing trackers**; GDPR-compliant. Any
   analytics disclosed in a privacy notice.
+- **PRIV-2.** **Search analytics** (the one concrete analytics under PRIV-1). The
+  backend logs what people search for — the search **keyword** and the **filters**
+  combined with it (§SEA-3: date range, speaker, faction, agenda type, sort, and a
+  zero-result flag) — to guide coverage and search improvements. It is **anonymous
+  and aggregated by design**: no IP address, user agent, cookie or session
+  identifier is read or stored, and **no exact timestamp** is kept — events are
+  counted into **whole-hour buckets** (UTC), so only a per-hour **count** per
+  `(keyword, filters)` tuple is persisted, never a per-request row that could be
+  correlated to a person. Only the canonical `/search` request is counted (not the
+  trend/breakdown/suggest calls the SPA fires for the same query). Data is written
+  to a **separate SQLite file** — never the read-only content DB — flushed hourly
+  and mounted on a **host-accessible** volume so the aggregates can be inspected or
+  exported from outside the container. Enabled by default, switchable off by config
+  (OPS-4), and **disclosed in the privacy notice** (PRIV-1).
 - **TRUST-1.** Provenance and **confidence/timing-precision** indicators (from the
   pipeline `debug` block) are surfaced, not hidden, wherever they affect what the
   user sees (see VIE-6, REP-5).

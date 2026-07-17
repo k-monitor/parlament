@@ -102,7 +102,10 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 
 <template>
   <a v-if="!isEmbed" class="skip-link" href="#main">{{ $t('app.skipToContent') }}</a>
-  <header v-if="!isEmbed" class="site-header">
+  <!-- The main nav and the cycle chooser stick to the top together as one block,
+       so scrolling never leaves the page without its active-cycle context. -->
+  <div v-if="!isEmbed" class="site-top">
+  <header class="site-header">
     <div class="container header-bar">
       <router-link :to="{ name: 'home' }" class="brand" aria-label="Parlamonitor">
         <img class="brand-mark" src="/parlamonitor.png" alt="" aria-hidden="true" />
@@ -139,7 +142,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
     </div>
   </header>
 
-  <nav v-if="!isEmbed && periods.length" class="cyclebar" :aria-label="$t('cycle.label')">
+  <nav v-if="periods.length" class="cyclebar" :aria-label="$t('cycle.label')">
     <div class="container cyclebar-inner">
       <svg class="cyclebar-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
         <rect x="3" y="4.5" width="18" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
@@ -170,6 +173,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
       </select>
     </div>
   </nav>
+  </div>
 
   <nav v-if="!isEmbed && sectionTabs.length > 1" class="subheader" :aria-label="$t('nav.submenu')">
     <div class="container subnav">
@@ -259,9 +263,12 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 </template>
 
 <style scoped>
+/* Sticky wrapper for the main nav + cycle bar, so both stay pinned to the top as
+   one block on scroll. The shadow sits at the block's bottom edge, separating the
+   whole nav group from the scrolling content beneath it. */
+.site-top { position: sticky; top: 0; z-index: 20; box-shadow: var(--shadow); }
 .site-header {
   background: var(--accent); color: var(--accent-ink);
-  position: sticky; top: 0; z-index: 20; box-shadow: var(--shadow);
 }
 .site-header .container { padding-top: .6rem; padding-bottom: .6rem; }
 /* Three zones: brand (left), nav (flexes + wraps), controls (pinned right). The

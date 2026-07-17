@@ -529,6 +529,7 @@ def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
         by_agenda.setdefault(sp["agenda_item_id"], []).append(_speech_brief(sp))
     return {
         "session": _session_dict(s),
+        "neighbours": _session_neighbours(db, s),
         "agenda": [
             {**_agenda_dict(a), "speeches": by_agenda.get(a["id"], [])}
             for a in agenda
@@ -929,6 +930,28 @@ def _speech_neighbours(db, session_id, idx):
         "ORDER BY speech_index ASC LIMIT 1", (session_id, idx)).fetchone()
     return {"prev": prev["uid"] if prev else None,
             "next": nxt["uid"] if nxt else None}
+
+
+def _session_neighbours(db, s) -> dict:
+    """The chronologically adjacent sitting days within the same electoral cycle,
+    for prev/next-day navigation on the sitting page. Ordered by (date, sitting);
+    None at the cycle's first/last sitting so navigation never crosses cycles
+    (matching the cycle-scoped sittings list)."""
+    status_col = "COALESCE(status, 'published')" if _has_session_status(db) else "'published'"
+    params = {"per": s["period_number"], "date": s["date"], "sitting": s["sitting"]}
+    prev = db.execute(
+        f"SELECT id, date, sitting, {status_col} AS status FROM session "
+        "WHERE period_number = :per AND (date, sitting) < (:date, :sitting) "
+        "ORDER BY date DESC, sitting DESC LIMIT 1", params).fetchone()
+    nxt = db.execute(
+        f"SELECT id, date, sitting, {status_col} AS status FROM session "
+        "WHERE period_number = :per AND (date, sitting) > (:date, :sitting) "
+        "ORDER BY date ASC, sitting ASC LIMIT 1", params).fetchone()
+
+    def brief(r):
+        return {"id": r["id"], "date": r["date"], "sitting": r["sitting"],
+                "status": r["status"]} if r else None
+    return {"prev": brief(prev), "next": brief(nxt)}
 
 
 # ---------------------------------------------------------------------------

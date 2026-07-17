@@ -133,6 +133,7 @@ export default {
   sessions: {
     title: 'Sittings', date: 'Date', sitting: 'Sitting', speeches: 'speeches', agendaItems: 'agenda items',
     open: 'Open', agenda: 'Agenda', duration: 'Duration',
+    dayNav: 'Go to another sitting day', prevDay: 'Previous sitting', nextDay: 'Next sitting',
     wordcloud: 'What was discussed on this day?',
     wordcloudCaption: 'Words most characteristic of this day: frequent here but rare on the cycle\'s other sitting days (TF·IDF). Words are shown as their lemma (inflected forms merged) and recognized names (people, places, organisations) appear in italics. Chairing and common filler words excluded. Click a word to search that day.',
     wordcloudCount: 'occurrences',

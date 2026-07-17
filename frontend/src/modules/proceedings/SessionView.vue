@@ -211,6 +211,30 @@ function searchWord(word) {
               <SpeechRow v-for="sp in a.speeches" :key="sp.uid" :speech="sp" :playable="!notReady" />
             </ul>
           </section>
+
+          <!-- Move to the chronologically adjacent sitting day of the same cycle.
+               Absent at the cycle's first/last sitting (neighbour is null). -->
+          <nav
+            v-if="data.neighbours && (data.neighbours.prev || data.neighbours.next)"
+            class="day-nav" :aria-label="$t('sessions.dayNav')"
+          >
+            <router-link
+              v-if="data.neighbours.prev" class="day-nav-btn prev"
+              :to="{ name: 'session', params: { id: data.neighbours.prev.id } }"
+            >
+              <span class="day-nav-dir">‹ {{ $t('sessions.prevDay') }}</span>
+              <span class="day-nav-date">{{ formatDate(data.neighbours.prev.date) }} · {{ data.neighbours.prev.sitting }}. {{ $t('sessions.sitting').toLowerCase() }}</span>
+            </router-link>
+            <span v-else aria-hidden="true"></span>
+            <router-link
+              v-if="data.neighbours.next" class="day-nav-btn next"
+              :to="{ name: 'session', params: { id: data.neighbours.next.id } }"
+            >
+              <span class="day-nav-dir">{{ $t('sessions.nextDay') }} ›</span>
+              <span class="day-nav-date">{{ formatDate(data.neighbours.next.date) }} · {{ data.neighbours.next.sitting }}. {{ $t('sessions.sitting').toLowerCase() }}</span>
+            </router-link>
+            <span v-else aria-hidden="true"></span>
+          </nav>
         </div>
 
         <!-- Agenda jump list (TOC-1). Hidden on narrow screens (see CSS); a
@@ -353,4 +377,19 @@ function searchWord(word) {
 .agenda { margin-bottom: 1rem; scroll-margin-top: 72px; }
 .agenda-title { font-size: 1.05rem; margin: 0; border-bottom: 1px solid var(--line); display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .speeches { list-style: none; margin: 0; padding: .3rem; }
+
+/* Prev/next sitting-day navigation at the end of the transcript. space-between
+   keeps prev anchored left / next right; the empty placeholder <span> on a
+   missing side preserves that alignment when only one neighbour exists. */
+.day-nav { display: flex; justify-content: space-between; gap: 1rem; margin-top: 1.5rem; }
+.day-nav-btn {
+  display: flex; flex-direction: column; gap: .12rem; max-width: 47%;
+  padding: .55rem .85rem; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); box-shadow: var(--shadow); text-decoration: none;
+  transition: border-color .12s, background .12s;
+}
+.day-nav-btn:hover, .day-nav-btn:focus-visible { border-color: var(--accent); text-decoration: none; }
+.day-nav-btn.next { text-align: right; align-items: flex-end; }
+.day-nav-dir { font-size: .78rem; font-weight: 600; color: var(--accent); }
+.day-nav-date { font-size: .92rem; color: var(--ink); }
 </style>

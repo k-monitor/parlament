@@ -122,6 +122,34 @@ def test_session_browse_groups_by_agenda(client):
     assert first["speeches"][0]["uid"] == "43001-1"
 
 
+def test_session_neighbours_none_for_sole_sitting(client):
+    """The only sitting of its cycle has no prev/next day — both null so the
+    frontend renders no navigation."""
+    n = client.get("/api/v1/proceedings/sessions/43001").json()["neighbours"]
+    assert n == {"prev": None, "next": None}
+
+
+def test_session_neighbours_are_chronological_within_cycle(client, data_dir, db_path):
+    """Prev/next point to the chronologically adjacent sitting of the SAME cycle,
+    ordered by (date, sitting); null at the cycle's first/last day."""
+    import json
+    from app import loader
+    from tests.conftest import _session_record
+    # A later sitting in the same cycle (43001 is 2026-05-09).
+    (data_dir / "processed" / "43002-session.json").write_text(
+        json.dumps(_session_record(session="43002", sitting=2, date="2026-05-12"),
+                   ensure_ascii=False))
+    loader.build_database(data_dir, db_path)
+
+    earlier = client.get("/api/v1/proceedings/sessions/43001").json()["neighbours"]
+    assert earlier["prev"] is None
+    assert earlier["next"]["id"] == "43002" and earlier["next"]["sitting"] == 2
+
+    later = client.get("/api/v1/proceedings/sessions/43002").json()["neighbours"]
+    assert later["prev"]["id"] == "43001" and later["prev"]["date"] == "2026-05-09"
+    assert later["next"] is None
+
+
 def test_session_list_paginates(client):
     d = client.get("/api/v1/proceedings/sessions").json()
     assert d["total"] == 1 and d["limit"] == 50 and d["offset"] == 0

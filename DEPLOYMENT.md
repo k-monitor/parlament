@@ -206,13 +206,32 @@ docker compose up -d            # init builds the DB, offloading NLP to Modal
 > model (`hu_core_news_md`/`_lg`) deploys the cheap py3.12 CPU image (GPU gives
 > those little benefit).
 >
-> The model name is part of the cache/method tag, so **switching models
-> invalidates the word-cloud + entity caches** — the next build/update re-NERs
-> the whole corpus once (on Modal that is a bounded, parallel burst; plan a few
-> dollars of credit for a full-corpus pass on T4), after which incremental
-> updates are pennies again. Keep `PARLAMONITOR_HUSPACY_MODEL` on the host in
-> sync with what was deployed to Modal — a mismatch would file results under the
-> wrong cache tag.
+> The model name is part of the cache/method tag, so **switching a model
+> invalidates the affected sittings' word-cloud + entity caches** and re-NERs
+> them on the next build/update; afterwards incremental updates are pennies
+> again. Keep the host's model env vars in sync with what was deployed to Modal
+> — a mismatch would file results under the wrong cache tag.
+
+#### Per-cycle model split (transformer only where it pays)
+
+The loader picks the model **per sitting**: the newest electoral period uses
+`PARLAMONITOR_HUSPACY_MODEL` (default `hu_core_news_trf`, served by the
+`PARLAMONITOR_MODAL_APP` deployment), every earlier — frozen — period uses the
+cheaper `PARLAMONITOR_HUSPACY_MODEL_ARCHIVE` (default `hu_core_news_md`, served
+by `PARLAMONITOR_MODAL_APP_ARCHIVE`). Archive transcripts never change, so their
+cached md results are reused forever and the expensive T4 only ever processes
+the live cycle; a pre-split cache/DB keeps its md entries for the archive as-is
+(nothing recomputes). When a new cycle starts, the previous one re-NERs once
+with the archive model as it ages out (cheap, automatic). Set the archive model
+equal to the primary to use one model everywhere.
+
+Deploy the **second, CPU** Modal app for the archive model (same file):
+
+```bash
+cd backend
+PARLAMONITOR_MODAL_APP=parlamonitor-nlp-md \
+PARLAMONITOR_HUSPACY_MODEL=hu_core_news_md modal deploy modal_app.py
+```
 
 **Without Docker** (host scrapes/loads directly): the same three env vars +
 `python -m app.loader --update <data> <db>` (or `build`) offload to Modal.
@@ -365,9 +384,11 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_SSH_KNOWN_HOSTS` | — | known_hosts path for strict host-key checking (default: trust-on-first-use) |
 | **Word-cloud NLP** | | (used by `init` + `sync`) |
 | `PARLAMONITOR_WORDCLOUD_BACKEND` | `auto` | `auto`/`huspacy`/`regex`/`modal` term extraction (WCLOUD-6) |
-| `PARLAMONITOR_HUSPACY_MODEL` | `hu_core_news_trf` | HuSpaCy model tag — must match the model baked into the Modal image |
+| `PARLAMONITOR_HUSPACY_MODEL` | `hu_core_news_trf` | model for the newest cycle — must match the primary Modal image |
+| `PARLAMONITOR_HUSPACY_MODEL_ARCHIVE` | `hu_core_news_md` | model for frozen earlier cycles — must match the archive Modal image |
 | `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` | — | Modal auth (required when backend=`modal`) |
-| `PARLAMONITOR_MODAL_APP` | `parlamonitor-nlp` | deployed Modal app name (must match `modal_app.py`) |
+| `PARLAMONITOR_MODAL_APP` | `parlamonitor-nlp` | deployed Modal app for the newest cycle's model |
+| `PARLAMONITOR_MODAL_APP_ARCHIVE` | `parlamonitor-nlp-md` | deployed Modal app for the archive model |
 | `PARLAMONITOR_MODAL_BATCH_SENTENCES` | `5000` | sentences per Modal batch (host side) |
 
 ## Search analytics (privacy-friendly)

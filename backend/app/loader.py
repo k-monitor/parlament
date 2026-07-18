@@ -807,15 +807,17 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
     logger.info("Rebuilt aggregate tables")
 
 
-def _wordcloud_backend() -> str:
-    """Resolve the configured word-cloud backend to a concrete one ("modal",
-    "huspacy" or "regex").
+def _nlp_backend(model: str) -> str:
+    """Resolve the configured word-cloud backend for ``model`` to a concrete one
+    ("modal", "huspacy" or "regex").
 
     "modal" (opt-in) offloads the HuSpaCy pipeline to Modal; if the client isn't
     installed / not authenticated it degrades to local HuSpaCy, then regex.
-    "auto" prefers local HuSpaCy when its model loads, else regex (it never
+    "auto" prefers local HuSpaCy when the model loads, else regex (it never
     auto-selects Modal). An explicit backend that can't be used is logged and
-    degrades so a build on a bare host still succeeds (OPS-4)."""
+    degrades so a build on a bare host still succeeds (OPS-4). Resolution is
+    per model because the current and archive cycles may use different models
+    with different local availability (the trf only ever loads on Modal)."""
     want = settings.wordcloud_backend or "auto"
     if want == "regex":
         return "regex"
@@ -824,12 +826,34 @@ def _wordcloud_backend() -> str:
             return "modal"
         logger.warning("wordcloud_backend=modal unavailable; trying local HuSpaCy, "
                        "then the regex tokenizer")
-    if nlp.available():
+    if nlp.available(model):
         return "huspacy"
     if want == "huspacy":
-        logger.warning("wordcloud_backend=huspacy but the model is unavailable; "
-                       "using the regex tokenizer instead")
+        logger.warning("wordcloud_backend=huspacy but model %s is unavailable; "
+                       "using the regex tokenizer instead", model)
     return "regex"
+
+
+def _session_models(conn: sqlite3.Connection) -> dict[str, str]:
+    """Each session id → the HuSpaCy model that should process it: the newest
+    electoral period gets ``settings.huspacy_model`` (the expensive transformer),
+    every earlier — frozen — period the cheaper ``settings.huspacy_model_archive``.
+    The method/model name is hashed into each sitting's cache fingerprint, so
+    archive sittings keep reusing whatever the archive model produced and never
+    hit the expensive path. A session with no period recorded is treated as
+    current (quality-safe; at most a handful of sittings)."""
+    rows = conn.execute("SELECT id, period_number FROM session").fetchall()
+    latest = max((p for _sid, p in rows if p is not None), default=None)
+    return {sid: settings.huspacy_model if (p is None or p == latest)
+            else settings.huspacy_model_archive
+            for sid, p in rows}
+
+
+def _modal_app_for(model: str) -> str:
+    """The deployed Modal app serving ``model`` — the primary app bakes
+    ``huspacy_model``, the archive app ``huspacy_model_archive``."""
+    return (settings.modal_app_name if model == settings.huspacy_model
+            else settings.modal_app_name_archive)
 
 
 def _words_map(counts, entity_words) -> dict:
@@ -877,23 +901,35 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
     (WCLOUD-6); only cache-miss sittings are sent, packed into batches, so credit
     tracks actual new work. Output is identical to the local ``huspacy`` backend,
     so the disk cache is shared between them.
+
+    The model is chosen **per sitting**: the newest electoral period uses
+    ``settings.huspacy_model``, frozen earlier periods the cheaper
+    ``settings.huspacy_model_archive`` (see ``_session_models``). Each model
+    resolves its own backend/method; since the method is hashed into the cache
+    fingerprint, entries from different models coexist in one cache file and a
+    model switch only ever recomputes the sittings whose assigned model changed.
     """
-    backend = _wordcloud_backend()
-    if backend == "modal":
-        method = nlp_modal.method_tag()
-    elif backend == "huspacy":
-        method = nlp.method_tag()
-    else:
-        method = "regex:v1"
-    logger.info("Word-cloud term extraction backend: %s", backend)
+    models = _session_models(conn)
+    resolved: dict[str, tuple[str, str]] = {}   # model → (backend, method)
+
+    def _resolve(model: str) -> tuple[str, str]:
+        if model not in resolved:
+            backend = _nlp_backend(model)
+            method = "regex:v1" if backend == "regex" else nlp.method_tag(model)
+            logger.info("Word-cloud extraction: model=%s backend=%s", model, backend)
+            resolved[model] = (backend, method)
+        return resolved[model]
 
     cache_path = _wordcloud_cache_path(cache_dir) if cache_dir else None
-    cache: dict = {"method": method, "sessions": {}}
+    cache: dict = {"sessions": {}}
     if cache_path and cache_path.exists():
         try:
             loaded = json.loads(cache_path.read_text())
-            if loaded.get("method") == method:        # else stale → start fresh
-                cache = loaded
+            # The method is part of each entry's fingerprint, so entries made
+            # with another model/method simply miss — no whole-file staleness
+            # gate needed (legacy files with a top-level "method" load fine).
+            if isinstance(loaded.get("sessions"), dict):
+                cache["sessions"] = loaded["sessions"]
         except (OSError, ValueError):
             logger.warning("Could not read word-cloud cache %s; recomputing", cache_path)
 
@@ -945,37 +981,31 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
             _flush_cache()
             logger.info("session_word_count progress: %d recomputed", recomputed)
 
-    if backend == "modal":
-        # Split cache hits (written now) from misses; ship the misses to Modal in
-        # batches and write each result as it returns.
-        misses = []  # (sid, fp, texts)
-        for sid in sids:
-            texts = _fetch(sid)
-            fp = _session_fingerprint(method, texts)
-            entry = cache["sessions"].get(sid)
-            if entry and entry.get("fp") == fp:
-                _write(sid, entry["words"])
-                reused += 1
-            else:
-                misses.append((sid, fp, texts))
-        conn.commit()
-        for sid, fp, words in nlp_modal.extract(misses):
-            _emit(sid, fp, words)
-    else:
-        # Local: process one sitting at a time (low memory) — HuSpaCy or regex.
-        for sid in sids:
-            texts = _fetch(sid)
-            fp = _session_fingerprint(method, texts)
-            entry = cache["sessions"].get(sid)
-            if entry and entry.get("fp") == fp:
-                _write(sid, entry["words"])
-                reused += 1
-                continue
-            if backend == "huspacy":
-                counts, entity_words = nlp.analyze_counts(texts)
-            else:
-                counts, entity_words = count_words(texts), set()
+    # Cache hits are written immediately; local misses (HuSpaCy or regex) are
+    # processed one sitting at a time (low memory); Modal misses are collected
+    # per model and shipped in batches to that model's deployed app.
+    modal_misses: dict[str, list] = {}   # model → [(sid, fp, texts)]
+    for sid in sids:
+        model = models.get(sid, settings.huspacy_model)
+        backend, method = _resolve(model)
+        texts = _fetch(sid)
+        fp = _session_fingerprint(method, texts)
+        entry = cache["sessions"].get(sid)
+        if entry and entry.get("fp") == fp:
+            _write(sid, entry["words"])
+            reused += 1
+        elif backend == "modal":
+            modal_misses.setdefault(model, []).append((sid, fp, texts))
+        elif backend == "huspacy":
+            counts, entity_words = nlp.analyze_counts(texts, model=model)
             _emit(sid, fp, _words_map(counts, entity_words))
+        else:
+            counts, entity_words = count_words(texts), set()
+            _emit(sid, fp, _words_map(counts, entity_words))
+    conn.commit()
+    for model, misses in modal_misses.items():
+        for sid, fp, words in nlp_modal.extract(misses, app_name=_modal_app_for(model)):
+            _emit(sid, fp, words)
 
     conn.commit()
     _flush_cache()
@@ -1055,9 +1085,10 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
     """Extract PERSON + ORGANISATION mentions from transcript sentences into the
     ``entity`` table (NEL, §10) so the transcript can link names inline.
 
-    Uses the same HuSpaCy backend as the word cloud (Modal when configured,
-    else the local model); when neither is available the pass is skipped so a
-    bare-host build still succeeds (OPS-4). Cached on disk like the word cloud
+    Uses the same HuSpaCy backend and per-cycle model routing as the word cloud
+    (Modal when configured, else the local model; current cycle vs archive —
+    see ``_session_models``); when a model is available neither way its
+    sittings are skipped, so a bare-host build still succeeds (OPS-4). Cached on disk like the word cloud
     (``entity-cache.json``), keyed by a fingerprint of the text + method, so a
     rebuild re-runs NER only for the sittings whose transcript actually changed.
     ``only_sessions`` scopes the pass to just those ids (the ``--update`` path).
@@ -1069,24 +1100,39 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
         return
     _ensure_entity_tables(conn)
     # Person spans need the neural NER; the regex tokenizer can't produce them.
-    # An explicit Modal backend wins over a locally-installed model (same
-    # precedence as _wordcloud_backend) — the host offloads, never grinds
-    # through the transformer itself.
-    if _wordcloud_backend() == "modal" and nlp_modal.available():
-        method, use_modal = nlp_modal.method_tag() + ":" + _ENTITY_LOGIC, True
-    elif nlp.available():
-        method, use_modal = nlp.method_tag() + ":" + _ENTITY_LOGIC, False
-    else:
-        logger.info("entity extraction skipped (no HuSpaCy model available)")
-        return
+    # The model is chosen per sitting (current cycle vs archive — see
+    # ``_session_models``); per model, an explicit Modal backend wins over a
+    # locally-installed model (same precedence as ``_nlp_backend``) — the host
+    # offloads, never grinds through the transformer itself. A model available
+    # neither locally nor via Modal skips its sittings (cached spans are still
+    # reused), so a bare-host build still succeeds.
+    models = _session_models(conn)
+    resolved: dict[str, tuple[str | None, str]] = {}  # model → (mode|None, method)
+
+    def _resolve(model: str) -> tuple[str | None, str]:
+        if model not in resolved:
+            if _nlp_backend(model) == "modal":
+                mode = "modal"
+            elif nlp.available(model):
+                mode = "local"
+            else:
+                logger.info("entity extraction skipped for model %s "
+                            "(not available locally or via Modal)", model)
+                mode = None
+            method = nlp.method_tag(model) + ":" + _ENTITY_LOGIC
+            resolved[model] = (mode, method)
+        return resolved[model]
 
     cache_path = _entity_cache_path(cache_dir) if cache_dir else None
-    cache: dict = {"method": method, "sessions": {}}
+    cache: dict = {"sessions": {}}
     if cache_path and cache_path.exists():
         try:
             loaded = json.loads(cache_path.read_text())
-            if loaded.get("method") == method:
-                cache = loaded
+            # Per-entry fingerprints embed the method, so mixed-model entries
+            # coexist and stale ones simply miss (legacy single-method files
+            # with a top-level "method" load fine).
+            if isinstance(loaded.get("sessions"), dict):
+                cache["sessions"] = loaded["sessions"]
         except (OSError, ValueError):
             logger.warning("Could not read entity cache %s; recomputing", cache_path)
 
@@ -1131,17 +1177,21 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
                 "VALUES (?,?,?,?,?,?)", rows)
         return len(rows)
 
-    processed = reused = mentions = 0
-    misses = []  # (sid, fp, sent_rows)
+    processed = reused = skipped = mentions = 0
+    misses_by: dict[str, list] = {}  # model → [(sid, fp, sent_rows)]
     for sid in sids:
+        model = models.get(sid, settings.huspacy_model)
+        mode, method = _resolve(model)
         sent_rows = _fetch(sid)
         fp = _session_fingerprint(method, [t for (_i, t) in sent_rows])
         entry = cache["sessions"].get(sid)
         if entry and entry.get("fp") == fp:
             mentions += _write(sent_rows, entry["spans"])
             reused += 1
+        elif mode is None:
+            skipped += 1
         else:
-            misses.append((sid, fp, sent_rows))
+            misses_by.setdefault(model, []).append((sid, fp, sent_rows))
 
     def _emit(sid, fp, sent_rows, per_sentence_spans):
         nonlocal processed, mentions
@@ -1154,23 +1204,26 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
             logger.info("entity mentions progress: %d sittings processed", processed)
 
     try:
-        if use_modal:
-            packed = [(sid, fp, [t for (_i, t) in rows]) for (sid, fp, rows) in misses]
-            by_sid = {sid: rows for (sid, _fp, rows) in misses}
-            for sid, fp, spans in nlp_modal.extract_spans(packed):
-                _emit(sid, fp, by_sid[sid], spans)
-        else:
-            for (sid, fp, sent_rows) in misses:
-                spans = [[list(s) for s in per_sent]
-                         for per_sent in nlp.entity_spans([t for (_i, t) in sent_rows])]
-                _emit(sid, fp, sent_rows, spans)
+        for model, misses in misses_by.items():
+            mode, _method = _resolve(model)
+            if mode == "modal":
+                packed = [(sid, fp, [t for (_i, t) in rows]) for (sid, fp, rows) in misses]
+                by_sid = {sid: rows for (sid, _fp, rows) in misses}
+                for sid, fp, spans in nlp_modal.extract_spans(
+                        packed, app_name=_modal_app_for(model)):
+                    _emit(sid, fp, by_sid[sid], spans)
+            else:
+                for (sid, fp, sent_rows) in misses:
+                    spans = [[list(s) for s in per_sent] for per_sent in
+                             nlp.entity_spans([t for (_i, t) in sent_rows], model=model)]
+                    _emit(sid, fp, sent_rows, spans)
     except Exception as exc:  # enrichment must never break the build (SCR-5)
         logger.warning("entity extraction aborted (%s); keeping what was done", exc)
 
     conn.commit()
     _flush()
-    logger.info("entity mentions: %d sittings (%d processed, %d cached), %d PER+ORG mentions",
-                len(sids), processed, reused, mentions)
+    logger.info("entity mentions: %d sittings (%d processed, %d cached, %d skipped), "
+                "%d PER+ORG mentions", len(sids), processed, reused, skipped, mentions)
 
 
 def _entity_kinds(conn: sqlite3.Connection) -> dict[str, str]:

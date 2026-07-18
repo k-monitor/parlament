@@ -126,22 +126,24 @@ class NlpService:
         # spacy): torch's wheel carries the CUDA libraries, and importing it
         # loads them into the process — without that preload `import cupy`
         # fails inside thinc, has_cupy stays False, and the transformer
-        # silently runs on CPU next to an idle GPU.
+        # silently runs on CPU next to an idle GPU. Only relevant (and only
+        # installed) on the GPU image.
         detail = ""
-        try:
-            import torch  # noqa: F401
-        except Exception as exc:
-            detail += f" torch_error={exc!r}"
-        try:
-            import cupy  # noqa: F401
-        except Exception as exc:
-            detail += f" cupy_error={exc!r}"
         gpu_active = False
-        try:
-            import spacy
-            gpu_active = spacy.prefer_gpu()   # no-op without a GPU (or without cupy)
-        except Exception as exc:
-            detail += f" prefer_gpu_error={exc!r}"
+        if GPU:
+            try:
+                import torch  # noqa: F401
+            except Exception as exc:
+                detail += f" torch_error={exc!r}"
+            try:
+                import cupy  # noqa: F401
+            except Exception as exc:
+                detail += f" cupy_error={exc!r}"
+            try:
+                import spacy
+                gpu_active = spacy.prefer_gpu()   # no-op without cupy
+            except Exception as exc:
+                detail += f" prefer_gpu_error={exc!r}"
         from app import nlp
         nlp.get_nlp()
         print(f"NlpService ready: model={MODEL} gpu_active={gpu_active}{detail}")

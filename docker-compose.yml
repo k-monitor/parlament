@@ -42,10 +42,15 @@ x-common-env: &common-env
 # heavy NER/lemmatization to modal.com (WCLOUD-6) — ideal on a small host.
 x-nlp-env: &nlp-env
   PARLAMONITOR_WORDCLOUD_BACKEND: ${PARLAMONITOR_WORDCLOUD_BACKEND:-auto}
-  # Must match the model baked into the deployed Modal image — it is part of the
-  # cache/method tag, so changing it triggers a full re-NER on the next build.
+  # Model for the CURRENT electoral period — must match the model baked into the
+  # primary Modal app's image; it is part of the cache/method tag, so changing it
+  # re-NERs the affected sittings on the next build.
   PARLAMONITOR_HUSPACY_MODEL: ${PARLAMONITOR_HUSPACY_MODEL:-hu_core_news_trf}
+  # Cheaper model for the frozen earlier cycles (their cached results are keyed
+  # to it and never recompute); must match the archive Modal app's image.
+  PARLAMONITOR_HUSPACY_MODEL_ARCHIVE: ${PARLAMONITOR_HUSPACY_MODEL_ARCHIVE:-hu_core_news_md}
   PARLAMONITOR_MODAL_APP: ${PARLAMONITOR_MODAL_APP:-parlamonitor-nlp}
+  PARLAMONITOR_MODAL_APP_ARCHIVE: ${PARLAMONITOR_MODAL_APP_ARCHIVE:-parlamonitor-nlp-md}
   MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
   MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
   # Person-entity linking (NEL, §10): extract PERSON mentions (same HuSpaCy

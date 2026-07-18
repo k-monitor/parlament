@@ -59,8 +59,10 @@ ENT_LABELS: frozenset[str] = frozenset(
 # on-disk processing cache even if the model and text are unchanged.
 _LOGIC_VERSION = 2
 
-_nlp = None
-_load_attempted = False
+# model name → loaded pipeline (or None after a failed load attempt). Two models
+# can be active in one build since archive cycles may use a cheaper model than
+# the current cycle (see settings.huspacy_model_archive).
+_pipelines: dict[str, object | None] = {}
 
 # Pipeline components we never need: we feed already-split sentences (senter) and
 # nothing downstream reads dependency arcs (parser). The trf model's dependency
@@ -71,8 +73,9 @@ _DISABLED_PIPES = ("parser", "senter",
                    "experimental_arc_predicter", "experimental_arc_labeler")
 
 
-def get_nlp():
-    """Lazily load (once) the HuSpaCy model, or ``None`` if it is unavailable.
+def get_nlp(model: str | None = None):
+    """Lazily load (once per model) a HuSpaCy model, or ``None`` if unavailable.
+    ``model`` defaults to the configured primary (``settings.huspacy_model``).
 
     Only the components the word cloud needs run — the dependency parser and the
     sentence segmenter are disabled (``_DISABLED_PIPES``, intersected with the
@@ -81,34 +84,35 @@ def get_nlp():
     and NER. A missing model or import is logged once and degrades to ``None`` so
     callers can fall back to the regex tokenizer.
     """
-    global _nlp, _load_attempted
-    if _load_attempted:
-        return _nlp
-    _load_attempted = True
+    model = model or settings.huspacy_model
+    if model in _pipelines:
+        return _pipelines[model]
     try:
         import spacy
-        _nlp = spacy.load(settings.huspacy_model)
-        for pipe in _DISABLED_PIPES:
-            if pipe in _nlp.pipe_names:
-                _nlp.disable_pipe(pipe)
+        pipe = spacy.load(model)
+        for name in _DISABLED_PIPES:
+            if name in pipe.pipe_names:
+                pipe.disable_pipe(name)
         logger.info("Loaded HuSpaCy model %s (pipes: %s)",
-                    settings.huspacy_model, ", ".join(_nlp.pipe_names))
+                    model, ", ".join(pipe.pipe_names))
     except Exception as exc:  # ImportError, OSError (model not installed), …
-        _nlp = None
+        pipe = None
         logger.warning("HuSpaCy model %s unavailable (%s); word cloud falls back "
-                       "to the regex tokenizer", settings.huspacy_model, exc)
-    return _nlp
+                       "to the regex tokenizer", model, exc)
+    _pipelines[model] = pipe
+    return pipe
 
 
-def available() -> bool:
+def available(model: str | None = None) -> bool:
     """Whether the HuSpaCy model can be loaded (so the loader can pick a backend)."""
-    return get_nlp() is not None
+    return get_nlp(model) is not None
 
 
-def method_tag() -> str:
-    """A short identifier of the active extraction method, embedded in the
-    processing cache so that swapping the model / changing the logic busts it."""
-    return f"huspacy:{settings.huspacy_model}:v{_LOGIC_VERSION}"
+def method_tag(model: str | None = None) -> str:
+    """A short identifier of the extraction method for ``model`` (default: the
+    configured primary), embedded in the processing cache so that swapping the
+    model / changing the logic busts it."""
+    return f"huspacy:{model or settings.huspacy_model}:v{_LOGIC_VERSION}"
 
 
 def _lemma_key(tok) -> str | None:
@@ -182,7 +186,8 @@ def _org_key(ent) -> str | None:
 _SPAN_KEYERS = {"PER": _person_key, "ORG": _org_key}
 
 
-def entity_spans(texts, *, batch_size: int = 128, n_process: int = 1):
+def entity_spans(texts, *, batch_size: int = 128, n_process: int = 1,
+                 model: str | None = None):
     """Per-text PERSON + ORGANISATION mentions for inline transcript linking (NEL).
 
     Yields, for each input text in order, a list of
@@ -190,7 +195,7 @@ def entity_spans(texts, *, batch_size: int = 128, n_process: int = 1):
     or ORG span, where ``surface`` is the exact substring in the text (offsets
     relative to that text), ``key`` is its inflection-normalized name (the join key
     for ``entity_link``) and ``kind`` is ``"PER"`` or ``"ORG"``."""
-    nlp = get_nlp()
+    nlp = get_nlp(model)
     if nlp is None:
         raise RuntimeError("HuSpaCy model not available")
     for doc in nlp.pipe([t or "" for t in texts], batch_size=batch_size, n_process=n_process):
@@ -214,7 +219,8 @@ def person_spans(texts, *, batch_size: int = 128, n_process: int = 1):
         yield [(s, a, b, k) for (s, a, b, k, kind) in spans if kind == "PER"]
 
 
-def analyze_counts(texts, *, batch_size: int = 128, n_process: int = 1):
+def analyze_counts(texts, *, batch_size: int = 128, n_process: int = 1,
+                   model: str | None = None):
     """Lemmatized + entity-aware term frequencies for ``texts``.
 
     Returns ``(counts, entity_words)`` where ``counts`` is a ``Counter`` of
@@ -222,7 +228,7 @@ def analyze_counts(texts, *, batch_size: int = 128, n_process: int = 1):
     entity (so the caller can tag them). A token that is part of a kept entity is
     counted *only* as that entity, never also on its own, to avoid double counting.
     """
-    nlp = get_nlp()
+    nlp = get_nlp(model)
     if nlp is None:
         raise RuntimeError("HuSpaCy model not available")
     counts: Counter[str] = Counter()

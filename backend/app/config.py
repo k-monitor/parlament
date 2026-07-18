@@ -79,9 +79,19 @@ class Settings:
     # wordcloud_backend="modal") by default; a lighter CPU model
     # (`hu_core_news_md`/`_lg`) can be swapped in via env for local runs.
     # The model name is part of method_tag(), so changing it busts the
-    # word-cloud + entity caches and re-runs NER over the whole corpus.
+    # word-cloud + entity caches and re-runs NER over the affected sittings.
+    # This model applies to the CURRENT (newest) electoral period only — see
+    # `huspacy_model_archive` for the frozen earlier cycles.
     huspacy_model: str = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_HUSPACY_MODEL", "hu_core_news_trf").strip())
+    # Cheaper model for ARCHIVE cycles (every electoral period except the
+    # newest). Their transcripts are frozen, so whatever this model produced
+    # stays cached forever and the expensive transformer only ever processes
+    # the live cycle. Set it equal to `huspacy_model` to use one model
+    # everywhere. When a new cycle starts, the previously-current cycle re-NERs
+    # once with this model (cheap) as it ages into the archive.
+    huspacy_model_archive: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_HUSPACY_MODEL_ARCHIVE", "hu_core_news_md").strip())
     # Modal offload (wordcloud_backend="modal"). The deployed Modal app name to
     # look the NLP service up under, and how many sentences to pack into each
     # remote batch — larger batches = fewer, fatter calls (less overhead), bounded
@@ -89,6 +99,12 @@ class Settings:
     # standard MODAL_TOKEN_ID/MODAL_TOKEN_SECRET env (or ~/.modal.toml).
     modal_app_name: str = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_MODAL_APP", "parlamonitor-nlp").strip())
+    # The Modal app serving `huspacy_model_archive` (a cheap CPU deployment of
+    # the same modal_app.py, e.g. `PARLAMONITOR_MODAL_APP=parlamonitor-nlp-md
+    # PARLAMONITOR_HUSPACY_MODEL=hu_core_news_md modal deploy modal_app.py`).
+    # Only contacted when an archive sitting actually misses the cache.
+    modal_app_name_archive: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_MODAL_APP_ARCHIVE", "parlamonitor-nlp-md").strip())
     modal_batch_sentences: int = int(
         os.environ.get("PARLAMONITOR_MODAL_BATCH_SENTENCES", "5000"))
     # Person-entity linking (NEL, §10). When enabled the loader extracts PERSON

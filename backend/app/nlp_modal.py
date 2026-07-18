@@ -62,15 +62,15 @@ def available() -> bool:
     return True
 
 
-def method_tag() -> str:
+def method_tag(model: str | None = None) -> str:
     """Same tag as the local HuSpaCy backend, so the on-disk cache / DB built one
     way is reused by the other (identical model + logic → identical output)."""
-    return nlp.method_tag()
+    return nlp.method_tag(model)
 
 
-def _service():
+def _service(app_name: str | None = None):
     import modal
-    app = settings.modal_app_name
+    app = app_name or settings.modal_app_name
     try:
         cls = modal.Cls.from_name(app, _SERVICE_CLASS)      # modal >= 0.72
     except AttributeError:  # pragma: no cover - older client
@@ -98,38 +98,43 @@ def _words(result: dict) -> dict:
             for w, c in (result.get("counts") or {}).items()}
 
 
-def extract(misses, *, batch_sentences: int | None = None):
+def extract(misses, *, batch_sentences: int | None = None,
+            app_name: str | None = None):
     """Yield ``(sid, fp, words)`` for each miss (a ``(sid, fp, texts)`` triple),
     in order, running the HuSpaCy analysis on Modal. Batches are dispatched with
     ``.map`` so the deployed pool of warm containers processes them in parallel;
-    results come back in input order."""
+    results come back in input order. ``app_name`` picks the deployed service
+    (default the primary one; the archive-model app for old cycles)."""
     batch_sentences = batch_sentences or settings.modal_batch_sentences
-    svc = _service()
+    svc = _service(app_name)
     chunks = list(_chunks(misses, batch_sentences))
     if not chunks:
         return
     payloads = [[texts for (_sid, _fp, texts) in chunk] for chunk in chunks]
-    logger.info("Modal NLP: %d sitting(s) in %d batch(es) (~%d sentences/batch)",
+    logger.info("Modal NLP (%s): %d sitting(s) in %d batch(es) (~%d sentences/batch)",
+                app_name or settings.modal_app_name,
                 sum(len(c) for c in chunks), len(chunks), batch_sentences)
     for chunk, results in zip(chunks, svc.analyze_sessions.map(payloads)):
         for (sid, fp, _texts), result in zip(chunk, results):
             yield sid, fp, _words(result)
 
 
-def extract_spans(misses, *, batch_sentences: int | None = None):
+def extract_spans(misses, *, batch_sentences: int | None = None,
+                  app_name: str | None = None):
     """Yield ``(sid, fp, per_sentence_spans)`` for each miss (a ``(sid, fp, texts)``
     triple), running HuSpaCy PERSON + ORGANISATION span extraction on Modal (NEL,
     §10). ``per_sentence_spans`` is a list — one entry per input sentence, in order
     — of ``[surface, start, end, key, kind]`` spans, exactly what
     ``app.nlp.entity_spans`` yields. Batched + ``.map``-dispatched like
-    :func:`extract`."""
+    :func:`extract`; ``app_name`` picks the deployed service."""
     batch_sentences = batch_sentences or settings.modal_batch_sentences
-    svc = _service()
+    svc = _service(app_name)
     chunks = list(_chunks(misses, batch_sentences))
     if not chunks:
         return
     payloads = [[texts for (_sid, _fp, texts) in chunk] for chunk in chunks]
-    logger.info("Modal NLP spans: %d sitting(s) in %d batch(es)",
+    logger.info("Modal NLP spans (%s): %d sitting(s) in %d batch(es)",
+                app_name or settings.modal_app_name,
                 sum(len(c) for c in chunks), len(chunks))
     for chunk, results in zip(chunks, svc.analyze_sessions_spans.map(payloads)):
         for (sid, fp, _texts), spans in zip(chunk, results):

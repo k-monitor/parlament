@@ -190,16 +190,29 @@ docker compose up -d            # init builds the DB, offloading NLP to Modal
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PARLAMONITOR_MODAL_GPU` | _(none → CPU)_ | GPU type e.g. `T4`/`A10G`; only worth it with a transformer model (`hu_core_news_trf`) |
-| `PARLAMONITOR_MODAL_CPU` | `1.0` | CPU cores per worker |
+| `PARLAMONITOR_MODAL_GPU` | `T4` for a `*_trf` model, CPU otherwise | GPU type e.g. `T4`/`A10G`; set **empty** to force CPU |
+| `PARLAMONITOR_MODAL_CPU` | `2.0` with GPU, `1.0` CPU-only | CPU cores per worker |
+| `PARLAMONITOR_MODAL_MEMORY` | `6144` for `*_trf`, `2048` otherwise | MiB of RAM per worker |
 | `PARLAMONITOR_MODAL_MAX_CONTAINERS` | `10` | worker pool ceiling (parallelism + credit cap) |
-| `PARLAMONITOR_HUSPACY_MODEL` | `hu_core_news_md` | model baked into the image (must match the host's tag) |
+| `PARLAMONITOR_HUSPACY_MODEL` | `hu_core_news_trf` | model baked into the image (must match the host's tag) |
 | `PARLAMONITOR_MODAL_BATCH_SENTENCES` | `5000` | sentences per remote batch (host-side) |
 
-> The default `hu_core_news_md` is a CPU model — GPU gives it little benefit, so
-> **CPU is both cheaper and the right default**. Reach for a GPU only if you also
-> switch to the transformer model, which changes the output (and invalidates the
-> cache, so pair it with a full rebuild).
+> The default model is the transformer (`hu_core_news_trf`) — best NER/lemma
+> accuracy, and the whole reason the pipeline is offloaded: it is too heavy for a
+> small host, and on Modal a T4 chews through it. The deploy defaults track the
+> model: a `*_trf` model gets a T4 + torch/cupy baked in on a Python 3.11 /
+> spaCy 3.7 image (the trf build's own requirement — its 2023-era dependency
+> wheels stop at py3.11, so it effectively runs *only* on Modal), while a CPU
+> model (`hu_core_news_md`/`_lg`) deploys the cheap py3.12 CPU image (GPU gives
+> those little benefit).
+>
+> The model name is part of the cache/method tag, so **switching models
+> invalidates the word-cloud + entity caches** — the next build/update re-NERs
+> the whole corpus once (on Modal that is a bounded, parallel burst; plan a few
+> dollars of credit for a full-corpus pass on T4), after which incremental
+> updates are pennies again. Keep `PARLAMONITOR_HUSPACY_MODEL` on the host in
+> sync with what was deployed to Modal — a mismatch would file results under the
+> wrong cache tag.
 
 **Without Docker** (host scrapes/loads directly): the same three env vars +
 `python -m app.loader --update <data> <db>` (or `build`) offload to Modal.
@@ -352,6 +365,7 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_SSH_KNOWN_HOSTS` | — | known_hosts path for strict host-key checking (default: trust-on-first-use) |
 | **Word-cloud NLP** | | (used by `init` + `sync`) |
 | `PARLAMONITOR_WORDCLOUD_BACKEND` | `auto` | `auto`/`huspacy`/`regex`/`modal` term extraction (WCLOUD-6) |
+| `PARLAMONITOR_HUSPACY_MODEL` | `hu_core_news_trf` | HuSpaCy model tag — must match the model baked into the Modal image |
 | `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` | — | Modal auth (required when backend=`modal`) |
 | `PARLAMONITOR_MODAL_APP` | `parlamonitor-nlp` | deployed Modal app name (must match `modal_app.py`) |
 | `PARLAMONITOR_MODAL_BATCH_SENTENCES` | `5000` | sentences per Modal batch (host side) |

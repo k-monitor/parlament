@@ -15,6 +15,11 @@ import sqlite3
 # The dedicated HuSpaCy tests opt back in explicitly. Must precede the app imports
 # below, which instantiate config.settings from the environment.
 os.environ.setdefault("PARLAMONITOR_WORDCLOUD_BACKEND", "regex")
+# The project default model is the transformer (hu_core_news_trf), which is run
+# on Modal in production and isn't installed in dev/CI environments. The HuSpaCy
+# tests only need *a* model with the same key/lemma semantics, so pin the light
+# md model here — they skip cleanly if even that is absent.
+os.environ.setdefault("PARLAMONITOR_HUSPACY_MODEL", "hu_core_news_md")
 # Likewise disable entity extraction/resolution by default: it needs the HuSpaCy
 # model (offline determinism) and the Wikidata endpoint (no network in tests), and
 # K-Monitor linking would fetch the tag lists during a build. The dedicated entity

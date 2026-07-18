@@ -1055,8 +1055,8 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
     """Extract PERSON + ORGANISATION mentions from transcript sentences into the
     ``entity`` table (NEL, §10) so the transcript can link names inline.
 
-    Uses the same HuSpaCy backend as the word cloud (local model, or Modal when
-    the host has no model); when neither is available the pass is skipped so a
+    Uses the same HuSpaCy backend as the word cloud (Modal when configured,
+    else the local model); when neither is available the pass is skipped so a
     bare-host build still succeeds (OPS-4). Cached on disk like the word cloud
     (``entity-cache.json``), keyed by a fingerprint of the text + method, so a
     rebuild re-runs NER only for the sittings whose transcript actually changed.
@@ -1069,10 +1069,13 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
         return
     _ensure_entity_tables(conn)
     # Person spans need the neural NER; the regex tokenizer can't produce them.
-    if nlp.available():
-        method, use_modal = nlp.method_tag() + ":" + _ENTITY_LOGIC, False
-    elif _wordcloud_backend() == "modal" and nlp_modal.available():
+    # An explicit Modal backend wins over a locally-installed model (same
+    # precedence as _wordcloud_backend) — the host offloads, never grinds
+    # through the transformer itself.
+    if _wordcloud_backend() == "modal" and nlp_modal.available():
         method, use_modal = nlp_modal.method_tag() + ":" + _ENTITY_LOGIC, True
+    elif nlp.available():
+        method, use_modal = nlp.method_tag() + ":" + _ENTITY_LOGIC, False
     else:
         logger.info("entity extraction skipped (no HuSpaCy model available)")
         return

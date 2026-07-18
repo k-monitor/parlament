@@ -5,11 +5,13 @@ poor unit of meaning in Hungarian — a richly inflected, agglutinative language
 because *törvény*, *törvényt*, *törvényben*, *törvények* are all the same concept
 yet would be counted (and IDF-weighted) as four different words, diluting the
 signal and scattering a day's real theme across a dozen inflections. So instead of
-the regex tokenizer we lemmatize with HuSpaCy's smallest model
-(``hu_core_news_md``), collapsing inflected forms to their dictionary lemma, and
-use its named-entity recognizer to keep multi-word entities ("Orbán Viktor",
-"Európai Unió") together as single terms instead of splitting them into low-value
-fragments ("orbán", "viktor").
+the regex tokenizer we lemmatize with a HuSpaCy model — the transformer
+(``hu_core_news_trf``) by default, typically offloaded to Modal GPU workers; a
+lighter CPU model (``hu_core_news_md``) can be swapped in via
+``PARLAMONITOR_HUSPACY_MODEL`` — collapsing inflected forms to their dictionary
+lemma, and use its named-entity recognizer to keep multi-word entities ("Orbán
+Viktor", "Európai Unió") together as single terms instead of splitting them into
+low-value fragments ("orbán", "viktor").
 
 This neural pipeline is expensive (~200 sentences/s on one core), so it is run
 **once at load time** and the per-session results are cached on disk and
@@ -60,14 +62,24 @@ _LOGIC_VERSION = 2
 _nlp = None
 _load_attempted = False
 
+# Pipeline components we never need: we feed already-split sentences (senter) and
+# nothing downstream reads dependency arcs (parser). The trf model's dependency
+# parser is a spacy-experimental biaffine pair — it must be disabled ALONG WITH
+# senter, since with senter off it would crash on the missing sentence
+# boundaries (E030). Intersected with the model's actual pipe names at load.
+_DISABLED_PIPES = ("parser", "senter",
+                   "experimental_arc_predicter", "experimental_arc_labeler")
+
 
 def get_nlp():
     """Lazily load (once) the HuSpaCy model, or ``None`` if it is unavailable.
 
     Only the components the word cloud needs run — the dependency parser and the
-    sentence segmenter are disabled (we feed already-split sentences), leaving the
-    tagger/morphologizer, lemmatizer and NER. A missing model or import is logged
-    once and degrades to ``None`` so callers can fall back to the regex tokenizer.
+    sentence segmenter are disabled (``_DISABLED_PIPES``, intersected with the
+    model's actual pipeline since the component set and names vary across HuSpaCy
+    models), leaving the embedding/transformer, tagger/morphologizer, lemmatizer
+    and NER. A missing model or import is logged once and degrades to ``None`` so
+    callers can fall back to the regex tokenizer.
     """
     global _nlp, _load_attempted
     if _load_attempted:
@@ -75,7 +87,10 @@ def get_nlp():
     _load_attempted = True
     try:
         import spacy
-        _nlp = spacy.load(settings.huspacy_model, disable=["parser", "senter"])
+        _nlp = spacy.load(settings.huspacy_model)
+        for pipe in _DISABLED_PIPES:
+            if pipe in _nlp.pipe_names:
+                _nlp.disable_pipe(pipe)
         logger.info("Loaded HuSpaCy model %s (pipes: %s)",
                     settings.huspacy_model, ", ".join(_nlp.pipe_names))
     except Exception as exc:  # ImportError, OSError (model not installed), …

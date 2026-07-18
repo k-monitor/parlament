@@ -41,6 +41,11 @@ cd "$ROOT"
 
 # --- fixed resource names ---------------------------------------------------
 VOL="parlamonitor_dbdata"          # external DB volume (matches docker-compose.yml)
+# Search analytics (PRIV-1). A HOST bind-mounted directory — not a named volume —
+# so the aggregated, GDPR-friendly search-keyword stats (search-analytics.db) are
+# readable straight off the host, outside the container. Only the serving colors
+# write it (they handle /search); it's bind-mounted read-write below.
+ANALYTICS_DIR="${PARLAMONITOR_ANALYTICS_DIR:-$ROOT/analytics}"
 IMAGE="parlamonitor:latest"
 ROLLBACK_IMAGE="parlamonitor:rollback"
 BLUE_CTR="parlamonitor_app_blue"
@@ -137,6 +142,9 @@ echo "==> deploying: $TARGET"
 # --- ensure the shared external DB volume exists ----------------------------
 $ENGINE volume inspect "$VOL" >/dev/null 2>&1 || { echo "==> creating volume $VOL"; $ENGINE volume create "$VOL" >/dev/null; }
 
+# --- ensure the host-accessible search-analytics dir exists (PRIV-1) --------
+mkdir -p "$ANALYTICS_DIR"
+
 # --- rollback: restore the previously-deployed image ------------------------
 if [ "$ROLLBACK" = "1" ]; then
   if ! image_exists "$ROLLBACK_IMAGE"; then
@@ -153,8 +161,19 @@ if [ "$BUILD" = "1" ]; then
     echo "==> saving current image as $ROLLBACK_IMAGE (for --rollback)"
     $ENGINE tag "$IMAGE" "$ROLLBACK_IMAGE" || true
   fi
-  echo "==> building $IMAGE from current checkout"
-  $ENGINE build -t "$IMAGE" -f Dockerfile .
+  # Stamp the image with the git SHA (+ -dirty for uncommitted tracked changes)
+  # and build time, so the SPA footer / console and /api/v1/health all report
+  # exactly which code an origin is serving.
+  GIT_SHA="$(git rev-parse --short=8 HEAD 2>/dev/null || echo unknown)"
+  if [ "$GIT_SHA" != "unknown" ] && ! { git diff --quiet && git diff --cached --quiet; } 2>/dev/null; then
+    GIT_SHA="${GIT_SHA}-dirty"
+  fi
+  BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "==> building $IMAGE from current checkout ($GIT_SHA)"
+  $ENGINE build \
+    --build-arg "GIT_SHA=$GIT_SHA" \
+    --build-arg "BUILD_TIME=$BUILD_TIME" \
+    -t "$IMAGE" -f Dockerfile .
 fi
 
 if ! image_exists "$IMAGE"; then
@@ -197,6 +216,11 @@ color_env=(
   -e "PARLAMONITOR_SITE_URL=${PARLAMONITOR_SITE_URL:-}"
   -e "PARLAMONITOR_API_CACHE_CONTROL=${PARLAMONITOR_API_CACHE_CONTROL:-}"
   -e "PARLAMONITOR_HTML_CACHE_CONTROL=${PARLAMONITOR_HTML_CACHE_CONTROL:-}"
+  # Search analytics (PRIV-1): aggregated hourly, written to the bind-mounted
+  # /analytics dir below so the file is readable from the host. Set
+  # PARLAMONITOR_SEARCH_ANALYTICS=0 in .env to turn it off.
+  -e "PARLAMONITOR_SEARCH_ANALYTICS=${PARLAMONITOR_SEARCH_ANALYTICS:-1}"
+  -e "PARLAMONITOR_ANALYTICS_DB=${PARLAMONITOR_ANALYTICS_DB:-/analytics/search-analytics.db}"
 )
 [ -n "${PARLAMONITOR_WEB_WORKERS:-}" ]        && color_env+=(-e "PARLAMONITOR_WEB_WORKERS=${PARLAMONITOR_WEB_WORKERS}")
 [ -n "${PARLAMONITOR_FORWARDED_ALLOW_IPS:-}" ] && color_env+=(-e "PARLAMONITOR_FORWARDED_ALLOW_IPS=${PARLAMONITOR_FORWARDED_ALLOW_IPS}")
@@ -210,6 +234,7 @@ $ENGINE run -d \
   --restart unless-stopped \
   -v "$ROOT/data:/data:ro" \
   -v "$VOL:/db" \
+  -v "$ANALYTICS_DIR:/analytics" \
   "${color_env[@]}" \
   "$IMAGE" serve >/dev/null
 

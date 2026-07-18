@@ -1,11 +1,16 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
 # Word-cloud lemmatization + entity extraction (WCLOUD-2). HuSpaCy pulls in spaCy;
-# the model itself is a separate ~127 MB wheel, installed once with:
+# the model itself is a separate wheel. The project default is the transformer
+# (hu_core_news_trf, best accuracy) which in practice runs ONLY on Modal
+# (PARLAMONITOR_WORDCLOUD_BACKEND=modal, see modal_app.py): its latest build
+# targets spaCy 3.7 + 2023-era spacy-transformers/tokenizers whose wheels stop at
+# Python 3.11, so it won't install into a modern local venv. For local NLP use
+# the ~127 MB CPU model and point the app at it with
+# PARLAMONITOR_HUSPACY_MODEL=hu_core_news_md:
 #   python -c "import huspacy; huspacy.download('hu_core_news_md')"
-# (or pip-install the hu_core_news_md wheel from huggingface.co/huspacy). The word
-# cloud degrades to a regex tokenizer when the model is absent, so this is optional
-# for a minimal build (PARLAMONITOR_WORDCLOUD_BACKEND=regex to force it off).
+# The word cloud degrades to a regex tokenizer when the model is absent, so this
+# is optional for a minimal build (PARLAMONITOR_WORDCLOUD_BACKEND=regex forces it off).
 huspacy>=0.5
 # Offload the word-cloud NER/lemmatization to Modal GPU/CPU workers when
 # PARLAMONITOR_WORDCLOUD_BACKEND=modal (WCLOUD-6). Only the lightweight client is

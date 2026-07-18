@@ -74,10 +74,14 @@ class Settings:
     # cached, never at request time (OPS-4).
     wordcloud_backend: str = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_WORDCLOUD_BACKEND", "auto").strip().lower())
-    # Which HuSpaCy model to lemmatize with — the smallest (`hu_core_news_md`) by
-    # default; a larger one (`hu_core_news_lg`/`_trf`) can be swapped in via env.
+    # Which HuSpaCy model to lemmatize/NER with — the transformer
+    # (`hu_core_news_trf`, best accuracy; run it on Modal GPU workers via
+    # wordcloud_backend="modal") by default; a lighter CPU model
+    # (`hu_core_news_md`/`_lg`) can be swapped in via env for local runs.
+    # The model name is part of method_tag(), so changing it busts the
+    # word-cloud + entity caches and re-runs NER over the whole corpus.
     huspacy_model: str = field(default_factory=lambda:
-        os.environ.get("PARLAMONITOR_HUSPACY_MODEL", "hu_core_news_md").strip())
+        os.environ.get("PARLAMONITOR_HUSPACY_MODEL", "hu_core_news_trf").strip())
     # Modal offload (wordcloud_backend="modal"). The deployed Modal app name to
     # look the NLP service up under, and how many sentences to pack into each
     # remote batch — larger batches = fewer, fatter calls (less overhead), bounded

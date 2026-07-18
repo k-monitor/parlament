@@ -42,6 +42,9 @@ x-common-env: &common-env
 # heavy NER/lemmatization to modal.com (WCLOUD-6) — ideal on a small host.
 x-nlp-env: &nlp-env
   PARLAMONITOR_WORDCLOUD_BACKEND: ${PARLAMONITOR_WORDCLOUD_BACKEND:-auto}
+  # Must match the model baked into the deployed Modal image — it is part of the
+  # cache/method tag, so changing it triggers a full re-NER on the next build.
+  PARLAMONITOR_HUSPACY_MODEL: ${PARLAMONITOR_HUSPACY_MODEL:-hu_core_news_trf}
   PARLAMONITOR_MODAL_APP: ${PARLAMONITOR_MODAL_APP:-parlamonitor-nlp}
   MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
   MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}

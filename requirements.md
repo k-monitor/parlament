@@ -606,8 +606,9 @@ snippet — a site-wide capability, not a per-module feature.
   Hungarian is agglutinative, the same concept appears in many inflected forms
   (*törvény / törvényt / törvényben / törvények*); counting them separately would
   scatter a day's real theme and weaken the TF·IDF signal. The text is therefore
-  **lemmatized with a HuSpaCy model** (the smallest, `hu_core_news_md`, by
-  default) so inflected forms collapse to their dictionary lemma, and only
+  **lemmatized with a HuSpaCy model** (the transformer, `hu_core_news_trf`, by
+  default — offloaded to Modal GPU workers in production; a lighter CPU model
+  can be configured) so inflected forms collapse to their dictionary lemma, and only
   topical parts of speech (nouns, proper nouns, adjectives) are kept. The model's
   **named-entity recognition** keeps multi-word entities — people, places,
   organisations (*"Orbán Viktor"*, *"Európai Unió"*) — together as a **single

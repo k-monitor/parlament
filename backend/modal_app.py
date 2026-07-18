@@ -28,9 +28,11 @@ sittings, batched.
 
 Tunables (env at *deploy* time):
   PARLAMONITOR_MODAL_APP             app name (must match the client)  [parlamonitor-nlp]
-  PARLAMONITOR_HUSPACY_MODEL         HuSpaCy model to bake in          [hu_core_news_md]
-  PARLAMONITOR_MODAL_GPU             GPU type, e.g. "T4"/"A10G", or empty for CPU  [CPU]
-  PARLAMONITOR_MODAL_CPU             CPU cores per container           [1.0]
+  PARLAMONITOR_HUSPACY_MODEL         HuSpaCy model to bake in          [hu_core_news_trf]
+  PARLAMONITOR_MODAL_GPU             GPU type, e.g. "T4"/"A10G"; set EMPTY for CPU
+                                     [T4 for a *_trf model, CPU otherwise]
+  PARLAMONITOR_MODAL_CPU             CPU cores per container           [2.0 with GPU, 1.0 CPU-only]
+  PARLAMONITOR_MODAL_MEMORY          MiB of RAM per container          [6144 for *_trf, 2048 otherwise]
   PARLAMONITOR_MODAL_MAX_CONTAINERS  parallelism / credit ceiling      [10]
 """
 
@@ -41,23 +43,46 @@ import os
 import modal
 
 APP_NAME = os.environ.get("PARLAMONITOR_MODAL_APP", "parlamonitor-nlp").strip()
-MODEL = os.environ.get("PARLAMONITOR_HUSPACY_MODEL", "hu_core_news_md").strip()
+MODEL = os.environ.get("PARLAMONITOR_HUSPACY_MODEL", "hu_core_news_trf").strip()
+# The transformer model wants a GPU (and the torch/cupy stack); the CPU md/lg
+# models don't benefit from one.
+IS_TRF = "trf" in MODEL
 # Pin the model wheel version label used when renaming the versionless HF wheel so
 # pip accepts it (the installed version comes from the wheel's own METADATA, not
-# this label). Matches the version verified locally.
-MODEL_WHEEL_VERSION = os.environ.get("PARLAMONITOR_MODAL_MODEL_VERSION", "3.8.1").strip()
-GPU = os.environ.get("PARLAMONITOR_MODAL_GPU") or None      # None => CPU
-CPU = float(os.environ.get("PARLAMONITOR_MODAL_CPU", "1.0"))
+# this label). Matches the versions published on huggingface.co/huspacy: the md/lg
+# models track spaCy 3.8 (3.8.1), while the trf model's latest build is 3.7.0.
+MODEL_WHEEL_VERSION = os.environ.get(
+    "PARLAMONITOR_MODAL_MODEL_VERSION", "3.7.0" if IS_TRF else "3.8.1").strip()
+# Default GPU tracks the model: T4 (the cheapest) for a transformer, CPU for the
+# small models. Deploy with PARLAMONITOR_MODAL_GPU="" to force CPU even for trf.
+_gpu_env = os.environ.get("PARLAMONITOR_MODAL_GPU")
+if _gpu_env is None:
+    _gpu_env = "T4" if IS_TRF else ""
+GPU = _gpu_env.strip() or None      # None => CPU
+CPU = float(os.environ.get("PARLAMONITOR_MODAL_CPU", "2.0" if GPU else "1.0"))
+MEMORY = int(os.environ.get("PARLAMONITOR_MODAL_MEMORY",
+                            "6144" if IS_TRF else "2048"))
 MAX_CONTAINERS = int(os.environ.get("PARLAMONITOR_MODAL_MAX_CONTAINERS", "10"))
 
 app = modal.App(APP_NAME)
 
 image = (
-    modal.Image.debian_slim(python_version="3.12")
+    # The trf model's latest build (3.7.0) targets spaCy 3.7 and 2023-era
+    # spacy-transformers/spacy-experimental, which ship prebuilt wheels only up
+    # to Python 3.11 — on 3.12 pip would try (and fail) to compile tokenizers
+    # from source. The CPU models track spaCy 3.8 on Python 3.12.
+    modal.Image.debian_slim(python_version="3.11" if IS_TRF else "3.12")
     .apt_install("curl")
     # `click` is imported by huspacy's components when spaCy loads the model; the
-    # slim image doesn't pull it transitively, so name it explicitly.
-    .pip_install("spacy==3.8.13", "huspacy==0.5.1", "click")
+    # slim image doesn't pull it transitively, so name it explicitly. The trf
+    # model needs the transformer stack its meta.json declares (spacy-transformers
+    # ~=1.2.2 → transformers<4.31, spacy-experimental==0.6.4); torch is pinned to
+    # a contemporary release known-good with that transformers range.
+    .pip_install(
+        "spacy==3.7.5" if IS_TRF else "spacy==3.8.13",
+        "huspacy==0.5.1", "click",
+        *(["spacy-transformers~=1.2.2", "spacy-experimental==0.6.4",
+           "torch==2.1.2"] if IS_TRF else []))
     .run_commands(
         # Install the HuSpaCy model into the image (baked in, so containers start
         # fast). The HuggingFace wheel filename is versionless and pip rejects it,
@@ -69,6 +94,14 @@ image = (
         f"&& pip install /tmp/{MODEL}-{MODEL_WHEEL_VERSION}-py3-none-any.whl "
         f"|| python -c \"import huspacy; huspacy.download('{MODEL}')\""
     )
+    # cupy routes thinc's ops to CUDA — required for spacy.prefer_gpu() to move
+    # the transformer (torch) onto the GPU. Its wheel bundles the CUDA runtime,
+    # so the driver on Modal's GPU workers is all it needs. Pinned to the 13.x
+    # line: cupy 14 requires numpy>=2, which silently upgrades numpy over the
+    # numpy-1.x ABI the spaCy 3.7 trf stack's wheels are compiled against and
+    # breaks the model at load time.
+    .pip_install(*(["cupy-cuda12x==13.6.0"] + (["numpy<2"] if IS_TRF else [])
+                   if GPU else []))
     # The service runs the project's own extraction logic, so its output matches
     # the local backend exactly. Ship the backend `app` package into the image.
     .env({"PARLAMONITOR_HUSPACY_MODEL": MODEL})
@@ -80,6 +113,7 @@ image = (
     image=image,
     gpu=GPU,
     cpu=CPU,
+    memory=MEMORY,
     max_containers=MAX_CONTAINERS,
     scaledown_window=60,   # scale to zero ~1 min after the last call (no idle cost)
     timeout=3600,
@@ -88,13 +122,29 @@ class NlpService:
     @modal.enter()
     def _load(self):
         # Warm the model once per container; reused across every batch it handles.
+        # torch MUST be imported before anything touches cupy (thinc does, via
+        # spacy): torch's wheel carries the CUDA libraries, and importing it
+        # loads them into the process — without that preload `import cupy`
+        # fails inside thinc, has_cupy stays False, and the transformer
+        # silently runs on CPU next to an idle GPU.
+        detail = ""
+        try:
+            import torch  # noqa: F401
+        except Exception as exc:
+            detail += f" torch_error={exc!r}"
+        try:
+            import cupy  # noqa: F401
+        except Exception as exc:
+            detail += f" cupy_error={exc!r}"
+        gpu_active = False
         try:
             import spacy
-            spacy.prefer_gpu()   # no-op without a GPU (or without cupy installed)
-        except Exception:
-            pass
+            gpu_active = spacy.prefer_gpu()   # no-op without a GPU (or without cupy)
+        except Exception as exc:
+            detail += f" prefer_gpu_error={exc!r}"
         from app import nlp
         nlp.get_nlp()
+        print(f"NlpService ready: model={MODEL} gpu_active={gpu_active}{detail}")
 
     @modal.method()
     def analyze_sessions(self, sessions: list[list[str]]) -> list[dict]:

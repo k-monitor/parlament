@@ -114,8 +114,14 @@ def extract(misses, *, batch_sentences: int | None = None,
     logger.info("Modal NLP (%s): %d sitting(s) in %d batch(es) (~%d sentences/batch)",
                 app_name or settings.modal_app_name,
                 sum(len(c) for c in chunks), len(chunks), batch_sentences)
-    for chunk, results in zip(chunks, svc.analyze_sessions.map(payloads)):
-        for (sid, fp, _texts), result in zip(chunk, results):
+    # Drive the loop off the .map() generator (not as zip's 2nd arg): zip stops
+    # when `chunks` is exhausted and leaves the Modal generator suspended at its
+    # final yield, which Modal then tears down off-task ("aclose(): asynchronous
+    # generator is already running"). Iterating it directly drains it to
+    # StopIteration so it closes cleanly. One result batch per input payload, so
+    # its index lines up with `chunks`.
+    for i, results in enumerate(svc.analyze_sessions.map(payloads)):
+        for (sid, fp, _texts), result in zip(chunks[i], results):
             yield sid, fp, _words(result)
 
 
@@ -136,6 +142,9 @@ def extract_spans(misses, *, batch_sentences: int | None = None,
     logger.info("Modal NLP spans (%s): %d sitting(s) in %d batch(es)",
                 app_name or settings.modal_app_name,
                 sum(len(c) for c in chunks), len(chunks))
-    for chunk, results in zip(chunks, svc.analyze_sessions_spans.map(payloads)):
-        for (sid, fp, _texts), spans in zip(chunk, results):
+    # Drive the loop off the .map() generator so it drains to StopIteration and
+    # closes in-task — see the note in extract() (zip would leave it suspended,
+    # triggering "aclose(): asynchronous generator is already running").
+    for i, spans_batch in enumerate(svc.analyze_sessions_spans.map(payloads)):
+        for (sid, fp, _texts), spans in zip(chunks[i], spans_batch):
             yield sid, fp, spans

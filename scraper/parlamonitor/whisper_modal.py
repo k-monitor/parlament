@@ -88,8 +88,12 @@ def transcribe(misses, *, model: str, language: str):
     # return_exceptions keeps one bad recording (a decode/ASR error on a single
     # sitting) from aborting a whole backfill batch — that day just gets no words
     # and falls back to the positional estimate (SCR-5).
-    results = svc.transcribe.map(jobs, return_exceptions=True)
-    for (session, _m3u8, _playseq), words in zip(misses, results):
+    # Drive the loop off the .map() generator (not as zip's 2nd arg) so it drains
+    # to StopIteration and closes in-task; as zip's 2nd arg it is left suspended
+    # when `misses` is exhausted and Modal tears it down off-task ("aclose():
+    # asynchronous generator is already running"). One result per job, in order.
+    for i, words in enumerate(svc.transcribe.map(jobs, return_exceptions=True)):
+        session = misses[i][0]
         if isinstance(words, BaseException):
             logger.warning("Modal transcription failed for %s (%s)", session, words)
             continue

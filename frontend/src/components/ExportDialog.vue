@@ -108,7 +108,10 @@ const resultUrl = ref(null)
 const resultName = ref('')
 const resultSize = ref(0)
 const running = computed(() => ['loading', 'fetching', 'encoding'].includes(phase.value))
-const pct = computed(() => Math.round(progress.value * 100))
+// Clamp to 0..100: progress fractions come from download callbacks whose
+// `total` can be a compressed Content-Length (received/total > 1), so guard the
+// displayed percentage regardless of which phase feeds it.
+const pct = computed(() => Math.min(100, Math.max(0, Math.round(progress.value * 100))))
 
 let abortCtrl = null
 let engine = null                // the lazily-imported clipExport module

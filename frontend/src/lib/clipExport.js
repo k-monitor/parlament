@@ -58,7 +58,14 @@ export async function ensureLoaded({ onLog, onProgress } = {}) {
     const [core, wasm] = await Promise.all([
       toBlobURL(coreURL, 'text/javascript'),
       toBlobURL(wasmURL, 'application/wasm', true, (e) => {
-        if (onProgress && e && e.total) onProgress(e.received / e.total)
+        // received/total, but @ffmpeg/util takes `total` from Content-Length —
+        // the COMPRESSED size when the server sends the wasm gzip/br-encoded —
+        // while `received` counts DECOMPRESSED stream bytes. The ratio then
+        // blows past 1 (seen as >10000%). `total` is -1 with no Content-Length.
+        // Clamp to 0..1 so callers always get a sane fraction.
+        if (onProgress && e && e.total > 0) {
+          onProgress(Math.max(0, Math.min(1, e.received / e.total)))
+        }
       }),
     ])
     await ff.load({ coreURL: core, wasmURL: wasm })

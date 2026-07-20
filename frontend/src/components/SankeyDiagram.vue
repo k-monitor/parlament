@@ -1,9 +1,12 @@
 <script setup>
-// Dependency-free SVG Sankey diagram (two columns: askers on the left, answerers
-// on the right). `nodes` = [{ label, color, side: 'asker' | 'answerer' }];
-// `links` = [{ source, target, value, color }] referencing node indices. Node
-// heights and ribbon thicknesses are proportional to the flow. Each ribbon and
-// node is keyboard-focusable and labelled for assistive tech (A11Y-1).
+// Dependency-free SVG Sankey diagram supporting any number of columns. Each node
+// carries a `column` index (0 = leftmost); links connect nodes in adjacent
+// columns. `nodes` = [{ label, color, column, side? }]; `links` =
+// [{ source, target, value, color }] referencing node indices. Node heights and
+// ribbon thicknesses are proportional to the flow. Each ribbon and node is
+// keyboard-focusable and labelled for assistive tech (A11Y-1). For backward
+// compatibility a node without `column` is placed by `side` (asker → 0,
+// answerer → 1).
 import { computed, ref } from 'vue'
 
 const props = defineProps({
@@ -13,6 +16,9 @@ const props = defineProps({
   // When false, the caption still labels the diagram for assistive tech but is not
   // shown as a visible figcaption (the parent surfaces it elsewhere, e.g. a HelpTip).
   showCaption: { type: Boolean, default: true },
+  // Column headings, indexed by column. Falls back to asker/answerer for the
+  // first / last column when the array has no entry.
+  columnHeadings: { type: Array, default: () => [] },
   askerHeading: { type: String, default: '' },
   answererHeading: { type: String, default: '' },
   selected: { type: Number, default: -1 },       // index of the selected link
@@ -42,48 +48,64 @@ const NODE_W = 13
 const NODE_GAP = 7
 const PAD_Y = 10
 const HEAD_H = 26          // room for the column headings above the columns
-const L_GUTTER = 150        // room for asker labels on the left
-const R_GUTTER = 265        // room for (long) ministry labels on the right
-const BAR_TOTAL = 540       // summed node-bar height on one side → sets the scale
+const L_GUTTER = 150        // room for the first column's labels on the left
+const R_GUTTER = 265        // room for (long) last-column labels on the right
+const BAR_TOTAL = 540       // summed node-bar height of the busiest column → the scale
 
 function trunc(s, n = 30) {
   s = String(s == null ? '' : s)
   return s.length > n ? s.slice(0, n - 1) + '…' : s
 }
 
+const colOf = (n) => (n.column != null ? n.column : (n.side === 'asker' ? 0 : 1))
+
 const layout = computed(() => {
   const nodes = props.nodes
   const links = props.links
   if (!nodes.length || !links.length) return null
 
-  const totals = nodes.map(() => 0)
-  for (const l of links) { totals[l.source] += l.value; totals[l.target] += l.value }
-  const sumVal = links.reduce((s, l) => s + l.value, 0) || 1
-  const scale = BAR_TOTAL / sumVal
-
-  const askerIdx = nodes.map((_, i) => i).filter((i) => nodes[i].side === 'asker')
-  const answerIdx = nodes.map((_, i) => i).filter((i) => nodes[i].side === 'answerer')
-  const maxCount = Math.max(askerIdx.length, answerIdx.length)
-  const LABEL_MIN = 15   // minimum vertical gap between labels
-
+  const columns = [...new Set(nodes.map(colOf))].sort((a, b) => a - b)
+  const lastCol = columns[columns.length - 1]
   const xLeft = L_GUTTER
   const xRight = WIDTH - R_GUTTER - NODE_W
+  const colX = new Map()
+  columns.forEach((c, i) => {
+    colX.set(c, columns.length === 1
+      ? xLeft
+      : xLeft + (xRight - xLeft) * (i / (columns.length - 1)))
+  })
+
+  // A node's height is its throughput: max(incoming, outgoing) flow (the two are
+  // equal for interior nodes; one side is zero at the ends).
+  const inSum = nodes.map(() => 0)
+  const outSum = nodes.map(() => 0)
+  for (const l of links) { outSum[l.source] += l.value; inSum[l.target] += l.value }
+  const totals = nodes.map((_, i) => Math.max(inSum[i], outSum[i]))
+
+  // Scale so the busiest column fills BAR_TOTAL. Every column carries the same
+  // total flow, but they can differ if a node's in/out don't balance, so take
+  // the max to be safe.
+  const colSum = new Map()
+  nodes.forEach((n, i) => colSum.set(colOf(n), (colSum.get(colOf(n)) || 0) + totals[i]))
+  const scale = BAR_TOTAL / Math.max(...colSum.values(), 1)
+
+  const LABEL_MIN = 15   // minimum vertical gap between labels
 
   const box = nodes.map((n, i) => ({
-    i, ...n, total: totals[i],
+    i, ...n, column: colOf(n), total: totals[i],
     h: Math.max(2, totals[i] * scale),
-    x: n.side === 'asker' ? xLeft : xRight,
-    y: 0, labelY: 0,
+    x: colX.get(colOf(n)), y: 0, labelY: 0,
   }))
 
   // Stack each column vertically from the top of the plot area (below the
   // heading row).
+  const byCol = new Map(columns.map((c) => [c, []]))
+  box.forEach((b) => byCol.get(b.column).push(b.i))
   const place = (idxs) => {
     let y = PAD_Y + HEAD_H
     for (const i of idxs) { box[i].y = y; y += box[i].h + NODE_GAP }
   }
-  place(askerIdx)
-  place(answerIdx)
+  for (const c of columns) place(byCol.get(c))
 
   // Declutter labels: a tiny node's bar is thinner than its label, so labels
   // near a cluster of small nodes would collide. Anchor each label at its bar's
@@ -99,8 +121,7 @@ const layout = computed(() => {
       bottom = Math.max(bottom, ly)
     }
   }
-  declutter(askerIdx)
-  declutter(answerIdx)
+  for (const c of columns) declutter(byCol.get(c))
   const H = Math.round(Math.max(bottom + PAD_Y, PAD_Y * 2 + 40))
 
   // Allocate ribbon endpoints: within a source node, order outgoing ribbons by
@@ -116,13 +137,13 @@ const layout = computed(() => {
   const tTop = new Map()
   for (const l of byTarget) { tTop.set(l, ty[l.target]); ty[l.target] += l.value * scale }
 
-  const xa = xLeft + NODE_W
-  const xb = xRight
-  const mx = (xa + xb) / 2
   const ribbons = links.map((l, k) => {
     const h = l.value * scale
     const s0 = sTop.get(l), s1 = s0 + h
     const t0 = tTop.get(l), t1 = t0 + h
+    const xa = box[l.source].x + NODE_W
+    const xb = box[l.target].x
+    const mx = (xa + xb) / 2
     return {
       key: k,
       color: l.color || 'var(--accent)',
@@ -133,10 +154,24 @@ const layout = computed(() => {
     }
   })
 
-  return { H, box, ribbons, xLeft, xRight }
+  // Column headings, positioned to the outward edge of the first / last column
+  // and centred over any interior column.
+  const headings = columns.map((c, i) => {
+    let text = props.columnHeadings[i] || ''
+    if (!text) {
+      if (i === 0) text = props.askerHeading
+      else if (c === lastCol) text = props.answererHeading
+    }
+    const x = colX.get(c)
+    if (i === 0) return { key: c, text, x: x + NODE_W, anchor: 'start' }
+    if (c === lastCol) return { key: c, text, x, anchor: 'end' }
+    return { key: c, text, x: x + NODE_W / 2, anchor: 'middle' }
+  }).filter((h) => h.text)
+
+  return { H, box, ribbons, headings, lastCol }
 })
 
-const active = ref(-1)   // hovered/focused source node index (highlight its ribbons)
+const active = ref(-1)   // hovered/focused node index (highlight its ribbons)
 </script>
 
 <template>
@@ -145,8 +180,10 @@ const active = ref(-1)   // hovered/focused source node index (highlight its rib
     <div class="scroll">
       <svg :viewBox="`0 0 ${WIDTH} ${layout.H}`" class="svg" role="img" :aria-label="caption">
         <!-- column headings -->
-        <text v-if="askerHeading" :x="layout.xLeft + NODE_W" :y="12" class="colhead" text-anchor="start">{{ askerHeading }}</text>
-        <text v-if="answererHeading" :x="layout.xRight" :y="12" class="colhead" text-anchor="end">{{ answererHeading }}</text>
+        <text
+          v-for="h in layout.headings" :key="'h' + h.key"
+          :x="h.x" :y="12" class="colhead" :text-anchor="h.anchor"
+        >{{ h.text }}</text>
 
         <!-- ribbons (each is a clickable flow → drill-down) -->
         <path
@@ -178,17 +215,18 @@ const active = ref(-1)   // hovered/focused source node index (highlight its rib
         >
           <rect
             :x="b.x" :y="b.y" :width="NODE_W" :height="b.h" rx="2"
-            class="node" :fill="b.color || (b.side === 'asker' ? 'var(--accent)' : '#9c9188')"
+            class="node" :fill="b.color || 'var(--accent)'"
           >
             <title>{{ b.label }}: {{ b.total }}</title>
           </rect>
           <text
-            v-if="b.side === 'asker'" :x="b.x - 6" :y="b.labelY"
+            v-if="b.column === 0" :x="b.x - 6" :y="b.labelY"
             class="nlabel" text-anchor="end" dominant-baseline="middle"
           >{{ trunc(b.label) }} <tspan class="nval">({{ b.total }})</tspan></text>
           <text
             v-else :x="b.x + NODE_W + 6" :y="b.labelY"
-            class="nlabel" text-anchor="start" dominant-baseline="middle"
+            class="nlabel" :class="{ halo: b.column !== layout.lastCol }"
+            text-anchor="start" dominant-baseline="middle"
           >{{ trunc(b.label) }} <tspan class="nval">({{ b.total }})</tspan></text>
         </g>
       </svg>
@@ -207,6 +245,9 @@ const active = ref(-1)   // hovered/focused source node index (highlight its rib
 .ribbon.sel { opacity: .82; }
 .node { stroke: rgba(0,0,0,.12); stroke-width: .5; transition: stroke .12s ease, stroke-width .12s ease; }
 .nlabel { font-size: 12px; fill: var(--ink); }
+/* Interior-column labels sit over the ribbons — give them a background halo so
+   they stay legible. */
+.nlabel.halo { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
 .nval { fill: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .nodegrp { cursor: pointer; }
 .nodegrp:focus { outline: none; }

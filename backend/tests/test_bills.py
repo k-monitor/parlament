@@ -368,16 +368,41 @@ def _seed_question_answer(db_path, name, related_label=None):
 
 def test_questions_sankey_excludes_bills_and_defaults_unanswered(client):
     """Only question-type irományok (A/I/K) count — the two törvényjavaslatok are
-    excluded — and a question with no answer event flows to the unanswered node."""
+    excluded — and a question with no answer event flows to the unanswered node.
+    The diagram has three columns: question type → asker faction → answerer, so a
+    single question yields two links (one per stage)."""
     j = client.get("/api/v1/bills/questions/sankey").json()
     assert j["total"] == 1                              # only doc-uuid-3 (interpelláció)
-    askers = [n for n in j["nodes"] if n["side"] == "asker"]
-    answerers = [n for n in j["nodes"] if n["side"] == "answerer"]
+    types = [n for n in j["nodes"] if n["column"] == 0]
+    askers = [n for n in j["nodes"] if n["column"] == 1]
+    answerers = [n for n in j["nodes"] if n["column"] == 2]
+    assert types and types[0]["kind"] == "type" and types[0]["main_type"] == "I"
     assert any(n["label"] == "Fidesz" for n in askers)  # asker's faction
     assert answerers and answerers[0]["kind"] == "unanswered"
-    # one flow, asker -> answerer, value 1, carrying the faction colour
-    assert len(j["links"]) == 1 and j["links"][0]["value"] == 1
+    # two links, both value 1: type -> faction (type colour) and faction -> answerer
+    assert len(j["links"]) == 2 and all(l["value"] == 1 for l in j["links"])
     assert j["links"][0]["color"]
+
+    # the faction node sits between the question type and the answerer
+    t_idx = next(i for i, n in enumerate(j["nodes"]) if n["column"] == 0)
+    a_idx = next(i for i, n in enumerate(j["nodes"]) if n["column"] == 1)
+    s_idx = next(i for i, n in enumerate(j["nodes"]) if n["column"] == 2)
+    pairs = {(l["source"], l["target"]) for l in j["links"]}
+    assert (t_idx, a_idx) in pairs and (a_idx, s_idx) in pairs
+
+
+def test_questions_sankey_can_hide_the_type_column(client):
+    """include_type=false collapses the diagram to two columns (faction →
+    answerer): no type node, the faction sits in column 0, and the single
+    question yields one link."""
+    j = client.get("/api/v1/bills/questions/sankey",
+                   params={"include_type": "false"}).json()
+    assert j["total"] == 1
+    assert not any(n["kind"] == "type" for n in j["nodes"])
+    assert max(n["column"] for n in j["nodes"]) == 1        # only two columns
+    askers = [n for n in j["nodes"] if n["column"] == 0]
+    assert any(n["label"] == "Fidesz" for n in askers)     # faction now leads
+    assert len(j["links"]) == 1 and j["links"][0]["value"] == 1
 
 
 def test_questions_sankey_oral_answer_routes_to_ministry(client, db_path):
@@ -433,6 +458,39 @@ def test_questions_list_drills_into_a_flow(client, db_path):
     empty = client.get("/api/v1/bills/questions/list", params={
         "faction": fac, "answerer": "unanswered"}).json()
     assert empty["total"] == 0
+
+
+def test_questions_list_drills_into_a_type(client):
+    """Clicking the question-type column filters the drill-down by main_type:
+    doc-uuid-3 is an interpelláció (I), so `main_type=I` lists it and `main_type=K`
+    lists nothing."""
+    hit = client.get("/api/v1/bills/questions/list", params={"main_type": "I"}).json()
+    assert hit["total"] == 1 and hit["bills"][0]["bill_number"] == "I/5"
+    miss = client.get("/api/v1/bills/questions/list", params={"main_type": "K"}).json()
+    assert miss["total"] == 0
+
+
+def test_questions_written_question_is_its_own_type(client, db_path):
+    """A written question — an ``írásbeli kérdés`` (main_type K, answered in
+    writing) — is split into its own 'W' type node, not merged into the plain
+    'kérdés' (K)."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("""INSERT INTO bill (id, bill_number, number_sort, period_number,
+                     title, type, main_type, status)
+                 VALUES ('q-wr','K/77',77,43,'Írásbeli kérdés a díjakról',
+                         'írásbeli kérdés','K','lezárva')""")
+    c.execute("""INSERT INTO bill_sponsor (bill_id, person_id, faction_id, label, ord)
+                 VALUES ('q-wr','k001',7,'Kovács Béla',0)""")
+    c.commit(); c.close()
+    # the type column gains a distinct 'W' (written) node
+    sk = client.get("/api/v1/bills/questions/sankey").json()
+    assert any(n["column"] == 0 and n["main_type"] == "W" for n in sk["nodes"])
+    # drill-down: it lists under 'W', not under the plain 'K'
+    w = client.get("/api/v1/bills/questions/list", params={"main_type": "W"}).json()
+    assert [b["bill_number"] for b in w["bills"]] == ["K/77"]
+    k = client.get("/api/v1/bills/questions/list", params={"main_type": "K"}).json()
+    assert "K/77" not in [b["bill_number"] for b in k["bills"]]
 
 
 def test_questions_list_unfiltered_lists_all_questions(client):

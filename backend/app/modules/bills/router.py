@@ -193,23 +193,43 @@ def bill_facets(period: Optional[int] = None,
 
 # Question-type irományok (kérdés / interpelláció / azonnali kérdés) and the
 # events that record how each was answered. The Kérdések sub-page (BILL-11) turns
-# these into a Sankey diagram — asker faction → answerer — where the answerer is
-# the responding portfolio (both oral and written answer events carry it in
-# `related_label`), or an "unanswered" node when the question drew no answer.
+# these into a three-column Sankey — question type → asker faction → answerer —
+# where the answerer is the responding portfolio (both oral and written answer
+# events carry it in `related_label`), or an "unanswered" node when the question
+# drew no answer.
 _QUESTION_TYPES = ("A", "I", "K")
 _ORAL_ANSWER_EVENTS = ("kérdés megválaszolva", "interpelláció szóban megválaszolva")
 _WRITTEN_ANSWER_EVENT = "kérdés írásban megválaszolva"
+# Colours for the question-type column of the Sankey (§6A). Muted tones distinct
+# from the faction palette; the type node colours its outgoing (stage-1) ribbons.
+_TYPE_COLORS = {
+    "I": "#6b7fb0",   # interpelláció
+    "K": "#8a9b6e",   # kérdés (answered orally)
+    "A": "#c08a55",   # azonnali kérdés
+    "W": "#9d84a8",   # írásbeli kérdés (answered in writing)
+}
+
+
+def _refine_type(main_type: Optional[str], type_str: Optional[str]) -> str:
+    """The Sankey type-column code for a question. A written question — an
+    ``írásbeli kérdés`` (main_type K answered in writing rather than orally) — is
+    split out from the plain ``kérdés`` into its own ``W`` category."""
+    if main_type == "K" and "írásbeli" in (type_str or "").lower():
+        return "W"
+    return main_type or ""
 
 
 def _classify_questions(db: sqlite3.Connection, period: Optional[int], top: int):
     """Shared engine for the Kérdések Sankey and its drill-down: classify every
-    question-type iromány in scope by asker faction and by answerer, applying the
-    same top-``top`` ministry ranking so the diagram and the per-flow list agree.
+    question-type iromány in scope by asker faction, by question type and by
+    answerer, applying the same top-``top`` ministry ranking so the diagram and
+    the per-flow list agree.
 
-    Returns ``(order_ids, factions, faction_key, answerer_key)`` where
+    Returns ``(order_ids, factions, faction_key, type_key, answerer_key)`` where
     ``order_ids`` is the question bill ids newest-first, ``faction_key(bid)`` is
-    the asker's faction id (or ``None``), and ``answerer_key(bid)`` is a
-    ``(kind, label)`` tuple (``label`` empty for the non-ministry nodes)."""
+    the asker's faction id (or ``None``), ``type_key(bid)`` is the question's
+    ``main_type`` code (A/I/K), and ``answerer_key(bid)`` is a ``(kind, label)``
+    tuple (``label`` empty for the non-ministry nodes)."""
     from collections import Counter
 
     qph = ",".join("?" * len(_QUESTION_TYPES))
@@ -219,10 +239,14 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[int], top: int)
         where.append("b.period_number = ?"); params.append(period)
     where_sql = " AND ".join(where)
 
-    order_ids = [r["id"] for r in db.execute(
-        f"SELECT b.id FROM bill b WHERE {where_sql} "
+    order_ids: list[str] = []
+    bill_type: dict[str, str] = {}   # bill -> refined type code (A/I/K/W)
+    for r in db.execute(
+        f"SELECT b.id, b.main_type, b.type FROM bill b WHERE {where_sql} "
         f"ORDER BY b.period_number DESC, b.number_sort DESC",  # number_sort is per-cycle
-        params)]
+        params):
+        order_ids.append(r["id"])
+        bill_type[r["id"]] = _refine_type(r["main_type"], r["type"])
     factions = {r["id"]: r for r in
                 db.execute("SELECT id, label, color FROM faction")}
 
@@ -274,6 +298,11 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[int], top: int)
         fid = asker_faction.get(bid)
         return fid if (fid is not None and fid in factions) else None
 
+    def type_key(bid: str) -> str:
+        """The question's refined type code (A/I/K/W) — the first Sankey column;
+        W is a written question split out from the plain kérdés (K)."""
+        return bill_type.get(bid, "")
+
     def answerer_key(bid: str) -> tuple[str, str]:
         """(kind, label) for the answerer side; label is '' for special nodes."""
         answered_orally = bid in oral_ministry
@@ -287,71 +316,101 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[int], top: int)
             return ("oral", "") if answered_orally else ("other", "")
         return ("ministry", m) if m in top_ministries else ("other", "")
 
-    return order_ids, factions, faction_key, answerer_key
+    return order_ids, factions, faction_key, type_key, answerer_key
 
 
 @router.get("/questions/sankey")
 def questions_sankey(
     period: Optional[int] = None,
     limit: int = Query(12, ge=1, le=40),   # top-N responding ministries, rest pooled
+    include_type: bool = True,             # prepend the question-type column
     db: sqlite3.Connection = Depends(get_db),
 ):
     """Sankey data for the Kérdések page (BILL-11): every question-type iromány
-    (kérdés / interpelláció / azonnali kérdés) flows from its asker's faction to
-    whoever answered it — the responding portfolio whether the answer came orally
-    in plenary or in writing (both name the responder in `related_label`), or an
-    "unanswered" node otherwise. Faction
-    colours (§4.1) carry through the ribbons. Derived at query time from the
-    shared bill / bill_event / bill_sponsor data (EXT-2); honours the global
-    cycle (§4A). Only the top-``limit`` ministries stay glanceable — the rest are
+    flows from its asker's faction to whoever answered it (the responding
+    portfolio whether the answer came orally in plenary or in writing, both
+    naming the responder in `related_label`, or an "unanswered" node otherwise).
+    Faction colours (§4.1) carry through the faction → answerer stage, so the
+    right half stays split by party. When ``include_type`` is set (the default) a
+    question-type column (interpelláció / kérdés / azonnali kérdés / írásbeli) is
+    prepended, giving type → faction → answerer; clearing it collapses the
+    diagram to just faction → answerer. Derived at query time from the shared
+    bill / bill_event / bill_sponsor data (EXT-2); honours the global cycle
+    (§4A). Only the top-``limit`` ministries stay glanceable — the rest are
     pooled into one "other" node. Each node carries the identity a click needs to
-    drill into ``/questions/list`` (asker nodes their ``faction_id``, ministry
-    nodes their label)."""
+    drill into ``/questions/list`` (asker nodes their ``faction_id``, type nodes
+    their ``main_type``, ministry nodes their label)."""
     from collections import Counter
 
-    bill_ids, factions, faction_key, answerer_key = _classify_questions(
+    bill_ids, factions, faction_key, type_key, answerer_key = _classify_questions(
         db, period, limit)
     if not bill_ids:
         return {"period": period, "total": 0, "nodes": [], "links": []}
 
-    flows: Counter = Counter()   # (asker_key, answerer_key) -> count
-    asker_meta: dict[str, dict] = {}
-    for bid in bill_ids:
+    def asker_of(bid):
         fid = faction_key(bid)
         if fid is not None:
-            akey = f"f{fid}"
-            asker_meta[akey] = {"kind": "faction", "faction_id": fid,
+            return (f"f{fid}", {"side": "asker", "kind": "faction", "faction_id": fid,
                                 "label": factions[fid]["label"],
-                                "color": factions[fid]["color"]}
-        else:
-            akey = "__nofaction__"
-            asker_meta[akey] = {"kind": "nofaction", "faction_id": None,
-                                "label": None, "color": None}
-        flows[(akey, answerer_key(bid))] += 1
+                                "color": factions[fid]["color"]})
+        return ("__nofaction__", {"side": "asker", "kind": "nofaction",
+                                  "faction_id": None, "label": None, "color": None})
 
-    # Assemble nodes: askers first (by volume desc), then answerers (by volume
-    # desc). Links reference node indices; a link takes its asker's colour.
+    # The faction → answerer stage is always present. The question-type stage
+    # (type → faction) is prepended only when include_type is set, shifting the
+    # faction and answerer columns one to the right.
+    fa: Counter = Counter()   # (asker_key, answerer_key) -> count  [faction → answerer]
+    tf: Counter = Counter()   # (type_code, asker_key) -> count     [type → faction]
+    asker_meta: dict[str, dict] = {}
+    for bid in bill_ids:
+        akey, meta = asker_of(bid)
+        asker_meta[akey] = meta
+        fa[(akey, answerer_key(bid))] += 1
+        if include_type:
+            tf[(type_key(bid), akey)] += 1
+
+    # Column volumes drive node ordering (busiest first) within each column.
+    type_vol: Counter = Counter()
     asker_vol: Counter = Counter()
     answerer_vol: Counter = Counter()
-    for (ak, ans), n in flows.items():
-        asker_vol[ak] += n
-        answerer_vol[ans] += n
+    for (ak, ans), n in fa.items():
+        asker_vol[ak] += n; answerer_vol[ans] += n
+    for (tc, ak), n in tf.items():
+        type_vol[tc] += n
+
+    faction_col = 1 if include_type else 0
+    answerer_col = faction_col + 1
 
     nodes: list[dict] = []
     index: dict = {}
+    if include_type:
+        for tc, _ in type_vol.most_common():
+            index[("t", tc)] = len(nodes)
+            nodes.append({"column": 0, "side": "type", "kind": "type",
+                          "main_type": tc, "label": None,
+                          "color": _TYPE_COLORS.get(tc)})
     for ak, _ in asker_vol.most_common():
-        index[ak] = len(nodes)
-        nodes.append({"side": "asker", **asker_meta[ak]})
+        index[("a", ak)] = len(nodes)
+        nodes.append({"column": faction_col, **asker_meta[ak]})
     for ans, _ in answerer_vol.most_common():
         kind, label = ans
-        index[ans] = len(nodes)
-        nodes.append({"side": "answerer", "kind": kind,
+        index[("s", ans)] = len(nodes)
+        nodes.append({"column": answerer_col, "side": "answerer", "kind": kind,
                       "label": label or None, "color": None})
 
-    links = [{
-        "source": index[ak], "target": index[ans], "value": n,
+    # Type → faction ribbons take the question type's colour; faction → answerer
+    # ribbons take the asking faction's colour, so the right half stays split and
+    # coloured by party.
+    links: list[dict] = []
+    if include_type:
+        links += [{
+            "source": index[("t", tc)], "target": index[("a", ak)], "value": n,
+            "color": _TYPE_COLORS.get(tc),
+        } for (tc, ak), n in tf.items()]
+    links += [{
+        "source": index[("a", ak)], "target": index[("s", ans)], "value": n,
         "color": asker_meta[ak]["color"],
-    } for (ak, ans), n in flows.items()]
+    } for (ak, ans), n in fa.items()]
 
     return {"period": period, "total": len(bill_ids), "nodes": nodes, "links": links}
 
@@ -360,6 +419,7 @@ def questions_sankey(
 def questions_list(
     period: Optional[int] = None,
     faction: Optional[str] = None,     # asker faction id, or "none" for the no-faction node
+    main_type: Optional[str] = None,   # question type code (A/I/K) for the middle column
     answerer: Optional[str] = None,    # ministry | oral | other | unanswered
     ministry: Optional[str] = None,    # the ministry label when answerer == "ministry"
     top: int = Query(12, ge=1, le=40),  # MUST match the Sankey's `limit` so nodes agree
@@ -367,13 +427,15 @@ def questions_list(
     offset: int = Query(0, ge=0),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    """The individual questions behind one Sankey flow (BILL-11): the
-    question-type irományok whose asker faction is ``faction`` and whose answerer
-    is ``answerer`` (a specific ``ministry`` when ``answerer == "ministry"``).
+    """The individual questions behind one Sankey flow or node (BILL-11): the
+    question-type irományok whose asker faction is ``faction``, whose question
+    type is ``main_type`` and/or whose answerer is ``answerer`` (a specific
+    ``ministry`` when ``answerer == "ministry"``). A clicked stage-1 ribbon fixes
+    faction+type, a stage-2 ribbon fixes type+answerer, a node fixes just itself.
     Uses the same classification as the diagram (same ``top`` ranking) so a
-    clicked ribbon lists exactly its questions. Paginated, newest-first; each
-    links back to its detail view. Omitting the filters lists every question."""
-    order_ids, _factions, faction_key, answerer_key = _classify_questions(
+    clicked flow lists exactly its questions. Paginated, newest-first; each links
+    back to its detail view. Omitting the filters lists every question."""
+    order_ids, _factions, faction_key, type_key, answerer_key = _classify_questions(
         db, period, top)
 
     want = (answerer, ministry or "") if answerer == "ministry" else (answerer, "")
@@ -387,7 +449,9 @@ def questions_list(
         return fk is not None and str(fk) == str(faction)
 
     matched = [bid for bid in order_ids
-               if fmatch(bid) and (answerer is None or answerer_key(bid) == want)]
+               if fmatch(bid)
+               and (main_type is None or type_key(bid) == main_type)
+               and (answerer is None or answerer_key(bid) == want)]
     total = len(matched)
     page_ids = matched[offset:offset + limit]
     if not page_ids:

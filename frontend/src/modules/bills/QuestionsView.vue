@@ -7,6 +7,7 @@
 // the Bills module: it reads the shared bill/event data via
 // `/api/v1/bills/questions/*` and honours the global cycle chooser (§4A).
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, currentCycleLabel } from '../../store.js'
@@ -19,6 +20,8 @@ import HelpTip from '../../components/HelpTip.vue'
 import Pagination from '../../components/Pagination.vue'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 
 const PAGE = 25
 
@@ -26,18 +29,38 @@ const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
 
+// Whether the leading question-type column is shown. Hidden by default (the
+// diagram is just faction → answerer); `?types=1` in the URL shows it, so the
+// choice is deep-linkable and carries into an embed. The backend builds the
+// matching structure either way.
+const showType = ref(route.query.types === '1')
+
+const columnHeadings = computed(() => showType.value
+  ? [t('questions.typeHeading'), t('questions.askerHeading'), t('questions.answererHeading')]
+  : [t('questions.askerHeading'), t('questions.answererHeading')])
+
+// Toggle by rewriting the URL query; the watcher below syncs state + reloads,
+// so the URL stays the single source of truth (and back/forward works).
+function toggleType() {
+  router.replace({ query: { ...route.query, types: showType.value ? undefined : '1' } })
+}
+
 // Resolve backend node "kind"s (which carry no label for the special nodes)
-// into localized labels; faction/ministry nodes already carry their own text.
+// into localized labels; faction/ministry nodes already carry their own text,
+// and question-type nodes carry a main_type code mapped to a localized name.
 function nodeLabel(n) {
   if (n.label) return n.label
+  if (n.kind === 'type') return t('questions.type.' + n.main_type)
   return t('questions.node.' + n.kind)
 }
 
 // Nodes for the diagram, keeping the identity a clicked flow needs to query.
 const nodes = computed(() => (data.value ? data.value.nodes.map((n) => ({
   side: n.side,
+  column: n.column,
   kind: n.kind,
   faction_id: n.faction_id ?? null,
+  main_type: n.main_type ?? null,
   ministry: n.side === 'answerer' && n.kind === 'ministry' ? n.label : null,
   label: nodeLabel(n),
   color: n.color || (n.side === 'asker' ? 'var(--accent)' : '#9c9188'),
@@ -57,7 +80,7 @@ async function load() {
   loading.value = true; error.value = false
   clearFlow()
   try {
-    const res = await api.questionsSankey(store.cycle)
+    const res = await api.questionsSankey(store.cycle, showType.value)
     if (seq === loadSeq) data.value = res
   } catch {
     if (seq === loadSeq) error.value = true
@@ -67,11 +90,11 @@ async function load() {
 }
 
 // --- drill-down: the questions behind one clicked flow or node ------------
-// `flow` carries the query (faction / answerer / ministry) plus what to
-// highlight: `linkIndex` for a clicked ribbon, `nodeIndex` for a clicked node
+// `flow` carries the query (faction / main_type / answerer / ministry) plus what
+// to highlight: `linkIndex` for a clicked ribbon, `nodeIndex` for a clicked node
 // (the other is -1). `segs` is the header trail (source → target, or a single
-// node). Clicking a node leaves its counterpart unset so the backend matches
-// every flow through that endpoint.
+// node). Every filter a click doesn't fix stays undefined so the backend matches
+// all flows through the chosen endpoint(s).
 const flow = ref(null)
 const flowData = ref(null)
 const flowLoading = ref(false)
@@ -91,14 +114,24 @@ function scrollToPanel() {
   nextTick(() => panelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
 }
 
+// Fold one node's identity into a drill-down filter, by which column it's in:
+// an asker fixes the faction, a type node the question type, an answerer the
+// responder. Everything a click doesn't touch is left undefined.
+function applyNode(n, filt) {
+  if (n.side === 'type') filt.main_type = n.main_type
+  else if (n.side === 'answerer') { filt.answerer = n.kind; filt.ministry = n.ministry || undefined }
+  else filt.faction = n.faction_id != null ? n.faction_id : 'none'
+}
+
+// A stage-1 ribbon (faction → type) fixes faction + type; a stage-2 ribbon
+// (type → answerer) fixes type + answerer.
 function onSelect(sel) {
   const src = sel.source, tgt = sel.target
+  const filt = {}
+  applyNode(src, filt)
+  applyNode(tgt, filt)
   flow.value = {
-    linkIndex: sel.index,
-    nodeIndex: -1,
-    faction: src.faction_id != null ? src.faction_id : 'none',
-    answerer: tgt.kind,
-    ministry: tgt.ministry || undefined,
+    linkIndex: sel.index, nodeIndex: -1, ...filt,
     segs: [{ label: src.label, color: src.color }, { label: tgt.label, color: null }],
   }
   flowOffset.value = 0
@@ -106,23 +139,15 @@ function onSelect(sel) {
   scrollToPanel()
 }
 
-// Clicking a node filters by that endpoint alone: an asker node fixes the
-// faction across every answerer, an answerer node fixes the answerer across
-// every faction. The unfixed side stays undefined so the query lists all of it.
+// Clicking a node filters by that endpoint alone — every flow into/out of it.
 function onSelectNode(sel) {
   const n = sel.node
-  flow.value = n.side === 'asker'
-    ? {
-        linkIndex: -1, nodeIndex: sel.index,
-        faction: n.faction_id != null ? n.faction_id : 'none',
-        answerer: undefined, ministry: undefined,
-        segs: [{ label: n.label, color: n.color }],
-      }
-    : {
-        linkIndex: -1, nodeIndex: sel.index,
-        faction: undefined, answerer: n.kind, ministry: n.ministry || undefined,
-        segs: [{ label: n.label, color: null }],
-      }
+  const filt = {}
+  applyNode(n, filt)
+  flow.value = {
+    linkIndex: -1, nodeIndex: sel.index, ...filt,
+    segs: [{ label: n.label, color: n.side === 'asker' ? n.color : null }],
+  }
   flowOffset.value = 0
   loadFlow()
   scrollToPanel()
@@ -140,6 +165,7 @@ async function loadFlow() {
     const res = await api.questionsList({
       period: store.cycle,
       faction: flow.value.faction,
+      main_type: flow.value.main_type,
       answerer: flow.value.answerer,
       ministry: flow.value.ministry,
       limit: PAGE, offset: flowOffset.value,
@@ -160,6 +186,10 @@ function gotoFlowPage(p) {
 
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
 watch(() => store.cycle, load)
+watch(() => route.query.types, (v) => {
+  const s = v === '1'
+  if (s !== showType.value) { showType.value = s; load() }
+})
 </script>
 
 <template>
@@ -178,22 +208,28 @@ watch(() => store.cycle, load)
     @retry="load"
   >
     <div v-if="data">
-      <p class="muted small">
-        {{ data.total }} {{ $t('questions.count') }} · {{ scopeLabel }}
-      </p>
+      <div class="q-controls">
+        <p class="muted small">
+          {{ data.total }} {{ $t('questions.count') }} · {{ scopeLabel }}
+        </p>
+        <button
+          type="button" class="btn secondary small" :aria-pressed="showType"
+          @click="toggleType"
+        >{{ showType ? $t('questions.hideType') : $t('questions.showType') }}</button>
+      </div>
       <div class="card pad">
         <SankeyDiagram
           :nodes="nodes" :links="data.links"
           :selected="flow ? flow.linkIndex : -1" :selected-node="flow ? flow.nodeIndex : -1"
           :caption="$t('questions.chartCaption')" :show-caption="false"
-          :asker-heading="$t('questions.askerHeading')"
-          :answerer-heading="$t('questions.answererHeading')"
+          :column-headings="columnHeadings"
           @select="onSelect" @select-node="onSelectNode"
         />
         <div class="fig-foot">
           <p class="muted small hint">{{ $t('questions.clickHint') }}</p>
           <EmbedButton
             kind="questions-sankey" :title="$t('questions.title')"
+            :params="{ types: showType ? '1' : undefined }"
             :height="560" :max-width="900"
           />
         </div>
@@ -249,6 +285,9 @@ watch(() => store.cycle, load)
 <style scoped>
 .sechead { display: flex; align-items: center; gap: .35rem; }
 .sechead h1 { margin: 0; }
+/* Count on the left, the type-axis toggle on the right, above the chart. */
+.q-controls { display: flex; align-items: center; justify-content: space-between; gap: .8rem; flex-wrap: wrap; margin-bottom: .75rem; }
+.q-controls p { margin: 0; }
 /* In the figure footer row the hint sits left, pushing the embed button right. */
 .hint { margin: 0; margin-right: auto; }
 .flowpanel { margin-top: 1.5rem; scroll-margin-top: 5rem; }

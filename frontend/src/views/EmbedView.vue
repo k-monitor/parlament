@@ -68,7 +68,7 @@ function fetchForKind() {
     case 'faction-speaking':
       return api.factions(period.value)
     case 'questions-sankey':
-      return api.questionsSankey(period.value)
+      return api.questionsSankey(period.value, route.query.types === '1')
     case 'faction-cohesion':
       return api.voteCohesion({ period: period.value })
     case 'vote-participation':
@@ -105,13 +105,21 @@ const factionBars = computed(() =>
 
 // ---- questions-sankey -----------------------------------------------------
 function nodeLabel(n) {
-  return n.label || t('questions.node.' + n.kind)
+  if (n.label) return n.label
+  if (n.kind === 'type') return t('questions.type.' + n.main_type)
+  return t('questions.node.' + n.kind)
 }
 const sankeyNodes = computed(() => (data.value?.nodes || []).map((n) => ({
   side: n.side,
+  column: n.column,
   label: nodeLabel(n),
   color: n.color || (n.side === 'asker' ? 'var(--accent)' : '#9c9188'),
 })))
+// The type column is shown only when the embed URL carries types=1 (hidden by
+// default, matching the main view).
+const sankeyHeadings = computed(() => route.query.types === '1'
+  ? [t('questions.typeHeading'), t('questions.askerHeading'), t('questions.answererHeading')]
+  : [t('questions.askerHeading'), t('questions.answererHeading')])
 
 // ---- vote-participation ---------------------------------------------------
 // Same segment palette + ordering as the representative profile pie.
@@ -227,8 +235,7 @@ const siteHref = computed(() => {
             v-else-if="kind === 'questions-sankey'"
             :nodes="sankeyNodes" :links="data.links"
             :caption="$t('questions.chartCaption')" :show-caption="false"
-            :asker-heading="$t('questions.askerHeading')"
-            :answerer-heading="$t('questions.answererHeading')"
+            :column-headings="sankeyHeadings"
           />
 
           <!-- Faction vote analysis (VOTE-8) -->

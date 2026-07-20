@@ -78,7 +78,8 @@ export const api = {
   bills: (params) => get('/bills', params),
   bill: (id) => get(`/bills/${id}`),
   billFacets: (params) => get('/bills/facets', params),
-  questionsSankey: (period) => get('/bills/questions/sankey', { period }),
+  questionsSankey: (period, includeType = true) =>
+    get('/bills/questions/sankey', { period, include_type: includeType }),
   questionsList: (params) => get('/bills/questions/list', params),
   // votes
   votes: (params) => get('/votes', params),

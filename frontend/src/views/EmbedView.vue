@@ -229,7 +229,6 @@ const siteHref = computed(() => {
             :caption="$t('questions.chartCaption')" :show-caption="false"
             :asker-heading="$t('questions.askerHeading')"
             :answerer-heading="$t('questions.answererHeading')"
-            :value-label="$t('questions.count')"
           />
 
           <!-- Faction vote analysis (VOTE-8) -->

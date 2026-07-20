@@ -2,8 +2,8 @@
 // Dependency-free SVG Sankey diagram (two columns: askers on the left, answerers
 // on the right). `nodes` = [{ label, color, side: 'asker' | 'answerer' }];
 // `links` = [{ source, target, value, color }] referencing node indices. Node
-// heights and ribbon thicknesses are proportional to the flow. Colour is
-// decorative — an accessible table below carries the same numbers (A11Y-1).
+// heights and ribbon thicknesses are proportional to the flow. Each ribbon and
+// node is keyboard-focusable and labelled for assistive tech (A11Y-1).
 import { computed, ref } from 'vue'
 
 const props = defineProps({
@@ -15,7 +15,6 @@ const props = defineProps({
   showCaption: { type: Boolean, default: true },
   askerHeading: { type: String, default: '' },
   answererHeading: { type: String, default: '' },
-  valueLabel: { type: String, default: '' },   // unit for the a11y table
   selected: { type: Number, default: -1 },       // index of the selected link
   selectedNode: { type: Number, default: -1 },   // index of the selected node
 })
@@ -137,19 +136,6 @@ const layout = computed(() => {
   return { H, box, ribbons, xLeft, xRight }
 })
 
-// Rows for the accessible table fallback: asker → answerer → value. Each row
-// carries its link index so it drills down exactly like the ribbon.
-const tableRows = computed(() =>
-  props.links
-    .map((l, index) => ({
-      index,
-      asker: props.nodes[l.source]?.label || '—',
-      answerer: props.nodes[l.target]?.label || '—',
-      value: l.value,
-    }))
-    .sort((a, b) => b.value - a.value))
-
-const showTable = ref(false)
 const active = ref(-1)   // hovered/focused source node index (highlight its ribbons)
 </script>
 
@@ -207,29 +193,6 @@ const active = ref(-1)   // hovered/focused source node index (highlight its rib
         </g>
       </svg>
     </div>
-
-    <button type="button" class="tabletoggle small" @click="showTable = !showTable">
-      {{ showTable ? '▾ ' + $t('a11y.hideTable') : '▸ ' + $t('a11y.showTable') }}
-    </button>
-    <table v-if="showTable" class="a11y-table small">
-      <thead>
-        <tr>
-          <th>{{ askerHeading }}</th>
-          <th>{{ answererHeading }}</th>
-          <th class="num">{{ valueLabel }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="row in tableRows" :key="row.index"
-            class="rowlink" :class="{ sel: row.index === selected }"
-            tabindex="0" @click="pick(row.index)"
-            @keydown.enter.prevent="pick(row.index)" @keydown.space.prevent="pick(row.index)">
-          <td>{{ row.asker }}</td>
-          <td>{{ row.answerer }}</td>
-          <td class="num">{{ row.value }}</td>
-        </tr>
-      </tbody>
-    </table>
   </figure>
 </template>
 
@@ -251,12 +214,5 @@ const active = ref(-1)   // hovered/focused source node index (highlight its rib
 .nodegrp:focus-visible .node { stroke: var(--accent); stroke-width: 1.5; }
 .nodegrp.selnode .node { stroke: var(--accent); stroke-width: 2; }
 .nodegrp.selnode .nlabel { font-weight: 700; }
-.tabletoggle { margin-top: .6rem; background: none; border: 0; color: var(--accent); cursor: pointer; padding: .2rem 0; font-weight: 600; }
-.a11y-table { width: 100%; border-collapse: collapse; margin-top: .5rem; }
-.a11y-table th, .a11y-table td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid var(--line); }
-.a11y-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-.rowlink { cursor: pointer; }
-.rowlink:hover { background: var(--accent-soft); }
-.rowlink.sel { background: var(--accent-soft); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .ribbon, .node { transition: none; } }
 </style>

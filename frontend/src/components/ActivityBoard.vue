@@ -2,8 +2,9 @@
 // GitHub-style contribution heatmap for a representative (REP-8). Renders the
 // per-day activity (`days` = [{date, speeches, documents, total}]) as week
 // columns × weekday rows, each cell shaded by the day's total activity. It is
-// dependency-free (CSS grid of <div>s) and ships an accessible table equivalent
-// (REP-6 / A11Y-1) — colour/intensity is never the only carrier of meaning.
+// dependency-free (CSS grid of <div>s); each cell carries its date and exact
+// counts in a hover title and the grid a screen-reader summary (A11Y-1) —
+// colour/intensity is never the only carrier of meaning.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatDate } from '../format.js'

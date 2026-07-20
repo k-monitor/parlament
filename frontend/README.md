@@ -52,8 +52,8 @@ The backend applies HTML5-history fallback, so deep links like
   graceful no-transcript state (VIE-8).
 * **Representatives (§6):** filterable list (REP-1), profile with bio + faction
   history + reverse-chron speeches (REP-2), precomputed stats with scope +
-  methodology (REP-3/REP-5), accessible SVG charts with table equivalents (REP-6),
-  faction colours (REP-4). "Bills submitted" stays hidden until the Bills module.
+  methodology (REP-3/REP-5), accessible SVG charts (labelled, keyboard-friendly,
+  A11Y-1), faction colours (REP-4). "Bills submitted" stays hidden until the Bills module.
 * **Extensible (EXT-4):** each module view is a separate lazy chunk; nav is built
   from the backend manifest, so disabling a module in backend config makes it
   vanish from the UI without a rebuild.

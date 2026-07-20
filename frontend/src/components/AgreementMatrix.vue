@@ -3,9 +3,9 @@
 // and faction j vote the same way (0–1); the diagonal (i = j) is a faction's
 // internal cohesion, also surfaced as a % beside its row label. Magnitude is
 // carried by fill-opacity over the brand accent, so it reads in the app's single
-// (light) theme without a bespoke ramp; colour is never the sole carrier — an
-// accessible table below holds every number (A11Y-1). Hovering a cell lights up
-// its row and column so a pair is easy to trace.
+// (light) theme without a bespoke ramp; colour is never the sole carrier — every
+// cell carries its exact number in a hover title and each row shows its cohesion %
+// (A11Y-1). Hovering a cell lights up its row and column so a pair is easy to trace.
 import { computed, ref } from 'vue'
 
 const props = defineProps({

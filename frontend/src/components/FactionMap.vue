@@ -5,7 +5,8 @@
 // encodes the faction's size (members); fill opacity encodes internal cohesion
 // (a fuller bubble votes more as one). The axes carry no meaning — only the
 // distances do — so there are none. Colour/position are never the sole carriers:
-// an accessible table lists size and cohesion (A11Y-1).
+// each bubble is text-labelled and carries its size/cohesion in a hover title,
+// and the map has a screen-reader summary (A11Y-1).
 import { computed, ref } from 'vue'
 
 const props = defineProps({

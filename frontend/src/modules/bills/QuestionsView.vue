@@ -188,7 +188,6 @@ watch(() => store.cycle, load)
           :caption="$t('questions.chartCaption')" :show-caption="false"
           :asker-heading="$t('questions.askerHeading')"
           :answerer-heading="$t('questions.answererHeading')"
-          :value-label="$t('questions.count')"
           @select="onSelect" @select-node="onSelectNode"
         />
         <div class="fig-foot">

@@ -35,10 +35,6 @@ export default {
     cohesion: 'Frakcióelemzés',
     about: 'A projektről',
   },
-  a11y: {
-    showTable: 'Adatok táblázatként',
-    hideTable: 'Táblázat elrejtése',
-  },
   share: {
     label: 'Megosztás',
     menu: 'Megosztási lehetőségek',

@@ -900,12 +900,12 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   the diagram stays glanceable. **Each flow (ribbon) is clickable** — selecting
   it lists the individual questions behind it at the bottom of the page,
   paginated and newest-first, each linking to its detail view and showing its
-  submitter(s) (EXT-2); the accessible table fallback offers the same drill-down
-  by keyboard. It **honours the global cycle selector** (§4A) and is **derived at
+  submitter(s) (EXT-2); the ribbons and nodes are keyboard-focusable so the same
+  drill-down works without a mouse. It **honours the global cycle selector** (§4A) and is **derived at
   query time** from the shared `bill` / `bill_event` / `bill_sponsor` data
   (EXT-2) — no new tables, no new scraping. Like every other visualization the
-  diagram carries an **accessible table fallback** (A11Y-1) and a short
-  methodology note (TRUST-1). It is part of the Bills module's vertical slice
+  diagram is **keyboard-navigable and screen-reader-labelled** (A11Y-1) and
+  carries a short methodology note (TRUST-1). It is part of the Bills module's vertical slice
   (BILL-5): new `/api/v1/bills/questions/sankey` and `/api/v1/bills/questions/list`
   routes and a new frontend sub-tab, disabled with the rest of the module (EXT-6).
   The Sankey diagram is **embeddable** (§4C).
@@ -976,8 +976,8 @@ header).
   call, per-faction breakdown and bill links, plus a **party-cohesion analysis**
   (*Frakcióelemzés*, a Votes sub-tab): computed house-wide over the cycle's
   roll-call set, it shows how factions vote together three ways — an **agreement
-  matrix**, cohesion/alignment **bars**, and an MDS **bloc map** — each with an
-  accessible table fallback (A11Y-1) and a methodology note (TRUST-1). This
+  matrix**, cohesion/alignment **bars**, and an MDS **bloc map** — each meeting
+  the site's accessibility bar (A11Y-1) and carrying a methodology note (TRUST-1). This
   faction vote analysis is **embeddable** (§4C). Also shipped: the **per-MP
   vote-absence count and percentage** on the representative profile (REP-3), whose
   roll-call **participation breakdown** is likewise embeddable (§4C). Remaining

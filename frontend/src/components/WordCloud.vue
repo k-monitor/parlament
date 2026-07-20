@@ -1,9 +1,9 @@
 <script setup>
 // Dependency-free word cloud (WCLOUD-1/3): the classic packed "tag cloud" look —
 // the most distinctive word anchored at the centre and the rest spiralled around
-// it (some rotated upright), sized by weight. Same built-in accessible table
-// equivalent as the other charts (REP-6 / A11Y-1), so sizing/placement is never
-// the only carrier of meaning.
+// it (some rotated upright), sized by weight. Each word carries its exact count
+// in a hover title and the cloud has a screen-reader summary (A11Y-1), so
+// sizing/placement is never the only carrier of meaning.
 // `words` = [{ text, count, weight, kind }] ordered by weight desc. `weight` is
 // the sizing metric (a TF·IDF "distinctiveness" score); `count` is the raw
 // occurrences shown to the user. Words are HuSpaCy lemmas; `kind === 'entity'`

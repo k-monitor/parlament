@@ -4,8 +4,8 @@
 // aggregate — computed over the whole *filtered* roll-call set (cf. the search
 // trend/breakdown, SEA-8/9) — and shows the same numbers three ways, switchable
 // by a tab: an agreement matrix, cohesion/alignment bars, and a bloc map. All
-// three are dependency-free SVG (or reuse BarChart) with an accessible table
-// fallback and a methodology note (A11Y-1 / TRUST-1).
+// three are dependency-free SVG (or reuse BarChart), screen-reader-labelled, and
+// carry a methodology note (A11Y-1 / TRUST-1).
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BarChart from '../../components/BarChart.vue'

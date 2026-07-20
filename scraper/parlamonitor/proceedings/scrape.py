@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ..config import Paths, session_id
 from ..felicitas import FelicitasClient
@@ -148,6 +148,29 @@ def _write_json(path, data) -> None:
     tmp.replace(path)
 
 
+# parlament.hu publishes a sitting in stages — bare listing, then recording,
+# then (days later) the stenographic transcript. Empirically the transcript
+# lands within a couple of weeks; past this window a still-missing transcript is
+# treated as officially absent (never published) rather than pending. Some older
+# sittings genuinely never get one — video-only days, or eras whose record was
+# not digitised (e.g. several 2011-autumn sittings in cycle 39). Without this
+# gate, every continuation run re-downloads all such days of a completed cycle
+# forever. Use ``--force`` to override and re-fetch regardless.
+_TEXT_GRACE = timedelta(days=30)
+
+
+def _past_text_grace(date_str: str | None) -> bool:
+    """Whether a sitting is old enough that a missing recording/transcript will
+    not arrive any more (see :data:`_TEXT_GRACE`)."""
+    if not date_str:
+        return False
+    try:
+        d = datetime.strptime(date_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return datetime.now(timezone.utc) - d > _TEXT_GRACE
+
+
 def _awaiting_content(raw_path) -> bool:
     """Whether an already-downloaded raw day is not yet complete and should be
     re-scraped even though its file exists.
@@ -156,11 +179,17 @@ def _awaiting_content(raw_path) -> bool:
     sitting with no speeches yet (a placeholder), or a video-only day whose
     transcript text has not been published (every speech's ``text_html`` empty).
     Once at least one speech carries text the day is considered done. A malformed
-    file re-scrapes to self-heal."""
+    file re-scrapes to self-heal.
+
+    A day past the publication-lag window (:func:`_past_text_grace`) is treated as
+    done even if empty/text-less: the missing content is officially absent, not
+    pending, so a completed cycle is not re-downloaded wholesale on every run."""
     try:
         raw = json.loads(raw_path.read_text())
     except (OSError, ValueError):
         return True
+    if _past_text_grace(raw.get("date")):
+        return False
     speeches = raw.get("speeches") or []
     if not speeches:
         return True
@@ -180,8 +209,11 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
         logger.info("No session days for cycle %s in [%s, %s]", cycle, start, end)
         return []
 
-    # Most-recent sitting may still be in progress — always refresh it.
+    # Most-recent sitting may still be in progress — always refresh it, unless
+    # even the latest day is past the publication-lag window (a completed cycle),
+    # in which case it too is done and need not be re-downloaded every run.
     latest_date = max((d.get("date") or "") for d in days)
+    latest_is_live = not _past_text_grace(latest_date)
     written: list[str] = []
     for day in sorted(days, key=lambda d: d.get("date") or ""):
         sitting = sitting_number(day)
@@ -191,7 +223,7 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
             continue
         session = session_id(cycle, sitting)
         raw_path = paths.raw_day(session)
-        is_latest = (day.get("date") == latest_date)
+        is_latest = latest_is_live and (day.get("date") == latest_date)
         if (raw_path.exists() and not force and not is_latest
                 and not _awaiting_content(raw_path)):
             continue

@@ -631,6 +631,18 @@ def test_awaiting_content(tmp_path):
     assert _awaiting_content(_write("c.json", {"speeches": [{"text_html": "<p>x</p>"}]})) is False
     # A malformed/missing file self-heals by re-scraping.
     assert _awaiting_content(tmp_path / "missing.json") is True
+    # A text-less day within the publication-lag window is still awaiting.
+    from datetime import datetime, timedelta, timezone
+    recent = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%d")
+    assert _awaiting_content(
+        _write("d.json", {"date": recent, "speeches": [{"text_html": ""}]})) is True
+    # A text-less day past the window is officially missing text → done (not
+    # re-downloaded every run). This is the cycle-39 2011-autumn case.
+    assert _awaiting_content(
+        _write("e.json", {"date": "2011-09-12", "speeches": [{"text_html": ""}]})) is False
+    # An old announced-but-empty placeholder likewise will not fill in → done.
+    assert _awaiting_content(
+        _write("f.json", {"date": "2011-09-12", "speeches": []})) is False
 
 
 def test_sitting_number_from_felirat():

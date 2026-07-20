@@ -204,6 +204,7 @@ export default {
   },
   bills: {
     title: 'Bills', subtitle: 'Bills submitted to the National Assembly.',
+    figyusz: 'Use Figyusz! notifications to follow parliamentary documents!',
     searchPlaceholder: 'Search in the title…', period: 'Cycle', status: 'Status',
     sortNumber: 'By bill number', sortDate: 'By submission', count: 'bills',
     bySponsor: 'Submitter', viewProfile: 'View profile', clearSponsor: 'Clear filter',

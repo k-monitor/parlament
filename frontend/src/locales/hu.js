@@ -297,6 +297,7 @@ export default {
   bills: {
     title: 'Törvényjavaslatok',
     subtitle: 'Az Országgyűléshez benyújtott törvényjavaslatok (irományok).',
+    figyusz: 'A parlamenti irományok követésére használd a Figyusz! értesítéseit!',
     searchPlaceholder: 'Keresés a címben…',
     period: 'Ciklus',
     status: 'Állapot',

@@ -115,8 +115,20 @@ onUnmounted(() => clearTimeout(t))
 </script>
 
 <template>
-  <h1>{{ $t('bills.title') }}</h1>
-  <p class="muted">{{ $t('bills.subtitle') }}</p>
+  <div class="bills-head">
+    <div>
+      <h1>{{ $t('bills.title') }}</h1>
+      <p class="muted">{{ $t('bills.subtitle') }}</p>
+    </div>
+    <a
+      class="figyusz-btn"
+      href="https://figyusz.k-monitor.hu/"
+      target="_blank" rel="noopener noreferrer"
+      :title="$t('bills.figyusz')" :aria-label="$t('bills.figyusz')"
+    >
+      <img src="/figyusz.svg" alt="Figyusz!" />
+    </a>
+  </div>
 
   <form class="card pad searchform" role="search" @submit.prevent="apply">
     <div class="row" style="gap:.5rem;">
@@ -193,6 +205,32 @@ onUnmounted(() => clearTimeout(t))
 </template>
 
 <style scoped>
+/* Page header: title/subtitle on the left, Figyusz! CTA pinned top-right. */
+.bills-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+/* Figyusz! call-to-action: the official wordmark links out to figyusz.k-monitor.hu.
+   The logo is transparent white text, so the button supplies the brand-purple box.
+   The full sentence is shown on hover (title) and to screen readers (aria-label). */
+.figyusz-btn {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: .35rem .6rem;
+  background: #6000db;
+  border-radius: 9px;
+  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+}
+.figyusz-btn img { display: block; height: 22px; width: auto; }
+.figyusz-btn:hover, .figyusz-btn:focus-visible {
+  background: #6d0ff0;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(96, 0, 219, .35);
+}
 /* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
 .sponsorfilter { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; background: var(--accent-soft); }
 .sponsorfilter .clear { margin-left: auto; }

@@ -40,36 +40,67 @@ class HttpClient:
         elif config.proxy:
             self.session.proxies = {"http": config.proxy, "https": config.proxy}
 
-    def _request(self, method: str, url: str, **kw) -> requests.Response:
+    def _with_retries(self, desc: str, fn):
+        """Run ``fn`` with bounded exponential-backoff retries.
+
+        Retries on any :class:`requests.RequestException` or :class:`HttpError`
+        ``fn`` raises — so callers can signal a retryable condition (a 5xx, or a
+        200 whose body failed to parse) by raising ``HttpError`` from inside."""
         last_exc: Exception | None = None
         for attempt in range(self.config.retry_count + 1):
             try:
-                r = self.session.request(method, url, timeout=self.config.timeout, **kw)
-                if r.status_code >= 500:
-                    raise HttpError(f"HTTP {r.status_code} for {url}")
-                return r
+                return fn()
             except (requests.RequestException, HttpError) as e:
                 last_exc = e
                 wait = min(self.config.retry_delay_max, 2 ** attempt)
-                logger.warning("%s %s failed (%s); retry %d/%d in %.0fs",
-                               method, url, e, attempt + 1,
+                logger.warning("%s failed (%s); retry %d/%d in %.0fs",
+                               desc, e, attempt + 1,
                                self.config.retry_count, wait)
                 time.sleep(wait)
-        raise HttpError(f"{method} {url} failed after retries: {last_exc}")
+        raise HttpError(f"{desc} failed after retries: {last_exc}")
+
+    def _send(self, method: str, url: str, **kw) -> requests.Response:
+        r = self.session.request(method, url, timeout=self.config.timeout, **kw)
+        if r.status_code >= 500:
+            raise HttpError(f"HTTP {r.status_code} for {url}")
+        return r
+
+    def _request(self, method: str, url: str, **kw) -> requests.Response:
+        return self._with_retries(f"{method} {url}",
+                                  lambda: self._send(method, url, **kw))
+
+    def _parse_json(self, r: requests.Response, url: str) -> dict:
+        """Parse a JSON body, turning a non-JSON/blank response into a
+        (retryable) :class:`HttpError` with a diagnostic body snippet.
+
+        The Felicitas backend (and the SSH proxy in front of it) occasionally
+        returns a 200 with an empty or whitespace-only body; raising ``HttpError``
+        here lets :meth:`_with_retries` retry it instead of crashing the run with
+        an opaque ``JSONDecodeError``."""
+        r.encoding = "utf-8"
+        try:
+            return r.json()
+        except ValueError as e:
+            snippet = " ".join(r.text.split())[:200]
+            raise HttpError(
+                f"non-JSON response from {url} (HTTP {r.status_code}, "
+                f"{len(r.text)} bytes): {snippet!r}") from e
 
     def get_json(self, url: str, **kw) -> dict:
-        r = self._request("GET", url, **kw)
-        r.encoding = "utf-8"
-        return r.json()
+        return self._with_retries(
+            f"GET {url}",
+            lambda: self._parse_json(self._send("GET", url, **kw), url))
 
     def post_json(self, url: str, body: dict, *, headers: dict | None = None) -> dict:
         """POST a JSON body and parse a JSON response (the Felicitas pattern)."""
         h = {"Content-Type": "application/json", "Accept": "application/json"}
         if headers:
             h.update(headers)
-        r = self._request("POST", url, data=json.dumps(body).encode("utf-8"), headers=h)
-        r.encoding = "utf-8"
-        return r.json()
+        data = json.dumps(body).encode("utf-8")
+        return self._with_retries(
+            f"POST {url}",
+            lambda: self._parse_json(
+                self._send("POST", url, data=data, headers=h), url))
 
     def get_text(self, url: str, **kw) -> str:
         r = self._request("GET", url, **kw)

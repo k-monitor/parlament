@@ -77,8 +77,14 @@ for spec in _MODULES:
 @app.get(f"{API_PREFIX}/meta", tags=["core"])
 def meta(db: sqlite3.Connection = Depends(get_db)):
     """Site metadata + the live module manifest the SPA registers against (EXT-4)."""
+    # Only surface cycles we can label by their year span. A partially scraped
+    # cycle (sessions/bills/votes loaded but not its representatives registry)
+    # has a bare electoral_period row with NULL date_start/date_end, which the
+    # SPA would otherwise show as just the ordinal number ("39"). Hide those
+    # until the cycle is set up enough to carry a start–end year label.
     periods = [dict(r) for r in db.execute(
         "SELECT number, label, date_start, date_end FROM electoral_period "
+        "WHERE date_start IS NOT NULL "
         "ORDER BY number DESC")]
     counts = {
         "sessions": db.execute("SELECT COUNT(*) AS c FROM session").fetchone()["c"],

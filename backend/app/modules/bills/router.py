@@ -194,10 +194,8 @@ def bill_facets(period: Optional[int] = None,
 # Question-type irományok (kérdés / interpelláció / azonnali kérdés) and the
 # events that record how each was answered. The Kérdések sub-page (BILL-11) turns
 # these into a Sankey diagram — asker faction → answerer — where the answerer is
-# the responding ministry when the question was answered orally in plenary (the
-# oral-answer event carries the ministry in `related_label`), a single combined
-# node when it was answered in writing (upstream records no ministry there), and
-# an "unanswered" node otherwise.
+# the responding portfolio (both oral and written answer events carry it in
+# `related_label`), or an "unanswered" node when the question drew no answer.
 _QUESTION_TYPES = ("A", "I", "K")
 _ORAL_ANSWER_EVENTS = ("kérdés megválaszolva", "interpelláció szóban megválaszolva")
 _WRITTEN_ANSWER_EVENT = "kérdés írásban megválaszolva"
@@ -236,28 +234,40 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[int], top: int)
             WHERE {where_sql} ORDER BY bs.bill_id, bs.ord""", params):
         asker_faction.setdefault(r["bill_id"], r["faction_id"])
 
-    # Answer classification from the bill's answer events (oral wins over written
-    # — the oral answer is the substantive one and names the responding ministry).
+    # Answer classification from the bill's answer events. A question is answered
+    # either orally in plenary or in writing, and BOTH kinds of event name the
+    # responding portfolio in `related_label` (the same label strings are reused
+    # for oral and written answers), so every answered question resolves to its
+    # actual responder — there is no separate "answered in writing" bucket. Oral
+    # wins per bill when both events exist (the plenary answer is the substantive
+    # one).
     answer_events = _ORAL_ANSWER_EVENTS + (_WRITTEN_ANSWER_EVENT,)
     aph = ",".join("?" * len(answer_events))
-    oral_ministry: dict[str, Optional[str]] = {}   # bill -> ministry label (or None)
-    written: set[str] = set()
+    oral_ministry: dict[str, Optional[str]] = {}     # bill -> responder label (or None)
+    written_ministry: dict[str, Optional[str]] = {}  # bill -> responder label (or None)
     for r in db.execute(
         f"""SELECT e.bill_id, e.name, e.related_label
             FROM bill_event e JOIN bill b ON b.id = e.bill_id
             WHERE {where_sql} AND e.name IN ({aph})""",
         params + list(answer_events)):
-        if r["name"] in _ORAL_ANSWER_EVENTS:
-            # mark the bill as orally answered, keeping the first non-empty
-            # ministry label seen for it (None until/unless one appears)
-            if not oral_ministry.get(r["bill_id"]):
-                oral_ministry[r["bill_id"]] = r["related_label"]
-        else:
-            written.add(r["bill_id"])
+        target = oral_ministry if r["name"] in _ORAL_ANSWER_EVENTS else written_ministry
+        # mark the bill as answered, keeping the first non-empty responder label
+        # seen for it (None until/unless one appears)
+        if not target.get(r["bill_id"]):
+            target[r["bill_id"]] = r["related_label"]
 
-    # Rank ministries so only the busiest stay as their own node.
-    ministry_totals: Counter = Counter(
-        m for bid, m in oral_ministry.items() if m)
+    def responder_label(bid: str) -> Optional[str]:
+        """The responding portfolio for an answered question: the oral answer's
+        label when it was answered in plenary, else the written answer's."""
+        return oral_ministry[bid] if bid in oral_ministry else written_ministry.get(bid)
+
+    # Rank responders (oral and written together) so only the busiest keep their
+    # own node; the rest pool into "other".
+    ministry_totals: Counter = Counter()
+    for bid in oral_ministry.keys() | written_ministry.keys():
+        m = responder_label(bid)
+        if m:
+            ministry_totals[m] += 1
     top_ministries = {m for m, _ in ministry_totals.most_common(top)}
 
     def faction_key(bid: str) -> Optional[int]:
@@ -266,14 +276,16 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[int], top: int)
 
     def answerer_key(bid: str) -> tuple[str, str]:
         """(kind, label) for the answerer side; label is '' for special nodes."""
-        if bid in oral_ministry:
-            m = oral_ministry[bid]
-            if not m:
-                return ("oral", "")
-            return ("ministry", m) if m in top_ministries else ("other", "")
-        if bid in written:
-            return ("written", "")
-        return ("unanswered", "")
+        answered_orally = bid in oral_ministry
+        if not answered_orally and bid not in written_ministry:
+            return ("unanswered", "")
+        m = responder_label(bid)
+        if not m:
+            # answered, but the responder isn't named upstream: keep the
+            # "answered orally" node for plenary answers; pool the (rare)
+            # unnamed written answers into "other"
+            return ("oral", "") if answered_orally else ("other", "")
+        return ("ministry", m) if m in top_ministries else ("other", "")
 
     return order_ids, factions, faction_key, answerer_key
 
@@ -286,9 +298,9 @@ def questions_sankey(
 ):
     """Sankey data for the Kérdések page (BILL-11): every question-type iromány
     (kérdés / interpelláció / azonnali kérdés) flows from its asker's faction to
-    whoever answered it — the responding ministry when it was answered orally in
-    plenary, a single "answered in writing" node when it was (the upstream data
-    carries no ministry there), or an "unanswered" node otherwise. Faction
+    whoever answered it — the responding portfolio whether the answer came orally
+    in plenary or in writing (both name the responder in `related_label`), or an
+    "unanswered" node otherwise. Faction
     colours (§4.1) carry through the ribbons. Derived at query time from the
     shared bill / bill_event / bill_sponsor data (EXT-2); honours the global
     cycle (§4A). Only the top-``limit`` ministries stay glanceable — the rest are
@@ -348,7 +360,7 @@ def questions_sankey(
 def questions_list(
     period: Optional[int] = None,
     faction: Optional[str] = None,     # asker faction id, or "none" for the no-faction node
-    answerer: Optional[str] = None,    # ministry | written | oral | other | unanswered
+    answerer: Optional[str] = None,    # ministry | oral | other | unanswered
     ministry: Optional[str] = None,    # the ministry label when answerer == "ministry"
     top: int = Query(12, ge=1, le=40),  # MUST match the Sankey's `limit` so nodes agree
     limit: int = Query(50, ge=1, le=200),

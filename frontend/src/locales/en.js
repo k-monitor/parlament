@@ -274,9 +274,8 @@ export default {
     close: 'Close',
     askerHeading: 'Asker (faction)',
     answererHeading: 'Answerer',
-    methodology: 'The asker is the faction of the MP who submitted the question. For orally-answered questions the answerer is the responding ministry (minister / state secretary); for questions answered in writing the source records no ministry, so they collapse into one node. Only the busiest ministries appear separately — the rest are pooled into an “Other ministry” node. The cycle is set by the header’s cycle selector.',
+    methodology: 'The asker is the faction of the MP who submitted the question. The answerer is the responding ministry (minister / state secretary), whether the question was answered orally or in writing. Only the busiest ministries appear separately — the rest are pooled into an “Other ministry” node. The cycle is set by the header’s cycle selector.',
     node: {
-      written: 'Answered in writing',
       oral: 'Answered orally',
       other: 'Other ministry',
       unanswered: 'Unanswered',

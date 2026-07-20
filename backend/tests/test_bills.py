@@ -391,13 +391,27 @@ def test_questions_sankey_oral_answer_routes_to_ministry(client, db_path):
     assert any(n["label"] == "Belügyminisztérium államtitkára" for n in ministries)
 
 
-def test_questions_sankey_written_answer_routes_to_written_node(client, db_path):
-    """A written-answer event (no ministry upstream) routes to the combined
-    'answered in writing' node."""
+def test_questions_sankey_written_answer_routes_to_responder(client, db_path):
+    """A written-answer event names the responding portfolio in related_label
+    (same as an oral answer), so the question routes to that responder's ministry
+    node — not a generic 'answered in writing' bucket (there is none)."""
+    _seed_question_answer(db_path, "kérdés írásban megválaszolva",
+                          "Belügyminisztérium államtitkára")
+    j = client.get("/api/v1/bills/questions/sankey").json()
+    answerers = [n for n in j["nodes"] if n["side"] == "answerer"]
+    assert any(n["kind"] == "ministry" and n["label"] == "Belügyminisztérium államtitkára"
+               for n in answerers)
+    assert not any(n["kind"] == "written" for n in answerers)
+
+
+def test_questions_sankey_written_answer_without_responder_pools_to_other(client, db_path):
+    """A written answer whose responder isn't named upstream (rare) pools into
+    the 'other' node rather than resurrecting the removed 'written' node."""
     _seed_question_answer(db_path, "kérdés írásban megválaszolva")
     j = client.get("/api/v1/bills/questions/sankey").json()
-    assert any(n["kind"] == "written"
-               for n in j["nodes"] if n["side"] == "answerer")
+    answerers = [n for n in j["nodes"] if n["side"] == "answerer"]
+    assert any(n["kind"] == "other" for n in answerers)
+    assert not any(n["kind"] == "written" for n in answerers)
 
 
 def test_questions_list_drills_into_a_flow(client, db_path):
@@ -414,9 +428,10 @@ def test_questions_list_drills_into_a_flow(client, db_path):
         "ministry": "Belügyminisztérium államtitkára"}).json()
     assert r["total"] == 1
     assert r["bills"][0]["bill_number"] == "I/5"
-    # a non-matching answerer for the same faction is empty
+    # a non-matching answerer for the same faction is empty (the question was
+    # answered, so it is not in the "unanswered" flow)
     empty = client.get("/api/v1/bills/questions/list", params={
-        "faction": fac, "answerer": "written"}).json()
+        "faction": fac, "answerer": "unanswered"}).json()
     assert empty["total"] == 0
 
 

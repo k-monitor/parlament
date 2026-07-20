@@ -1,8 +1,8 @@
 <script setup>
 // Kérdések (BILL-11): a Sankey diagram of parliamentary questions — who asked
-// (grouped by the asking MP's faction) → who answered (the responding ministry
-// for orally-answered questions, a combined node for questions answered in
-// writing, and an "unanswered" node). Clicking a flow (ribbon) lists the actual
+// (grouped by the asking MP's faction) → who answered (the responding portfolio,
+// whether answered orally in plenary or in writing, and an "unanswered" node).
+// Clicking a flow (ribbon) lists the actual
 // questions behind it at the bottom, each linking to its detail view. Part of
 // the Bills module: it reads the shared bill/event data via
 // `/api/v1/bills/questions/*` and honours the global cycle chooser (§4A).

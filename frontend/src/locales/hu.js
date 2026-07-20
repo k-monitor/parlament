@@ -381,9 +381,8 @@ export default {
     close: 'Bezárás',
     askerHeading: 'Kérdező (frakció)',
     answererHeading: 'Válaszadó',
-    methodology: 'A kérdező a kérdés benyújtójának frakciója. A válaszadó a szóban megválaszolt kérdéseknél a válaszoló tárca (miniszter/államtitkár); az írásban megválaszolt kérdéseknél az adatforrás nem rögzíti a tárcát, ezek egy közös csomópontba kerülnek. A csak a legtöbbet válaszoló tárcák jelennek meg külön, a többi az „Egyéb tárca” csomópontban összesül. A ciklust a fejléc ciklusválasztója szabja meg.',
+    methodology: 'A kérdező a kérdés benyújtójának frakciója. A válaszadó a válaszoló tárca (miniszter/államtitkár) – akár szóban, akár írásban válaszolták meg a kérdést. A csak a legtöbbet válaszoló tárcák jelennek meg külön, a többi az „Egyéb tárca” csomópontban összesül. A ciklust a fejléc ciklusválasztója szabja meg.',
     node: {
-      written: 'Írásban megválaszolva',
       oral: 'Szóban megválaszolva',
       other: 'Egyéb tárca',
       unanswered: 'Megválaszolatlan',

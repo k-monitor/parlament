@@ -156,3 +156,35 @@ def test_share_session_card(og_client):
     m = _meta(r.text)
     assert "ülésnap" in m["og:title"].lower()
     assert m["og:url"] == "https://parlamonitor.hu/sessions/43001"
+
+
+def test_share_bill_card(og_client):
+    # bill-uuid-1 (conftest): T/100, "A költségvetésről szóló törvényjavaslat",
+    # sponsor Kovács Béla, status tárgysorozatban, benyújtva 2026-05-10.
+    r = og_client.get("/bills/bill-uuid-1")
+    assert r.status_code == 200
+    m = _meta(r.text)
+    assert "T/100" in m["og:title"]
+    assert "költségvetésről" in m["og:title"]
+    assert "Kovács Béla" in m["og:description"]
+    assert "tárgysorozatban" in m["og:description"]
+    assert "2026. május 10." in m["og:description"]
+    assert m["og:type"] == "article"
+    assert m["og:url"] == "https://parlamonitor.hu/bills/bill-uuid-1"
+
+
+def test_share_document_card_uses_its_own_path(og_client):
+    # doc-uuid-3 (conftest): I/5, an interpelláció, shared on the /documents path.
+    r = og_client.get("/documents/doc-uuid-3")
+    m = _meta(r.text)
+    assert "I/5" in m["og:title"]
+    assert "közlekedésről" in m["og:title"]
+    # The card's canonical URL matches the path the link was shared on.
+    assert m["og:url"] == "https://parlamonitor.hu/documents/doc-uuid-3"
+
+
+def test_share_unknown_bill_falls_back_to_plain_shell(og_client):
+    r = og_client.get("/bills/no-such-bill")
+    assert r.status_code == 200
+    assert "GENERIC SITE DESCRIPTION" in r.text  # untouched shell
+    assert "og:title" not in r.text

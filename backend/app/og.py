@@ -100,6 +100,12 @@ def _truncate(text: str, limit: int = 300) -> str:
     return text[:limit].rstrip() + "…"
 
 
+def _ucfirst(text: str) -> str:
+    """Upper-case only the first character (unlike str.capitalize(), which also
+    lower-cases the rest — wrong for multi-word types or month names)."""
+    return text[:1].upper() + text[1:] if text else text
+
+
 # The transcript's opening sentence is prefixed with the speaker label in caps —
 # "BALLA GYÖRGY (Fidesz): …" — which is redundant with the speaker we already
 # show on the card. Strip it, mirroring the frontend's format.js::stripSpeakerLabel.
@@ -335,3 +341,84 @@ def register(app) -> None:
                 url_path=f"/sessions/{session_id}", og_type="article")
         except sqlite3.Error:
             return plain(request)
+
+    def _share_iromany(bill_id: str, request: Request, url_path: str,
+                       db: sqlite3.Connection) -> HTMLResponse:
+        """Share card for an iromány detail page (a bill or any other document).
+
+        `/bills/:id` and `/documents/:id` render the same `BillView`; both go
+        through here. `url_path` is the route the link was actually shared on,
+        so the card's canonical og:url matches it. `/bills` and `/documents`
+        (the list pages) carry no id and fall through to the plain shell."""
+        try:
+            b = db.execute(
+                """SELECT id, bill_number, title, type, status, submitted_date
+                   FROM bill WHERE id = ?""", (bill_id,)).fetchone()
+            if not b:
+                return plain(request)
+
+            number = b["bill_number"]
+            doc_type = (b["type"] or "").strip()
+            title_text = (b["title"] or "").strip()
+
+            # og:title mirrors the page header: the number (canonical citation)
+            # followed by the iromány's subject, falling back to type+number when
+            # a document has no subject line.
+            if title_text and number:
+                title = f"{number} – {title_text}"
+            elif title_text:
+                title = title_text
+            elif number:
+                title = f"{_ucfirst(doc_type)} {number}".strip() if doc_type else number
+            else:
+                title = "Iromány"
+
+            sponsors = [
+                r["name"] for r in db.execute(
+                    """SELECT COALESCE(p.label, bs.label) AS name
+                       FROM bill_sponsor bs
+                       LEFT JOIN person p ON p.person_id = bs.person_id
+                       WHERE bs.bill_id = ? ORDER BY bs.ord""", (bill_id,))
+                if r["name"]]
+            if len(sponsors) > 3:
+                sponsor_text = ", ".join(sponsors[:3]) + " és mások"
+            else:
+                sponsor_text = ", ".join(sponsors)
+
+            # A natural-reading Hungarian summary from whatever fields exist.
+            lead = _ucfirst(doc_type) if doc_type else "Iromány"
+            if number:
+                lead += f" ({number})"
+            if sponsor_text:
+                lead += f", benyújtó: {sponsor_text}"
+            facts = []
+            if b["status"]:
+                facts.append(f"státusz: {b['status']}")
+            date_hu = _hu_date(b["submitted_date"])
+            if date_hu:
+                facts.append(f"benyújtva: {date_hu}")
+            description = lead + "."
+            if facts:
+                sentence = _ucfirst("; ".join(facts))
+                # A Hungarian date already ends in "." — don't double it.
+                description += " " + sentence + ("" if sentence.endswith(".") else ".")
+            description += (" Az iromány adatai, jogalkotási állomásai és a "
+                            "kapcsolódó felszólalások a Parlamonitoron.")
+
+            return render(
+                request, title=title, description=_truncate(description),
+                url_path=url_path, og_type="article")
+        except sqlite3.Error:
+            return plain(request)
+
+    @app.get("/bills/{bill_id}", response_class=HTMLResponse,
+             include_in_schema=False)
+    def share_bill(bill_id: str, request: Request,
+                   db: sqlite3.Connection = Depends(get_db)):
+        return _share_iromany(bill_id, request, f"/bills/{bill_id}", db)
+
+    @app.get("/documents/{bill_id}", response_class=HTMLResponse,
+             include_in_schema=False)
+    def share_document(bill_id: str, request: Request,
+                       db: sqlite3.Connection = Depends(get_db)):
+        return _share_iromany(bill_id, request, f"/documents/{bill_id}", db)

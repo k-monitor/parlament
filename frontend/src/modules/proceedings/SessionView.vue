@@ -26,6 +26,9 @@ const cloud = ref(null)
 // New words (NEW-1): words that debuted on this day, never said before in
 // parliament (previous cycles included). Again a separate, non-blocking request.
 const newWords = ref(null)
+// The new-words list is a secondary curiosity, not the main event — start it
+// collapsed so it doesn't push the toplist below the fold (NEW-2).
+const newWordsOpen = ref(false)
 // Speaker toplist (TOPSPK-1): likewise a separate, non-blocking request (TOPSPK-5).
 const topSpeakers = ref(null)
 // Longest single speaking time, for sizing the (decorative) bars (TOPSPK-4).
@@ -165,10 +168,16 @@ function searchWord(word) {
 
           <section v-if="newWords && newWords.words.length" class="card pad newwords">
             <div class="sechead">
-              <h2 class="wcloud-title">{{ $t('sessions.newWords') }}</h2>
+              <button
+                class="sechead-toggle" type="button"
+                :aria-expanded="newWordsOpen" @click="newWordsOpen = !newWordsOpen"
+              >
+                <span class="chev" :class="{ open: newWordsOpen }" aria-hidden="true">▸</span>
+                <h2 class="wcloud-title">{{ $t('sessions.newWords') }}</h2>
+              </button>
               <HelpTip :label="$t('sessions.newWords')"><p>{{ $t('sessions.newWordsCaption') }}</p></HelpTip>
             </div>
-            <ul class="chips">
+            <ul v-show="newWordsOpen" class="chips">
               <li v-for="w in newWords.words" :key="w.text">
                 <button
                   type="button" class="chip" :title="`${w.text}: ${w.count}`"
@@ -338,6 +347,15 @@ function searchWord(word) {
 .wcloud { margin-bottom: 1rem; }
 .sechead { display: flex; align-items: center; gap: .35rem; margin-bottom: .6rem; }
 .sechead .wcloud-title { margin: 0; }
+/* Collapsible section header: the title doubles as the expand/collapse control. */
+.sechead-toggle {
+  display: inline-flex; align-items: center; gap: .4rem;
+  background: none; border: none; padding: 0; margin: 0;
+  cursor: pointer; color: inherit; font: inherit; text-align: left;
+}
+.sechead-toggle .chev { font-size: .8em; opacity: .6; transition: transform .15s ease; }
+.sechead-toggle .chev.open { transform: rotate(90deg); }
+.sechead-toggle:hover .wcloud-title, .sechead-toggle:focus-visible .wcloud-title { color: var(--accent); }
 .wcloud-title { font-size: 1.05rem; margin: 0 0 .6rem; }
 .newwords { margin-bottom: 1rem; }
 .chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }

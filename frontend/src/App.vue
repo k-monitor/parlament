@@ -6,7 +6,7 @@ import { setLocale } from './i18n.js'
 import { formatLongDate } from './format.js'
 import { useI18n } from 'vue-i18n'
 
-const { locale } = useI18n()
+const { locale, t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 onMounted(() => { loadMeta().catch(() => {}) })
@@ -86,6 +86,11 @@ function selectCycle(value) {
 
 function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
 
+// Feedback goes to the same inbox as general contact, with a localized subject so
+// mail lands pre-labelled. Subject is URL-encoded for the mailto: query.
+const feedbackHref = computed(() =>
+  `mailto:info@k-monitor.hu?subject=${encodeURIComponent(t('footer.feedbackSubject'))}`)
+
 // "Utolsó adatfrissítés" — the loader stamps build_meta.data_updated_at on every
 // (re)build/incremental update; older DBs lack it, so the footer line is hidden
 // until a fresh load populates it. Re-formats when the language toggles.
@@ -128,6 +133,12 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
                      :class="{ 'router-link-active': sectionActive('votes') }">{{ $t('nav.votes') }}</router-link>
       </nav>
       <div class="header-controls">
+        <a class="infolink" :href="feedbackHref" :title="$t('footer.feedback')" :aria-label="$t('footer.feedback')">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.5 8.9 8.9 0 0 1-3.9-.9L3 21l1.4-4.6A8.4 8.4 0 0 1 3.5 11.5 8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z" />
+          </svg>
+        </a>
         <router-link :to="{ name: 'about' }" class="infolink" :title="$t('nav.about')" :aria-label="$t('nav.about')">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
             <circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="1.8" />

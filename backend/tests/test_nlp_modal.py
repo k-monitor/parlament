@@ -90,10 +90,14 @@ def test_rebuild_uses_modal_and_caches(monkeypatch, conn, db_path):
     assert rows.get("orbán viktor") == "entity"
     assert calls["sittings"] == 1          # the one sitting was dispatched once
 
-    # The cache holds the sitting keyed by a HuSpaCy-compatible fingerprint…
+    # The cache holds the sitting keyed by a HuSpaCy-compatible fingerprint,
+    # and records which model produced it (self-describing, no fp recompute).
     import json
     cache = json.loads((cache_dir / "wordcloud-cache.json").read_text())
     assert "43001" in cache["sessions"]
+    entry = cache["sessions"]["43001"]
+    assert entry["model"] == loader.settings.huspacy_model
+    assert entry["method"] == nlp.method_tag(loader.settings.huspacy_model)
 
     # …and a second identical pass reuses it — nothing is re-dispatched to Modal.
     calls["sittings"] = 0

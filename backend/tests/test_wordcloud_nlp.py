@@ -78,3 +78,40 @@ def test_named_entities_kept_whole_and_tagged(nlp_client):
     assert words["törvény"]["kind"] == "term"
     # the entity's parts are not also counted on their own
     assert "viktor" not in words and "unió" not in words
+
+
+def test_wordcloud_cache_records_model_name(nlp_client):
+    """The word-cloud cache entry records the HuSpaCy model + exact method that
+    produced it, so which model ran is inspectable without recomputing the
+    fingerprint against each candidate model."""
+    _, out = nlp_client
+    cache = json.loads((out.parent / "wordcloud-cache.json").read_text())
+    entry = cache["sessions"]["43001"]
+    assert entry["model"] == loader.settings.huspacy_model  # hu_core_news_md
+    assert entry["method"] == nlp.method_tag(loader.settings.huspacy_model)
+
+
+def test_entity_cache_records_model_name(tmp_path, monkeypatch):
+    """The entity cache likewise records the model + method that produced each
+    sitting's mentions. Built with entity extraction off, then run directly so
+    the test needs no network (K-Monitor / Wikidata resolution)."""
+    data = tmp_path / "data"
+    (data / "processed").mkdir(parents=True)
+    (data / "processed" / "representatives-43.json").write_text(
+        json.dumps(_registry(), ensure_ascii=False))
+    (data / "processed" / "43001-session.json").write_text(json.dumps(_wc_record(
+        "43001", 1, "2026-05-09",
+        ["A törvényt Orbán Viktor terjesztette elő."]), ensure_ascii=False))
+    out = tmp_path / "e.db"
+    loader.build_database(data, out)          # entity_links off by default → no NEL
+
+    monkeypatch.setattr(loader.settings, "entity_links", True)
+    conn = sqlite3.connect(out)
+    loader.rebuild_entity_mentions(conn, tmp_path)
+    conn.close()
+
+    cache = json.loads((tmp_path / "entity-cache.json").read_text())
+    entry = cache["sessions"]["43001"]
+    assert entry["model"] == loader.settings.huspacy_model
+    assert entry["method"] == (
+        nlp.method_tag(loader.settings.huspacy_model) + ":" + loader._ENTITY_LOGIC)

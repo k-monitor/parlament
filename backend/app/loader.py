@@ -908,6 +908,9 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
     resolves its own backend/method; since the method is hashed into the cache
     fingerprint, entries from different models coexist in one cache file and a
     model switch only ever recomputes the sittings whose assigned model changed.
+    Each cache entry also records the ``model`` name (``"regex"`` for the
+    fallback tokenizer) and its exact ``method`` tag, so which model produced a
+    sitting's cloud is directly inspectable without recomputing fingerprints.
     """
     models = _session_models(conn)
     resolved: dict[str, tuple[str, str]] = {}   # model → (backend, method)
@@ -968,12 +971,15 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
 
     reused = recomputed = 0
 
-    def _emit(sid, fp, words):
+    def _emit(sid, fp, words, model, method):
         # Store a freshly-computed sitting: cache it, write its rows, and commit +
         # flush the cache periodically so a long pass is resumable (a re-run skips
-        # what's already done rather than losing everything).
+        # what's already done rather than losing everything). ``model``/``method``
+        # record which HuSpaCy model (or ``"regex"``) produced the entry, so the
+        # cache is self-describing — no need to recompute fingerprints to tell.
         nonlocal recomputed
-        cache["sessions"][sid] = {"fp": fp, "words": words}
+        cache["sessions"][sid] = {"fp": fp, "words": words,
+                                  "model": model, "method": method}
         _write(sid, words)
         recomputed += 1
         if recomputed % 10 == 0:
@@ -998,14 +1004,16 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
             modal_misses.setdefault(model, []).append((sid, fp, texts))
         elif backend == "huspacy":
             counts, entity_words = nlp.analyze_counts(texts, model=model)
-            _emit(sid, fp, _words_map(counts, entity_words))
+            _emit(sid, fp, _words_map(counts, entity_words), model, method)
         else:
+            # Regex fallback: no HuSpaCy model was used, so record it as such.
             counts, entity_words = count_words(texts), set()
-            _emit(sid, fp, _words_map(counts, entity_words))
+            _emit(sid, fp, _words_map(counts, entity_words), "regex", method)
     conn.commit()
     for model, misses in modal_misses.items():
+        _backend, method = _resolve(model)
         for sid, fp, words in nlp_modal.extract(misses, app_name=_modal_app_for(model)):
-            _emit(sid, fp, words)
+            _emit(sid, fp, words, model, method)
 
     conn.commit()
     _flush_cache()
@@ -1091,6 +1099,9 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
     sittings are skipped, so a bare-host build still succeeds (OPS-4). Cached on disk like the word cloud
     (``entity-cache.json``), keyed by a fingerprint of the text + method, so a
     rebuild re-runs NER only for the sittings whose transcript actually changed.
+    Each cache entry also records the ``model`` name and its exact ``method``
+    tag, so which model produced a sitting's mentions is directly inspectable
+    without recomputing fingerprints.
     ``only_sessions`` scopes the pass to just those ids (the ``--update`` path).
 
     This only fills ``entity`` (the mention spans); resolving each distinct name
@@ -1193,9 +1204,12 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
         else:
             misses_by.setdefault(model, []).append((sid, fp, sent_rows))
 
-    def _emit(sid, fp, sent_rows, per_sentence_spans):
+    def _emit(sid, fp, sent_rows, per_sentence_spans, model, method):
+        # ``model``/``method`` record which HuSpaCy model produced the entry, so
+        # the cache is self-describing (no fingerprint recomputation needed to tell).
         nonlocal processed, mentions
-        cache["sessions"][sid] = {"fp": fp, "spans": per_sentence_spans}
+        cache["sessions"][sid] = {"fp": fp, "spans": per_sentence_spans,
+                                  "model": model, "method": method}
         mentions += _write(sent_rows, per_sentence_spans)
         processed += 1
         if processed % 10 == 0:
@@ -1205,18 +1219,18 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
 
     try:
         for model, misses in misses_by.items():
-            mode, _method = _resolve(model)
+            mode, method = _resolve(model)
             if mode == "modal":
                 packed = [(sid, fp, [t for (_i, t) in rows]) for (sid, fp, rows) in misses]
                 by_sid = {sid: rows for (sid, _fp, rows) in misses}
                 for sid, fp, spans in nlp_modal.extract_spans(
                         packed, app_name=_modal_app_for(model)):
-                    _emit(sid, fp, by_sid[sid], spans)
+                    _emit(sid, fp, by_sid[sid], spans, model, method)
             else:
                 for (sid, fp, sent_rows) in misses:
                     spans = [[list(s) for s in per_sent] for per_sent in
                              nlp.entity_spans([t for (_i, t) in sent_rows], model=model)]
-                    _emit(sid, fp, sent_rows, spans)
+                    _emit(sid, fp, sent_rows, spans, model, method)
     except Exception as exc:  # enrichment must never break the build (SCR-5)
         logger.warning("entity extraction aborted (%s); keeping what was done", exc)
 

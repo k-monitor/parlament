@@ -115,3 +115,24 @@ def test_word_first_seen_table_picks_earliest_day(wc_client):
     # 'magyarország' is said on all three days but first-seen is the earliest one.
     assert rows["magyarország"] == "43001"
     assert rows["klímavédelem"] == "43001"
+
+
+def test_cache_records_regex_model(tmp_path):
+    """With the (default) regex backend, each word-cloud cache entry records
+    model="regex" and the "regex:v1" method — the on-disk cache is self-describing
+    about which extractor produced it (no HuSpaCy model was used)."""
+    data = tmp_path / "data"
+    (data / "processed").mkdir(parents=True)
+    (data / "processed" / "representatives-43.json").write_text(
+        json.dumps(_registry(), ensure_ascii=False))
+    (data / "processed" / "43001-session.json").write_text(json.dumps(_wc_record(
+        "43001", 1, "2026-05-09",
+        ["Klímavédelem klímavédelem klímavédelem klímavédelem."]),
+        ensure_ascii=False))
+    out = tmp_path / "wc.db"
+    loader.build_database(data, out)
+
+    cache = json.loads((tmp_path / "wordcloud-cache.json").read_text())
+    entry = cache["sessions"]["43001"]
+    assert entry["model"] == "regex"
+    assert entry["method"] == "regex:v1"

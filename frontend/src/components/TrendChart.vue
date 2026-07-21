@@ -34,7 +34,7 @@ const MONTHS = ['', 'jan', 'feb', 'márc', 'ápr', 'máj', 'jún',
 // Tooltip label for one bucket, per granularity.
 function fullLabel(g, y, m, d) {
   if (g === 'year') return `${y}`
-  if (g === 'month') return `${MONTHS[m]} ${y}`
+  if (g === 'month') return `${y}. ${MONTHS[m]}`
   return `${y}. ${MONTHS[m]} ${d}.` // day / week (week = its Monday)
 }
 
@@ -159,7 +159,7 @@ const tickMode = computed(() => {
   return new Set(filled.value.map((b) => b.y)).size > 3 ? 'year' : 'month'
 })
 function tickText(b) {
-  return tickMode.value === 'year' ? `${b.y}` : `${MONTHS[b.m]} ${b.y}`
+  return tickMode.value === 'year' ? `${b.y}` : `${b.y}. ${MONTHS[b.m]}`
 }
 
 // The index of the first bucket in each calendar unit (month or year, per
@@ -193,7 +193,7 @@ const ticks = computed(() => {
   const f = filled.value
   const starts = unitStarts.value
   if (!f.length || !starts.length) return []
-  // Year labels ("2022") take about half the room of month labels ("szept 2026"),
+  // Year labels ("2022") take about half the room of month labels ("2026. szept"),
   // so they get a tighter budget — else a 4-year cycle drops to every-other-year
   // on the narrow home teasers.
   const pxPerLabel = tickMode.value === 'year' ? 44 : 60

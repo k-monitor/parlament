@@ -126,11 +126,17 @@ def test_share_video_only_speech_has_no_quote_but_still_a_card(og_client):
     assert "„" not in m["og:description"]  # no empty quote marks
 
 
-def test_share_unknown_speech_falls_back_to_plain_shell(og_client):
+def test_share_unknown_speech_falls_back_to_default_card(og_client):
+    # An unknown id has no per-page card, so it previews with the site-wide
+    # DEFAULT card (not a bare shell): generic title + the default OG image.
     r = og_client.get("/proceedings/nope-nope")
     assert r.status_code == 200
-    assert "GENERIC SITE DESCRIPTION" in r.text  # untouched shell
-    assert "og:title" not in r.text
+    m = _meta(r.text)
+    assert "GENERIC SITE DESCRIPTION" not in r.text  # generic shell desc replaced
+    assert m["og:title"] == "Parlamonitor"
+    assert m["og:type"] == "website"
+    assert m["og:image"].endswith("/og-image.png")
+    assert m["twitter:card"] == "summary_large_image"
 
 
 def test_share_profile_card(og_client):
@@ -145,10 +151,14 @@ def test_share_profile_card(og_client):
 
 def test_share_representatives_index_is_not_hijacked(og_client):
     # /representatives (the list) and /representatives/factions must NOT be
-    # treated as an MP id — they fall through to the plain shell.
+    # treated as an MP id: they get the site-wide default card, NOT a profile
+    # card (og:type website, not profile; no MP-specific image).
     r = og_client.get("/representatives/factions")
-    assert "og:type" not in r.text
-    assert "GENERIC SITE DESCRIPTION" in r.text
+    m = _meta(r.text)
+    assert m["og:type"] == "website"  # the default card, not "profile"
+    assert m["og:title"] == "Parlamonitor"
+    assert m["og:image"].endswith("/og-image.png")
+    assert m["og:url"] == "https://parlamonitor.hu/representatives/factions"
 
 
 def test_share_session_card(og_client):
@@ -183,8 +193,54 @@ def test_share_document_card_uses_its_own_path(og_client):
     assert m["og:url"] == "https://parlamonitor.hu/documents/doc-uuid-3"
 
 
-def test_share_unknown_bill_falls_back_to_plain_shell(og_client):
+def test_share_unknown_bill_falls_back_to_default_card(og_client):
+    # An unknown bill id previews with the site-wide default card.
     r = og_client.get("/bills/no-such-bill")
     assert r.status_code == 200
-    assert "GENERIC SITE DESCRIPTION" in r.text  # untouched shell
-    assert "og:title" not in r.text
+    m = _meta(r.text)
+    assert "GENERIC SITE DESCRIPTION" not in r.text
+    assert m["og:title"] == "Parlamonitor"
+    assert m["og:type"] == "website"
+    assert m["og:image"].endswith("/og-image.png")
+
+
+def test_home_and_list_routes_get_default_card(tmp_path, db_path, monkeypatch):
+    """The SPA root and any client route without its own card are served through
+    SPAStaticFiles with the site-wide default OG card injected — so the home page
+    previews with the default image, not a bare shell (the earlier bug)."""
+    from app import main as main_module
+
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text(SHELL, encoding="utf-8")
+
+    monkeypatch.setattr(og.settings, "frontend_dist", str(dist))
+    monkeypatch.setattr(og.settings, "site_url", "https://parlamonitor.hu")
+    monkeypatch.setattr(db_module.settings, "db_path", str(db_path))
+    monkeypatch.setattr(og, "_shell_cache", None)  # force a re-read of our shell
+
+    app = FastAPI()
+    og.register(app)
+    app.mount("/", main_module.SPAStaticFiles(directory=str(dist), html=True),
+              name="frontend")
+    client = TestClient(app)
+
+    # The home page (root) — served as index.html by StaticFiles, now with the
+    # default card injected, and og:image/og:url made absolute.
+    m = _meta(client.get("/").text)
+    assert m["og:title"] == "Parlamonitor"
+    assert m["og:type"] == "website"
+    assert m["og:image"] == "https://parlamonitor.hu/og-image.png"
+    assert m["og:url"] == "https://parlamonitor.hu/"
+    assert m["twitter:card"] == "summary_large_image"
+
+    # A list route with no card of its own (the representatives index) resolves
+    # via the history fallback and also gets the default card + canonical URL.
+    m2 = _meta(client.get("/representatives").text)
+    assert m2["og:title"] == "Parlamonitor"
+    assert m2["og:image"].endswith("/og-image.png")
+    assert m2["og:url"] == "https://parlamonitor.hu/representatives"
+
+    # A real asset miss still 404s (never the shell) so the edge can't cache
+    # HTML under a hashed-asset URL.
+    assert client.get("/assets/missing-abcd.js").status_code == 404

@@ -150,11 +150,14 @@ _NON_SHELL_EXACT = frozenset({"api", "media", "assets"})
 
 
 def _should_serve_shell(path: str) -> bool:
-    """Whether a 404 for `path` (mount-relative, no leading slash) should
-    resolve to the SPA shell. True only for client-side *routes* — extensionless
-    paths outside the api/media/assets namespaces. Anything that looks like a
-    file (has an extension in its last segment) is a real static request: a miss
-    must 404, not hand back HTML under a file URL (see _NON_SHELL_PREFIXES)."""
+    """Whether `path` (mount-relative, no leading slash) should resolve to the
+    SPA shell — the home page and every client-side *route*. True for the root
+    (StaticFiles normalizes "/" to "" / "."), and for extensionless paths
+    outside the api/media/assets namespaces. Anything that looks like a file
+    (has an extension in its last segment) is a real static request: a miss must
+    404, not hand back HTML under a file URL (see _NON_SHELL_PREFIXES)."""
+    if path in ("", "."):
+        return True  # the root request → the app shell (home page)
     if path.startswith(_NON_SHELL_PREFIXES) or path in _NON_SHELL_EXACT:
         return False
     return "." not in path.rsplit("/", 1)[-1]
@@ -164,16 +167,43 @@ class SPAStaticFiles(StaticFiles):
     """Static files with HTML5-history fallback: unknown *client routes* (e.g.
     /proceedings/43001-1) return index.html so a deep link / refresh resolves to
     the app shell (VIE-5). Missing *files* (assets, images, …) stay a real 404 —
-    returning the shell for them lets the edge cache HTML under a file URL."""
+    returning the shell for them lets the edge cache HTML under a file URL.
+
+    Every shell we hand back — the root, an index/list route, a history
+    fallback — is served with the site-wide DEFAULT OpenGraph/Twitter card
+    injected (og.plain), so every page previews with the default image. The
+    explicit per-page card routes (og.register) are mounted ahead of this and
+    never reach here; they override the default with a specific card."""
 
     async def get_response(self, path, scope):
         from starlette.exceptions import HTTPException as StarletteHTTPException
+        serve_shell = _should_serve_shell(path)
+        # Serve a client-side route (the root included) as the app shell with
+        # the default OG card injected. HEAD carries no body, so the card is
+        # moot — let StaticFiles answer it directly.
+        if serve_shell and scope.get("method") == "GET":
+            shell = _default_card_shell(scope)
+            if shell is not None:
+                return shell
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            if exc.status_code == 404 and _should_serve_shell(path):
+            if exc.status_code == 404 and serve_shell:
+                # Fallback: og couldn't render (or a HEAD request) — hand back
+                # the bare shell so the route still resolves to the app.
                 return await super().get_response("index.html", scope)
             raise
+
+
+def _default_card_shell(scope):
+    """The app shell + site-wide default OG card for `scope`, or None if it
+    can't be rendered (then the caller serves the bare shell)."""
+    from starlette.requests import Request
+    from . import og
+    try:
+        return og.plain(Request(scope))
+    except Exception:  # pragma: no cover - defensive; fall back to bare shell
+        return None
 
 
 if settings.frontend_dist and os.path.isdir(settings.frontend_dist):

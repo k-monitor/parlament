@@ -130,6 +130,16 @@ def _strip_speaker_label(text: str) -> str:
 
 # --- rendering --------------------------------------------------------------
 
+# The site-wide default share card — used for the home page and any client route
+# without a more specific card (see plain()). The default image is a landscape
+# 1200×630 card art served from the frontend's static root (frontend/public/).
+DEFAULT_OG_IMAGE = "/og-image.png"
+_DEFAULT_TITLE = "Parlamonitor"
+_DEFAULT_DESC = (
+    "Parlamonitor — a Magyar Országgyűlés nyilvános jegyzőkönyvei mondatszinten "
+    "kereshetően és videóval szinkronizálva. Civil-tech projekt.")
+
+
 def render(request: Request, *, title: str, description: str,
            image: str | None = None, url_path: str | None = None,
            og_type: str = "website", card: str = "summary_large_image",
@@ -145,7 +155,7 @@ def render(request: Request, *, title: str, description: str,
 
     full_title = title if title.endswith("Parlamonitor") else f"{title} · Parlamonitor"
     abs_url = _abs(request, url_path) if url_path else _base_url(request)
-    abs_image = _abs(request, image) or _abs(request, "/og-image.png")
+    abs_image = _abs(request, image) or _abs(request, DEFAULT_OG_IMAGE)
 
     tags = [
         f'<title>{_esc(full_title)}</title>',
@@ -178,12 +188,16 @@ def render(request: Request, *, title: str, description: str,
 
 
 def plain(request: Request) -> HTMLResponse:
-    """The unmodified app shell — the graceful fallback when a URL has no
-    special card (unknown id, missing data, or any error)."""
-    shell = _load_shell()
-    if shell is None:  # pragma: no cover
-        raise RuntimeError("no app shell")
-    return HTMLResponse(shell)
+    """The app shell carrying the site-wide DEFAULT OpenGraph/Twitter card.
+
+    This is the fallback for every URL without a more specific card: the home
+    page and other list/index routes (served through here by the SPA mount),
+    an unknown id, missing data, or any error. Every page thus previews at
+    least with the generic Parlamonitor card and the default image
+    (DEFAULT_OG_IMAGE); the per-page routes above override it with something
+    more specific. `og:url`/canonical follow the actual request path."""
+    return render(request, title=_DEFAULT_TITLE, description=_DEFAULT_DESC,
+                  url_path=request.url.path or "/", og_type="website")
 
 
 # --- Hungarian date formatting (matches the frontend's locale) --------------

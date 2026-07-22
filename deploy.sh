@@ -42,9 +42,11 @@ cd "$ROOT"
 # --- fixed resource names ---------------------------------------------------
 VOL="parlamonitor_dbdata"          # external DB volume (matches docker-compose.yml)
 # Search analytics (PRIV-1). A HOST bind-mounted directory — not a named volume —
-# so the aggregated, GDPR-friendly search-keyword stats (search-analytics.db) are
-# readable straight off the host, outside the container. Only the serving colors
-# write it (they handle /search); it's bind-mounted read-write below.
+# so the aggregated, GDPR-friendly search-keyword stats are readable straight off
+# the host, outside the container: search-analytics.db (live SQLite) plus a daily
+# per-day CSV export under ./analytics/csv (search-analytics-YYYY-MM-DD.csv), so
+# the stats can be read without sqlite3. Only the serving colors write it (they
+# handle /search); it's bind-mounted read-write below.
 ANALYTICS_DIR="${PARLAMONITOR_ANALYTICS_DIR:-$ROOT/analytics}"
 IMAGE="parlamonitor:latest"
 ROLLBACK_IMAGE="parlamonitor:rollback"
@@ -217,10 +219,14 @@ color_env=(
   -e "PARLAMONITOR_API_CACHE_CONTROL=${PARLAMONITOR_API_CACHE_CONTROL:-}"
   -e "PARLAMONITOR_HTML_CACHE_CONTROL=${PARLAMONITOR_HTML_CACHE_CONTROL:-}"
   # Search analytics (PRIV-1): aggregated hourly, written to the bind-mounted
-  # /analytics dir below so the file is readable from the host. Set
-  # PARLAMONITOR_SEARCH_ANALYTICS=0 in .env to turn it off.
+  # /analytics dir below so the file is readable from the host. A daily CSV
+  # export lands next to it under /analytics/csv (host: ./analytics/csv). Set
+  # PARLAMONITOR_SEARCH_ANALYTICS=0 in .env to turn it off (or _ANALYTICS_CSV=0
+  # to drop just the CSV export and keep the SQLite store).
   -e "PARLAMONITOR_SEARCH_ANALYTICS=${PARLAMONITOR_SEARCH_ANALYTICS:-1}"
   -e "PARLAMONITOR_ANALYTICS_DB=${PARLAMONITOR_ANALYTICS_DB:-/analytics/search-analytics.db}"
+  -e "PARLAMONITOR_ANALYTICS_CSV=${PARLAMONITOR_ANALYTICS_CSV:-1}"
+  -e "PARLAMONITOR_ANALYTICS_CSV_DIR=${PARLAMONITOR_ANALYTICS_CSV_DIR:-/analytics/csv}"
 )
 [ -n "${PARLAMONITOR_WEB_WORKERS:-}" ]        && color_env+=(-e "PARLAMONITOR_WEB_WORKERS=${PARLAMONITOR_WEB_WORKERS}")
 [ -n "${PARLAMONITOR_FORWARDED_ALLOW_IPS:-}" ] && color_env+=(-e "PARLAMONITOR_FORWARDED_ALLOW_IPS=${PARLAMONITOR_FORWARDED_ALLOW_IPS}")

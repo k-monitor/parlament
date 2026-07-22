@@ -78,6 +78,19 @@ class Settings:
     # it honours a db_path overridden after construction, e.g. in tests).
     analytics_db: str | None = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_ANALYTICS_DB") or None)
+    # Daily CSV export of the aggregated search analytics. Once per UTC day each
+    # completed day's aggregates are written as a plain CSV file
+    # (search-analytics-YYYY-MM-DD.csv) so the stats can be read from OUTSIDE the
+    # container without opening SQLite. Enabled by default (set
+    # PARLAMONITOR_ANALYTICS_CSV=0 to keep only the SQLite store).
+    analytics_csv_export: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_ANALYTICS_CSV", "1").strip().lower()
+         not in ("0", "false", "no", "")))
+    # Where the CSV files land. Unset → a `csv/` sub-directory next to the
+    # analytics DB (so on the default deploy they land in the host-mounted
+    # ./analytics/csv, readable from outside the container).
+    analytics_csv_dir: str | None = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_ANALYTICS_CSV_DIR") or None)
     # Folded set of speech types excluded from statistics (STAT-1).
     procedural_speech_types: frozenset = field(default_factory=lambda: _procedural_speech_types())
     # Word-cloud term-extraction backend (WCLOUD-2). "huspacy" lemmatizes and

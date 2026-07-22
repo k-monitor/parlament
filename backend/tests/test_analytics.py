@@ -8,10 +8,16 @@ throwaway temp DB.
 
 from __future__ import annotations
 
+import csv
 import sqlite3
 
 from app import analytics
 from app.analytics import SearchAnalytics
+
+
+def _read_csv(path):
+    with open(path, newline="", encoding="utf-8") as fh:
+        return list(csv.reader(fh))
 
 
 def _rows(db_path):
@@ -135,6 +141,101 @@ def test_normalisation_and_empty_query(tmp_path, monkeypatch):
     rows = _rows(dbp)
     assert len(rows) == 1
     assert len(rows[0]["query"]) == 200
+
+
+def test_csv_export_writes_one_file_per_day(tmp_path, monkeypatch):
+    """The daily export dumps the aggregates to per-UTC-day CSV files in a
+    host-accessible directory, faithfully mirroring the (non-personal) columns."""
+    dbp = tmp_path / "a.db"
+    csv_dir = tmp_path / "csv"
+    sa = SearchAnalytics(str(dbp), enabled=True, csv_dir=str(csv_dir))
+
+    # Day one: two identical searches → one bucket, searches=2.
+    monkeypatch.setattr(analytics, "_utc_hour", lambda *a, **k: "2026-07-20T09:00")
+    sa.record(query="alma", period=43)
+    sa.record(query="alma", period=43)
+    monkeypatch.setattr(analytics, "_utc_hour", lambda *a, **k: "2026-07-20T10:00")
+    assert sa.flush() == 1  # 09:00 bucket complete
+    # Day two: a different keyword.
+    monkeypatch.setattr(analytics, "_utc_hour", lambda *a, **k: "2026-07-21T08:00")
+    sa.record(query="körte", zero_results=True)
+    monkeypatch.setattr(analytics, "_utc_hour", lambda *a, **k: "2026-07-21T09:00")
+    assert sa.flush() == 1  # 08:00 bucket complete
+
+    assert sa.export_csv() == 2
+    d1 = csv_dir / "search-analytics-2026-07-20.csv"
+    d2 = csv_dir / "search-analytics-2026-07-21.csv"
+    assert d1.exists() and d2.exists()
+
+    rows1 = _read_csv(d1)
+    assert rows1[0] == list(analytics._CSV_COLUMNS)  # header mirrors the schema
+    assert len(rows1) == 2  # header + one data row
+    col = {c: i for i, c in enumerate(analytics._CSV_COLUMNS)}
+    assert rows1[1][col["hour"]] == "2026-07-20T09:00"
+    assert rows1[1][col["query"]] == "alma"
+    assert rows1[1][col["period"]] == "43"
+    assert rows1[1][col["searches"]] == "2"
+
+    rows2 = _read_csv(d2)
+    assert rows2[1][col["query"]] == "körte"
+    assert rows2[1][col["zero_results"]] == "1"
+
+    # No personal-data columns leak into the CSV either (same guarantee as the DB).
+    forbidden = ("ip", "addr", "agent", "session", "cookie", "user")
+    assert not any(bad in h for h in rows1[0] for bad in forbidden)
+
+
+def test_csv_export_runs_at_most_once_per_day(tmp_path, monkeypatch):
+    dbp = tmp_path / "a.db"
+    sa = SearchAnalytics(str(dbp), enabled=True, csv_dir=str(tmp_path / "csv"))
+    monkeypatch.setattr(analytics, "_utc_hour", lambda *a, **k: "2026-07-20T09:00")
+    sa.record(query="alma")
+    sa.flush(force=True)
+
+    calls = []
+    monkeypatch.setattr(sa, "export_csv", lambda: calls.append(1))
+    sa._maybe_export_csv()   # first this day → export
+    sa._maybe_export_csv()   # same day → no-op
+    assert len(calls) == 1
+    monkeypatch.setattr(analytics, "_utc_hour", lambda *a, **k: "2026-07-21T00:00")
+    sa._maybe_export_csv()   # day rolled over → export again
+    assert len(calls) == 2
+
+
+def test_csv_export_backfills_missing_day_but_leaves_old_files(tmp_path, monkeypatch):
+    """An older day is (re)written only when its file is missing; the two most
+    recent days are always refreshed (so the just-ended day gets finalised)."""
+    dbp = tmp_path / "a.db"
+    csv_dir = tmp_path / "csv"
+    sa = SearchAnalytics(str(dbp), enabled=True, csv_dir=str(csv_dir))
+    for day in ("2026-07-18", "2026-07-19", "2026-07-20"):
+        monkeypatch.setattr(analytics, "_utc_hour", lambda *a, d=day, **k: f"{d}T09:00")
+        sa.record(query="alma")
+        sa.flush(force=True)
+
+    assert sa.export_csv() == 3  # all three written the first time
+    old = csv_dir / "search-analytics-2026-07-18.csv"
+    old.write_text("SENTINEL\n", encoding="utf-8")  # pretend a stale hand-edit
+
+    # 18th is older than the 2 most-recent days AND its file exists → left alone;
+    # 19th + 20th (recent) are rewritten.
+    assert sa.export_csv() == 2
+    assert old.read_text(encoding="utf-8") == "SENTINEL\n"
+
+    # If a file goes missing it is backfilled even when it is an old day.
+    old.unlink()
+    assert sa.export_csv() == 3
+
+
+def test_csv_export_disabled_when_no_dir(tmp_path, monkeypatch):
+    dbp = tmp_path / "a.db"
+    sa = SearchAnalytics(str(dbp), enabled=True, csv_dir=None)
+    monkeypatch.setattr(analytics, "_utc_hour", lambda *a, **k: "2026-07-20T09:00")
+    sa.record(query="alma")
+    sa.flush(force=True)
+    assert sa.export_csv() == 0
+    sa._maybe_export_csv()  # no-op, no crash
+    assert not any(tmp_path.glob("*.csv"))
 
 
 def test_search_endpoint_records_when_enabled(client, tmp_path, monkeypatch):

@@ -365,10 +365,15 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_MAX_SEARCH_TOTAL` | `5000` | cap on reported search totals |
 | `PARLAMONITOR_SEARCH_ANALYTICS` | `1` | privacy-friendly search-keyword logging (PRIV-1); `0` to disable (see [Search analytics](#search-analytics-privacy-friendly)) |
 | `PARLAMONITOR_ANALYTICS_DB` | `/analytics/search-analytics.db` | where the aggregated search stats are written (bind-mounted from `./analytics` on the host) |
+| `PARLAMONITOR_ANALYTICS_CSV` | `1` | daily CSV export of the aggregated stats (PRIV-1); `0` to keep only the SQLite store |
+| `PARLAMONITOR_ANALYTICS_CSV_DIR` | `/analytics/csv` | directory the per-day CSV files land in (bind-mounted from `./analytics/csv` on the host) |
 | `PARLAMONITOR_WEB_WORKERS` | _(one per core)_ | uvicorn worker processes (see [Handling high traffic](#handling-high-traffic-cloudflare--tuning)) |
 | `PARLAMONITOR_FORWARDED_ALLOW_IPS` | `*` | which proxy IPs uvicorn trusts `X-Forwarded-*` from |
 | `PARLAMONITOR_API_CACHE_CONTROL` | `public, max-age=60, s-maxage=300, stale-while-revalidate=600` | Cache-Control stamped on API responses |
 | `PARLAMONITOR_HTML_CACHE_CONTROL` | `public, max-age=0, s-maxage=300, stale-while-revalidate=600` | Cache-Control stamped on the SPA shell / OG share cards |
+| `PARLAMONITOR_SQLITE_MMAP_SIZE` | `1073741824` (1 GiB) | per-connection SQLite `mmap_size` ceiling in bytes; raise above the DB file's size so the whole DB is memory-mapped instead of read() for its tail |
+| `PARLAMONITOR_QUERY_CACHE_TTL` | `300` | seconds to memoize the expensive read-only aggregates (search trend/breakdown, module `/facets`); `0` disables the in-process cache |
+| `PARLAMONITOR_QUERY_CACHE_SIZE` | `256` | max distinct (query+filters) entries kept per cached aggregate endpoint |
 | **`sync` service** | | |
 | `PARLAMONITOR_SYNC_INTERVAL` | `1800` | seconds between continuous-sync polls |
 | `PARLAMONITOR_SYNC_CYCLE` | _(auto)_ | pin a cycle to watch (default: the latest) |
@@ -415,7 +420,32 @@ container**:
 sqlite3 ./analytics/search-analytics.db \
   'SELECT hour, query, period, faction_id, zero_results, searches
      FROM search_query_hourly ORDER BY hour DESC, searches DESC LIMIT 20;'
+```
 
+### Daily CSV export
+
+For readers who would rather not touch SQLite, the same aggregates are also
+exported to **plain CSV, once per UTC day**, into **`./analytics/csv/`** on the
+host — one file per day, `search-analytics-YYYY-MM-DD.csv`:
+
+```bash
+# on the host — no sqlite3 needed
+column -t -s, ./analytics/csv/search-analytics-2026-07-21.csv | less
+```
+
+Each file holds every `(hour, keyword, filters, zero-result flag, count)` bucket
+whose hour falls on that day, with the column header on the first line. A day's
+file is finalised the run after the day ends (its last hour flushes shortly after
+midnight UTC), so **each completed day's CSV is available by the following day**;
+the in-progress day stays in the live SQLite file until it completes. Files are
+written atomically, and — like the DB — the several worker/color processes all
+produce the same content, so concurrent writes are safe. Turn the export off with
+`PARLAMONITOR_ANALYTICS_CSV=0` (the SQLite store stays), or redirect it with
+`PARLAMONITOR_ANALYTICS_CSV_DIR`.
+
+More ways to read the SQLite store directly:
+
+```bash
 # most-searched keywords overall
 sqlite3 ./analytics/search-analytics.db \
   'SELECT query, SUM(searches) AS n FROM search_query_hourly

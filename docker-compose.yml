@@ -159,11 +159,13 @@ services:
     restart: unless-stopped
 
 # Search analytics (PRIV-1): the serving colors log aggregated, GDPR-friendly
-# search-keyword stats (no IP, no exact timestamp) to a SEPARATE SQLite file. Like
-# the colors themselves, that store is owned by ./deploy.sh, which bind-mounts a
-# HOST directory (./analytics) to /analytics so the file is readable from outside
-# the container. Nothing in this compose file needs it — init/sync don't serve
-# /search — so it is intentionally not mounted here.
+# search-keyword stats (no IP, no exact timestamp) to a SEPARATE SQLite file, and
+# export them daily to per-day CSV files (./analytics/csv/search-analytics-*.csv)
+# so they can be read off the host without sqlite3. Like the colors themselves,
+# that store is owned by ./deploy.sh, which bind-mounts a HOST directory
+# (./analytics) to /analytics so both are readable from outside the container.
+# Nothing in this compose file needs it — init/sync don't serve /search — so it
+# is intentionally not mounted here.
 #
 # The DB volume is EXTERNAL and owned by ./deploy.sh (it creates it if missing).
 # External guarantees the compose plumbing and the hand-run colors mount the

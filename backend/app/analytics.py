@@ -19,6 +19,14 @@ colors during a swap, write the same file concurrently; every write is an
 accumulating UPSERT (``searches = searches + excluded.searches``), so their
 contributions add up rather than clobber one another.
 
+On top of the SQLite store the aggregates are also exported to **plain CSV, once
+per UTC day** (``PARLAMONITOR_ANALYTICS_CSV_DIR``, defaulting to a ``csv/``
+sub-directory next to the DB — i.e. the same host-mounted location), one file per
+day (``search-analytics-YYYY-MM-DD.csv``), so the stats can be read straight off
+the host without opening SQLite. Each file is written atomically (temp + rename),
+so a reader — and the several worker/color processes, which all read the same
+shared DB — always see a complete file.
+
 Recording is best-effort and must never affect a search response: ``record()``
 only touches an in-memory counter under a short lock and swallows its own errors,
 and a misconfigured / unwritable analytics path disables the logger instead of
@@ -27,8 +35,10 @@ taking the API down.
 
 from __future__ import annotations
 
+import csv
 import datetime as dt
 import logging
+import os
 import re
 import sqlite3
 import threading
@@ -96,12 +106,30 @@ DO UPDATE SET searches = searches + excluded.searches;
 _KEY_FIELDS = ("hour", "query", "date_from", "date_to", "period", "person_id",
                "faction_id", "agenda_type", "sort", "zero_results")
 
+# CSV export column order: every stored column, hour first. Kept in sync with the
+# SQLite schema — the export is a faithful dump, so a CSV reader sees exactly the
+# same (non-personal) fields as the DB.
+_CSV_COLUMNS = _KEY_FIELDS + ("searches",)
+
+# On each daily export, always (re)write this many of the most recent days present
+# in the data: the day that just ended still receives its final hour(s) shortly
+# after midnight, so it must be rewritten one run after it "became yesterday".
+# Older days are immutable and written once (then only backfilled if a file went
+# missing). Two gives a one-run safety margin if a rollover export was ever missed.
+_CSV_REWRITE_RECENT_DAYS = 2
+
 
 def _utc_hour(now: Optional[dt.datetime] = None) -> str:
     """The current whole-hour bucket in UTC as ``YYYY-MM-DDTHH:00`` (fixed-width,
     so lexical ordering equals chronological ordering)."""
     now = now or dt.datetime.now(dt.timezone.utc)
     return now.strftime("%Y-%m-%dT%H:00")
+
+
+def _utc_day(now: Optional[dt.datetime] = None) -> str:
+    """The current UTC day as ``YYYY-MM-DD``. Derived from :func:`_utc_hour` so a
+    test that pins the hour pins the day too."""
+    return _utc_hour(now)[:10]
 
 
 def _norm_query(q: str | None) -> str:
@@ -121,15 +149,20 @@ class SearchAnalytics:
     """
 
     def __init__(self, db_path: str, enabled: bool = True,
-                 flush_interval: float = 60.0):
+                 flush_interval: float = 60.0, csv_dir: str | None = None):
         self.db_path = db_path
         self.enabled = enabled
+        # Directory the daily CSV export is written to (None disables the export
+        # while keeping the SQLite store). See export_csv().
+        self.csv_dir = csv_dir
         self._flush_interval = flush_interval
         self._lock = threading.Lock()
         self._buckets: dict[tuple, int] = {}
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._warned_full = False
+        # The last UTC day the CSV export ran for — so it fires at most once a day.
+        self._last_csv_day: str | None = None
 
     @classmethod
     def from_settings(cls) -> "SearchAnalytics":
@@ -137,7 +170,13 @@ class SearchAnalytics:
         # overridden after construction (tests monkeypatch it) is still honoured.
         path = settings.analytics_db or str(
             Path(settings.db_path).resolve().parent / "search-analytics.db")
-        return cls(db_path=path, enabled=settings.search_analytics)
+        # Default the CSV export next to the DB (→ the host-mounted analytics dir);
+        # only when both analytics and the CSV export are enabled.
+        csv_dir: str | None = None
+        if settings.search_analytics and settings.analytics_csv_export:
+            csv_dir = settings.analytics_csv_dir or str(
+                Path(path).resolve().parent / "csv")
+        return cls(db_path=path, enabled=settings.search_analytics, csv_dir=csv_dir)
 
     # -- recording (hot path: in-memory only, never touches disk) -------------
     def record(self, *, query, date_from=None, date_to=None, period=None,
@@ -227,6 +266,92 @@ class SearchAnalytics:
                     self._buckets[k] = self._buckets.get(k, 0) + v
             return 0
 
+    # -- CSV export (cold path: once a day) ----------------------------------
+    def export_csv(self) -> int:
+        """Dump the aggregated analytics to per-UTC-day CSV files in
+        ``self.csv_dir`` — a host-accessible location — so the stats can be read
+        without opening SQLite. One file per day,
+        ``search-analytics-YYYY-MM-DD.csv``, holding every ``(hour, keyword,
+        filters, …)`` bucket whose hour falls on that day.
+
+        A completed day is immutable, so its file is written once (the run after
+        the day ends) and then left untouched; only the most recent
+        ``_CSV_REWRITE_RECENT_DAYS`` days are rewritten each run, plus any day
+        whose file is missing (self-healing backfill). Each file is written
+        atomically (temp + rename), so a reader — and the concurrent worker /
+        color processes, which all read the same shared DB — always see a complete
+        file. Returns the number of files written. Best-effort: never raises."""
+        if not self.enabled or not self.csv_dir:
+            return 0
+        # Reading a not-yet-created DB would leave an empty file behind — skip.
+        if not Path(self.db_path).exists():
+            return 0
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30)
+            try:
+                conn.execute("PRAGMA busy_timeout=30000")
+                rows = conn.execute(
+                    "SELECT " + ", ".join(_CSV_COLUMNS)
+                    + " FROM search_query_hourly ORDER BY hour, query").fetchall()
+            finally:
+                conn.close()
+        except sqlite3.OperationalError:
+            return 0  # table absent (nothing recorded yet) — nothing to export
+        except Exception:
+            logger.exception("search analytics CSV export: read failed")
+            return 0
+
+        by_day: dict[str, list] = {}
+        for row in rows:
+            by_day.setdefault(row[0][:10], []).append(row)  # row[0] == hour
+        if not by_day:
+            return 0
+
+        out_dir = Path(self.csv_dir)
+        recent = set(sorted(by_day)[-_CSV_REWRITE_RECENT_DAYS:])
+        written = 0
+        for day, day_rows in by_day.items():
+            path = out_dir / f"search-analytics-{day}.csv"
+            # Rewrite the recent days always; write an older day only if its file
+            # is missing (it never changes once the day is over).
+            if day in recent or not path.exists():
+                if self._write_day_csv(path, day_rows):
+                    written += 1
+        return written
+
+    def _write_day_csv(self, path: Path, rows: list) -> bool:
+        """Atomically write one day's rows to ``path`` (temp file in the same dir
+        + rename). A per-PID temp name keeps concurrent workers from clobbering
+        each other's in-progress file. Best-effort — returns False on any error."""
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(tmp, "w", encoding="utf-8", newline="") as fh:
+                writer = csv.writer(fh)
+                writer.writerow(_CSV_COLUMNS)
+                writer.writerows(rows)
+            os.replace(tmp, path)
+            return True
+        except Exception:
+            logger.exception("search analytics CSV export: write failed for %s", path)
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return False
+
+    def _maybe_export_csv(self) -> None:
+        """Run :meth:`export_csv` at most once per UTC day (the first call after
+        start, then whenever the day rolls over). A cheap no-op the rest of the
+        day, and when the export is disabled."""
+        if not self.csv_dir:
+            return
+        today = _utc_day()
+        if today == self._last_csv_day:
+            return
+        self._last_csv_day = today
+        self.export_csv()
+
     # -- lifecycle -----------------------------------------------------------
     def start(self) -> None:
         """Verify the store is writable and launch the hourly flush thread. On any
@@ -257,11 +382,19 @@ class SearchAnalytics:
         logger.info(
             "search analytics enabled → %s (aggregated hourly, no IP / no exact "
             "timestamp)", self.db_path)
+        if self.csv_dir:
+            logger.info("search analytics daily CSV export → %s", self.csv_dir)
+        # Export immediately so a freshly (re)started server publishes an
+        # up-to-date CSV without waiting for the next midnight rollover.
+        self._maybe_export_csv()
 
     def _run(self) -> None:
         # wait() returns True the moment stop() sets the event → prompt shutdown.
         while not self._stop_event.wait(self._flush_interval):
             self.flush()
+            # Once a day, publish the completed days as host-readable CSV files
+            # (flush first so the just-ended day's final hour is on disk).
+            self._maybe_export_csv()
 
     def stop(self) -> None:
         """Stop the flush thread and persist EVERYTHING, including the in-progress

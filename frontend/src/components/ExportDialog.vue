@@ -99,6 +99,21 @@ const portrait = computed(() => orientation.value === 'portrait')
 const watermark = ref(true)
 const dateLabel = computed(() => (props.date ? formatLongDate(props.date, locale.value) : ''))
 
+// Any of these filter the picture, so the video is re-encoded (libx264) instead
+// of stream-copied — markedly slower. See argsFor() in lib/clipExport.js.
+const reEncodes = computed(() =>
+  (subtitleMode.value === 'burn' && hasText.value) || watermark.value || portrait.value)
+
+// Mobile phones/tablets run the ffmpeg.wasm re-encode far slower (and can hit
+// memory limits), so we surface an extra heads-up. iPadOS 13+ masquerades as
+// desktop Safari, hence the touch-point fallback.
+const isMobile = (() => {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent || ''
+  if (/Android|iPhone|iPad|iPod/i.test(ua)) return true
+  return /Macintosh/.test(ua) && navigator.maxTouchPoints > 1
+})()
+
 // --- run state -------------------------------------------------------------
 // idle | loading (engine) | fetching (segments) | encoding | done | error | cancelled
 const phase = ref('idle')
@@ -299,7 +314,6 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <p v-if="!hasText" class="small muted ex-sub-note">{{ $t('clipExport.noTextNote') }}</p>
-          <p v-else-if="subtitleMode === 'burn'" class="ex-alert warn small">⚠ {{ $t('clipExport.burnWarn') }}</p>
         </section>
 
         <!-- Format: aspect ratio tiles -->
@@ -338,6 +352,9 @@ onBeforeUnmount(() => {
             <em>{{ $t('clipExport.watermarkHint') }}</em>
           </span>
         </label>
+
+        <p v-if="reEncodes" class="ex-alert warn small">⚠ {{ $t('clipExport.reencodeWarn') }}</p>
+        <p v-if="isMobile" class="ex-alert warn small">⚠ {{ $t('clipExport.mobileWarn') }}</p>
 
         <button class="btn primary ex-start" @click="runExport">⤓ {{ $t('clipExport.start') }}</button>
         <p class="ex-note small muted">{{ $t('clipExport.provenance') }}</p>

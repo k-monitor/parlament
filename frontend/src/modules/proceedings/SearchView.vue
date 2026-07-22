@@ -44,6 +44,7 @@ const sort = ref(SORTS.includes(route.query.sort) ? route.query.sort : 'relevanc
 const data = ref(null)
 const trend = ref(null)
 const breakdown = ref(null)
+const breakdownLoading = ref(false)
 const loading = ref(false)
 const error = ref(false)
 
@@ -101,11 +102,16 @@ function gotoPage(p) {
 // a newer one's results (and the trend/breakdown could belong to a different
 // query than the list).
 let reqSeq = 0
+// The filters the current result set was fetched with — reused to lazily fetch
+// the breakdown, and the reqSeq that breakdown was last fetched for.
+let currentArgs = null
+let breakdownLoadedSeq = -1
 
 async function runFromRoute() {
   if (!route.query.q) {
     reqSeq++ // orphan any in-flight responses
     data.value = null; trend.value = null; breakdown.value = null
+    currentArgs = null; breakdownLoadedSeq = -1
     return
   }
   const seq = ++reqSeq
@@ -118,15 +124,19 @@ async function runFromRoute() {
     faction_id: route.query.faction_id,
     agenda_type: route.query.agenda_type,
   }
-  // The over-time popularity chart (SEA-8) and the who-said-it breakdown (SEA-9)
-  // are independent aggregates over the whole result set (not just this page),
-  // so they run alongside and their failure must never break the results list.
+  currentArgs = filterArgs
+  // The over-time popularity chart (SEA-8) is shown by default, so it runs
+  // alongside the results (its failure must never break the list). The who-said-it
+  // breakdown (SEA-9) is collapsed by default AND is the backend's most expensive
+  // query (a top-N over the entire match set), so it is deferred until the user
+  // actually opens the panel — most searches never pay for it. If the panel is
+  // already open (a re-search with it expanded), refresh it for the new query.
   api.searchTrend(filterArgs)
     .then((t) => { if (seq === reqSeq) trend.value = t })
     .catch(() => { if (seq === reqSeq) trend.value = null })
-  api.searchBreakdown(filterArgs)
-    .then((b) => { if (seq === reqSeq) breakdown.value = b })
-    .catch(() => { if (seq === reqSeq) breakdown.value = null })
+  breakdown.value = null
+  breakdownLoadedSeq = -1
+  if (showBreakdown.value) loadBreakdown()
   try {
     const res = await api.search({
       ...filterArgs,
@@ -140,6 +150,29 @@ async function runFromRoute() {
   } finally {
     if (seq === reqSeq) loading.value = false
   }
+}
+
+// Fetch the breakdown for the active search, once, on first expand of its panel
+// (SEA-9). Guarded by reqSeq so a breakdown from a superseded query never lands.
+async function loadBreakdown() {
+  if (!currentArgs) return
+  const seq = reqSeq
+  if (breakdownLoadedSeq === seq) return // already fetched for this search
+  breakdownLoadedSeq = seq
+  breakdownLoading.value = true
+  try {
+    const b = await api.searchBreakdown(currentArgs)
+    if (seq === reqSeq) breakdown.value = b
+  } catch {
+    if (seq === reqSeq) { breakdown.value = null; breakdownLoadedSeq = -1 }
+  } finally {
+    if (seq === reqSeq) breakdownLoading.value = false
+  }
+}
+
+function toggleBreakdown() {
+  showBreakdown.value = !showBreakdown.value
+  if (showBreakdown.value) loadBreakdown()
 }
 
 // Keep the form synced when navigating via back/forward, and re-run on any change.
@@ -316,29 +349,32 @@ function onTrendSelect({ from, to }) {
         </div>
       </section>
 
-      <section v-if="hasBreakdown" class="card pad breakdowncard">
+      <section v-if="data.results.length" class="card pad breakdowncard">
         <button
           class="breakdown-toggle" type="button"
-          :aria-expanded="showBreakdown" @click="showBreakdown = !showBreakdown"
+          :aria-expanded="showBreakdown" @click="toggleBreakdown"
         >
           <span class="chev" :class="{ open: showBreakdown }" aria-hidden="true">▸</span>
           {{ $t('search.breakdown') }}
         </button>
-        <div v-show="showBreakdown" class="breakdown-grid">
-          <BarChart
-            v-if="factionItems.length"
-            :items="factionItems"
-            :caption="$t('search.breakdownFactions', { q: data.query })"
-            :unit="$t('search.results')"
-            :value-format="(v) => v.toLocaleString('hu-HU')"
-          />
-          <BarChart
-            v-if="speakerItems.length"
-            :items="speakerItems"
-            :caption="$t('search.breakdownSpeakers', { q: data.query })"
-            :unit="$t('search.results')"
-            :value-format="(v) => v.toLocaleString('hu-HU')"
-          />
+        <div v-show="showBreakdown">
+          <p v-if="breakdownLoading" class="muted small bd-status">{{ $t('app.loading') }}</p>
+          <div v-else-if="hasBreakdown" class="breakdown-grid">
+            <BarChart
+              v-if="factionItems.length"
+              :items="factionItems"
+              :caption="$t('search.breakdownFactions', { q: data.query })"
+              :unit="$t('search.results')"
+              :value-format="(v) => v.toLocaleString('hu-HU')"
+            />
+            <BarChart
+              v-if="speakerItems.length"
+              :items="speakerItems"
+              :caption="$t('search.breakdownSpeakers', { q: data.query })"
+              :unit="$t('search.results')"
+              :value-format="(v) => v.toLocaleString('hu-HU')"
+            />
+          </div>
         </div>
       </section>
 
@@ -390,6 +426,7 @@ function onTrendSelect({ from, to }) {
 .breakdown-toggle .chev { font-size: .8em; opacity: .6; transition: transform .15s ease; }
 .breakdown-toggle .chev.open { transform: rotate(90deg); }
 .breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; margin-top: 1rem; }
+.bd-status { margin-top: 1rem; }
 .results { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .7rem; }
 /* Card reads top-to-bottom: speaker/meta header → context around the match →
    the watch action. A column gap spaces every part uniformly. */

@@ -66,7 +66,10 @@ def open_connection(db_path: str | None = None) -> sqlite3.Connection:
     # and keep a modest per-connection cache on top. Both are harmless no-ops
     # on SQLite builds without mmap support.
     try:
-        conn.execute("PRAGMA mmap_size=1073741824")  # 1 GiB ceiling, not a reservation
+        # mmap ceiling is env-configurable (PARLAMONITOR_SQLITE_MMAP_SIZE); the
+        # default 1 GiB is below the current DB size, so raising it above the
+        # file size maps the whole DB instead of read()ing its tail.
+        conn.execute(f"PRAGMA mmap_size={int(settings.sqlite_mmap_size)}")
         conn.execute("PRAGMA cache_size=-8192")      # ~8 MiB per connection
     except sqlite3.Error:  # pragma: no cover
         pass
@@ -99,6 +102,13 @@ def _db_ident() -> tuple:
             f"Database not found at {path}. Build it with "
             f"`python -m app.loader <data_dir> {path}`.")
     return (path, st.st_dev, st.st_ino, st.st_mtime_ns)
+
+
+def current_ident() -> tuple:
+    """Public view of the current DB file's identity (see ``_db_ident``). Folded
+    into the query cache's keys so the loader's atomic swap invalidates it
+    automatically — a superseded DB's cached entries are never looked up again."""
+    return _db_ident()
 
 
 def get_db():

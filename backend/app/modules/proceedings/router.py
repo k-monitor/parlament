@@ -18,6 +18,7 @@ from ...analytics import search_analytics
 from ...config import settings
 from ...db import get_db, like_contains
 from ...media import per_speech_clip
+from ...query_cache import cached_aggregate
 from ...search import build_match
 from ...wordfreq import count_words, tfidf_scores
 
@@ -116,26 +117,50 @@ def _search_where(q, date_from, date_to, period, person_id, faction_id, agenda_t
 
     `/search`, `/search/trend` (SEA-8) and `/search/breakdown` (SEA-9) all
     describe the *same* result set, so they apply an identical WHERE — only the
-    projection/grouping differs. Returns ``(where_sql, params)``; raises 400 when
+    projection/grouping differs. Returns ``(where_sql, params, needs)`` where
+    ``needs`` names the optional joins the filters reference (``'speech'`` for a
+    ``sp.*`` filter, ``'session'`` for a date filter, ``'agenda'`` for an
+    agenda-type filter) so a caller can assemble a minimal FROM. Raises 400 when
     the query holds no searchable terms."""
     match = build_match(q)
     if not match:
         raise HTTPException(400, "Query contains no searchable terms")
     where = ["sentence_fts MATCH :match"]
     params: dict = {"match": match}
+    needs: set[str] = set()
     if date_from:
-        where.append("ss.date >= :date_from"); params["date_from"] = date_from
+        where.append("ss.date >= :date_from"); params["date_from"] = date_from; needs.add("session")
     if date_to:
-        where.append("ss.date <= :date_to"); params["date_to"] = date_to
+        where.append("ss.date <= :date_to"); params["date_to"] = date_to; needs.add("session")
     if period is not None:
-        where.append("sp.period_number = :period"); params["period"] = period
+        where.append("sp.period_number = :period"); params["period"] = period; needs.add("speech")
     if person_id:
-        where.append("sp.person_id = :person_id"); params["person_id"] = person_id
+        where.append("sp.person_id = :person_id"); params["person_id"] = person_id; needs.add("speech")
     if faction_id is not None:
-        where.append("sp.faction_id = :faction_id"); params["faction_id"] = faction_id
+        where.append("sp.faction_id = :faction_id"); params["faction_id"] = faction_id; needs.add("speech")
     if agenda_type:
-        where.append("ai.type = :agenda_type"); params["agenda_type"] = agenda_type
-    return " AND ".join(where), params
+        where.append("ai.type = :agenda_type"); params["agenda_type"] = agenda_type; needs.add("agenda")
+    return " AND ".join(where), params, needs
+
+
+def _assemble_from(se: bool, speech: bool, session: bool, agenda: bool) -> str:
+    """Assemble the minimal FTS join chain for a search query. Each table bridges
+    to the next through the previous one's key (``sentence_fts.rowid`` →
+    ``sentence.id``; ``sentence.speech_id`` → ``speech.uid``; ``speech`` →
+    ``session``/``agenda_item``), so session/agenda/speech joins all require the
+    ``sentence`` row (``se``). Person/faction are never here: the WHERE never
+    filters on them, so they are joined only against the ranked page (see
+    ``search``), not across the whole match set."""
+    parts = ["FROM sentence_fts"]
+    if se:
+        parts.append("JOIN sentence se ON se.id = sentence_fts.rowid")
+    if speech:
+        parts.append("JOIN speech sp ON sp.uid = se.speech_id")
+    if session:
+        parts.append("JOIN session ss ON ss.id = sp.session_id")
+    if agenda:
+        parts.append("LEFT JOIN agenda_item ai ON ai.id = sp.agenda_item_id")
+    return "\n        ".join(parts)
 
 
 @router.get("/search")
@@ -159,22 +184,24 @@ def search(
     surrounding transcript context — spilling into the adjacent speeches at a
     speech boundary — speaker/faction/date/agenda metadata, and the timing needed
     to open the viewer at that moment (SEA-4)."""
-    where_sql, params = _search_where(q, date_from, date_to, period,
-                                      person_id, faction_id, agenda_type)
+    where_sql, params, needs = _search_where(q, date_from, date_to, period,
+                                              person_id, faction_id, agenda_type)
     order_by = _SEARCH_SORTS.get(sort, _SEARCH_SORTS["relevance"])
+    is_relevance = order_by == "rank"
 
-    base_from = """
-        FROM sentence_fts
-        JOIN sentence se ON se.id = sentence_fts.rowid
-        JOIN speech sp ON sp.uid = se.speech_id
-        JOIN session ss ON ss.id = sp.session_id
-        LEFT JOIN agenda_item ai ON ai.id = sp.agenda_item_id
-        LEFT JOIN person p ON p.person_id = sp.person_id
-        LEFT JOIN faction f ON f.id = sp.faction_id
-    """
+    # Joins the FILTERS reference. A date filter needs session, an agenda filter
+    # agenda, any sp.* filter speech; session/agenda both reach through speech, and
+    # all of them need the sentence row to bridge the FTS rowid → speech.
+    f_speech = bool(needs)
+    f_session = "session" in needs
+    f_agenda = "agenda" in needs
+    f_se = f_speech or f_session or f_agenda
 
+    # Capped total: only the filters' joins matter (person/faction are never
+    # filtered on), and the LIMIT stops the scan at the cap + 1.
+    count_from = _assemble_from(f_se, f_speech, f_session, f_agenda)
     total_row = db.execute(
-        f"SELECT COUNT(*) AS c FROM (SELECT se.id {base_from} WHERE {where_sql} "
+        f"SELECT COUNT(*) AS c FROM (SELECT 1 {count_from} WHERE {where_sql} "
         f"LIMIT {settings.max_search_total + 1})", params).fetchone()
     total = total_row["c"]
     capped = total > settings.max_search_total
@@ -191,23 +218,52 @@ def search(
         zero_results=(total == 0),
     )
 
+    # Rank + page over the FTS/filter joins ALONE, then join the <=`limit`
+    # survivors for their display metadata. A pure-relevance, unfiltered search
+    # never touches speech/session in this phase — the win is not scanning the
+    # whole match set through those joins just to return one page (measured
+    # ~2.3x on common terms). highlight()/snippet() live in the CTE because they
+    # need the FTS MATCH context; there SQLite computes them for the page only,
+    # not for every match. A date sort needs session/speech in the ranking phase
+    # for its sort key; relevance needs neither. Results are byte-identical to
+    # the pre-CTE query across every sort/filter/paging combination.
+    c_speech = f_speech or not is_relevance
+    c_session = f_session or not is_relevance
+    c_agenda = f_agenda
+    c_se = c_speech or c_session or c_agenda
+    hits_from = _assemble_from(c_se, c_speech, c_session, c_agenda)
+    rank_col = ", bm25(sentence_fts) AS rank" if is_relevance else ""
+    outer_order = "hits.rank" if is_relevance else order_by
+
     rows = db.execute(
         f"""
+        WITH hits AS (
+            SELECT sentence_fts.rowid AS sid,
+                   highlight(sentence_fts, 0, char(2), char(3)) AS hl,
+                   snippet(sentence_fts, 0, char(2), char(3), '…', 18) AS sn{rank_col}
+            {hits_from}
+            WHERE {where_sql}
+            ORDER BY {order_by}
+            LIMIT :limit OFFSET :offset
+        )
         SELECT se.id AS sentence_id, se.ord AS sentence_ord, se.time_start,
                se.time_end,
-               highlight(sentence_fts, 0, char(2), char(3)) AS highlighted,
-               snippet(sentence_fts, 0, char(2), char(3), '…', 18) AS snippet,
+               hits.hl AS highlighted,
+               hits.sn AS snippet,
                sp.uid AS speech_uid, sp.origin_id, sp.speaker_label,
                sp.person_id, sp.confidence, sp.align_method, sp.speech_index,
                ai.title AS agenda_title, ai.type AS agenda_type,
                ss.id AS session_id, ss.date, ss.sitting, sp.period_number,
                p.label AS person_label, p.photo_uri,
-               f.label AS faction_label, f.color AS faction_color,
-               bm25(sentence_fts) AS rank
-        {base_from}
-        WHERE {where_sql}
-        ORDER BY {order_by}
-        LIMIT :limit OFFSET :offset
+               f.label AS faction_label, f.color AS faction_color
+        FROM hits
+        JOIN sentence se ON se.id = hits.sid
+        JOIN speech sp ON sp.uid = se.speech_id
+        JOIN session ss ON ss.id = sp.session_id
+        LEFT JOIN agenda_item ai ON ai.id = sp.agenda_item_id
+        LEFT JOIN person p ON p.person_id = sp.person_id
+        LEFT JOIN faction f ON f.id = sp.faction_id
+        ORDER BY {outer_order}
         """,
         {**params, "limit": limit, "offset": offset}).fetchall()
 
@@ -304,9 +360,22 @@ def search_trend(
     monthly across the full multi-decade corpus. Only the periods that actually
     have hits are returned; the client fills the gaps with zeros so the timeline
     is continuous and honest."""
-    where_sql, params = _search_where(q, date_from, date_to, period,
-                                      person_id, faction_id, agenda_type)
+    where_sql, params, _needs = _search_where(q, date_from, date_to, period,
+                                               person_id, faction_id, agenda_type)
 
+    # This aggregate re-scans the whole match set on every call and the SPA fires
+    # it alongside every search (identical across pagination), so memoize the
+    # payload per (query+filters) with a short TTL, invalidated on DB swap. The
+    # ongoing cycle's axis end is anchored to *today* (_ongoing_axis_end), so today
+    # is part of the key — the axis is never stale by more than a day (and TTL
+    # keeps it far fresher). The 400 for an empty query is raised above the cache.
+    key = (q, date_from, date_to, period, person_id, faction_id, agenda_type,
+           date.today().isoformat())
+    return cached_aggregate("search_trend", key, lambda: _search_trend_compute(
+        db, q, where_sql, params, date_from, date_to, period))
+
+
+def _search_trend_compute(db, q, where_sql, params, date_from, date_to, period):
     base_from = """
         FROM sentence_fts
         JOIN sentence se ON se.id = sentence_fts.rowid
@@ -403,9 +472,18 @@ def search_breakdown(
     representative its `person_id` so the UI can link to the profile (REP-1).
     Speeches with no resolved representative are not attributed to a person row;
     those with no faction are not attributed to a faction row."""
-    where_sql, params = _search_where(q, date_from, date_to, period,
-                                      person_id, faction_id, agenda_type)
+    where_sql, params, _needs = _search_where(q, date_from, date_to, period,
+                                               person_id, faction_id, agenda_type)
 
+    # Two grouped top-N over the whole match set, fired alongside every search and
+    # identical across pagination — memoize per (query+filters+limit), invalidated
+    # on DB swap. The 400 for an empty query is raised above, before the cache.
+    key = (q, date_from, date_to, period, person_id, faction_id, agenda_type, limit)
+    return cached_aggregate("search_breakdown", key, lambda: _search_breakdown_compute(
+        db, q, where_sql, params, limit))
+
+
+def _search_breakdown_compute(db, q, where_sql, params, limit):
     base_from = """
         FROM sentence_fts
         JOIN sentence se ON se.id = sentence_fts.rowid
@@ -448,10 +526,18 @@ def suggest(q: str = Query(..., min_length=1), limit: int = Query(8, ge=1, le=20
             db: sqlite3.Connection = Depends(get_db)):
     """Search-as-you-type suggestions for speakers and factions (SEA-7)."""
     like = like_contains(q.strip())
+    # Rank name matches by activity using the precomputed all-periods aggregate
+    # (person_stats, period_number IS NULL) instead of a correlated COUNT over
+    # `speech` per matched person — this endpoint fires on every keystroke. The
+    # aggregate counts statistics-eligible speeches (procedural/chairing excluded,
+    # STAT-1), which is the same "how active a speaker" signal the profile shows.
     people = db.execute(
         """SELECT p.person_id, p.label, p.photo_uri,
-                  (SELECT COUNT(*) FROM speech s WHERE s.person_id=p.person_id) AS speeches
-           FROM person p WHERE p.is_mp = 1 AND fold(p.label) LIKE fold(:like) ESCAPE '\\'
+                  COALESCE(ps.speech_count, 0) AS speeches
+           FROM person p
+           LEFT JOIN person_stats ps
+                  ON ps.person_id = p.person_id AND ps.period_number IS NULL
+           WHERE p.is_mp = 1 AND fold(p.label) LIKE fold(:like) ESCAPE '\\'
            ORDER BY speeches DESC LIMIT :limit""",
         {"like": like, "limit": limit}).fetchall()
     factions = db.execute(

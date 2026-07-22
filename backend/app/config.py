@@ -46,6 +46,22 @@ class Settings:
         (os.environ.get("PARLAMONITOR_SITE_URL") or "").strip().rstrip("/") or None)
     # Cap on reported search totals so a pathological query can't scan forever.
     max_search_total: int = int(os.environ.get("PARLAMONITOR_MAX_SEARCH_TOTAL", "5000"))
+    # Read-path SQLite mmap ceiling in bytes (OPS-4). SQLite memory-maps up to this
+    # much of the DB file into the shared OS page cache — it is a ceiling, not a
+    # reservation. Default 1 GiB; raise it above the DB file's size so the whole
+    # file is mapped (a DB larger than the ceiling reads its tail via ordinary
+    # read() syscalls instead of the page cache).
+    sqlite_mmap_size: int = int(os.environ.get(
+        "PARLAMONITOR_SQLITE_MMAP_SIZE", str(1024 * 1024 * 1024)))
+    # In-process TTL/LRU cache for expensive read-only aggregates — the search
+    # trend/breakdown and the module /facets endpoints (app/query_cache.py).
+    # `ttl` is seconds (0 disables the cache entirely); `size` is the max number
+    # of distinct (query+filters) entries kept per cached endpoint. Defense in
+    # depth behind the CDN (caching.py): absorbs cache-miss bursts and un-CDN'd
+    # deployments. The DB file's identity is folded into every key, so the
+    # loader's atomic swap (DB-4) invalidates it automatically.
+    query_cache_ttl: int = int(os.environ.get("PARLAMONITOR_QUERY_CACHE_TTL", "300"))
+    query_cache_size: int = int(os.environ.get("PARLAMONITOR_QUERY_CACHE_SIZE", "256"))
     # Search analytics (PRIV-1). Privacy-respecting, GDPR-friendly logging of what
     # people search for — the search KEYWORDS and the FILTERS combined with them —
     # WITHOUT any personal data: no IP addresses, no user agents, no cookies, and

@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...db import get_db, like_contains
 from ...media import per_speech_clip
+from ...query_cache import cached_aggregate
 
 router = APIRouter(prefix="/bills", tags=["bills"])
 
@@ -171,24 +172,31 @@ def bill_facets(period: Optional[int] = None,
     period, a fotipus include/exclude — e.g. ``main_type=T`` for the bills page,
     ``main_type_not=T`` for the other-irományok page — and a sponsor, so a
     profile can list only the document types that MP actually submitted)."""
-    where, params = ["1=1"], []
-    if period is not None:
-        where.append("b.period_number = ?"); params.append(period)
-    if main_type:
-        where.append("b.main_type = ?"); params.append(main_type)
-    if main_type_not:
-        where.append("(b.main_type IS NULL OR b.main_type != ?)"); params.append(main_type_not)
-    if sponsor:
-        where.append("EXISTS (SELECT 1 FROM bill_sponsor bs "
-                     "WHERE bs.bill_id=b.id AND bs.person_id=?)"); params.append(sponsor)
-    where_sql = "WHERE " + " AND ".join(where)
-    statuses = [r["status"] for r in db.execute(
-        f"SELECT DISTINCT b.status FROM bill b {where_sql} "
-        f"AND b.status IS NOT NULL ORDER BY b.status", params)]
-    types = [{"main_type": r["main_type"], "type": r["type"]} for r in db.execute(
-        f"SELECT DISTINCT b.main_type, b.type FROM bill b {where_sql} "
-        f"ORDER BY b.main_type, b.type", params)]
-    return {"statuses": statuses, "types": types}
+    # Distinct-value scan over the whole bill table; static per deploy and hit by
+    # every filter UI, so memoize per filter-combination (invalidated on DB swap).
+    key = (period, main_type, main_type_not, sponsor)
+
+    def _compute():
+        where, params = ["1=1"], []
+        if period is not None:
+            where.append("b.period_number = ?"); params.append(period)
+        if main_type:
+            where.append("b.main_type = ?"); params.append(main_type)
+        if main_type_not:
+            where.append("(b.main_type IS NULL OR b.main_type != ?)"); params.append(main_type_not)
+        if sponsor:
+            where.append("EXISTS (SELECT 1 FROM bill_sponsor bs "
+                         "WHERE bs.bill_id=b.id AND bs.person_id=?)"); params.append(sponsor)
+        where_sql = "WHERE " + " AND ".join(where)
+        statuses = [r["status"] for r in db.execute(
+            f"SELECT DISTINCT b.status FROM bill b {where_sql} "
+            f"AND b.status IS NOT NULL ORDER BY b.status", params)]
+        types = [{"main_type": r["main_type"], "type": r["type"]} for r in db.execute(
+            f"SELECT DISTINCT b.main_type, b.type FROM bill b {where_sql} "
+            f"ORDER BY b.main_type, b.type", params)]
+        return {"statuses": statuses, "types": types}
+
+    return cached_aggregate("bill_facets", key, _compute)
 
 
 # Question-type irományok (kérdés / interpelláció / azonnali kérdés) and the

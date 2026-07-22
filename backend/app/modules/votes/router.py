@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...db import get_db, like_contains
 from ...parlament_links import vote_page_url
+from ...query_cache import cached_aggregate
 
 router = APIRouter(prefix="/votes", tags=["votes"])
 
@@ -202,15 +203,19 @@ def list_votes(
 def vote_facets(period: Optional[int] = None,
                 db: sqlite3.Connection = Depends(get_db)):
     """Distinct results and voting modes for the filter controls (within a period)."""
-    where, par = ("WHERE period_number = ?", (period,)) if period is not None else ("", ())
-    kw = "AND" if where else "WHERE"
-    results = [r["result"] for r in db.execute(
-        f"SELECT DISTINCT result FROM vote {where} "
-        f"{kw} result IS NOT NULL ORDER BY result", par)]
-    voting_modes = [r["voting_mode"] for r in db.execute(
-        f"SELECT DISTINCT voting_mode FROM vote {where} "
-        f"{kw} voting_mode IS NOT NULL ORDER BY voting_mode", par)]
-    return {"results": results, "voting_modes": voting_modes}
+    def _compute():
+        where, par = ("WHERE period_number = ?", (period,)) if period is not None else ("", ())
+        kw = "AND" if where else "WHERE"
+        results = [r["result"] for r in db.execute(
+            f"SELECT DISTINCT result FROM vote {where} "
+            f"{kw} result IS NOT NULL ORDER BY result", par)]
+        voting_modes = [r["voting_mode"] for r in db.execute(
+            f"SELECT DISTINCT voting_mode FROM vote {where} "
+            f"{kw} voting_mode IS NOT NULL ORDER BY voting_mode", par)]
+        return {"results": results, "voting_modes": voting_modes}
+
+    # Static per deploy, hit by the filter UI — memoize per period (DB-swap safe).
+    return cached_aggregate("vote_facets", period, _compute)
 
 
 _DEFECTOR_RE = re.compile(r"\d+")

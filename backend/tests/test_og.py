@@ -139,8 +139,8 @@ def test_share_profile_card(og_client):
     assert "Kovács Béla" in m["og:title"]
     assert m["og:type"] == "profile"
     assert m["og:url"] == "https://parlamonitor.hu/representatives/k001"
-    # k001 has no photo in the fixture -> logo fallback + large card.
-    assert m["og:image"].endswith("/parlamonitor.png")
+    # k001 has no photo in the fixture -> default OG image + large card.
+    assert m["og:image"].endswith("/og-image.png")
 
 
 def test_share_representatives_index_is_not_hijacked(og_client):

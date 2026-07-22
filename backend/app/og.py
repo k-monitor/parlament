@@ -145,7 +145,7 @@ def render(request: Request, *, title: str, description: str,
 
     full_title = title if title.endswith("Parlamonitor") else f"{title} · Parlamonitor"
     abs_url = _abs(request, url_path) if url_path else _base_url(request)
-    abs_image = _abs(request, image) or _abs(request, "/parlamonitor.png")
+    abs_image = _abs(request, image) or _abs(request, "/og-image.png")
 
     tags = [
         f'<title>{_esc(full_title)}</title>',

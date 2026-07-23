@@ -1,0 +1,12 @@
+/* Parlamonitor — layout & elevation tokens
+   ---------------------------------------------------------------------------
+   Radius, page width, gutters and the single card shadow. The system uses one
+   soft shadow and one corner radius throughout for a calm, consistent feel. */
+:root {
+  --radius: 10px;         /* default corner radius (cards, buttons) */
+  --maxw: 1100px;         /* max content width — .container is centered to this */
+  --gutter: 1.5rem;       /* page side-margin (horizontal padding of .container) */
+
+  /* One elevation, used for all cards */
+  --shadow: 0 1px 3px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.05);
+}

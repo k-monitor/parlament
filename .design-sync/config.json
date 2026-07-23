@@ -1,0 +1,7 @@
+{
+  "projectId": "c6ca804d-cff3-421b-8b0e-3ef8e537a96f",
+  "projectName": "Parlamonitor Brand Kit",
+  "shape": "brand",
+  "localDir": "./ds-bundle",
+  "notes": "Off-script brand/tokens-only sync. The frontend is a Vue 3 SPA (not a React component library), so no components are bound to Claude Design. This kit ships styling only: design tokens (tokens/*.css), the global stylesheet (styles.css), and the utility-class vocabulary, extracted verbatim from frontend/src/styles.css. Source of truth for tokens: frontend/src/styles.css :root; faction palette: backend/app/loader.py FACTION_COLORS."
+}

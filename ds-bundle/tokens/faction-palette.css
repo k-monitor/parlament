@@ -1,0 +1,32 @@
+/* Parlamonitor — parliamentary faction (party) palette
+   ---------------------------------------------------------------------------
+   A categorical palette: one stable colour per Hungarian parliamentary faction,
+   used for chart series, vote diagrams and the faction "dot" chips. Colours are
+   assigned per-faction in the data layer; this file mirrors the canonical map so
+   designs can reference the same swatches. Unknown factions cycle through the
+   fallback ramp below (deterministic by insertion order). */
+:root {
+  --faction-fidesz:     #FF6A13;  /* Fidesz */
+  --faction-kdnp:       #0B4C8C;  /* KDNP */
+  --faction-tisza:      #00A6A6;  /* TISZA */
+  --faction-dk:         #1E5BC6;  /* DK */
+  --faction-jobbik:     #5A3B1C;  /* Jobbik */
+  --faction-mszp:       #C8102E;  /* MSZP */
+  --faction-momentum:   #8E44AD;  /* Momentum */
+  --faction-lmp:        #3DA639;  /* LMP */
+  --faction-parbeszed:  #1B9E77;  /* Párbeszéd */
+  --faction-mihazank:   #2E5E2E;  /* Mi Hazánk / MHM */
+  --faction-independent: #888888; /* független (independent) */
+
+  /* Fallback categorical ramp for factions without an assigned colour */
+  --cat-1: #7F8C8D;
+  --cat-2: #D35400;
+  --cat-3: #16A085;
+  --cat-4: #9B59B6;
+  --cat-5: #2C3E50;
+  --cat-6: #E67E22;
+  --cat-7: #27AE60;
+  --cat-8: #2980B9;
+  --cat-9: #C0392B;
+  --cat-10: #F39C12;
+}

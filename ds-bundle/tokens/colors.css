@@ -1,0 +1,31 @@
+/* Parlamonitor — color tokens
+   ---------------------------------------------------------------------------
+   The canonical brand palette. Every contrast ratio noted below is measured
+   against --surface (#ffffff). Warm, paper-like neutrals with a single strong
+   brand red and a brand blue reserved for focus. */
+:root {
+  /* Surfaces */
+  --bg: #f7f6f3;          /* page background — warm off-white ("paper") */
+  --surface: #ffffff;     /* cards, inputs, raised surfaces */
+
+  /* Text ("ink") — a single warm-dark ramp */
+  --ink: #3e3b32;         /* primary text — brand dark, >9:1 on surface */
+  --ink-soft: #56524a;    /* secondary text — ~7:1 (AA for normal text) */
+  --ink-faint: #6f6a60;   /* tertiary / muted text — ~5:1 (AA for large text) */
+
+  /* Lines */
+  --line: #e2e0da;        /* borders, dividers, hairlines */
+
+  /* Accent — brand red. Primary actions, links, emphasis. */
+  --accent: #B22817;      /* brand red */
+  --accent-ink: #ffffff;  /* text / icon on --accent */
+  --accent-soft: #f8e7e4; /* tinted accent background (subtle hover fills) */
+  --accent-strong: #8e2012; /* accent hover/active — darker red */
+
+  /* Focus — brand blue, used only for keyboard focus rings */
+  --focus: #0D5F94;
+
+  /* Text highlight (search matches) */
+  --mark: #fff3bf;        /* highlight background */
+  --mark-ink: #5c4400;    /* text on --mark */
+}

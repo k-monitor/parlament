@@ -1,0 +1,18 @@
+/* Parlamonitor — typography tokens
+   ---------------------------------------------------------------------------
+   The UI uses native system fonts (no custom web font is loaded), for speed and
+   for a neutral, document-like reading experience. Two secondary families cover
+   specific roles. Type scale lives in styles.css (h1/h2/h3 + body). */
+:root {
+  /* Primary UI font — system sans stack */
+  --font: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+
+  /* Serif — used for compact "W" (Wikipedia) badges next to linked entities */
+  --font-serif: Georgia, "Times New Roman", serif;
+
+  /* Monospace — embed codes and copy-paste snippets */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Base rhythm */
+  --line-height: 1.55;
+}

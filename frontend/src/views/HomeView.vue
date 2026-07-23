@@ -36,6 +36,14 @@ const EXAMPLE_QUERIES = ['költségvetés', 'korrupció', 'oktatás', 'infláci�
 const examples = reactive(Object.fromEntries(
   EXAMPLE_QUERIES.map((term) => [term, { trend: null, total: 0, ready: false }])))
 
+// Only a first batch is shown up front (two full rows at the widest grid); the
+// rest stay hidden behind a "more topics" toggle so the home page stays compact
+// and only fetches the visible histograms until the reader asks for more.
+const INITIAL_EXAMPLES = 6
+const showAllExamples = ref(false)
+const visibleQueries = computed(() =>
+  showAllExamples.value ? EXAMPLE_QUERIES : EXAMPLE_QUERIES.slice(0, INITIAL_EXAMPLES))
+
 // On the all-cycles view the histograms span the whole corpus, so mark each
 // electoral cycle's start and end with a line to keep the eras legible. Empty
 // for a single-cycle scope (the axis is then just that cycle).
@@ -55,12 +63,24 @@ const cycleMarkers = computed(() => {
 // loadedCycle dedupes the onMounted + watcher double-trigger for the same cycle.
 let exSeq = 0
 let loadedCycle
+const loadedTerms = new Set()
 async function loadExamples() {
-  if (loadedCycle === store.cycle) return
-  loadedCycle = store.cycle
-  const seq = ++exSeq
-  for (const term of EXAMPLE_QUERIES) examples[term].ready = false
-  await Promise.all(EXAMPLE_QUERIES.map(async (term) => {
+  // A cycle switch invalidates every histogram, so reset and refetch from
+  // scratch; otherwise (e.g. the "more topics" toggle) fetch only the newly
+  // visible terms we haven't loaded yet for the current cycle.
+  if (loadedCycle !== store.cycle) {
+    loadedCycle = store.cycle
+    loadedTerms.clear()
+    for (const term of EXAMPLE_QUERIES) examples[term].ready = false
+    exSeq++ // invalidate any in-flight fetch from the previous cycle
+  }
+  // seq is per-cycle, not per-call: batches within one cycle (initial + "more")
+  // are all valid, so only a cycle switch drops still-pending responses.
+  const seq = exSeq
+  const terms = visibleQueries.value.filter((term) => !loadedTerms.has(term))
+  if (!terms.length) return
+  for (const term of terms) loadedTerms.add(term)
+  await Promise.all(terms.map(async (term) => {
     try {
       const t = await api.searchTrend({ q: term, period: store.cycle })
       if (seq !== exSeq) return
@@ -81,6 +101,8 @@ onMounted(async () => {
   if (showProceedings.value) loadExamples()
 })
 watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
+// Revealing the rest of the topics fetches their histograms on demand.
+watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
 </script>
 
 <template>
@@ -115,7 +137,7 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
     </div>
     <div class="grid examples-grid">
       <router-link
-        v-for="term in EXAMPLE_QUERIES" :key="term"
+        v-for="term in visibleQueries" :key="term"
         :to="{ name: 'search', query: { q: term } }" class="card pad example"
       >
         <div class="example__head">
@@ -138,6 +160,11 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
         </p>
         <div v-else class="example__skeleton" aria-hidden="true"></div>
       </router-link>
+    </div>
+    <div v-if="!showAllExamples && EXAMPLE_QUERIES.length > INITIAL_EXAMPLES" class="examples__more">
+      <button class="btn secondary" type="button" @click="showAllExamples = true">
+        {{ $t('home.examplesMore') }}
+      </button>
     </div>
   </section>
 
@@ -212,6 +239,7 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
 .examples__head h2 { margin: 0 0 .3rem; font-size: 1.25rem; }
 .examples__head p { margin: 0; max-width: 70ch; }
 .examples-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.examples__more { display: flex; justify-content: center; margin-top: 1.2rem; }
 .example {
   display: flex;
   flex-direction: column;

@@ -77,6 +77,7 @@ export default {
     examplesTitle: 'Példakeresések',
     examplesLead: 'Kattints egy témára a teljes keresés megnyitásához; a diagram az adott kifejezés időbeli előfordulását mutatja.',
     examplesEmpty: 'Nincs találat ebben a ciklusban.',
+    examplesMore: 'További témák megtekintése',
   },
   search: {
     title: 'Keresés a felszólalásokban',

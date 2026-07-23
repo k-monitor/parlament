@@ -54,6 +54,7 @@ export default {
     examplesTitle: 'Example searches',
     examplesLead: 'Click a topic to open the full search; the chart shows how often the term came up over time.',
     examplesEmpty: 'No matches in this cycle.',
+    examplesMore: 'View more topics',
   },
   search: {
     title: 'Search the proceedings', placeholder: 'Term or "exact phrase"…', button: 'Search',

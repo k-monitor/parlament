@@ -130,6 +130,43 @@ watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
     </dl>
   </section>
 
+  <section class="grid explore-grid">
+    <router-link v-if="showProceedings" :to="{ name: 'search' }" class="card feature">
+      <span class="feature__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+        </svg>
+      </span>
+      <h2>{{ $t('home.exploreSearch') }}</h2>
+      <p class="soft">{{ $t('home.exploreSearchDesc') }}</p>
+      <span class="feature__cta" aria-hidden="true">→</span>
+    </router-link>
+
+    <router-link v-if="showReps" :to="{ name: 'representatives' }" class="card feature">
+      <span class="feature__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1" /><circle cx="9.5" cy="7" r="3.5" />
+          <path d="M21 20v-1a4 4 0 0 0-3-3.87M16.5 3.6a3.5 3.5 0 0 1 0 6.8" />
+        </svg>
+      </span>
+      <h2>{{ $t('home.exploreReps') }}</h2>
+      <p class="soft">{{ $t('home.exploreRepsDesc') }}</p>
+      <span class="feature__cta" aria-hidden="true">→</span>
+    </router-link>
+
+    <router-link v-if="showProceedings" :to="{ name: 'sessions' }" class="card feature">
+      <span class="feature__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4.5" width="18" height="16" rx="2" /><path d="M3 9h18M8 2.5v4M16 2.5v4" />
+          <path d="M7.5 13h4M7.5 16.5h9" />
+        </svg>
+      </span>
+      <h2>{{ $t('home.exploreSessions') }}</h2>
+      <p class="soft">{{ $t('home.exploreSessionsDesc') }}</p>
+      <span class="feature__cta" aria-hidden="true">→</span>
+    </router-link>
+  </section>
+
   <section v-if="showProceedings" class="examples" aria-labelledby="examples-title">
     <div class="examples__head">
       <h2 id="examples-title">{{ $t('home.examplesTitle') }}</h2>
@@ -171,43 +208,6 @@ watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
   <section class="grid explore-grid home-donate-row">
     <DonateCard class="home-donate" />
   </section>
-
-  <section class="grid explore-grid">
-    <router-link v-if="showProceedings" :to="{ name: 'search' }" class="card feature">
-      <span class="feature__icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
-        </svg>
-      </span>
-      <h2>{{ $t('home.exploreSearch') }}</h2>
-      <p class="soft">{{ $t('home.exploreSearchDesc') }}</p>
-      <span class="feature__cta" aria-hidden="true">→</span>
-    </router-link>
-
-    <router-link v-if="showReps" :to="{ name: 'representatives' }" class="card feature">
-      <span class="feature__icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M16 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1" /><circle cx="9.5" cy="7" r="3.5" />
-          <path d="M21 20v-1a4 4 0 0 0-3-3.87M16.5 3.6a3.5 3.5 0 0 1 0 6.8" />
-        </svg>
-      </span>
-      <h2>{{ $t('home.exploreReps') }}</h2>
-      <p class="soft">{{ $t('home.exploreRepsDesc') }}</p>
-      <span class="feature__cta" aria-hidden="true">→</span>
-    </router-link>
-
-    <router-link v-if="showProceedings" :to="{ name: 'sessions' }" class="card feature">
-      <span class="feature__icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="4.5" width="18" height="16" rx="2" /><path d="M3 9h18M8 2.5v4M16 2.5v4" />
-          <path d="M7.5 13h4M7.5 16.5h9" />
-        </svg>
-      </span>
-      <h2>{{ $t('home.exploreSessions') }}</h2>
-      <p class="soft">{{ $t('home.exploreSessionsDesc') }}</p>
-      <span class="feature__cta" aria-hidden="true">→</span>
-    </router-link>
-  </section>
 </template>
 
 <style scoped>
@@ -227,14 +227,13 @@ watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
 @media (min-width: 520px) { .explore-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (min-width: 780px) { .explore-grid { grid-template-columns: repeat(3, 1fr); } }
 
-.home-donate-row { margin-bottom: 1.5rem; }
-/* Full width until three columns exist, then 2/3 (two of the three tracks). */
+.home-donate-row { margin-top: 1.5rem; }
+/* Spans all three tracks so it lines up with the full width of the cards below. */
 .home-donate { grid-column: 1 / -1; }
-@media (min-width: 780px) { .home-donate { grid-column: span 2; } }
 
 /* Example searches: a curated set of topics, each with its popularity histogram
    (§SEA-8) as a teaser. The card is a link into the full search for that term. */
-.examples { margin-bottom: 1.5rem; }
+.examples { margin-top: 1.5rem; margin-bottom: 1.5rem; }
 .examples__head { margin-bottom: 1rem; }
 .examples__head h2 { margin: 0 0 .3rem; font-size: 1.25rem; }
 .examples__head p { margin: 0; max-width: 70ch; }

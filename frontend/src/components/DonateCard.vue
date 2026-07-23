@@ -20,9 +20,11 @@ const props = defineProps({
 const PAYPAL_BASE = 'https://www.paypal.me/kmonitor'
 const MORE_OPTIONS_URL = 'https://tamogatas.k-monitor.hu/?utm_source=parlamonitor'
 
-// Suggested micro-amounts (HUF). Labels are literal money, not translated.
+// Suggested micro-amounts (HUF), laid out as a 2×2 grid. Labels are literal
+// money, not translated.
 const AMOUNTS = [
   { value: '1000', emoji: '👍', label: '1 000 Ft' },
+  { value: '2000', emoji: '🙏', label: '2 000 Ft' },
   { value: '5000', emoji: '❤️', label: '5 000 Ft' },
   { value: '10000', emoji: '🤩', label: '10 000 Ft' },
 ]
@@ -47,7 +49,10 @@ function dismiss() {
 </script>
 
 <template>
-  <section v-if="visible" class="donate card" :aria-label="$t('donate.title')">
+  <section
+    v-if="visible" class="donate card" :class="{ 'donate--dismissible': dismissible }"
+    :aria-label="$t('donate.title')"
+  >
     <button
       v-if="dismissible" type="button" class="donate__close"
       :title="$t('donate.close')" :aria-label="$t('donate.close')" @click="dismiss"
@@ -58,13 +63,10 @@ function dismiss() {
       </svg>
     </button>
 
-    <div class="donate__brand">
-      <img class="donate__mark" src="/parlamonitor.png" alt="" aria-hidden="true" />
-      <span class="donate__name">Parlamonitor</span>
+    <div class="donate__text">
+      <h3 class="donate__title">{{ $t('donate.title') }}</h3>
+      <p class="donate__desc">{{ $t('donate.description') }}</p>
     </div>
-
-    <h3 class="donate__title">{{ $t('donate.title') }}</h3>
-    <p class="donate__desc">{{ $t('donate.description') }}</p>
 
     <div class="donate__amounts" role="group" :aria-label="$t('donate.amountsLabel')">
       <button
@@ -88,11 +90,18 @@ function dismiss() {
 </template>
 
 <style scoped>
+/* Horizontal layout: description text on the left, the 2×2 amount grid to its
+   right, and the two action buttons stacked at the right end. Flex-wrap lets it
+   collapse to a single column at the narrower placements (About page, mobile). */
 .donate {
   position: relative;
   background: var(--accent-soft);
   border-color: #f0cfc9;
   padding: 1.1rem 1.2rem 1.2rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 1.5rem;
 }
 .donate__close {
   position: absolute; top: .6rem; right: .6rem;
@@ -102,26 +111,33 @@ function dismiss() {
 }
 .donate__close:hover, .donate__close:focus-visible { background: rgba(178,40,23,.12); color: var(--accent); outline: none; }
 
-.donate__brand { display: inline-flex; align-items: center; gap: .45rem; margin-bottom: .6rem; }
-.donate__mark { width: 1.6rem; height: 1.6rem; object-fit: contain; border-radius: .35rem; background: #fff; padding: .15rem; box-sizing: border-box; }
-.donate__name { font-weight: 800; color: var(--accent); font-size: .95rem; }
-
+.donate__text { flex: 1 1 18rem; min-width: 0; }
 .donate__title { margin: 0 0 .3rem; font-size: 1.2rem; color: var(--ink); }
-.donate__desc { margin: 0 0 .9rem; color: var(--ink-soft); max-width: 62ch; }
+.donate__desc { margin: 0; color: var(--ink-soft); max-width: 62ch; }
 
-.donate__amounts { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .9rem; }
+.donate__amounts {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(7rem, 1fr));
+  gap: .6rem;
+}
+/* Styled to match the action buttons below (.btn / .btn.secondary) so the two
+   amount rows line up with the two stacked buttons; the selected amount fills
+   with the accent, echoing the primary donate button. */
 .donate__amount {
-  font: inherit; font-size: .9rem; font-weight: 600; cursor: pointer;
-  padding: .45rem .8rem; border-radius: 999px;
-  border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft);
-  transition: border-color .12s, color .12s, box-shadow .12s;
+  display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+  font: inherit; font-size: 1rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+  padding: .55rem 1rem; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  transition: background .12s, border-color .12s, color .12s;
 }
-.donate__amount:hover, .donate__amount:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
-.donate__amount.active {
-  border-color: var(--accent); color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
+.donate__amount:hover, .donate__amount:focus-visible { background: #efeee9; outline: none; }
+.donate__amount.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.donate__amount.active:hover { background: #8e2012; }
 
-.donate__actions { display: flex; flex-direction: column; gap: .6rem; }
-.donate__actions .btn { width: 100%; text-align: center; }
+.donate__actions { flex: 0 0 auto; display: flex; flex-direction: column; gap: .6rem; min-width: 13rem; }
+.donate__actions .btn { width: 100%; text-align: center; white-space: nowrap; }
+
+/* Keep the stacked buttons clear of the absolutely-positioned close button. */
+.donate--dismissible .donate__actions { margin-top: .4rem; }
 </style>

@@ -39,7 +39,7 @@ const examples = reactive(Object.fromEntries(
 // Only a first batch is shown up front (two full rows at the widest grid); the
 // rest stay hidden behind a "more topics" toggle so the home page stays compact
 // and only fetches the visible histograms until the reader asks for more.
-const INITIAL_EXAMPLES = 6
+const INITIAL_EXAMPLES = 3
 const showAllExamples = ref(false)
 const visibleQueries = computed(() =>
   showAllExamples.value ? EXAMPLE_QUERIES : EXAMPLE_QUERIES.slice(0, INITIAL_EXAMPLES))

@@ -2,7 +2,8 @@
 export default {
   app: {
     title: 'Parlamonitor',
-    tagline: 'A Magyar Országgyűlés nyilvános jegyzőkönyvei — mondatszinten kereshetően, videóval szinkronizálva.',
+    tagline: 'Tudd meg, mi történik a Parlamentben!',
+    taglineSub: 'Keress felszólalásokban, nézd meg, hogyan szavaztak a képviselők, és kövesd végig a törvényjavaslatok sorsát.',
     skipToContent: 'Ugrás a tartalomra',
     loading: 'Betöltés…',
     error: 'Hiba történt az adatok betöltésekor.',

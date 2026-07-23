@@ -86,7 +86,8 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
 <template>
   <section class="hero card pad">
     <h1>{{ $t('app.title') }}</h1>
-    <p class="soft" style="font-size:1.1rem;max-width:60ch;">{{ $t('app.tagline') }}</p>
+    <p class="hero-lead">{{ $t('app.tagline') }}</p>
+    <p class="soft hero-sub">{{ $t('app.taglineSub') }}</p>
 
     <form v-if="showProceedings" class="searchbar" role="search" @submit.prevent="go">
       <input
@@ -184,6 +185,8 @@ watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
 
 <style scoped>
 .hero { margin-bottom: 1.5rem; }
+.hero-lead { margin: .4rem 0 .4rem; font-size: 1.5rem; font-weight: 700; color: var(--ink); max-width: 30ch; }
+.hero-sub { font-size: 1.1rem; max-width: 60ch; }
 .searchbar { display: flex; gap: .5rem; margin: 1.2rem 0; max-width: 640px; }
 .searchbar input { flex: 1; font-size: 1.05rem; padding: .7rem .8rem; }
 .stats-lead { margin: 1.2rem 0 .6rem; color: var(--ink); font-size: 1.05rem; }

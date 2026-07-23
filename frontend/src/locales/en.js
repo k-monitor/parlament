@@ -2,7 +2,8 @@
 export default {
   app: {
     title: 'Parlamonitor',
-    tagline: 'Public proceedings of the Hungarian National Assembly — searchable to the sentence, synced to video.',
+    tagline: 'Find out what happens in Parliament',
+    taglineSub: 'Search speeches, see how MPs voted, and follow bills every step of the way.',
     skipToContent: 'Skip to content',
     loading: 'Loading…',
     error: 'Something went wrong while loading data.',

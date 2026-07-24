@@ -261,7 +261,7 @@ export default {
     billsUnavailable: 'A benyújtott indítványok adatai a Törvényjavaslatok modul bevezetése után lesznek elérhetők.',
     speechesOverTime: 'Felszólalások ülésnaponként',
     activity: 'Aktivitás',
-    activityHelp: 'Napi aktivitás: az adott napon elhangzott felszólalások és benyújtott irományok száma. A sötétebb szín nagyobb aktivitást jelez.',
+    activityHelp: 'Napi aktivitás: az adott napon elhangzott felszólalások és benyújtott irományok száma. A sötétebb szín nagyobb aktivitást jelez. Az ötletet a GitHub hasonló diagramja adta.',
     activityAriaLabel: 'Aktivitási naptár: {days} aktív nap',
     activityDocs: 'iromány',
     activityWindow: 'Legfeljebb az utolsó 200 nap látható.',

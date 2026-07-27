@@ -14,6 +14,7 @@ export default {
     sourceNote: 'Data is sourced from parlament.hu; processing by Parlamonitor.',
     openData: 'Open data',
     terms: 'Terms of use',
+    dataTerms: 'Terms of use for parlament.hu data',
     pager: {
       nav: 'Pagination',
       prev: 'Previous page',

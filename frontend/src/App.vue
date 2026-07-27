@@ -258,7 +258,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
         {{ $t('app.sourceNote') }}
         <template v-if="store.meta">
           ·
-          <a :href="store.meta.source_attribution.license_url" target="_blank" rel="noopener">{{ $t('app.terms') }}</a>
+          <a :href="store.meta.source_attribution.license_url" target="_blank" rel="noopener">{{ $t('app.dataTerms') }}</a>
         </template>
         <template v-if="dataUpdatedAt">
           · {{ $t('footer.lastUpdate') }}: {{ dataUpdatedAt }}

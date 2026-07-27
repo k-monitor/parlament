@@ -14,6 +14,7 @@ export default {
     sourceNote: 'Az adatok forrása a parlament.hu; a feldolgozást a Parlamonitor végzi.',
     openData: 'Nyílt adat',
     terms: 'Felhasználási feltételek',
+    dataTerms: 'A parlament.hu adatainak felhasználási feltételei',
     pager: {
       nav: 'Lapozás',
       prev: 'Előző oldal',

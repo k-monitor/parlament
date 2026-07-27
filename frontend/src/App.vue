@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { store, loadMeta, setCycle, periodLabel } from './store.js'
 import { setLocale } from './i18n.js'
 import { formatLongDate } from './format.js'
+import { COHESION_ENABLED } from './features.js'
 import { useI18n } from 'vue-i18n'
 
 const { locale, t } = useI18n()
@@ -57,12 +58,13 @@ function sectionActive(id) { return NAV_SECTIONS[id].match.includes(route.name) 
 
 // The Frakcióelemzés (cohesion) sub-tab compares how factions vote *within one
 // cycle*; across all cycles that comparison is meaningless, so it's hidden while
-// the global scope is "all cycles" (router.js bounces the route to match). That
-// can leave the Votes section with a single tab, in which case the sub-tab bar
+// the global scope is "all cycles" (router.js bounces the route to match). It is
+// also hidden outright while COHESION_ENABLED is off (features.js). Either way
+// the Votes section can be left with a single tab, in which case the sub-tab bar
 // is redundant with the top nav and hidden entirely (see the `v-if` below).
 const sectionTabs = computed(() =>
   (currentSection.value ? currentSection.value.tabs : []).filter(
-    (t) => !(t.name === 'cohesion' && store.cycle === null)))
+    (t) => !(t.name === 'cohesion' && (!COHESION_ENABLED || store.cycle === null))))
 function tabActive(tab) {
   return route.name === tab.name || (tab.detail || []).includes(route.name)
 }

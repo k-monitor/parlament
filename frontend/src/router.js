@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { loadMeta, setCycle, store } from './store.js'
+import { COHESION_ENABLED } from './features.js'
 
 // The global electoral cycle is carried in a `?cycle=` query param so that a
 // shared link reproduces the exact scope the sharer was viewing (a period
@@ -93,12 +94,16 @@ const routes = [
     path: '/votes', name: 'votes', meta: { module: 'votes' },
     component: () => import('./modules/votes/VotesListView.vue'),
   },
-  {
-    // Frakcióelemzés — the party co-voting charts (VOTE-8), a sub-tab of Votes.
-    // Declared before /votes/:id so "cohesion" isn't captured as a vote id.
+  // Frakcióelemzés — the party co-voting charts (VOTE-8), a sub-tab of Votes.
+  // Declared before /votes/:id so "cohesion" isn't captured as a vote id. Behind
+  // COHESION_ENABLED (features.js): while off, the same path serves the 404 view
+  // rather than disappearing into /votes/:id.
+  ...(COHESION_ENABLED ? [{
     path: '/votes/cohesion', name: 'cohesion', meta: { module: 'votes' },
     component: () => import('./modules/votes/CohesionView.vue'),
-  },
+  }] : [{
+    path: '/votes/cohesion', component: () => import('./views/NotFoundView.vue'),
+  }]),
   {
     path: '/votes/:id', name: 'vote', meta: { module: 'votes' },
     component: () => import('./modules/votes/VoteView.vue'), props: true,
@@ -135,8 +140,15 @@ router.beforeEach(async (to) => {
   }
   // Embed routes are self-contained (their own `?cycle=` + params) and must not
   // adopt the visitor's saved cycle or have their URL rewritten — the iframe
-  // snippet has to stay byte-for-byte what the sharer copied. Let them through.
-  if (to.meta.embed) return true
+  // snippet has to stay byte-for-byte what the sharer copied. Let them through —
+  // except the figure of a page that is currently off the public site, which is
+  // shown as a 404 like its host page (previously copied iframes go blank).
+  if (to.meta.embed) {
+    if (!COHESION_ENABLED && to.params.kind === 'faction-cohesion') {
+      return { name: 'notfound', params: { pathMatch: to.path.substring(1).split('/') }, query: to.query }
+    }
+    return true
+  }
   if (to.meta.module && store.loaded && !store.moduleEnabled(to.meta.module)) {
     // Render the 404 view *at the requested URL* — a named catch-all resolved
     // without its repeatable param would rewrite the address bar to "/".

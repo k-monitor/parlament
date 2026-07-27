@@ -24,6 +24,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import contextlib
 import glob
 import hashlib
 import json
@@ -32,6 +33,11 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:                                    # POSIX only; the writer lock degrades to
+    import fcntl                        # a no-op where it is unavailable.
+except ImportError:                     # pragma: no cover - non-POSIX
+    fcntl = None
 
 from . import kmonitor, nlp, nlp_modal, wikidata
 from .config import settings
@@ -1347,6 +1353,72 @@ def rebuild_word_first_seen(conn: sqlite3.Connection) -> None:
 # Orchestration
 # ---------------------------------------------------------------------------
 
+# Writer processes currently holding the lock in THIS process, by resolved DB
+# path → depth. flock is per open-file-description, so a nested acquire from the
+# same process (update_database falling back to build_database) would deadlock
+# against itself; count depth instead of re-locking.
+_writer_lock_depth: dict[str, int] = {}
+
+
+def _writer_lock_path(db_path: Path) -> Path:
+    return db_path.with_name(db_path.name + ".loader.lock")
+
+
+@contextlib.contextmanager
+def _writer_lock(db_path: Path):
+    """Serialize DB-writing loader runs across processes (ING-2).
+
+    The loader is the only writer, but there can be several writer *processes*:
+    ``./deploy.sh`` runs ``init`` (``ensure-db``) while the ``sync`` sidecar may
+    be mid ``--update``, and both stage their output at the same
+    ``<db>.building`` path — each clears that path when it starts, so whichever
+    finishes second finds its own temp file gone and dies with ``FileNotFoundError``
+    on the final rename, after doing all the work. A blocking lock beside the DB
+    makes the second one wait for the first instead.
+
+    Best-effort: if the lock file cannot be created (read-only dir, no fcntl) the
+    run proceeds unlocked rather than failing — the lock is a safety net, not a
+    correctness requirement for the single-writer case.
+    """
+    db_path = Path(db_path)
+    key = str(db_path.resolve())
+    if _writer_lock_depth.get(key):
+        _writer_lock_depth[key] += 1
+        try:
+            yield
+        finally:
+            _writer_lock_depth[key] -= 1
+        return
+
+    fh = None
+    if fcntl is not None:
+        try:
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            fh = open(_writer_lock_path(db_path), "a+")
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                logger.info("Another loader run holds %s — waiting for it to finish",
+                            _writer_lock_path(db_path).name)
+                fcntl.flock(fh, fcntl.LOCK_EX)
+        except OSError as exc:
+            logger.warning("Could not take the loader lock (%s); proceeding unlocked", exc)
+            if fh is not None:
+                fh.close()
+                fh = None
+
+    _writer_lock_depth[key] = 1
+    try:
+        yield
+    finally:
+        _writer_lock_depth.pop(key, None)
+        if fh is not None:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+            finally:
+                fh.close()
+
+
 def build_database(data_dir: str | Path, db_path: str | Path, *,
                    only_session: str | None = None,
                    skip_wordcloud: bool = False) -> None:
@@ -1355,7 +1427,17 @@ def build_database(data_dir: str | Path, db_path: str | Path, *,
     ``skip_wordcloud`` skips the (expensive) per-sitting term extraction that feeds
     the word cloud / new-words features (WCLOUD-2). Those tables are left empty, so
     those views come up blank — handy for a fast dev rebuild when they aren't needed.
+
+    Waits for any other loader process writing the same DB (see ``_writer_lock``).
     """
+    with _writer_lock(Path(db_path)):
+        _build_database(data_dir, db_path, only_session=only_session,
+                        skip_wordcloud=skip_wordcloud)
+
+
+def _build_database(data_dir: str | Path, db_path: str | Path, *,
+                    only_session: str | None = None,
+                    skip_wordcloud: bool = False) -> None:
     data_dir = Path(data_dir)
     db_path = Path(db_path)
     tmp_path = db_path.with_suffix(db_path.suffix + ".building")
@@ -1514,7 +1596,16 @@ def update_database(data_dir: str | Path, db_path: str | Path, *,
     Degrades to a full :func:`build_database` when there is no DB yet, or when the
     existing DB predates the ``load_state`` table (one rebuild seeds the baseline).
     Returns ``True`` if the DB was changed, ``False`` if nothing was stale.
+
+    Waits for any other loader process writing the same DB (see ``_writer_lock``) —
+    notably ``./deploy.sh``'s ``init`` run racing the ``sync`` sidecar.
     """
+    with _writer_lock(Path(db_path)):
+        return _update_database(data_dir, db_path, skip_wordcloud=skip_wordcloud)
+
+
+def _update_database(data_dir: str | Path, db_path: str | Path, *,
+                     skip_wordcloud: bool = False) -> bool:
     data_dir = Path(data_dir)
     db_path = Path(db_path)
     processed = data_dir / "processed"

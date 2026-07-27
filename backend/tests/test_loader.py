@@ -201,3 +201,51 @@ def test_membership_kept_per_cycle_for_returning_mp(db_path):
     assert c.execute("SELECT COUNT(*) FROM membership WHERE person_id='k001'"
                      ).fetchone()[0] == 2
     c.close()
+
+
+def test_writer_lock_blocks_a_second_process(tmp_path):
+    """DB-4: two loader processes must not stage at the same ``<db>.building``.
+
+    ./deploy.sh runs `init` (a full build) while the `sync` sidecar may be mid
+    `--update`; both clear that temp path when they start, so without a lock the
+    slower one's final os.replace() fails with FileNotFoundError after doing all
+    the work. The lock makes the second wait instead.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    db = tmp_path / "parlamonitor.db"
+    with loader._writer_lock(db):
+        assert loader._writer_lock_path(db).exists()
+        # A separate process must NOT be able to take it while we hold it.
+        probe = subprocess.run(
+            [sys.executable, "-c", textwrap.dedent(f"""
+                import fcntl, sys
+                fh = open({str(loader._writer_lock_path(db))!r}, "a+")
+                try:
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    sys.exit(7)      # held elsewhere — expected
+                sys.exit(0)
+            """)])
+        assert probe.returncode == 7
+
+    # Released on exit: the same probe now succeeds.
+    probe = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(f"""
+            import fcntl, sys
+            fh = open({str(loader._writer_lock_path(db))!r}, "a+")
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        """)])
+    assert probe.returncode == 0
+
+
+def test_writer_lock_is_reentrant(tmp_path):
+    """update_database falls back to build_database in-process; flock is per open
+    file description, so a naive re-acquire would deadlock against itself."""
+    db = tmp_path / "parlamonitor.db"
+    with loader._writer_lock(db):
+        with loader._writer_lock(db):       # must not hang
+            pass
+    assert not loader._writer_lock_depth

@@ -368,6 +368,7 @@ export default {
     count: 'iromány',
     noResults: 'Nincs a feltételeknek megfelelő iromány.',
     submitters: 'Benyújtók',
+    answeredBy: 'Válaszolt',
     mainType: {
       T: 'Törvényjavaslatok', H: 'Határozati javaslatok', I: 'Interpellációk',
       K: 'Kérdések', A: 'Azonnali kérdések', B: 'Beszámolók és jelentések',

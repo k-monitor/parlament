@@ -500,6 +500,40 @@ def test_questions_list_unfiltered_lists_all_questions(client):
     assert r["total"] == 1 and r["bills"][0]["main_type"] == "I"
 
 
+def test_questions_list_names_the_person_who_answered(client, db_path):
+    """A question answered orally carries its `responder` — the answer speech's
+    speaker, resolved through the shared person entity (EXT-2) — so the list card
+    can show asker → answerer. The same field rides along on the plain document
+    list; a bill with no oral answer has none."""
+    _seed_answer(db_path)   # oral answer speech + event, but on bill-uuid-1
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("""INSERT INTO speech (uid, origin_id, speech_uuid, session_id,
+                     period_number, speech_index, person_id, speaker_label,
+                     speaker_status, speaker_office, has_text)
+                 VALUES ('43001-91','43-1-91','uuid-answer-3','43001',43,91,'k001',
+                         'Kovács Béla','memberOfGovernment',
+                         'Belügyminisztérium államtitkára',1)""")
+    c.execute("""INSERT INTO bill_event (bill_id, ord, event_date, name,
+                     related_label, speech_id)
+                 VALUES ('doc-uuid-3', 11, '2026-06-02T11:00:00Z',
+                         'interpelláció szóban megválaszolva',
+                         'Belügyminisztérium államtitkára', 'uuid-answer-3')""")
+    c.commit(); c.close()
+
+    q = client.get("/api/v1/bills/questions/list").json()["bills"][0]
+    assert q["bill_number"] == "I/5"
+    assert q["responder"]["person_id"] == "k001"
+    assert q["responder"]["name"] == "Kovács Béla"
+    assert q["responder"]["office"] == "Belügyminisztérium államtitkára"
+
+    docs = {b["bill_number"]: b for b in
+            client.get("/api/v1/bills", params={"main_type_not": "T"}).json()["bills"]}
+    assert docs["I/5"]["responder"]["name"] == "Kovács Béla"
+    bills = client.get("/api/v1/bills", params={"main_type": "T"}).json()["bills"]
+    assert all(b["responder"] is None for b in bills if b["bill_number"] == "T/2")
+
+
 def test_questions_list_faction_none_matches_unfactioned(client, db_path):
     """The `none` faction bucket matches questions whose asker has no faction."""
     import sqlite3

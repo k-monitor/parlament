@@ -261,6 +261,7 @@ export default {
     type: 'Type', period: 'Cycle', status: 'Status',
     sortNumber: 'By document number', sortDate: 'By submission', count: 'documents',
     noResults: 'No matching documents.', submitters: 'Submitters',
+    answeredBy: 'Answered by',
     mainType: {
       T: 'Bills', H: 'Resolution proposals', I: 'Interpellations',
       K: 'Questions', A: 'Immediate questions', B: 'Reports',

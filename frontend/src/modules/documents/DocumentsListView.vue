@@ -167,13 +167,23 @@ onUnmounted(() => clearTimeout(t))
             <span class="muted small" v-if="b.submitted_date">{{ formatDate(b.submitted_date) }}</span>
           </div>
           <router-link :to="{ name: 'document', params: { id: b.id } }" class="billtitle">{{ b.title }}</router-link>
-          <div class="sponsors small" v-if="b.sponsors.length">
-            <span class="muted">{{ $t('documents.submitters') }}:</span>
+          <div class="sponsors small" v-if="b.sponsors.length || b.responder">
             <template v-for="(s, i) in b.sponsors" :key="i">
               <router-link v-if="s.person_id" :to="{ name: 'profile', params: { id: s.person_id } }">{{ s.name }}</router-link>
               <span v-else>{{ s.name }}</span>
               <FactionBadge v-if="s.faction" :faction="s.faction" />
               <span v-if="i < b.sponsors.length - 1" aria-hidden="true">·</span>
+            </template>
+            <!-- questions: submitter → whoever answered it in plenary -->
+            <template v-if="b.responder">
+              <span class="arrow" aria-hidden="true">→</span>
+              <span class="visually-hidden">{{ $t('documents.answeredBy') }}:</span>
+              <router-link
+                v-if="b.responder.person_id" :title="b.responder.office"
+                :to="{ name: 'profile', params: { id: b.responder.person_id } }"
+              >{{ b.responder.name }}</router-link>
+              <span v-else :title="b.responder.office">{{ b.responder.name }}</span>
+              <FactionBadge v-if="b.responder.faction" :faction="b.responder.faction" />
             </template>
           </div>
         </li>
@@ -192,5 +202,6 @@ onUnmounted(() => clearTimeout(t))
 .billtitle { color: var(--ink); font-weight: 600; }
 .billtitle:hover { color: var(--accent); }
 .sponsors { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
+.sponsors .arrow { color: var(--ink-soft); }
 .badge.status { background: var(--accent-soft); }
 </style>

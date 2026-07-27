@@ -82,6 +82,43 @@ def _sponsors_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, list
     return out
 
 
+def _responders_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, dict]:
+    """Who *answered* each question-type iromány, grouped by bill id (one query
+    for a page). The responder is the speaker of the oral answer speech, resolved
+    from the answer event through the shared speech UUID (EXT-2) — the same
+    person the bill page's answer video shows. A question answered only in
+    writing names a responding portfolio upstream but no person, so it gets no
+    entry; neither does a non-question iromány."""
+    if not bill_ids:
+        return {}
+    ph = ",".join("?" * len(bill_ids))
+    aph = ",".join("?" * len(_ANSWER_EVENTS))
+    rows = db.execute(
+        f"""SELECT e.bill_id, s.person_id, s.speaker_label, s.speaker_office,
+                   p.label AS person_label,
+                   f.label AS faction_label, f.color AS faction_color
+            FROM bill_event e
+            JOIN speech s ON s.speech_uuid = e.speech_id
+            LEFT JOIN person p ON p.person_id = s.person_id
+            LEFT JOIN faction f ON f.id = s.faction_id
+            WHERE e.bill_id IN ({ph}) AND e.name IN ({aph})
+            ORDER BY e.bill_id, e.ord, s.speech_index""",
+        (*bill_ids, *_ANSWER_EVENTS)).fetchall()
+    out: dict[str, dict] = {}
+    for r in rows:
+        name = r["person_label"] or r["speaker_label"]
+        if not name or r["bill_id"] in out:   # first answer event per bill wins
+            continue
+        out[r["bill_id"]] = {
+            "person_id": r["person_id"],
+            "name": name,
+            "office": r["speaker_office"],
+            "faction": {"label": r["faction_label"], "color": r["faction_color"]}
+                       if r["faction_label"] else None,
+        }
+    return out
+
+
 @router.get("")
 def list_bills(
     q: Optional[str] = None,
@@ -148,6 +185,7 @@ def list_bills(
             ORDER BY {order} LIMIT :limit OFFSET :offset""",
         {**params, "limit": limit, "offset": offset}).fetchall()
     sponsors = _sponsors_for(db, [r["id"] for r in rows])
+    responders = _responders_for(db, [r["id"] for r in rows])
     return {
         "total": total, "limit": limit, "offset": offset,
         "bills": [
@@ -157,6 +195,7 @@ def list_bills(
                 "submitted_date": r["submitted_date"], "text_url": r["text_url"],
                 "source_url": r["source_url"], "period_number": r["period_number"],
                 "sponsors": sponsors.get(r["id"], []),
+                "responder": responders.get(r["id"]),
             } for r in rows
         ],
     }
@@ -470,10 +509,12 @@ def questions_list(
         f"""SELECT id, bill_number, title, type, main_type, status, submitted_date
             FROM bill WHERE id IN ({ph})""", page_ids)}
     sponsors = _sponsors_for(db, page_ids)
+    responders = _responders_for(db, page_ids)
     bills = [{
         "id": r["id"], "bill_number": r["bill_number"], "title": r["title"],
         "type": r["type"], "main_type": r["main_type"], "status": r["status"],
         "submitted_date": r["submitted_date"], "sponsors": sponsors.get(bid, []),
+        "responder": responders.get(bid),
     } for bid in page_ids if (r := rows.get(bid))]
     return {"total": total, "limit": limit, "offset": offset, "bills": bills}
 

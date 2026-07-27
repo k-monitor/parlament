@@ -757,17 +757,38 @@ snippet — a site-wide capability, not a per-module feature.
   representative and faction statistics** (speaking time, speech counts, trends —
   REP-3/REP-4/REP-7), but are **never dropped from storage or from the
   sitting-day viewer**. The signal is the upstream per-speech type
-  (*felszólalás típusa*, §3.1/§4.1): a speech whose type is a session-management
-  type — primarily **`ülésvezetés`**, the chair's procedural interjections
-  (calling the next speaker, timekeeping) that would otherwise inflate the
-  presiding officer's totals, plus the chair's formal debate markers
-  **`bizottsági jelentések és az összegző módosító javaslat vitája megkezdve`**
-  and **`… vitája lezárva`** — is marked `procedural` and omitted from the
-  aggregates. Such speeches remain fully searchable (§5.1) and are still shown
-  in the proceedings viewer with their type label (VIE-1), so the record stays
-  complete and the exclusion is transparent (TRUST-1). The set of
-  statistics-excluded types is **configurable, not hard-coded** (OPS-4), so
-  related chairing/ügyrendi types can be added without code changes.
+  (*felszólalás típusa*, §3.1/§4.1): a speech whose type is one of the presiding
+  officer's own procedural utterances is marked `procedural` and omitted from the
+  aggregates. Three families qualify:
+
+  1. **running the sitting** — **`ülésvezetés`** (the chair's interjections
+     calling the next speaker and keeping time), opening and closing the sitting
+     day, adopting the agenda;
+  2. **opening/closing a debate** — the `… vita megkezdve` / `… vitája lezárva`
+     markers in all their per-document variants;
+  3. **announcing a vote and its outcome** — `Országgyűlés határozatképes`,
+     `önálló indítvány elfogadva`, `mentelmi jog felfüggesztve` and the like.
+
+  Excluding families 2–3 matters as much as family 1: the media segment behind an
+  announcement typically spans the entire voting block it concludes, so each one
+  contributes not just a spurious speech but *hours* of phantom speaking time
+  (corpus-wide, `Országgyűlés határozatképes` averages 114 minutes). Left in,
+  they put the deputy speakers at the top of every speaking-time ranking.
+
+  What is **not** excluded: MP-initiated points of order (`ügyrendi kérdés`,
+  `ügyrendi javaslat`) are real interventions by that MP, and `jegyzői
+  ismertetés` is a procedural reading but performed by the notaries, spread thin
+  across many MPs.
+
+  Such speeches remain fully searchable (§5.1) and are still shown in the
+  proceedings viewer with their type label (VIE-1), so the record stays complete
+  and the exclusion is transparent (TRUST-1). The types are **enumerated
+  explicitly** rather than pattern-matched, so the list is auditable and can never
+  silently swallow a substantive type; the sanity check is the speaker base, since
+  every excluded type is spoken by at most 27 people (the presiding officers)
+  while substantive types have 100–478. The set is **configurable, not
+  hard-coded** (OPS-4), so a type parlament.hu introduces later can be added
+  without code changes.
 
 ---
 

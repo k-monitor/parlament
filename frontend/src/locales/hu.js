@@ -249,7 +249,7 @@ export default {
     totalSpeeches: 'Felszólalások száma',
     totalSpeakingTime: 'Összes beszédidő',
     billsSubmitted: 'Benyújtott önálló indítványok',
-    votesAbsent: 'Hiányzás a szavazásokról',
+    votesAbsent: 'Alkalommal nem szavazott',
     voteBreakdown: 'Szavazási részvétel',
     vbUnit: 'szavazás',
     vbVoted: 'Szavazott',

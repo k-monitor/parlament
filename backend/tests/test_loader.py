@@ -249,3 +249,32 @@ def test_writer_lock_is_reentrant(tmp_path):
         with loader._writer_lock(db):       # must not hang
             pass
     assert not loader._writer_lock_depth
+
+
+def test_procedural_type_list_covers_the_chairing_families():
+    """STAT-1: the excluded set is enumerated explicitly, so it needs a guard that
+    all three families stay covered and that no substantive type creeps in."""
+    from app.config import DEFAULT_PROCEDURAL_SPEECH_TYPES as TYPES
+    from app.config import settings
+
+    folded = [t.strip().casefold() for t in TYPES]
+    assert len(folded) == len(set(folded)), "duplicate entry in the procedural list"
+
+    # One representative per family: running the sitting, debate markers, and
+    # vote-outcome announcements (the last is the one that carried whole voting
+    # blocks' worth of phantom speaking time into the chair's totals).
+    for t in ("ülésvezetés", "Az ülésnap megnyitása", "általános vita lezárva",
+              "Országgyűlés határozatképes", "önálló indítvány elfogadva",
+              "mentelmi jog felfüggesztve"):
+        assert settings.is_procedural_type(t), t
+    # Case/whitespace-insensitive, and the double space in this one is verbatim
+    # upstream — it must be matched as-is, not normalised away.
+    assert settings.is_procedural_type("  ÜLÉSVEZETÉS  ")
+    assert settings.is_procedural_type(
+        "Országgyűlés a képviselő tiszteletdíjának csökkentését  fenntartotta")
+
+    # Real contributions — including MP-initiated points of order — must survive.
+    for t in ("felszólalás", "vezérszónoki felszólalás", "előterjesztő nyitóbeszéde",
+              "napirend előtti felszólalás", "kétperces felszólalás", "Expozé",
+              "ügyrendi kérdés", "ügyrendi javaslat", "jegyzői ismertetés", None):
+        assert not settings.is_procedural_type(t), t

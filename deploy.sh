@@ -281,7 +281,11 @@ echo "==> $TARGET_CTR is healthy"
 echo "==> refreshing sync sidecar onto the new image"
 sync_ctrs="$($ENGINE ps -aq --filter 'name=_sync_' 2>/dev/null || true)"
 [ -n "$sync_ctrs" ] && $ENGINE rm -f $sync_ctrs >/dev/null 2>&1 || true
-$COMPOSE up -d sync || echo "warning: could not (re)start sync — the swap itself is done" >&2
+# --no-deps: `sync` declares `depends_on: init (service_completed_successfully)`,
+# so a plain `up -d sync` starts init a SECOND time and blocks until it exits —
+# which with REBUILD_DB=1 is another full multi-minute rebuild, racing the
+# sidecar we just recreated. init already ran above; skip it here.
+$COMPOSE up -d --no-deps sync || echo "warning: could not (re)start sync — the swap itself is done" >&2
 
 # --- cut over: retire the old color -----------------------------------------
 if [ "$ACTIVE" != "none" ] && [ "$ACTIVE" != "$TARGET" ]; then

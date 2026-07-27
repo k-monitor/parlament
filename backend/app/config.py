@@ -17,15 +17,121 @@ ALL_MODULES = ("proceedings", "representatives", "bills", "votes")
 
 # Per-speech types (felszólalás típusa) whose speeches are procedural/chairing
 # and therefore excluded from representative/faction statistics (STAT-1). Kept
-# configurable (OPS-4) so related chairing/ügyrendi types can be added without a
-# code change. Primarily "ülésvezetés" — the chair's interjections that would
-# otherwise inflate the presiding officer's totals — plus the chair's formal
-# markers opening/closing the committee-report debate, which are procedural
-# announcements rather than substantive contributions.
+# configurable (OPS-4) so further types can be added without a code change.
+#
+# These are the presiding officer's own procedural utterances: running the
+# sitting, opening/closing each debate, and reading out what the House has just
+# decided. They are not contributions to the debate, and counting them wrecks the
+# statistics twice over — the chair racks up thousands of them, and the media
+# segment behind an announcement typically spans the whole voting block it
+# concludes (corpus-wide, "Országgyűlés határozatképes" averages 114 minutes),
+# so each one also contributes hours of phantom speaking time.
+#
+# Enumerated explicitly rather than pattern-matched: the list is auditable at a
+# glance and can never silently swallow a substantive type (TRUST-1). The trade
+# is that a type parlament.hu introduces later is counted until it is added here
+# — the sanity check is the speaker base, since every type below is spoken by at
+# most 27 people (the presiding officers) while substantive types have 100–478.
+#
+# Deliberately NOT listed, as judgment calls rather than oversights — add them
+# via PARLAMONITOR_PROCEDURAL_SPEECH_TYPES if you disagree:
+#   "jegyzői ismertetés"   — a procedural reading, but by the notaries (43 MPs,
+#                            ~1 min each), so it distorts nothing
+#   "Eskü", "Expozé"       — ceremonial / the presenter's own exposition
+#   "ügyrendi kérdés", "ügyrendi javaslat" — MP-initiated points of order, i.e.
+#                            a real intervention by that MP, not chairing
 DEFAULT_PROCEDURAL_SPEECH_TYPES = (
+    # Running the sitting day.
     "ülésvezetés",
+    "Az ülésnap megnyitása",
+    "Az ülésnap bezárása",
+    "ülés napirendjének elfogadása",
+    "ülés napirendjének módosítása/kiegészítése",
+    "bejelentés",
+    "mandátum igazolás",
+
+    # Opening / closing / adjourning a debate.
+    "általános vita megkezdve",
+    "általános vita lezárva",
+    "általános vita folytatása",
+    "általános vita elnapolása",
+    "újra megnyitott általános vita megkezdve",
+    "újra megnyitott általános vita lezárva, kiegészítő részletesvita-szakasz megnyitva",
+    "vita megkezdve",
+    "vita lezárva",
+    "összevont vita megkezdve",
+    "összevont vita lezárva",
+    "összevont vita folytatása",
+    "tárgyalás megkezdve",
+    "tárgyalás lezárva",
+    "tárgysorozatba-vételi kérelem tárgyalása megkezdve",
+    "tárgysorozatba-vételi kérelem tárgyalása lezárva",
+    "bizottsági jelentés(ek) vitája megkezdve",
+    "bizottsági jelentés(ek) vitája lezárva",
+    "bizottsági jelentés és módosító javaslat vitája megkezdve",
+    "bizottsági jelentés és módosító javaslat vitája lezárva",
     "bizottsági jelentések és az összegző módosító javaslat vitája megkezdve",
     "bizottsági jelentések és az összegző módosító javaslat vitája lezárva",
+    "zárószavazás előtti jelentés és a zárószavazás előtti módosító javaslat vitája megkezdve",
+    "zárószavazás előtti jelentés és a zárószavazás előtti módosító javaslat vitája lezárva",
+    "Törvényalkotási Bizottság jelentésének vitája megkezdve",
+    "Törvényalkotási Bizottság jelentésének vitája lezárva",
+    "Törvényalkotási Bizottság jelentése és az elfogadott, de ki nem hirdetett "
+    "törvényhez benyújtott módosító javaslat vitája megkezdve",
+    "Törvényalkotási Bizottság jelentése és az elfogadott, de ki nem hirdetett "
+    "törvényhez benyújtott módosító javaslat vitája lezárva",
+    "Törvényalkotási Bizottság jelentése és az alaptörvény-ellenesség kiküszöbölése "
+    "érdekében benyújtott módosító javaslat vitája megkezdve",
+    "Törvényalkotási Bizottság jelentése és az alaptörvény-ellenesség kiküszöbölése "
+    "érdekében benyújtott módosító javaslat vitája lezárva",
+    "normakontroll-javaslat, normakontroll kezdeményezését előkészítő jelentés és a "
+    "normakontroll kezdeményezését előkészítő módosító javaslat vitája megkezdve",
+    "normakontroll-javaslat, normakontroll kezdeményezését előkészítő jelentés és a "
+    "normakontroll kezdeményezését előkészítő módosító javaslat vitája lezárva",
+
+    # Announcing a vote and its outcome.
+    "egyéb szavazás",
+    "határozatképtelen szavazás",
+    "Országgyűlés határozatképes",
+    "Országgyűlés határozatképtelen",
+    "önálló indítvány elfogadva",
+    "önálló indítvány elutasítva",
+    "módosító javaslat(ok) elfogadva",
+    "módosító javaslat fenntartása elutasítva",
+    "összegző módosító javaslat elfogadva",
+    "összegző módosító javaslat minősített többséget igénylő része elfogadva",
+    "zárószavazás előtti módosító javaslat elfogadva",
+    "zárószavazás elhalasztása elfogadva",
+    "javaslat zárószavazás elhalasztására benyújtva",
+    "elfogadott, de ki nem hirdetett törvényhez benyújtott módosító javaslat elfogadva",
+    "elfogadott, de ki nem hirdetett törvényhez benyújtott módosító javaslat elutasítva",
+    "sürgősségi javaslat elfogadva",
+    "sürgősségi javaslat elutasítva",
+    "kivételességi javaslat elfogadva",
+    "kivételességi javaslat elutasítva",
+    "napirendi pont tárgyalásának elnapolása elfogadva",
+    "napirendi pont tárgyalásának elnapolása elutasítva",
+    "határozati házszabályi rendelkezésektől való eltéréshez hozzájárulás elfogadva",
+    "határozati házszabályi rendelkezésektől való eltérés elutasítva",
+    "beszámolóról történő határozathozatalra felkérés elfogadva",
+    "túlterjeszkedő módosító javaslat szabályszerű",
+    "visszavontnak tekintendő",
+    "Országgyűlés az interpellációs választ elfogadta",
+    "Országgyűlés időkeretben történő tárgyaláshoz hozzájárult",
+    "Országgyűlés időkeretben történő tárgyalást elutasította",
+    "Országgyűlés a tárgysorozatba vételt elutasította",
+    "Országgyűlés az indítvány visszavonásához hozzájárult",
+    "Országgyűlés a népszavazást elrendelte",
+
+    # Announcing a decision about a member.
+    "mentelmi jog felfüggesztve",
+    "mentelmi jog fenntartva",
+    "Országgyűlés az összeférhetetlenséget kimondta",
+    "Országgyűlés kizárta a képviselőt az ülésnapról",
+    # NB: the double space is verbatim in the source data — matching is
+    # strip()+casefold() only, it does not collapse inner whitespace.
+    "Országgyűlés a képviselő tiszteletdíjának csökkentését  fenntartotta",
+    "Országgyűlés a képviselő tiszteletdíjának csökkentését és kitiltását fenntartotta",
 )
 
 

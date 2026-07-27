@@ -1,3 +1,9 @@
+<script>
+// Tab keys, which double as the `?tab=` URL values — exported so hosts can
+// validate what they read from the query before handing it back as a prop.
+export const COHESION_TABS = ['matrix', 'bars', 'map']
+</script>
+
 <script setup>
 // The dynamic vote-analysis panel that sits between the votes filter and the
 // list (VOTE-8: party cohesion / defection). It reads the /votes/cohesion
@@ -6,7 +12,7 @@
 // by a tab: an agreement matrix, cohesion/alignment bars, and a bloc map. All
 // three are dependency-free SVG (or reuse BarChart), screen-reader-labelled, and
 // carry a methodology note (A11Y-1 / TRUST-1).
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BarChart from '../../components/BarChart.vue'
 import AgreementMatrix from '../../components/AgreementMatrix.vue'
@@ -20,11 +26,25 @@ const props = defineProps({
   // When the host page already renders the title + methodology (its own <h1>),
   // suppress the panel's internal header so it isn't shown twice.
   hideHeader: { type: Boolean, default: false },
+  // Which view to show. Hosts that deep-link the choice (CohesionView via
+  // `?tab=`, EmbedView from the embed URL) pass it in; anything unrecognized —
+  // including the default empty string — falls back to the matrix.
+  tab: { type: String, default: '' },
 })
+const emit = defineEmits(['update:tab'])
 const { t } = useI18n()
 
-const TABS = ['matrix', 'bars', 'map']
-const tab = ref('matrix')
+const TABS = COHESION_TABS
+// The prop is the source of truth when the host tracks it, but a host may also
+// pass a fixed value (the embed reads its tab from a static URL); `override`
+// keeps the tabs clickable there. A new prop value always wins again.
+const override = ref(null)
+const tab = computed(() => override.value || (TABS.includes(props.tab) ? props.tab : 'matrix'))
+watch(() => props.tab, () => { override.value = null })
+function selectTab(tb) {
+  override.value = tb
+  emit('update:tab', tb)
+}
 
 const factions = computed(() => props.data?.factions || [])
 const matrix = computed(() => props.data?.matrix || [])
@@ -81,7 +101,7 @@ const mapPoints = computed(() => {
         <button
           v-for="tb in TABS" :key="tb" type="button" role="tab"
           class="tab" :class="{ active: tab === tb }" :aria-selected="tab === tb"
-          @click="tab = tb"
+          @click="selectTab(tb)"
         >{{ $t('votes.cohesion.tab_' + tb) }}</button>
       </div>
 

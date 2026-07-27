@@ -146,6 +146,11 @@ const pieExtra = computed(() => {
   return n ? [{ key: 'not_mp', label: t('profile.vbNotMp'), value: n, color: '#c3c7cc' }] : []
 })
 
+// ---- faction-cohesion -----------------------------------------------------
+// Which of the three views the sharer had open, straight from the URL. The
+// panel validates it and keeps its tabs clickable inside the iframe.
+const cohesionTab = computed(() => (typeof route.query.tab === 'string' ? route.query.tab : ''))
+
 // ---- shared: title, empty state, on-site link -----------------------------
 const title = computed(() => {
   switch (props.kind) {
@@ -193,7 +198,10 @@ const siteHref = computed(() => {
       break
     case 'faction-speaking': path = '/representatives/factions'; break
     case 'questions-sankey': path = '/questions'; break
-    case 'faction-cohesion': path = '/votes/cohesion'; break
+    case 'faction-cohesion':
+      path = '/votes/cohesion'
+      if (q.tab) usp.set('tab', q.tab)
+      break
     case 'vote-participation': path = q.id ? `/representatives/${q.id}` : '/representatives'; break
   }
   return `${location.origin}${path}?${usp.toString()}`
@@ -241,7 +249,7 @@ const siteHref = computed(() => {
           <!-- Faction vote analysis (VOTE-8) -->
           <CohesionPanel
             v-else-if="kind === 'faction-cohesion'"
-            :data="data" :scope-label="scopeLabel" hide-header
+            :data="data" :scope-label="scopeLabel" hide-header :tab="cohesionTab"
           />
 
           <!-- Representative vote participation (REP-3) -->

@@ -6,15 +6,30 @@
 // matrix / bars / bloc map). Honours the global cycle chooser (§4A); unlike the
 // old in-list panel it carries no per-page filters (it's the whole-cycle view).
 import { ref, computed, watch, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, currentCycleLabel } from '../../store.js'
 import StateBlock from '../../components/StateBlock.vue'
 import HelpTip from '../../components/HelpTip.vue'
 import EmbedButton from '../../components/EmbedButton.vue'
-import CohesionPanel from './CohesionPanel.vue'
+import CohesionPanel, { COHESION_TABS } from './CohesionPanel.vue'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+
+// The selected view lives in `?tab=` so it is deep-linkable, survives reload and
+// back/forward, and can be baked into the embed snippet. The matrix is the
+// default and stays out of the URL.
+const tab = computed(() => {
+  const v = route.query.tab
+  return COHESION_TABS.includes(v) ? v : 'matrix'
+})
+function setTab(tb) {
+  if (tb === tab.value) return
+  router.replace({ query: { ...route.query, tab: tb === 'matrix' ? undefined : tb } })
+}
 
 const data = ref(null)
 const loading = ref(false)
@@ -64,10 +79,14 @@ watch(() => store.cycle, load)
     :empty="!!data && !ready" :empty-text="$t('votes.cohesion.empty')"
     @retry="load"
   >
-    <CohesionPanel v-if="ready" :data="data" :scope-label="scopeLabel" hide-header>
+    <CohesionPanel
+      v-if="ready" :data="data" :scope-label="scopeLabel" hide-header
+      :tab="tab" @update:tab="setTab"
+    >
       <template #corner>
         <EmbedButton
           kind="faction-cohesion" :title="$t('votes.cohesion.title')"
+          :params="{ tab: tab === 'matrix' ? '' : tab }"
           :height="580" :max-width="900"
         />
       </template>

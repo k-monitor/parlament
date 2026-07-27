@@ -118,16 +118,6 @@ watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
       />
       <button class="btn" type="submit">{{ $t('home.searchButton') }}</button>
     </form>
-
-    <p v-if="store.meta" class="stats-lead">
-      {{ startYear ? $t('home.statsLead', { year: startYear }) : $t('home.statsLeadNoYear') }}
-    </p>
-    <dl v-if="store.meta" class="stats" aria-label="corpus statistics">
-      <div><dt>{{ fmt(counts.sentences) }}</dt><dd>{{ $t('home.stats.sentences') }}</dd></div>
-      <div><dt>{{ fmt(counts.speeches) }}</dt><dd>{{ $t('home.stats.speeches') }}</dd></div>
-      <div><dt>{{ fmt(counts.sessions) }}</dt><dd>{{ $t('home.stats.sessions') }}</dd></div>
-      <div><dt>{{ fmt(counts.representatives) }}</dt><dd>{{ $t('home.stats.representatives') }}</dd></div>
-    </dl>
   </section>
 
   <section class="grid explore-grid">
@@ -205,6 +195,18 @@ watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
     </div>
   </section>
 
+  <section v-if="store.meta" class="stats-section card pad">
+    <p class="stats-lead">
+      {{ startYear ? $t('home.statsLead', { year: startYear }) : $t('home.statsLeadNoYear') }}
+    </p>
+    <dl class="stats" aria-label="corpus statistics">
+      <div><dt>{{ fmt(counts.sentences) }}</dt><dd>{{ $t('home.stats.sentences') }}</dd></div>
+      <div><dt>{{ fmt(counts.speeches) }}</dt><dd>{{ $t('home.stats.speeches') }}</dd></div>
+      <div><dt>{{ fmt(counts.sessions) }}</dt><dd>{{ $t('home.stats.sessions') }}</dd></div>
+      <div><dt>{{ fmt(counts.representatives) }}</dt><dd>{{ $t('home.stats.representatives') }}</dd></div>
+    </dl>
+  </section>
+
   <section class="grid explore-grid home-donate-row">
     <DonateCard class="home-donate" />
   </section>
@@ -216,11 +218,21 @@ watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
 .hero-sub { font-size: 1.1rem; max-width: 60ch; }
 .searchbar { display: flex; gap: .5rem; margin: 1.2rem 0; max-width: 640px; }
 .searchbar input { flex: 1; font-size: 1.05rem; padding: .7rem .8rem; }
-.stats-lead { margin: 1.2rem 0 .6rem; color: var(--ink); font-size: 1.05rem; }
-.stats { display: flex; flex-wrap: wrap; gap: 2rem; margin: 0; }
-.stats div { margin: 0; }
+.stats-section { margin-top: 1.5rem; }
+.stats-lead { margin: 0 0 .6rem; color: var(--ink); font-size: 1.05rem; }
+/* Even four-column grid so the numbers sit on a regular rhythm and the
+   dividers land at consistent intervals regardless of each number's width. */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; max-width: 680px; }
+.stats div { margin: 0; padding: 0 1.6rem; border-left: 1px solid var(--line); }
+.stats div:first-child { padding-left: 0; border-left: 0; }
 .stats dt { font-size: 1.6rem; font-weight: 800; color: var(--accent); }
 .stats dd { margin: 0; color: var(--ink-faint); font-size: .9rem; }
+/* On narrow screens fold to a 2×2 grid, keeping the divider only mid-row. */
+@media (max-width: 620px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 1.1rem; max-width: 360px; }
+  .stats div { padding-left: 1.4rem; }
+  .stats div:nth-child(odd) { padding-left: 0; border-left: 0; }
+}
 /* Shared column tracks for the donate row + the three feature cards, so the
    donate card's edges line up exactly with the cards below it. */
 .explore-grid { grid-template-columns: 1fr; }

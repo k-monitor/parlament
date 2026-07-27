@@ -1,19 +1,19 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { store, loadMeta, setCycle, periodLabel } from './store.js'
+import { useRoute } from 'vue-router'
+import { store, loadMeta } from './store.js'
 import { setLocale } from './i18n.js'
 import { formatLongDate } from './format.js'
 import { COHESION_ENABLED } from './features.js'
 import { useI18n } from 'vue-i18n'
+import CycleSelect from './components/CycleSelect.vue'
 
 const { locale, t } = useI18n()
 const route = useRoute()
-const router = useRouter()
 onMounted(() => { loadMeta().catch(() => {}) })
 
 // Embeddable figures (see EmbedView) render inside a third-party <iframe> with no
-// site chrome: the whole header / cycle bar / sub-nav / footer are suppressed so
+// site chrome: the whole header / sub-nav / footer are suppressed so
 // only the chart shows. Detected from the matched route's meta.embed flag.
 const isEmbed = computed(() => route.meta.embed === true)
 
@@ -56,34 +56,18 @@ const currentSection = computed(() =>
   Object.values(NAV_SECTIONS).find((s) => s.match.includes(route.name)) || null)
 function sectionActive(id) { return NAV_SECTIONS[id].match.includes(route.name) }
 
-// The Frakcióelemzés (cohesion) sub-tab compares how factions vote *within one
-// cycle*; across all cycles that comparison is meaningless, so it's hidden while
-// the global scope is "all cycles" (router.js bounces the route to match). It is
-// also hidden outright while COHESION_ENABLED is off (features.js). Either way
-// the Votes section can be left with a single tab, in which case the sub-tab bar
-// is redundant with the top nav and hidden entirely (see the `v-if` below).
+// The Frakcióelemzés (cohesion) sub-tab compares how factions vote *within* the
+// cycles in scope; across the whole corpus that comparison is meaningless, so
+// it's hidden while the global scope is "all cycles" (router.js bounces the
+// route to match). It is also hidden outright while COHESION_ENABLED is off
+// (features.js). Either way the Votes section can be left with a single tab, in
+// which case the sub-tab bar is redundant with the top nav and hidden entirely
+// (see the `v-if` below).
 const sectionTabs = computed(() =>
   (currentSection.value ? currentSection.value.tabs : []).filter(
-    (t) => !(t.name === 'cohesion' && (!COHESION_ENABLED || store.cycle === null))))
+    (t) => !(t.name === 'cohesion' && (!COHESION_ENABLED || !store.cycles.length))))
 function tabActive(tab) {
   return route.name === tab.name || (tab.detail || []).includes(route.name)
-}
-
-// Global electoral-cycle chooser, rendered as a bar under the main nav. The
-// selected cycle scopes every period-aware view; "all" drops the period filter
-// site-wide. Periods arrive newest-first from /meta; the bar shows them
-// oldest→newest (after "all cycles") so it reads left-to-right like a timeline.
-const periods = computed(() => (store.meta && store.meta.periods) || [])
-const periodsAsc = computed(() => [...periods.value].reverse())
-// The chip timeline collapses into a native <select> on narrow screens; it binds
-// to this string ('all' | period number) and hands it straight to selectCycle.
-const cycleValue = computed(() => (store.cycle === null ? 'all' : String(store.cycle)))
-function selectCycle(value) {
-  const v = value === 'all' ? 'all' : String(value) // 'all' | period number — the query value too
-  setCycle(v === 'all' ? null : Number(v))
-  // Reflect the new scope in the URL (replace, so it doesn't pile up history)
-  // so the address stays shareable. The router guard keeps store ↔ URL in sync.
-  router.replace({ query: { ...route.query, cycle: v } })
 }
 
 function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
@@ -109,8 +93,8 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 
 <template>
   <a v-if="!isEmbed" class="skip-link" href="#main">{{ $t('app.skipToContent') }}</a>
-  <!-- The main nav and the cycle chooser stick to the top together as one block,
-       so scrolling never leaves the page without its active-cycle context. -->
+  <!-- The main nav (with the cycle chooser in it) sticks to the top, so
+       scrolling never leaves the page without its active-cycle context. -->
   <div v-if="!isEmbed" class="site-top">
   <header class="site-header">
     <div class="container header-bar">
@@ -148,6 +132,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
             <rect x="11" y="10.5" width="2" height="6.5" rx="1" fill="currentColor" />
           </svg>
         </router-link>
+        <CycleSelect />
         <button class="lang" @click="toggleLang" :aria-label="'Language: ' + locale">
           {{ locale === 'hu' ? 'EN' : 'HU' }}
         </button>
@@ -155,37 +140,6 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
     </div>
   </header>
 
-  <nav v-if="periods.length" class="cyclebar" :aria-label="$t('cycle.label')">
-    <div class="container cyclebar-inner">
-      <svg class="cyclebar-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
-        <rect x="3" y="4.5" width="18" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
-        <path d="M3 9.5h18M8 2.5v4M16 2.5v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-      </svg>
-      <!-- Wide screens: the full period timeline as chips. -->
-      <div class="cyclechips">
-        <span class="cyclesep" aria-hidden="true"></span>
-        <button
-          class="cyclechip" :class="{ active: store.cycle === null }"
-          :aria-pressed="store.cycle === null ? 'true' : 'false'" @click="selectCycle('all')"
-        >{{ $t('cycle.all') }}</button>
-        <template v-for="p in periodsAsc" :key="p.number">
-          <span class="cyclesep" aria-hidden="true"></span>
-          <button
-            class="cyclechip" :class="{ active: store.cycle === p.number }"
-            :aria-pressed="store.cycle === p.number ? 'true' : 'false'" @click="selectCycle(p.number)"
-          >{{ periodLabel(p) }}</button>
-        </template>
-      </div>
-      <!-- Narrow screens: the same choice as a styled dropdown. -->
-      <select
-        class="cyclesel" :value="cycleValue" @change="selectCycle($event.target.value)"
-        :aria-label="$t('cycle.label')"
-      >
-        <option value="all">{{ $t('cycle.all') }}</option>
-        <option v-for="p in periodsAsc" :key="p.number" :value="p.number">{{ periodLabel(p) }}</option>
-      </select>
-    </div>
-  </nav>
   </div>
 
   <nav v-if="!isEmbed && sectionTabs.length > 1" class="subheader" :aria-label="$t('nav.submenu')">
@@ -276,9 +230,8 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 </template>
 
 <style scoped>
-/* Sticky wrapper for the main nav + cycle bar, so both stay pinned to the top as
-   one block on scroll. The shadow sits at the block's bottom edge, separating the
-   whole nav group from the scrolling content beneath it. */
+/* Sticky wrapper for the main nav, pinned to the top on scroll. The shadow sits
+   at its bottom edge, separating the nav from the scrolling content beneath. */
 .site-top { position: sticky; top: 0; z-index: 20; box-shadow: var(--shadow); }
 .site-header {
   background: var(--accent); color: var(--accent-ink);
@@ -310,46 +263,8 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 .subtab:hover { color: var(--accent); background: var(--accent-soft); text-decoration: none; }
 .subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-/* Global electoral-cycle bar, directly under the main nav. Reads like a
-   timeline — a calendar icon, then "all cycles" and each period oldest→newest,
-   with the active scope shown as a solid pill. On narrow screens the chips give
-   way to a styled dropdown (see the breakpoint below). */
-.cyclebar { background: var(--accent-soft); border-bottom: 1px solid #f0cfc9; }
-.cyclebar-inner {
-  display: flex; align-items: center; gap: .3rem;
-  padding-top: .4rem; padding-bottom: .4rem;
-}
-.cyclebar-icon { color: var(--accent); flex-shrink: 0; margin-right: .05rem; }
-/* The chip row absorbs its own overflow, so a growing period list scrolls
-   sideways here rather than pushing the layout wide. */
-.cyclechips { display: flex; align-items: center; gap: .3rem; min-width: 0; overflow-x: auto; }
-.cyclesep { width: 1px; height: 1.05rem; background: #e6b9b1; flex-shrink: 0; }
-.cyclechip {
-  appearance: none; border: none; background: transparent; cursor: pointer;
-  color: var(--accent); font-family: inherit; font-weight: 700; font-size: .82rem;
-  line-height: 1; white-space: nowrap; padding: .35rem .65rem; border-radius: 999px;
-}
-.cyclechip:hover { background: rgba(178,40,23,.1); }
-.cyclechip.active, .cyclechip.active:hover { background: var(--accent); color: #fff; }
-
-/* Mobile form of the same chooser: a pill-shaped native select tinted to match
-   the bar, with a custom accent chevron (appearance:none drops the default one). */
-.cyclesel { display: none; }
-.cyclesel option { color: var(--ink); }
-@media (max-width: 640px) {
-  .cyclechips { display: none; }
-  .cyclesel {
-    display: inline-flex; align-items: center; box-sizing: border-box; height: 32px; width: auto;
-    appearance: none; -webkit-appearance: none;
-    border: 1px solid #e6b9b1; background-color: var(--surface); color: var(--accent);
-    border-radius: 999px; font-family: inherit; font-weight: 700; font-size: .82rem;
-    padding: 0 1.9rem 0 .75rem; cursor: pointer;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23B22817' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-    background-repeat: no-repeat; background-position: right .65rem center;
-  }
-}
-
-/* The header controls share one height + box model so they line up. */
+/* The header controls share one height + box model so they line up (the cycle
+   chooser next to them matches it from its own scoped styles). */
 .infolink, .lang {
   box-sizing: border-box; height: 34px; border: 1px solid rgba(255,255,255,.35);
   background: rgba(255,255,255,.15); border-radius: 8px; color: #fff;

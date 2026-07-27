@@ -1,27 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { loadMeta, setCycle, store } from './store.js'
+import { loadMeta, parseCycles, serializeCycles, setCycles, store } from './store.js'
 import { COHESION_ENABLED } from './features.js'
 
-// The global electoral cycle is carried in a `?cycle=` query param so that a
-// shared link reproduces the exact scope the sharer was viewing (a period
-// number, or `all` for the "all cycles" scope — matching the localStorage
-// sentinel in store.js). The guard below keeps it in sync in both directions.
+// The global electoral-cycle scope is carried in a `?cycle=` query param so that
+// a shared link reproduces the exact scope the sharer was viewing: one or more
+// comma-separated period numbers ("43" / "43,44"), or `all` for the "all cycles"
+// scope — matching the localStorage sentinel in store.js. The guard below keeps
+// it in sync in both directions.
 const CYCLE_QUERY = 'cycle'
-
-// Parse a `?cycle=` value into a store cycle, validating against known periods.
-// `undefined` = absent or invalid (caller falls back to the current cycle),
-// `null` = the explicit "all cycles" sentinel, otherwise the period number.
-function cycleFromQuery(raw, periods) {
-  if (raw === undefined || raw === null) return undefined
-  if (raw === 'all') return null
-  const n = Number(raw)
-  return Number.isFinite(n) && periods.some((p) => p.number === n) ? n : undefined
-}
-
-// Serialise a store cycle (null = all) into its `?cycle=` query value.
-function cycleToQuery(cycle) {
-  return cycle === null ? 'all' : String(cycle)
-}
 
 // Core routes are always present. Feature-module views are **lazily loaded**
 // (separate chunks, EXT-4) and gated on the module being enabled (EXT-6).
@@ -160,30 +146,30 @@ router.beforeEach(async (to) => {
     }
   }
 
-  // Sync the global cycle with the URL. A valid `?cycle=` wins — adopt it so a
-  // shared link overrides the visitor's saved default. Otherwise write the
-  // current cycle (set by loadMeta→initCycle from localStorage/latest) back
+  // Sync the global cycle scope with the URL. A valid `?cycle=` wins — adopt it
+  // so a shared link overrides the visitor's saved default. Otherwise write the
+  // current scope (set by loadMeta→initCycles from localStorage/latest) back
   // into the URL, so every address carries an explicit, shareable scope. The
   // in-guard redirect commits once (no extra history entry), and views that
   // rebuild the query on filter/pagination simply get the param re-added.
   if (store.loaded) {
     const periods = (store.meta && store.meta.periods) || []
-    const fromUrl = cycleFromQuery(to.query[CYCLE_QUERY], periods)
+    const fromUrl = parseCycles(to.query[CYCLE_QUERY], periods)
     if (fromUrl !== undefined) {
-      if (store.cycle !== fromUrl) setCycle(fromUrl)
+      if (serializeCycles(store.cycles) !== serializeCycles(fromUrl)) setCycles(fromUrl)
     } else {
-      const desired = cycleToQuery(store.cycle)
+      const desired = serializeCycles(store.cycles)
       if (to.query[CYCLE_QUERY] !== desired) {
         return { path: to.path, query: { ...to.query, [CYCLE_QUERY]: desired }, hash: to.hash }
       }
     }
 
-    // Frakcióelemzés (cohesion) is a single-cycle analysis — co-voting compared
-    // across different cycles is meaningless — so under the "all cycles" scope
-    // its sub-tab is hidden (App.vue) and its route is unreachable: bounce to the
-    // vote list, keeping the scope. Also fires when the user switches to "all
-    // cycles" while already viewing the page.
-    if (to.name === 'cohesion' && store.cycle === null) {
+    // Frakcióelemzés (cohesion) is a within-cycle analysis — co-voting compared
+    // across a whole multi-decade corpus is meaningless — so under the "all
+    // cycles" scope its sub-tab is hidden (App.vue) and its route is unreachable:
+    // bounce to the vote list, keeping the scope. Also fires when the user
+    // switches to "all cycles" while already viewing the page.
+    if (to.name === 'cohesion' && !store.cycles.length) {
       return { name: 'votes', query: to.query, hash: to.hash }
     }
   }

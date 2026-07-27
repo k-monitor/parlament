@@ -20,9 +20,9 @@ let loadSeq = 0
 async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
-  // Scoped to the global cycle chooser (store.cycle; null = all cycles).
+  // Scoped to the global cycle chooser (store.cycles; empty = all cycles).
   try {
-    const res = await api.factions(store.cycle)
+    const res = await api.factions(store.cycles)
     if (seq === loadSeq) data.value = res
   } catch {
     if (seq === loadSeq) error.value = true
@@ -32,7 +32,7 @@ async function load() {
 }
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
 // Re-fetch when the global cycle changes.
-watch(() => store.cycle, load)
+watch(() => store.cycles.join(','), load)
 
 const chartItems = computed(() =>
   (data.value ? data.value.factions : [])

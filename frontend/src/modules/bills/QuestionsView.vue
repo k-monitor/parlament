@@ -80,7 +80,7 @@ async function load() {
   loading.value = true; error.value = false
   clearFlow()
   try {
-    const res = await api.questionsSankey(store.cycle, showType.value)
+    const res = await api.questionsSankey(store.cycles, showType.value)
     if (seq === loadSeq) data.value = res
   } catch {
     if (seq === loadSeq) error.value = true
@@ -163,7 +163,7 @@ async function loadFlow() {
   flowLoading.value = true; flowError.value = false
   try {
     const res = await api.questionsList({
-      period: store.cycle,
+      period: store.cycles,
       faction: flow.value.faction,
       main_type: flow.value.main_type,
       answerer: flow.value.answerer,
@@ -185,7 +185,7 @@ function gotoFlowPage(p) {
 }
 
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
-watch(() => store.cycle, load)
+watch(() => store.cycles.join(','), load)
 watch(() => route.query.types, (v) => {
   const s = v === '1'
   if (s !== showType.value) { showType.value = s; load() }

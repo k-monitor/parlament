@@ -30,10 +30,10 @@ let loadSeq = 0
 async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
-  // Scoped to the global cycle chooser (store.cycle; null = all cycles).
+  // Scoped to the global cycle chooser (store.cycles; empty = all cycles).
   try {
     const res = await api.sessions({
-      period: store.cycle, limit: PAGE, offset: route.query.offset || 0,
+      period: store.cycles, limit: PAGE, offset: route.query.offset || 0,
     })
     if (seq === loadSeq) data.value = res
   } catch {
@@ -45,7 +45,7 @@ async function load() {
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
 watch(() => route.query, load)
 // Changing the cycle resets to the first page; the offset reset triggers load via the query watcher.
-watch(() => store.cycle, () => {
+watch(() => store.cycles.join(','), () => {
   if (route.query.offset) router.push({ name: 'sessions', query: {} })
   else load()
 })

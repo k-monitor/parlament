@@ -19,12 +19,14 @@ import EmbedButton from '../../components/EmbedButton.vue'
 const props = defineProps({ id: String })
 const { t } = useI18n()
 
-// First day of the selected cycle, so the activity board always starts there
-// (null under "all cycles" → the board starts at the MP's first active day).
+// First day of the earliest cycle in scope, so the activity board always starts
+// there (null under "all cycles" → the board starts at the MP's first active day).
 const cycleStart = computed(() => {
-  if (store.cycle === null) return null
-  const p = (store.meta?.periods || []).find((x) => x.number === store.cycle)
-  return p?.date_start ? String(p.date_start).slice(0, 10) : null
+  if (!store.cycles.length) return null
+  const starts = (store.meta?.periods || [])
+    .filter((x) => store.cycles.includes(x.number) && x.date_start)
+    .map((x) => String(x.date_start).slice(0, 10))
+  return starts.length ? starts.sort()[0] : null
 })
 
 const profile = ref(null)
@@ -91,12 +93,12 @@ async function toggleDayWith(open, cache, key, fetcher) {
 }
 function toggleDay(day) {
   toggleDayWith(openDays, dayCache, day.session_id, (sid) =>
-    api.repSpeeches(props.id, { session_id: sid, period: store.cycle, limit: 200 })
+    api.repSpeeches(props.id, { session_id: sid, period: store.cycles, limit: 200 })
       .then((r) => r.speeches))
 }
 function toggleVoteDay(day) {
   toggleDayWith(openVoteDays, voteDayCache, day.date, (date) =>
-    api.repVotes(props.id, { date, period: store.cycle, limit: 200 })
+    api.repVotes(props.id, { date, period: store.cycles, limit: 200 })
       .then((r) => r.votes))
 }
 
@@ -178,9 +180,10 @@ async function load() {
     for (const k of Object.keys(m)) delete m[k]
   expanded.questions = expanded.lawbills = expanded.other = expanded.votes = expanded.days = false
   try {
-    // Everything on the profile is scoped to the global cycle (store.cycle; null
-    // = all cycles), so the page never mixes in a previous cycle's data (§4A).
-    const period = store.cycle
+    // Everything on the profile is scoped to the global cycle scope
+    // (store.cycles; empty = all cycles), so the page never mixes in an
+    // out-of-scope cycle's data (§4A).
+    const period = store.cycles
     // A feature-module failure must not break the profile, so each resolves to
     // null on error (and is skipped entirely when its module is disabled).
     // Submitted irományok are fetched in three buckets by main type so each
@@ -217,12 +220,12 @@ async function load() {
     if (seq === loadSeq) loading.value = false
   }
 }
-// Gate the first fetch on the manifest so store.cycle is resolved to the latest
+// Gate the first fetch on the manifest so store.cycles is resolved to the latest
 // cycle before we query (otherwise the profile would briefly be scoped to "all").
 onMounted(async () => { await loadMeta().catch(() => {}); load() })
 watch(() => props.id, load)
 // Re-fetch when the user switches the global cycle.
-watch(() => store.cycle, load)
+watch(() => store.cycles.join(','), load)
 </script>
 
 <template>

@@ -15,6 +15,7 @@ import os
 import sqlite3
 import threading
 import unicodedata
+from collections.abc import Iterable
 from pathlib import Path
 
 from .config import settings
@@ -48,6 +49,45 @@ def like_contains(term: str) -> str:
                    .replace("%", "\\%")
                    .replace("_", "\\_"))
     return f"%{escaped}%"
+
+
+def period_list(period: Iterable[int] | None) -> list[int]:
+    """Canonical form of the ``period`` query param: sorted, de-duplicated
+    electoral-period numbers. An empty list means "all cycles" (no filter).
+
+    Every period-aware endpoint takes ``period`` as a *repeatable* param
+    (``?period=42&period=43``), because the site's cycle chooser lets the reader
+    scope to several cycles at once; a single ``?period=43`` is the one-element
+    case and behaves exactly as it did when the param was scalar."""
+    return sorted({int(p) for p in (period or ())})
+
+
+def period_sql(period: Iterable[int] | None, column: str) -> str:
+    """SQL predicate restricting ``column`` to the selected periods, or ``""``
+    when nothing is selected (all cycles).
+
+    The numbers are inlined rather than bound: they are ints (validated by
+    FastAPI, re-coerced above), so this is injection-safe, and it lets the
+    fragment be spliced into any query regardless of its paramstyle — the
+    period-aware queries here use named, qmark and positional binding alike."""
+    nums = period_list(period)
+    if not nums:
+        return ""
+    if len(nums) == 1:
+        return f"{column} = {nums[0]}"
+    return f"{column} IN ({', '.join(str(n) for n in nums)})"
+
+
+def period_and(period: Iterable[int] | None, column: str) -> str:
+    """``period_sql`` prefixed with ``" AND "``, for appending to a WHERE that
+    already has at least one condition (``""`` when scope is all cycles)."""
+    sql = period_sql(period, column)
+    return f" AND {sql}" if sql else ""
+
+
+def period_key(period: Iterable[int] | None) -> tuple[int, ...]:
+    """Hashable canonical scope, for aggregate cache keys (``()`` = all cycles)."""
+    return tuple(period_list(period))
 
 
 def open_connection(db_path: str | None = None) -> sqlite3.Connection:

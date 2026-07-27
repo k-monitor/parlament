@@ -44,13 +44,15 @@ const showAllExamples = ref(false)
 const visibleQueries = computed(() =>
   showAllExamples.value ? EXAMPLE_QUERIES : EXAMPLE_QUERIES.slice(0, INITIAL_EXAMPLES))
 
-// On the all-cycles view the histograms span the whole corpus, so mark each
-// electoral cycle's start and end with a line to keep the eras legible. Empty
-// for a single-cycle scope (the axis is then just that cycle).
+// Whenever the histograms span more than one cycle, mark each electoral cycle's
+// start and end with a line to keep the eras legible — the whole corpus under
+// "all cycles", just the selected ones under a multi-cycle scope. Empty for a
+// single-cycle scope (the axis is then just that cycle).
 const cycleMarkers = computed(() => {
-  if (store.cycle !== null || !store.meta) return []
+  if (store.cycles.length === 1 || !store.meta) return []
+  const inScope = (p) => !store.cycles.length || store.cycles.includes(p.number)
   const out = []
-  for (const p of store.meta.periods || []) {
+  for (const p of (store.meta.periods || []).filter(inScope)) {
     const label = periodLabel(p)
     if (p.date_start) out.push({ date: p.date_start, label })
     if (p.date_end) out.push({ date: p.date_end, label })
@@ -59,30 +61,31 @@ const cycleMarkers = computed(() => {
 })
 
 // The histograms honour the global cycle scope (§4A) like every other view.
-// Monotonic seq guards against out-of-order responses when the cycle switches;
-// loadedCycle dedupes the onMounted + watcher double-trigger for the same cycle.
+// Monotonic seq guards against out-of-order responses when the scope switches;
+// loadedCycle (the scope, serialised) dedupes the onMounted + watcher
+// double-trigger for the same scope.
 let exSeq = 0
 let loadedCycle
 const loadedTerms = new Set()
 async function loadExamples() {
-  // A cycle switch invalidates every histogram, so reset and refetch from
+  // A scope switch invalidates every histogram, so reset and refetch from
   // scratch; otherwise (e.g. the "more topics" toggle) fetch only the newly
-  // visible terms we haven't loaded yet for the current cycle.
-  if (loadedCycle !== store.cycle) {
-    loadedCycle = store.cycle
+  // visible terms we haven't loaded yet for the current scope.
+  if (loadedCycle !== store.cycles.join(',')) {
+    loadedCycle = store.cycles.join(',')
     loadedTerms.clear()
     for (const term of EXAMPLE_QUERIES) examples[term].ready = false
-    exSeq++ // invalidate any in-flight fetch from the previous cycle
+    exSeq++ // invalidate any in-flight fetch from the previous scope
   }
-  // seq is per-cycle, not per-call: batches within one cycle (initial + "more")
-  // are all valid, so only a cycle switch drops still-pending responses.
+  // seq is per-scope, not per-call: batches within one scope (initial + "more")
+  // are all valid, so only a scope switch drops still-pending responses.
   const seq = exSeq
   const terms = visibleQueries.value.filter((term) => !loadedTerms.has(term))
   if (!terms.length) return
   for (const term of terms) loadedTerms.add(term)
   await Promise.all(terms.map(async (term) => {
     try {
-      const t = await api.searchTrend({ q: term, period: store.cycle })
+      const t = await api.searchTrend({ q: term, period: store.cycles })
       if (seq !== exSeq) return
       examples[term].trend = t
       examples[term].total = (t.buckets || []).reduce((s, b) => s + b.hits, 0)
@@ -100,7 +103,7 @@ onMounted(async () => {
   await loadMeta().catch(() => {})
   if (showProceedings.value) loadExamples()
 })
-watch(() => store.cycle, () => { if (showProceedings.value) loadExamples() })
+watch(() => store.cycles.join(','), () => { if (showProceedings.value) loadExamples() })
 // Revealing the rest of the topics fetches their histograms on demand.
 watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
 </script>

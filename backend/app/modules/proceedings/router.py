@@ -10,13 +10,13 @@ import html
 import json
 import sqlite3
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...analytics import search_analytics
 from ...config import settings
-from ...db import get_db, like_contains
+from ...db import get_db, like_contains, period_key, period_list, period_sql
 from ...media import per_speech_clip
 from ...query_cache import cached_aggregate
 from ...search import build_match
@@ -132,8 +132,9 @@ def _search_where(q, date_from, date_to, period, person_id, faction_id, agenda_t
         where.append("ss.date >= :date_from"); params["date_from"] = date_from; needs.add("session")
     if date_to:
         where.append("ss.date <= :date_to"); params["date_to"] = date_to; needs.add("session")
-    if period is not None:
-        where.append("sp.period_number = :period"); params["period"] = period; needs.add("speech")
+    per_sql = period_sql(period, "sp.period_number")
+    if per_sql:
+        where.append(per_sql); needs.add("speech")
     if person_id:
         where.append("sp.person_id = :person_id"); params["person_id"] = person_id; needs.add("speech")
     if faction_id is not None:
@@ -168,7 +169,8 @@ def search(
     q: str = Query(..., min_length=1, description="Free-text query; \"…\" = exact phrase"),
     date_from: Optional[str] = Query(None, description="ISO date lower bound"),
     date_to: Optional[str] = Query(None, description="ISO date upper bound"),
-    period: Optional[int] = Query(None, description="Electoral period number"),
+    period: Optional[List[int]] = Query(
+        None, description="Electoral period number(s); repeat to scope to several cycles"),
     person_id: Optional[str] = None,
     faction_id: Optional[int] = None,
     agenda_type: Optional[str] = None,
@@ -212,7 +214,10 @@ def search(
     # (not trend/breakdown/suggest, which the SPA fires for the same query), so one
     # user search is one recorded event. Best-effort — never affects the response.
     search_analytics.record(
-        query=q, date_from=date_from, date_to=date_to, period=period,
+        query=q, date_from=date_from, date_to=date_to,
+        # Multi-cycle scope is recorded as one canonical "43,44" key, so the same
+        # selection always aggregates onto the same row.
+        period=",".join(str(n) for n in period_list(period)) or None,
         person_id=person_id, faction_id=faction_id, agenda_type=agenda_type,
         sort=sort if sort in _SEARCH_SORTS else "relevance",
         zero_results=(total == 0),
@@ -345,7 +350,8 @@ def search_trend(
     q: str = Query(..., min_length=1, description="Free-text query; \"…\" = exact phrase"),
     date_from: Optional[str] = Query(None, description="ISO date lower bound"),
     date_to: Optional[str] = Query(None, description="ISO date upper bound"),
-    period: Optional[int] = Query(None, description="Electoral period number"),
+    period: Optional[List[int]] = Query(
+        None, description="Electoral period number(s); repeat to scope to several cycles"),
     person_id: Optional[str] = None,
     faction_id: Optional[int] = None,
     agenda_type: Optional[str] = None,
@@ -369,8 +375,8 @@ def search_trend(
     # ongoing cycle's axis end is anchored to *today* (_ongoing_axis_end), so today
     # is part of the key — the axis is never stale by more than a day (and TTL
     # keeps it far fresher). The 400 for an empty query is raised above the cache.
-    key = (q, date_from, date_to, period, person_id, faction_id, agenda_type,
-           date.today().isoformat())
+    key = (q, date_from, date_to, period_key(period), person_id, faction_id,
+           agenda_type, date.today().isoformat())
     return cached_aggregate("search_trend", key, lambda: _search_trend_compute(
         db, q, where_sql, params, date_from, date_to, period))
 
@@ -391,27 +397,29 @@ def _search_trend_compute(db, q, where_sql, params, date_from, date_to, period):
         return {"query": q, "granularity": "month", "buckets": []}
 
     # Anchor the chart's time axis to the *scope*, not to this query's own first
-    # and last hit, so every card sharing a cycle draws one identical timeline
-    # (otherwise a rare term and a common one show visibly different axes). With a
-    # cycle in scope the axis spans that whole cycle: a finished one runs
+    # and last hit, so every card sharing a scope draws one identical timeline
+    # (otherwise a rare term and a common one show visibly different axes). With
+    # cycles in scope the axis spans them end to end: a finished cycle runs
     # cycle-start → cycle-end; the ongoing one runs cycle-start → a synthesised end
     # that grows a year at a time (see `_ongoing_axis_end`), so its data sits
     # left-aligned with the not-yet-happened remainder empty on the right and the
-    # axis widens as the term progresses. The all-cycles view runs earliest-sitting
-    # → today. Explicit date filters tighten these bounds, and real hits are never
-    # clipped.
+    # axis widens as the term progresses. Several cycles selected at once give one
+    # continuous axis from the earliest start to the latest end — including the gap
+    # between two non-adjacent cycles, which is honest: nothing was said there *in
+    # scope*. The all-cycles view runs earliest-sitting → today. Explicit date
+    # filters tighten these bounds, and real hits are never clipped.
     today = date.today().isoformat()
-    if period is not None:
-        prow = db.execute(
-            "SELECT date_start, date_end FROM electoral_period WHERE number = :p",
-            {"p": period}).fetchone()
-        dom_lo = prow["date_start"] if prow else None
-        if prow and prow["date_end"]:
-            dom_hi = min(prow["date_end"], today)
-        elif prow and prow["date_start"]:
-            dom_hi = _ongoing_axis_end(prow["date_start"], today)  # ongoing → growing
-        else:
-            dom_hi = None
+    nums = period_list(period)
+    if nums:
+        prows = db.execute(
+            "SELECT date_start, date_end FROM electoral_period "
+            f"WHERE {period_sql(nums, 'number')}").fetchall()
+        starts = [r["date_start"] for r in prows if r["date_start"]]
+        ends = [min(r["date_end"], today) if r["date_end"]
+                else _ongoing_axis_end(r["date_start"], today)  # ongoing → growing
+                for r in prows if r["date_start"] or r["date_end"]]
+        dom_lo = min(starts) if starts else None
+        dom_hi = max(ends) if ends else None
     else:
         dom_lo = db.execute("SELECT MIN(date) AS lo FROM session").fetchone()["lo"]
         dom_hi = today
@@ -455,7 +463,8 @@ def search_breakdown(
     q: str = Query(..., min_length=1, description="Free-text query; \"…\" = exact phrase"),
     date_from: Optional[str] = Query(None, description="ISO date lower bound"),
     date_to: Optional[str] = Query(None, description="ISO date upper bound"),
-    period: Optional[int] = Query(None, description="Electoral period number"),
+    period: Optional[List[int]] = Query(
+        None, description="Electoral period number(s); repeat to scope to several cycles"),
     person_id: Optional[str] = None,
     faction_id: Optional[int] = None,
     agenda_type: Optional[str] = None,
@@ -478,7 +487,8 @@ def search_breakdown(
     # Two grouped top-N over the whole match set, fired alongside every search and
     # identical across pagination — memoize per (query+filters+limit), invalidated
     # on DB swap. The 400 for an empty query is raised above, before the cache.
-    key = (q, date_from, date_to, period, person_id, faction_id, agenda_type, limit)
+    key = (q, date_from, date_to, period_key(period), person_id, faction_id,
+           agenda_type, limit)
     return cached_aggregate("search_breakdown", key, lambda: _search_breakdown_compute(
         db, q, where_sql, params, limit))
 
@@ -555,14 +565,14 @@ def suggest(q: str = Query(..., min_length=1), limit: int = Query(8, ge=1, le=20
 # ---------------------------------------------------------------------------
 
 @router.get("/sessions")
-def list_sessions(period: Optional[int] = None,
+def list_sessions(period: Optional[List[int]] = Query(
+                      None, description="Electoral period number(s)"),
                   limit: int = Query(50, ge=1, le=200),
                   offset: int = Query(0, ge=0),
                   db: sqlite3.Connection = Depends(get_db)):
-    where = ""
+    per_sql = period_sql(period, "s.period_number")
+    where = f"WHERE {per_sql}" if per_sql else ""
     params: dict = {}
-    if period is not None:
-        where = "WHERE s.period_number = :period"; params["period"] = period
     total = db.execute(
         f"SELECT COUNT(*) AS c FROM session s {where}", params).fetchone()["c"]
     # `status` distinguishes an announced upcoming sitting ('scheduled') from a held

@@ -14,7 +14,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...config import settings
-from ...db import fold_text, get_db, like_contains
+from ...db import (fold_text, get_db, like_contains, period_and, period_list,
+                   period_sql)
+from ...query_cache import cached_aggregate
 
 router = APIRouter(prefix="/representatives", tags=["representatives"])
 
@@ -43,7 +45,8 @@ def _exclude_quorum(alias: str = "v") -> str:
 def list_representatives(
     q: Optional[str] = None,
     faction_id: Optional[int] = None,
-    period: Optional[int] = None,
+    period: Optional[List[int]] = Query(
+        None, description="Electoral period number(s); repeat to scope to several cycles"),
     constituency: Optional[str] = None,
     sort: str = Query("name", pattern="^(name|speeches|speaking_time)$"),
     limit: int = Query(60, ge=1, le=300),
@@ -59,18 +62,17 @@ def list_representatives(
     if constituency:
         where.append("fold(p.constituency) LIKE fold(:con) ESCAPE '\\'")
         params["con"] = like_contains(constituency)
-    if faction_id is not None and period is not None:
+    mem_sql = period_sql(period, "m.period_number")
+    if faction_id is not None:
         # One membership row must match both — two independent EXISTS would
-        # list an MP who was in this faction only during a *different* cycle.
-        where.append("EXISTS (SELECT 1 FROM membership m WHERE m.person_id=p.person_id "
-                     "AND m.faction_id=:fid AND m.period_number=:per)")
-        params["fid"] = faction_id; params["per"] = period
-    elif faction_id is not None:
-        where.append("EXISTS (SELECT 1 FROM membership m WHERE m.person_id=p.person_id "
-                     "AND m.faction_id=:fid)"); params["fid"] = faction_id
-    elif period is not None:
-        where.append("EXISTS (SELECT 1 FROM membership m WHERE m.person_id=p.person_id "
-                     "AND m.period_number=:per)"); params["per"] = period
+        # list an MP who was in this faction only during a cycle out of scope.
+        cond = "m.faction_id=:fid" + (f" AND {mem_sql}" if mem_sql else "")
+        where.append("EXISTS (SELECT 1 FROM membership m "
+                     f"WHERE m.person_id=p.person_id AND {cond})")
+        params["fid"] = faction_id
+    elif mem_sql:
+        where.append("EXISTS (SELECT 1 FROM membership m "
+                     f"WHERE m.person_id=p.person_id AND {mem_sql})")
     where_sql = " AND ".join(where)
 
     # fold() the name sort: BINARY collation puts accented Hungarian surnames
@@ -79,18 +81,19 @@ def list_representatives(
              "speeches": "stat.speech_count DESC",
              "speaking_time": "stat.speaking_seconds DESC"}[sort]
 
-    # Scope the per-MP stats and the shown faction to the selected cycle (§4A):
-    # with `period` set, use that cycle's `person_stats` row and that cycle's
-    # membership; otherwise the all-cycles row and the most recent faction. This
-    # is why the list never mixes a previous cycle's speech counts into another.
-    if period is not None:
-        stat_join = "stat.person_id = p.person_id AND stat.period_number = :per"
-        faction_sub = ("SELECT m.faction_id FROM membership m WHERE m.person_id = p.person_id "
-                       "AND m.period_number = :per ORDER BY m.period_number DESC LIMIT 1")
-    else:
-        stat_join = "stat.person_id = p.person_id AND stat.period_number IS NULL"
-        faction_sub = ("SELECT m.faction_id FROM membership m WHERE m.person_id = p.person_id "
-                       "ORDER BY m.period_number DESC LIMIT 1")
+    # Scope the per-MP stats and the shown faction to the selected cycle(s) (§4A):
+    # with `period` set, sum that cycle's (or those cycles') `person_stats` rows
+    # and use the most recent membership within scope; otherwise the precomputed
+    # all-cycles row (period_number IS NULL) and the most recent faction. This is
+    # why the list never mixes an out-of-scope cycle's speech counts into another.
+    stat_scope = (period_sql(period, "period_number")
+                  or "period_number IS NULL")   # the precomputed all-cycles row
+    stat_sub = ("SELECT person_id, SUM(speech_count) AS speech_count, "
+                "SUM(speaking_seconds) AS speaking_seconds "
+                f"FROM person_stats WHERE {stat_scope} GROUP BY person_id")
+    faction_sub = ("SELECT m.faction_id FROM membership m WHERE m.person_id = p.person_id"
+                   + (f" AND {mem_sql}" if mem_sql else "")
+                   + " ORDER BY m.period_number DESC LIMIT 1")
 
     total = db.execute(f"SELECT COUNT(*) AS c FROM person p WHERE {where_sql}",
                        params).fetchone()["c"]
@@ -101,7 +104,7 @@ def list_representatives(
                    COALESCE(stat.speaking_seconds, 0) AS speaking_seconds,
                    f.id AS faction_id, f.label AS faction_label, f.color AS faction_color
             FROM person p
-            LEFT JOIN person_stats stat ON {stat_join}
+            LEFT JOIN ({stat_sub}) stat ON stat.person_id = p.person_id
             LEFT JOIN faction f ON f.id = ({faction_sub})
             WHERE {where_sql}
             ORDER BY {order}
@@ -124,18 +127,25 @@ def list_representatives(
 
 
 @router.get("/factions")
-def list_factions(period: Optional[int] = None,
+def list_factions(period: Optional[List[int]] = Query(
+                      None, description="Electoral period number(s)"),
                   db: sqlite3.Connection = Depends(get_db)):
     """Factions with aggregate stats and consistent colours (REP-4).
 
-    Scoped to the global cycle (§4A): with ``period`` set, the per-period
-    aggregate row is used; otherwise the all-periods row (``period_number IS NULL``)."""
-    if period is not None:
-        join = "fs.faction_id=f.id AND fs.period_number = :per"
-        params = {"per": period}
-    else:
-        join = "fs.faction_id=f.id AND fs.period_number IS NULL"
-        params = {}
+    Scoped to the global cycle(s) (§4A): one selected cycle uses that cycle's
+    precomputed aggregate row, "all cycles" the all-periods row
+    (``period_number IS NULL``). A multi-cycle scope has no precomputed row —
+    ``mp_count`` is a distinct-speaker count, so summing two cycles' rows would
+    count an MP active in both twice — so it is derived from ``speech`` and
+    memoized per scope (the scan is why the precomputed rows exist at all)."""
+    nums = period_list(period)
+    if len(nums) > 1:
+        return cached_aggregate(
+            "faction_stats_multi", tuple(nums),
+            lambda: {"factions": _factions_across_cycles(db, nums),
+                     "methodology": _FACTION_METHODOLOGY})
+    join = ("fs.faction_id=f.id AND "
+            + (period_sql(nums, "fs.period_number") or "fs.period_number IS NULL"))
     rows = db.execute(
         f"""SELECT f.id, f.label, f.color,
                   COALESCE(fs.speech_count, 0) AS speech_count,
@@ -143,19 +153,48 @@ def list_factions(period: Optional[int] = None,
                   COALESCE(fs.mp_count, 0) AS mp_count
            FROM faction f
            LEFT JOIN faction_stats fs ON {join}
-           ORDER BY fs.speaking_seconds DESC""", params).fetchall()
-    factions = []
-    for r in rows:
-        mp = r["mp_count"] or 0
-        factions.append({
-            "id": r["id"], "label": r["label"], "color": r["color"],
-            "speech_count": r["speech_count"],
-            "speaking_seconds": r["speaking_seconds"],
-            "mp_count": mp,
-            "avg_speaking_seconds": (r["speaking_seconds"] / mp) if mp else 0,
-            "avg_speeches": (r["speech_count"] / mp) if mp else 0,
-        })
-    return {"factions": factions, "methodology": _FACTION_METHODOLOGY}
+           ORDER BY fs.speaking_seconds DESC""").fetchall()
+    return {"factions": [_faction_out(r) for r in rows],
+            "methodology": _FACTION_METHODOLOGY}
+
+
+def _faction_out(r: sqlite3.Row) -> dict:
+    """Shape one faction aggregate row; averages are per speaking MP."""
+    mp = r["mp_count"] or 0
+    return {
+        "id": r["id"], "label": r["label"], "color": r["color"],
+        "speech_count": r["speech_count"],
+        "speaking_seconds": r["speaking_seconds"],
+        "mp_count": mp,
+        "avg_speaking_seconds": (r["speaking_seconds"] / mp) if mp else 0,
+        "avg_speeches": (r["speech_count"] / mp) if mp else 0,
+    }
+
+
+def _factions_across_cycles(db: sqlite3.Connection, nums: list[int]) -> list[dict]:
+    """Faction aggregates over several cycles at once, computed from ``speech``.
+
+    Mirrors what the loader precomputes per cycle (statistics-eligible speeches
+    only — procedural/chairing excluded, STAT-1) but with ``mp_count`` counted
+    DISTINCT across the whole scope, so an MP who spoke in both cycles counts
+    once and the averages stay meaningful."""
+    rows = db.execute(
+        f"""SELECT f.id, f.label, f.color,
+                   COALESCE(agg.speech_count, 0) AS speech_count,
+                   COALESCE(agg.speaking_seconds, 0) AS speaking_seconds,
+                   COALESCE(agg.mp_count, 0) AS mp_count
+            FROM faction f
+            LEFT JOIN (
+                SELECT s.faction_id, COUNT(*) AS speech_count,
+                       COALESCE(SUM(s.duration), 0) AS speaking_seconds,
+                       COUNT(DISTINCT s.person_id) AS mp_count
+                FROM speech s
+                WHERE s.faction_id IS NOT NULL AND s.procedural = 0
+                  AND {period_sql(nums, "s.period_number")}
+                GROUP BY s.faction_id
+            ) agg ON agg.faction_id = f.id
+            ORDER BY agg.speaking_seconds DESC""").fetchall()
+    return [_faction_out(r) for r in rows]
 
 
 @router.get("/resolve")
@@ -198,32 +237,25 @@ def resolve_speakers(
 
 
 @router.get("/{person_id}")
-def get_representative(person_id: str, period: Optional[int] = None,
+def get_representative(person_id: str, period: Optional[List[int]] = Query(
+                          None, description="Electoral period number(s)"),
                       db: sqlite3.Connection = Depends(get_db)):
     """Full MP profile (REP-2): bio, faction history, constituency, links.
 
-    The shown ``current_faction`` is scoped to the selected cycle (§4A): with
-    ``period`` set it is the MP's faction in that cycle, otherwise their most
-    recent faction. (``faction_history`` always lists every cycle — it IS the
-    cross-cycle view.)"""
+    The shown ``current_faction`` is scoped to the selected cycle(s) (§4A): with
+    ``period`` set it is the MP's faction in the most recent cycle *in scope*,
+    otherwise their most recent faction overall. (``faction_history`` always
+    lists every cycle — it IS the cross-cycle view.)"""
     p = db.execute("SELECT * FROM person WHERE person_id = ?", (person_id,)).fetchone()
     if not p:
         raise HTTPException(404, "Representative not found")
-    if period is not None:
-        current = db.execute(
-            """SELECT f.id AS faction_id, f.label AS faction_label, f.color AS faction_color,
-                      m.position
-               FROM membership m LEFT JOIN faction f ON f.id = m.faction_id
-               WHERE m.person_id = ? AND m.period_number = ?
-               ORDER BY m.period_number DESC LIMIT 1""",
-            (person_id, period)).fetchone()
-    else:
-        current = db.execute(
-            """SELECT f.id AS faction_id, f.label AS faction_label, f.color AS faction_color,
-                      m.position
-               FROM membership m LEFT JOIN faction f ON f.id = m.faction_id
-               WHERE m.person_id = ? ORDER BY m.period_number DESC LIMIT 1""",
-            (person_id,)).fetchone()
+    current = db.execute(
+        f"""SELECT f.id AS faction_id, f.label AS faction_label, f.color AS faction_color,
+                   m.position
+            FROM membership m LEFT JOIN faction f ON f.id = m.faction_id
+            WHERE m.person_id = ?{period_and(period, "m.period_number")}
+            ORDER BY m.period_number DESC LIMIT 1""",
+        (person_id,)).fetchone()
     # Colour/id maps so each historical faction renders consistently (REP-4) and
     # its badge can link to the faction-filtered rep list (id keyed by label).
     faction_rows = db.execute("SELECT id, label, color FROM faction").fetchall()
@@ -263,45 +295,42 @@ def get_representative(person_id: str, period: Optional[int] = None,
 
 
 @router.get("/{person_id}/statistics")
-def get_statistics(person_id: str, period: Optional[int] = None,
+def get_statistics(person_id: str, period: Optional[List[int]] = Query(
+                       None, description="Electoral period number(s)"),
                    db: sqlite3.Connection = Depends(get_db)):
     """Per-MP statistics (REP-3) with explicit scope + methodology (REP-5).
 
     Everything except ``by_period`` (the explicit per-cycle breakdown) is scoped
-    to the selected cycle (§4A): with ``period`` set, the headline totals,
-    over-time chart and session count cover ONLY that cycle; otherwise all
-    cycles. The ``scope.description`` names the cycle so the scope is explicit."""
+    to the selected cycle(s) (§4A): with ``period`` set, the headline totals,
+    over-time chart and session count cover ONLY those cycles — the totals are
+    the sum of their per-cycle aggregate rows; otherwise all cycles (the
+    precomputed all-cycles row). The ``scope.description`` names the cycles so
+    the scope is explicit."""
     p = db.execute("SELECT person_id, is_mp, external_stats_json, election_history_json "
                    "FROM person WHERE person_id=?", (person_id,)).fetchone()
     if not p:
         raise HTTPException(404, "Representative not found")
 
-    if period is not None:
-        totals = db.execute(
-            "SELECT speech_count, speaking_seconds, sentence_count FROM person_stats "
-            "WHERE person_id=? AND period_number=?", (person_id, period)).fetchone()
-        over_time = db.execute(
-            """SELECT pss.session_id, pss.date, pss.speech_count, pss.speaking_seconds,
-                      s.sitting, s.period_number
-               FROM person_session_stats pss JOIN session s ON s.id=pss.session_id
-               WHERE pss.person_id=? AND s.period_number=? ORDER BY pss.date""",
-            (person_id, period)).fetchall()
-        sessions_covered = db.execute(
-            "SELECT COUNT(DISTINCT pss.session_id) AS c FROM person_session_stats pss "
-            "JOIN session s ON s.id=pss.session_id "
-            "WHERE pss.person_id=? AND s.period_number=?", (person_id, period)).fetchone()["c"]
-    else:
-        totals = db.execute(
-            "SELECT speech_count, speaking_seconds, sentence_count FROM person_stats "
-            "WHERE person_id=? AND period_number IS NULL", (person_id,)).fetchone()
-        over_time = db.execute(
-            """SELECT pss.session_id, pss.date, pss.speech_count, pss.speaking_seconds,
-                      s.sitting, s.period_number
-               FROM person_session_stats pss JOIN session s ON s.id=pss.session_id
-               WHERE pss.person_id=? ORDER BY pss.date""", (person_id,)).fetchall()
-        sessions_covered = db.execute(
-            "SELECT COUNT(DISTINCT session_id) AS c FROM person_session_stats "
-            "WHERE person_id=?", (person_id,)).fetchone()["c"]
+    periods = period_list(period)
+    stat_scope = (period_sql(periods, "period_number")
+                  or "period_number IS NULL")   # the precomputed all-cycles row
+    sess_scope = period_and(periods, "s.period_number")
+    totals = db.execute(
+        f"""SELECT SUM(speech_count) AS speech_count,
+                   SUM(speaking_seconds) AS speaking_seconds,
+                   SUM(sentence_count) AS sentence_count
+            FROM person_stats WHERE person_id=? AND {stat_scope}""",
+        (person_id,)).fetchone()
+    over_time = db.execute(
+        f"""SELECT pss.session_id, pss.date, pss.speech_count, pss.speaking_seconds,
+                   s.sitting, s.period_number
+            FROM person_session_stats pss JOIN session s ON s.id=pss.session_id
+            WHERE pss.person_id=?{sess_scope} ORDER BY pss.date""",
+        (person_id,)).fetchall()
+    sessions_covered = db.execute(
+        f"""SELECT COUNT(DISTINCT pss.session_id) AS c FROM person_session_stats pss
+            JOIN session s ON s.id=pss.session_id
+            WHERE pss.person_id=?{sess_scope}""", (person_id,)).fetchone()["c"]
     by_period = db.execute(
         """SELECT ep.number AS period, ep.label, ps.speech_count, ps.speaking_seconds,
                   ps.sentence_count
@@ -319,8 +348,8 @@ def get_statistics(person_id: str, period: Optional[int] = None,
     if bills_available:
         ext = _loads(p["external_stats_json"]) or {}
         bills_by_cycle = (ext or {}).get("billsSubmitted") or []
-        bills_submitted = (_own_bills_for_cycle(bills_by_cycle, period)
-                           if period is not None else _latest_own_bills(bills_by_cycle))
+        bills_submitted = (_own_bills_for_cycles(bills_by_cycle, periods)
+                           if periods else _latest_own_bills(bills_by_cycle))
 
     # Attendance (REP-3): how many roll-call votes the MP was absent from, both
     # nominally and as a share of the votes they could have cast in scope. The
@@ -339,10 +368,8 @@ def get_statistics(person_id: str, period: Optional[int] = None,
     votes_absent_pct = None
     vote_breakdown = None
     if votes_available and is_mp:
-        extra = " AND v.period_number = :per" if period is not None else ""
+        extra = period_and(periods, "v.period_number")
         vparams: dict = {"pid": person_id}
-        if period is not None:
-            vparams["per"] = period
         # One pass over the MP's roll-call records splits them into the four
         # participation categories shown in the profile pie: "szavazott" (a vote
         # was cast — igen/nem/tartózkodás all count as voting), "nem szavazott"
@@ -365,11 +392,9 @@ def get_statistics(person_id: str, period: Optional[int] = None,
         # has_per_mp = 1 — voice/list votes are excluded so they don't inflate
         # everyone's absence, and quorum checks likewise) count the whole
         # universe.
-        rc_where = "has_per_mp = 1" + _exclude_quorum("")
+        rc_where = ("has_per_mp = 1" + _exclude_quorum("")
+                    + period_and(periods, "period_number"))
         rc_params: dict = {}
-        if period is not None:
-            rc_where += " AND period_number = :per"
-            rc_params["per"] = period
         total_rollcall = (db.execute(
             f"SELECT COUNT(*) AS n FROM vote WHERE {rc_where}",
             rc_params).fetchone()["n"] or 0)
@@ -417,10 +442,11 @@ def get_statistics(person_id: str, period: Optional[int] = None,
             "total": voted + novote + votes_absent + not_present,
         }
 
-    if period is not None:
-        ep = db.execute("SELECT label FROM electoral_period WHERE number=?",
-                        (period,)).fetchone()
-        cyc_label = ep["label"] if ep else f"{period}. ciklus"
+    if periods:
+        labels = {r["number"]: r["label"] for r in db.execute(
+            "SELECT number, label FROM electoral_period "
+            f"WHERE {period_sql(periods, 'number')}")}
+        cyc_label = ", ".join(labels.get(n) or f"{n}. ciklus" for n in periods)
         scope_desc = ("A Parlamonitor által feldolgozott ülésnapok alapján — "
                       f"{cyc_label}.")
     else:
@@ -429,12 +455,17 @@ def get_statistics(person_id: str, period: Optional[int] = None,
 
     return {
         "person_id": person_id,
-        "scope": {"description": scope_desc, "period": period,
+        # `period` stays scalar for a single-cycle scope (null for all cycles or a
+        # multi-cycle one); `periods` carries the full scope either way.
+        "scope": {"description": scope_desc,
+                  "period": periods[0] if len(periods) == 1 else None,
+                  "periods": periods,
                   "sessions_covered": sessions_covered},
         "totals": {
-            "speech_count": totals["speech_count"] if totals else 0,
-            "speaking_seconds": totals["speaking_seconds"] if totals else 0,
-            "sentence_count": totals["sentence_count"] if totals else 0,
+            # SUM over no rows yields NULL, so an MP with nothing in scope reads 0.
+            "speech_count": (totals["speech_count"] if totals else 0) or 0,
+            "speaking_seconds": (totals["speaking_seconds"] if totals else 0) or 0,
+            "sentence_count": (totals["sentence_count"] if totals else 0) or 0,
             "bills_submitted": bills_submitted,  # null while Bills module is off
             "bills_available": bills_available,
             "bills_by_cycle": bills_by_cycle,
@@ -451,7 +482,8 @@ def get_statistics(person_id: str, period: Optional[int] = None,
 
 
 @router.get("/{person_id}/activity")
-def get_activity(person_id: str, period: Optional[int] = None,
+def get_activity(person_id: str, period: Optional[List[int]] = Query(
+                     None, description="Electoral period number(s)"),
                  db: sqlite3.Connection = Depends(get_db)):
     """Per-day activity for the contribution board (REP-8).
 
@@ -475,10 +507,8 @@ def get_activity(person_id: str, period: Optional[int] = None,
 
     # Speeches per day. `person_session_stats` already excludes procedural speeches
     # (STAT-1) and carries the sitting date; join `session` only to scope by cycle.
-    sextra = " AND s.period_number = :per" if period is not None else ""
+    sextra = period_and(period, "s.period_number")
     sparams: dict = {"pid": person_id}
-    if period is not None:
-        sparams["per"] = period
     for r in db.execute(
         f"""SELECT substr(pss.date, 1, 10) AS day,
                    SUM(pss.speech_count) AS speeches,
@@ -495,10 +525,8 @@ def get_activity(person_id: str, period: Optional[int] = None,
     # sponsors is counted once for this MP (DISTINCT).
     documents_available = settings.module_enabled("bills")
     if documents_available:
-        bextra = " AND b.period_number = :per" if period is not None else ""
+        bextra = period_and(period, "b.period_number")
         bparams = {"pid": person_id}
-        if period is not None:
-            bparams["per"] = period
         for r in db.execute(
             f"""SELECT substr(b.submitted_date, 1, 10) AS day,
                        COUNT(DISTINCT b.id) AS documents
@@ -512,7 +540,7 @@ def get_activity(person_id: str, period: Optional[int] = None,
         d["total"] = d["speeches"] + d["documents"]
     return {
         "person_id": person_id,
-        "scope": {"period": period},
+        "scope": {"periods": period_list(period)},
         "documents_available": documents_available,
         "days": out,
         "totals": {
@@ -524,7 +552,8 @@ def get_activity(person_id: str, period: Optional[int] = None,
 
 
 @router.get("/{person_id}/speech-days")
-def get_speech_days(person_id: str, period: Optional[int] = None,
+def get_speech_days(person_id: str, period: Optional[List[int]] = Query(
+                        None, description="Electoral period number(s)"),
                     db: sqlite3.Connection = Depends(get_db)):
     """The sitting days an MP spoke on, reverse-chronological, with a speech
     count per day (REP-2). Drives the grouped, lazy-loaded speech list on the
@@ -532,10 +561,8 @@ def get_speech_days(person_id: str, period: Optional[int] = None,
     filtered by ``session_id``. Scoped to the selected cycle (§4A) when
     ``period`` is set. Counts cover ALL speeches (procedural included), matching
     what ``/speeches`` returns — not the procedural-excluded statistics."""
-    extra = " AND ss.period_number = :per" if period is not None else ""
+    extra = period_and(period, "ss.period_number")
     params: dict = {"pid": person_id}
-    if period is not None:
-        params["per"] = period
     rows = db.execute(
         f"""SELECT ss.id AS session_id, ss.date, ss.sitting,
                    COUNT(*) AS count, SUM(sp.duration) AS seconds
@@ -555,7 +582,8 @@ def get_speech_days(person_id: str, period: Optional[int] = None,
 
 
 @router.get("/{person_id}/speeches")
-def get_speeches(person_id: str, period: Optional[int] = None,
+def get_speeches(person_id: str, period: Optional[List[int]] = Query(
+                     None, description="Electoral period number(s)"),
                  session_id: Optional[str] = None,
                  limit: int = Query(50, ge=1, le=200),
                  offset: int = Query(0, ge=0),
@@ -563,10 +591,8 @@ def get_speeches(person_id: str, period: Optional[int] = None,
     """Reverse-chronological list of an MP's speeches (REP-2), scoped to the
     selected cycle (§4A) when ``period`` is set, and to a single sitting day
     when ``session_id`` is set (used by the grouped, lazy-loaded list)."""
-    extra = " AND ss.period_number = :per" if period is not None else ""
+    extra = period_and(period, "ss.period_number")
     params: dict = {"pid": person_id}
-    if period is not None:
-        params["per"] = period
     if session_id is not None:
         extra += " AND sp.session_id = :sid"
         params["sid"] = session_id
@@ -600,7 +626,8 @@ def get_speeches(person_id: str, period: Optional[int] = None,
 
 
 @router.get("/{person_id}/vote-days")
-def get_vote_days(person_id: str, period: Optional[int] = None,
+def get_vote_days(person_id: str, period: Optional[List[int]] = Query(
+                      None, description="Electoral period number(s)"),
                   db: sqlite3.Connection = Depends(get_db)):
     """The sitting days an MP voted on, reverse-chronological, with a roll-call
     count per day (EXT-2). Drives the grouped, lazy-loaded vote list on the
@@ -611,10 +638,8 @@ def get_vote_days(person_id: str, period: Optional[int] = None,
     (EXT-6) — guard before querying."""
     if not settings.module_enabled("votes"):
         return {"total": 0, "days": [], "available": False}
-    extra = " AND v.period_number = :per" if period is not None else ""
+    extra = period_and(period, "v.period_number")
     params: dict = {"pid": person_id}
-    if period is not None:
-        params["per"] = period
     rows = db.execute(
         f"""SELECT substr(v.vote_datetime, 1, 10) AS date, COUNT(*) AS count
             FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
@@ -627,7 +652,8 @@ def get_vote_days(person_id: str, period: Optional[int] = None,
 
 
 @router.get("/{person_id}/votes")
-def get_votes(person_id: str, period: Optional[int] = None,
+def get_votes(person_id: str, period: Optional[List[int]] = Query(
+                  None, description="Electoral period number(s)"),
               date: Optional[str] = None,
               limit: int = Query(50, ge=1, le=200),
               offset: int = Query(0, ge=0),
@@ -641,10 +667,8 @@ def get_votes(person_id: str, period: Optional[int] = None,
     if not settings.module_enabled("votes"):
         return {"total": 0, "limit": limit, "offset": offset, "votes": [],
                 "available": False}
-    extra = " AND v.period_number = :per" if period is not None else ""
+    extra = period_and(period, "v.period_number")
     params: dict = {"pid": person_id}
-    if period is not None:
-        params["per"] = period
     if date is not None:
         extra += " AND substr(v.vote_datetime, 1, 10) = :date"
         params["date"] = date
@@ -682,7 +706,7 @@ def get_votes(person_id: str, period: Optional[int] = None,
 
 
 def _current_office(db: sqlite3.Connection, person_id: str,
-                    period: Optional[int]) -> Optional[str]:
+                    period: Optional[List[int]]) -> Optional[str]:
     """The speaker's most recent government office (tisztség) in scope, or None.
 
     A speaker's office is recorded per speech (``speech.speaker_office``, from the
@@ -692,10 +716,8 @@ def _current_office(db: sqlite3.Connection, person_id: str,
     (§4A) when ``period`` is set, matching the rest of the profile. Returns None for
     a speaker who never held one (every ordinary MP), so the UI shows it only for the
     ministers / state secretaries who do."""
-    extra = " AND sp.period_number = :per" if period is not None else ""
+    extra = period_and(period, "sp.period_number")
     params: dict = {"pid": person_id}
-    if period is not None:
-        params["per"] = period
     row = db.execute(
         f"""SELECT sp.speaker_office
             FROM speech sp JOIN session ss ON ss.id = sp.session_id
@@ -706,12 +728,14 @@ def _current_office(db: sqlite3.Connection, person_id: str,
     return row["speaker_office"] if row else None
 
 
-def _own_bills_for_cycle(by_cycle: list, period: int) -> Optional[int]:
-    """The own-bills count for a specific cycle in the upstream breakdown."""
-    for entry in by_cycle or []:
-        if entry.get("cycle") == period:
-            return entry.get("ownBills")
-    return None
+def _own_bills_for_cycles(by_cycle: list, periods: list[int]) -> Optional[int]:
+    """The own-bills count over the cycles in scope, from the upstream breakdown
+    (summed when several are selected). None when the breakdown covers none of
+    them — "not reported", which the UI shows differently from a real zero."""
+    counts = [entry.get("ownBills") for entry in by_cycle or []
+              if entry.get("cycle") in periods]
+    known = [c for c in counts if c is not None]
+    return sum(known) if known else None
 
 
 def _latest_own_bills(by_cycle: list) -> Optional[int]:

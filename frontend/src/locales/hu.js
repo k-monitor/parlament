@@ -60,6 +60,8 @@ export default {
   cycle: {
     label: 'Ciklus',
     all: 'Összes ciklus',
+    count: '{n} ciklus',
+    multiHint: 'Több ciklus is kiválasztható.',
     scope: '{cycle} adatai',
     scopeAll: 'Összes ciklus adatai',
   },

@@ -2,7 +2,7 @@
 // "Embed this figure" control, pinned to the bottom-right corner of a chart. It
 // opens a popover with a ready-to-paste <iframe> snippet pointing at the
 // chrome-free `/embed/:kind` view (EmbedView). The snippet always carries the
-// **currently selected electoral cycle** (store.cycle) plus the chart-specific
+// **currently selected electoral cycle scope** (store.cycles) plus the chart-specific
 // params the host passes, so what a reader embeds matches what they are looking
 // at. The host must give its chart container `position: relative` — this button
 // positions itself absolutely within it.
@@ -11,7 +11,7 @@
 // it is never clipped by a chart card's overflow.
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { store, currentCycleLabel } from '../store.js'
+import { store, currentCycleLabel, serializeCycles } from '../store.js'
 
 const props = defineProps({
   // Which embed view to point at: 'search-trend' | 'faction-speaking' |
@@ -34,8 +34,8 @@ const btnRef = ref(null)
 const menuRef = ref(null)
 const menuStyle = ref({})
 
-// The cycle to bake into the embed URL: 'all' or the period number.
-const cycleValue = computed(() => (store.cycle === null ? 'all' : String(store.cycle)))
+// The scope to bake into the embed URL: 'all' or the period numbers ("43,44").
+const cycleValue = computed(() => serializeCycles(store.cycles))
 const cycleLabel = computed(() => currentCycleLabel() || t('cycle.all'))
 
 // Absolute URL of the chrome-free chart, carrying the current cycle + params (+

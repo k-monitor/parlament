@@ -70,7 +70,7 @@ function gotoPage(p) {
 async function loadFacets() {
   try {
     statuses.value = (await api.billFacets({
-      period: store.cycle, main_type: 'T',
+      period: store.cycles, main_type: 'T',
     })).statuses
   } catch { statuses.value = [] }
 }
@@ -85,9 +85,9 @@ async function load() {
   try {
     // This page is the bills (törvényjavaslat) view; the other iromány types
     // live on the separate "Egyéb irományok" page (main_type=T scopes here).
-    // `period` comes from the global cycle chooser (store.cycle; null = all).
+    // `period` comes from the global cycle chooser (store.cycles; empty = all).
     const res = await api.bills({
-      q: route.query.q, status: route.query.status, period: store.cycle,
+      q: route.query.q, status: route.query.status, period: store.cycles,
       sponsor: route.query.sponsor, sort: route.query.sort || 'number',
       main_type: 'T', limit: PAGE, offset: route.query.offset || 0,
     })
@@ -106,7 +106,7 @@ watch(() => route.query, (q) => {
   loadFacets(); load()
 })
 // Re-fetch when the global cycle changes.
-watch(() => store.cycle, () => { loadFacets(); load() })
+watch(() => store.cycles.join(','), () => { loadFacets(); load() })
 let t = null
 function onSearchInput() { clearTimeout(t); t = setTimeout(apply, 300) }
 // The debounce survives the component: clear it, or typing then clicking a

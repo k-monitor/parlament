@@ -113,7 +113,7 @@ function voteParts(v) {
 
 async function loadFacets() {
   try {
-    const facets = await api.voteFacets({ period: store.cycle })
+    const facets = await api.voteFacets({ period: store.cycles })
     results.value = facets.results
     votingModes.value = facets.voting_modes || []
   } catch { results.value = []; votingModes.value = [] }
@@ -127,9 +127,9 @@ async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
   try {
-    // `period` comes from the global cycle chooser (store.cycle; null = all).
+    // `period` comes from the global cycle chooser (store.cycles; empty = all).
     const res = await api.votes({
-      q: route.query.q, result: route.query.result, period: store.cycle,
+      q: route.query.q, result: route.query.result, period: store.cycles,
       voting_mode: route.query.voting_mode,
       date_from: route.query.date_from, date_to: route.query.date_to,
       sort: route.query.sort,
@@ -157,7 +157,7 @@ watch(() => route.query, (q) => {
   loadFacets(); load()
 })
 // Re-fetch when the global cycle changes.
-watch(() => store.cycle, () => { loadFacets(); load() })
+watch(() => store.cycles.join(','), () => { loadFacets(); load() })
 let searchTimer = null
 function onSearchInput() { clearTimeout(searchTimer); searchTimer = setTimeout(apply, 300) }
 // The debounce survives the component: clear it, or typing then clicking a

@@ -319,23 +319,30 @@ carrying its own electoral-period filter, the site exposes **one global cycle
 selector** that scopes every period-aware view at once.
 
 - **CYC-1 (MUST).** A **cycle selector lives in the site header** and is visible
-  on every page. It lists each electoral period plus an **"all cycles"** option,
-  and **defaults to the latest cycle** on a first visit. Each period is labelled
-  by its **start–end years** (e.g. `2018–2024`), not its ordinal cycle number,
-  since the year span is what users recognise; an ongoing cycle (no end date yet)
-  shows its start year with a trailing dash (`2026–`).
-- **CYC-2 (MUST).** The chosen cycle is the **single source of period scope**
+  on every page: a **dropdown** listing each electoral period plus an **"all
+  cycles"** option, **defaulting to the latest cycle** on a first visit. Each
+  period is labelled by its **start–end years** (e.g. `2018–2024`), not its
+  ordinal cycle number, since the year span is what users recognise; an ongoing
+  cycle (no end date yet) shows its start year with a trailing dash (`2026–`).
+- **CYC-1a (MUST).** The selector is **multi-select**: several cycles can be in
+  scope at once (tick as many as wanted), and every period-aware view then covers
+  their union. The trigger names the selection — one or two cycles by label, more
+  as a count.
+- **CYC-2 (MUST).** The chosen scope is the **single source of period scope**
   across all period-aware modules — proceedings search, sittings, representatives,
-  bills, other irományok and votes all honour it. Selecting a cycle (or "all")
-  **immediately re-scopes the current view** and carries over as the user
-  navigates between modules; modules no longer present their own redundant
-  period filter.
+  bills, other irományok and votes all honour it. Changing it **immediately
+  re-scopes the current view** and carries over as the user navigates between
+  modules; modules no longer present their own redundant period filter.
 - **CYC-3 (MUST).** The selection is **persisted** (e.g. `localStorage`) so it
   survives reloads and return visits; an invalid/stale saved value falls back to
   the latest cycle.
 - **CYC-4.** "All cycles" simply **drops the period constraint** site-wide
-  (no period parameter is sent); a numeric cycle constrains every query to that
-  electoral period.
+  (no period parameter is sent) and is the same state as an empty selection;
+  otherwise every query is constrained to the selected electoral period(s) — the
+  API's `period` param is repeatable (`?period=43&period=44`). Where an aggregate
+  is precomputed per cycle, a multi-cycle scope sums the per-cycle rows; counts
+  that would double-count across cycles (a faction's distinct speaking MPs) are
+  derived over the whole scope instead.
 - **CYC-5.** The remaining, module-specific filters (free-text query, status,
   type, faction, date range, sort, etc.) stay **per-page URL state** so a
   filtered/searched view is still deep-linkable and citable (§SEA-6); only the
@@ -394,10 +401,10 @@ snippet — a site-wide capability, not a per-module feature.
 - **EMBED-2 (MUST).** An embed renders **chrome-free**: the `<iframe>` points at a
   dedicated embed view (`/embed/<figure>`) that shows **only** the figure — its
   title, the active electoral-cycle scope, and a compact attribution line — with
-  **no site header, navigation, cycle bar, or footer**.
+  **no site header, navigation, cycle selector, or footer**.
 - **EMBED-3 (MUST).** The snippet **captures the currently selected electoral
-  cycle** (§4A): the embed URL carries an **explicit** cycle, so the embedded
-  figure always shows the data for the cycle the sharer was viewing, **independent
+  cycle scope** (§4A): the embed URL carries the **explicit** cycle(s), so the
+  embedded figure always shows the data for the scope the sharer was viewing, **independent
   of the reader's own saved scope** — an embed on a third-party page has no access
   to, and MUST NOT depend on, the visitor's preference. The URL likewise carries
   the figure's active parameters (e.g. the search query + filters, or the

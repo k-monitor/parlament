@@ -68,10 +68,10 @@ async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
   try {
-    // `period` comes from the global cycle chooser (store.cycle; null = all) —
+    // `period` comes from the global cycle chooser (store.cycles; empty = all) —
     // it scopes the list to MPs serving in that cycle.
     const res = await api.representatives({
-      q: route.query.q, faction_id: route.query.faction_id, period: store.cycle,
+      q: route.query.q, faction_id: route.query.faction_id, period: store.cycles,
       sort: route.query.sort || 'speaking_time', limit: PAGE, offset: route.query.offset || 0,
     })
     if (seq === loadSeq) data.value = res
@@ -92,7 +92,7 @@ watch(() => route.query, (q) => {
   load()
 })
 // Changing the cycle resets to the first page; the offset reset triggers load via the query watcher.
-watch(() => store.cycle, () => {
+watch(() => store.cycles.join(','), () => {
   if (route.query.offset) router.push({ name: 'representatives', query: { ...route.query, offset: undefined } })
   else load()
 })

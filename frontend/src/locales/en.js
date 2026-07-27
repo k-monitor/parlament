@@ -38,7 +38,8 @@ export default {
     openInteractive: 'Interactive version ↗',
     noData: 'No data to display.',
   },
-  cycle: { label: 'Cycle', all: 'All cycles',
+  cycle: { label: 'Cycle', all: 'All cycles', count: '{n} cycles',
+           multiHint: 'You can select several cycles.',
            scope: '{cycle} data', scopeAll: 'All-cycles data' },
   home: {
     searchPlaceholder: 'Search for a phrase in the proceedings…',

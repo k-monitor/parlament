@@ -6,7 +6,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
-import { store, loadMeta, setCycle, currentCycleLabel, periodLabel } from '../../store.js'
+import { store, loadMeta, setCycles, currentCycleLabel, periodLabel } from '../../store.js'
 import { agendaLabel, formatDate, searchExcerptLines } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -25,8 +25,8 @@ const AGENDA_TYPES = ['opening', 'procedural', 'regular', 'oath', 'voting',
   'rules_of_procedure', 'questioning_of_the_government', 'qa', 'condolence']
 
 const input = ref(route.query.q || '')
-// The electoral cycle is a *global* scope set from the header (store.cycle), not
-// a per-search filter — so it is no longer part of the URL query here.
+// The electoral cycle is a *global* scope set from the header (store.cycles),
+// not a per-search filter — so it is no longer part of the URL query here.
 const filters = reactive({
   date_from: route.query.date_from || '',
   date_to: route.query.date_to || '',
@@ -64,7 +64,7 @@ onMounted(async () => {
 })
 
 // Re-run the active search when the global cycle changes.
-watch(() => store.cycle, () => { if (route.query.q) runFromRoute() })
+watch(() => store.cycles.join(','), () => { if (route.query.q) runFromRoute() })
 
 // Push the current form state into the URL (this triggers the watcher → fetch).
 function submit(resetPage = true) {
@@ -118,7 +118,7 @@ async function runFromRoute() {
   loading.value = true; error.value = false
   const filterArgs = {
     q: route.query.q,
-    period: store.cycle, // global cycle scope (null = all)
+    period: store.cycles, // global cycle scope (empty = all cycles)
     date_from: route.query.date_from,
     date_to: route.query.date_to,
     faction_id: route.query.faction_id,
@@ -217,17 +217,19 @@ const hasBreakdown = computed(() =>
 // default so it doesn't push the result list down the page.
 const showBreakdown = ref(false)
 
-// When a specific cycle is selected globally, the search is scoped to it; offer a
-// one-click switch back to "all cycles" (null) which re-runs the active search.
+// When cycles are selected globally, the search is scoped to them; offer a
+// one-click switch back to "all cycles" which re-runs the active search.
 const cycleScopeLabel = computed(() => currentCycleLabel())
 
-// On the all-cycles view the trend spans the whole corpus, so mark each electoral
-// cycle's start/end with a reference line to keep the eras legible. Empty for a
-// single-cycle scope (the axis is then just that one cycle). Mirrors the home page.
+// Whenever the trend spans more than one cycle, mark each electoral cycle's
+// start/end with a reference line to keep the eras legible — the whole corpus
+// under "all cycles", just the selected ones under a multi-cycle scope. Empty for
+// a single-cycle scope (the axis is then just that one cycle). Mirrors the home page.
 const cycleMarkers = computed(() => {
-  if (store.cycle !== null || !store.meta) return []
+  if (store.cycles.length === 1 || !store.meta) return []
+  const inScope = (p) => !store.cycles.length || store.cycles.includes(p.number)
   const out = []
-  for (const p of store.meta.periods || []) {
+  for (const p of (store.meta.periods || []).filter(inScope)) {
     const label = periodLabel(p)
     if (p.date_start) out.push({ date: p.date_start, label })
     if (p.date_end) out.push({ date: p.date_end, label })
@@ -307,7 +309,7 @@ function onTrendSelect({ from, to }) {
 
   <p v-if="cycleScopeLabel" class="muted small cyclenotice">
     {{ $t('search.cycleScope', { cycle: cycleScopeLabel }) }}
-    <a href="#" @click.prevent="setCycle(null)">{{ $t('search.cycleScopeAll') }}</a>
+    <a href="#" @click.prevent="setCycles([])">{{ $t('search.cycleScopeAll') }}</a>
   </p>
 
   <StateBlock

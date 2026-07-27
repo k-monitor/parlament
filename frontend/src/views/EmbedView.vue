@@ -5,13 +5,13 @@
 // and reads everything it needs from the URL — the electoral cycle from `?cycle=`
 // and the chart-specific params (`q`, `id`, filters) from the query — so the
 // embed is fully self-contained and reproduces exactly what the sharer saw.
-// It deliberately ignores the visitor's saved global cycle (store.cycle): an
-// embed shows the cycle baked into its URL, not the reader's local preference.
+// It deliberately ignores the visitor's saved global scope (store.cycles): an
+// embed shows the cycles baked into its URL, not the reader's local preference.
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../api.js'
-import { store, loadMeta, periodLabel } from '../store.js'
+import { store, loadMeta, parseCycles, periodLabel, serializeCycles } from '../store.js'
 import StateBlock from '../components/StateBlock.vue'
 import TrendChart from '../components/TrendChart.vue'
 import BarChart from '../components/BarChart.vue'
@@ -23,13 +23,17 @@ const props = defineProps({ kind: String })
 const route = useRoute()
 const { t } = useI18n()
 
-// The cycle carried in the URL: `all` (or absent) → null (all cycles), else the
-// electoral-period number. This — not store.cycle — scopes every embed fetch.
+// The cycle scope carried in the URL: `all` (or absent) → [] (all cycles), else
+// the comma-separated electoral-period numbers. This — not store.cycles — scopes
+// every embed fetch. Validated against /meta once it has loaded; before that the
+// raw numbers are used, so the first fetch isn't delayed by the manifest.
 const period = computed(() => {
-  const c = route.query.cycle
-  if (c === undefined || c === null || c === 'all') return null
-  const n = Number(c)
-  return Number.isFinite(n) ? n : null
+  const raw = route.query.cycle
+  if (store.meta) return parseCycles(raw, store.meta.periods) || []
+  // /meta hasn't landed (or failed): there is nothing to validate against, so
+  // take the numbers at face value rather than silently widening to all cycles.
+  return [...new Set(String(raw ?? '').split(',').map(Number).filter(Number.isFinite))]
+    .sort((a, b) => a - b)
 })
 
 const data = ref(null)
@@ -37,9 +41,11 @@ const loading = ref(false)
 const error = ref(false)
 
 const scopeLabel = computed(() => {
-  if (period.value === null) return t('cycle.all')
-  const p = (store.meta?.periods || []).find((x) => x.number === period.value)
-  return p ? periodLabel(p) : String(period.value)
+  if (!period.value.length) return t('cycle.all')
+  return period.value.map((n) => {
+    const p = (store.meta?.periods || []).find((x) => x.number === n)
+    return p ? periodLabel(p) : String(n)
+  }).join(', ')
 })
 
 // ---- per-kind data fetch --------------------------------------------------
@@ -84,12 +90,14 @@ function fetchForKind() {
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
 
 // ---- search-trend ---------------------------------------------------------
-// On the all-cycles scope, mark each electoral cycle's start/end (mirrors the
-// search page). Empty for a single cycle — the axis is then just that cycle.
+// Whenever the axis spans more than one cycle, mark each cycle's start/end
+// (mirrors the search page). Empty for a single cycle — the axis is then just
+// that cycle.
 const cycleMarkers = computed(() => {
-  if (period.value !== null || !store.meta) return []
+  if (period.value.length === 1 || !store.meta) return []
+  const inScope = (p) => !period.value.length || period.value.includes(p.number)
   const out = []
-  for (const p of store.meta.periods || []) {
+  for (const p of (store.meta.periods || []).filter(inScope)) {
     const label = periodLabel(p)
     if (p.date_start) out.push({ date: p.date_start, label })
     if (p.date_end) out.push({ date: p.date_end, label })
@@ -186,8 +194,7 @@ const isEmpty = computed(() => {
 // inside an iframe would otherwise be trapped in the embed.
 const siteHref = computed(() => {
   const q = route.query
-  const cyc = period.value === null ? 'all' : String(period.value)
-  const usp = new URLSearchParams({ cycle: cyc })
+  const usp = new URLSearchParams({ cycle: serializeCycles(period.value) })
   let path = '/'
   switch (props.kind) {
     case 'search-trend':

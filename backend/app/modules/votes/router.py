@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ...db import get_db, like_contains
+from ...db import get_db, like_contains, period_key, period_sql
 from ...parlament_links import vote_page_url
 from ...query_cache import cached_aggregate
 
@@ -80,15 +80,17 @@ def _apply_common_filters(where: list, params: dict, *, q=None, period=None,
 
     Every clause references the `vote v` alias, so a caller can splice them into
     any query that selects/joins `vote v`. The person/value scope stays in
-    list_votes (list-only); the cohesion aggregate is house-wide."""
+    list_votes (list-only); the cohesion aggregate is house-wide. `period` is a
+    list of electoral-period numbers (empty/None = all cycles)."""
     if q:
         where.append("(fold(v.subject) LIKE fold(:q) ESCAPE '\\' "
                      "OR EXISTS (SELECT 1 FROM vote_subject vs "
                      "WHERE vs.vote_id=v.id AND (fold(vs.bill_number) LIKE fold(:q) ESCAPE '\\' "
                      "OR fold(vs.title) LIKE fold(:q) ESCAPE '\\')))")
         params["q"] = like_contains(q.strip())
-    if period is not None:
-        where.append("v.period_number = :per"); params["per"] = period
+    per_sql = period_sql(period, "v.period_number")
+    if per_sql:
+        where.append(per_sql)
     if result:
         where.append("v.result = :res"); params["res"] = result
     if voting_mode:
@@ -109,7 +111,8 @@ def _apply_common_filters(where: list, params: dict, *, q=None, period=None,
 @router.get("")
 def list_votes(
     q: Optional[str] = None,
-    period: Optional[int] = None,
+    period: Optional[List[int]] = Query(
+        None, description="Electoral period number(s); repeat to scope to several cycles"),
     result: Optional[str] = None,
     voting_mode: Optional[str] = None,      # szavazasiMod ("type" of vote)
     date_from: Optional[str] = None,        # ISO date lower bound (inclusive)
@@ -200,22 +203,25 @@ def list_votes(
 
 
 @router.get("/facets")
-def vote_facets(period: Optional[int] = None,
+def vote_facets(period: Optional[List[int]] = Query(
+                    None, description="Electoral period number(s)"),
                 db: sqlite3.Connection = Depends(get_db)):
-    """Distinct results and voting modes for the filter controls (within a period)."""
+    """Distinct results and voting modes for the filter controls (within the
+    selected cycle(s))."""
     def _compute():
-        where, par = ("WHERE period_number = ?", (period,)) if period is not None else ("", ())
+        per_sql = period_sql(period, "period_number")
+        where = f"WHERE {per_sql}" if per_sql else ""
         kw = "AND" if where else "WHERE"
         results = [r["result"] for r in db.execute(
             f"SELECT DISTINCT result FROM vote {where} "
-            f"{kw} result IS NOT NULL ORDER BY result", par)]
+            f"{kw} result IS NOT NULL ORDER BY result")]
         voting_modes = [r["voting_mode"] for r in db.execute(
             f"SELECT DISTINCT voting_mode FROM vote {where} "
-            f"{kw} voting_mode IS NOT NULL ORDER BY voting_mode", par)]
+            f"{kw} voting_mode IS NOT NULL ORDER BY voting_mode")]
         return {"results": results, "voting_modes": voting_modes}
 
-    # Static per deploy, hit by the filter UI — memoize per period (DB-swap safe).
-    return cached_aggregate("vote_facets", period, _compute)
+    # Static per deploy, hit by the filter UI — memoize per scope (DB-swap safe).
+    return cached_aggregate("vote_facets", period_key(period), _compute)
 
 
 _DEFECTOR_RE = re.compile(r"\d+")
@@ -232,7 +238,8 @@ def _parse_defectors(s) -> Optional[int]:
 @router.get("/cohesion")
 def vote_cohesion(
     q: Optional[str] = None,
-    period: Optional[int] = None,
+    period: Optional[List[int]] = Query(
+        None, description="Electoral period number(s); repeat to scope to several cycles"),
     result: Optional[str] = None,
     voting_mode: Optional[str] = None,
     date_from: Optional[str] = None,

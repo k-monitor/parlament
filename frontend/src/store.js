@@ -2,11 +2,13 @@
 // The enabled-module list drives which nav entries show and which module routes
 // are reachable (EXT-4/EXT-6) — a module disabled in the backend simply vanishes.
 //
-// It also owns the **global electoral cycle** (period scope). One header control
-// sets it for the whole site; every period-aware view reads `store.cycle` instead
-// of carrying its own period filter. `null` means "all cycles"; a number is an
-// electoral-period number. The choice is persisted so it survives a reload, and
-// defaults to the latest cycle on first visit.
+// It also owns the **global electoral cycle scope** (period scope). One header
+// control sets it for the whole site; every period-aware view reads
+// `store.cycles` instead of carrying its own period filter. It is an array of
+// electoral-period numbers: several cycles can be in scope at once, and the
+// empty array means "all cycles" (no period filter). The API takes it verbatim
+// as the repeatable `period` query param. The choice is persisted so it survives
+// a reload, and defaults to the latest cycle on first visit.
 import { reactive } from 'vue'
 import { api } from './api.js'
 
@@ -16,25 +18,31 @@ export const store = reactive({
   meta: null,
   loaded: false,
   failed: false,
-  cycle: null, // null = all cycles; otherwise an electoral-period number
+  cycles: [], // [] = all cycles; otherwise the electoral-period numbers in scope
   moduleEnabled(name) {
     if (!this.meta) return true // optimistic before load
     return this.meta.modules.some((m) => m.name === name)
   },
 })
 
-// Read the saved cycle: `undefined` = nothing saved, `null` = explicit "all",
-// otherwise the saved period number.
-function savedCycle() {
-  try {
-    const raw = localStorage.getItem(CYCLE_KEY)
-    if (raw === null) return undefined
-    if (raw === 'all') return null
-    const n = Number(raw)
-    return Number.isFinite(n) ? n : undefined
-  } catch {
-    return undefined
-  }
+// Parse a persisted/URL scope value into a cycle array: `undefined` = nothing
+// saved or nothing valid, `[]` = the explicit "all cycles" sentinel, otherwise
+// the period numbers that actually exist. Accepts the comma-separated form
+// ("43,44") the scope is written in, and a bare number (older saved values).
+export function parseCycles(raw, periods) {
+  if (raw === undefined || raw === null || raw === '') return undefined
+  if (raw === 'all') return []
+  const known = new Set((periods || []).map((p) => p.number))
+  const nums = String(raw)
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && known.has(n))
+  return nums.length ? [...new Set(nums)].sort((a, b) => a - b) : undefined
+}
+
+// Serialise a cycle scope into the form used in the URL and localStorage.
+export function serializeCycles(cycles) {
+  return cycles && cycles.length ? cycles.join(',') : 'all'
 }
 
 // Display label for an electoral period: its start–end years (e.g. "2018–2024")
@@ -49,37 +57,48 @@ export function periodLabel(p) {
   return p.label || String(p.number)
 }
 
-// Human label for the currently selected cycle, or null when scope is "all
-// cycles" (the caller supplies its own "all" wording). Used to make the active
-// scope explicit on period-aware pages.
-export function currentCycleLabel() {
-  if (store.cycle === null) return null
-  const p = (store.meta && store.meta.periods || []).find((x) => x.number === store.cycle)
-  return p ? periodLabel(p) : String(store.cycle)
+// Label for one period number, from the loaded manifest.
+export function cycleLabel(number) {
+  const p = (store.meta && store.meta.periods || []).find((x) => x.number === number)
+  return p ? periodLabel(p) : String(number)
 }
 
-// Set the global cycle (number = a period, null = all) and persist it.
-export function setCycle(value) {
-  store.cycle = value
+// Human label for the current scope — the selected cycles newest-first, comma
+// separated ("2026–, 2018–2024") — or null when scope is "all cycles" (the
+// caller supplies its own "all" wording). Used to make the active scope explicit
+// on period-aware pages.
+export function currentCycleLabel() {
+  if (!store.cycles.length) return null
+  return [...store.cycles].sort((a, b) => b - a).map(cycleLabel).join(', ')
+}
+
+// Set the global cycle scope (an array of period numbers, empty = all) and
+// persist it. Stored sorted + de-duplicated so the scope has one canonical form.
+export function setCycles(values) {
+  const nums = [...new Set((values || []).map(Number).filter(Number.isFinite))]
+  store.cycles = nums.sort((a, b) => a - b)
   try {
-    localStorage.setItem(CYCLE_KEY, value === null ? 'all' : String(value))
+    localStorage.setItem(CYCLE_KEY, serializeCycles(store.cycles))
   } catch {
     /* localStorage unavailable (private mode) — in-memory state still works */
   }
 }
 
-// Initialise the global cycle once the available periods are known: honour a
+// Initialise the global scope once the available periods are known: honour a
 // valid saved choice, otherwise default to the latest cycle (periods are sorted
 // newest-first by /meta).
-function initCycle(meta) {
+function initCycles(meta) {
   const periods = meta.periods || []
-  const saved = savedCycle()
-  if (saved === null) {
-    store.cycle = null // explicit "all"
-  } else if (saved !== undefined && periods.some((p) => p.number === saved)) {
-    store.cycle = saved
+  let saved
+  try {
+    saved = parseCycles(localStorage.getItem(CYCLE_KEY), periods)
+  } catch {
+    saved = undefined
+  }
+  if (saved !== undefined) {
+    store.cycles = saved
   } else {
-    store.cycle = periods.length ? periods[0].number : null
+    store.cycles = periods.length ? [periods[0].number] : []
   }
 }
 
@@ -91,7 +110,7 @@ export function loadMeta() {
     .meta()
     .then((m) => {
       store.meta = m
-      initCycle(m)
+      initCycles(m)
       store.loaded = true
       store.failed = false
       return m

@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ...db import get_db, like_contains
+from ...db import get_db, like_contains, period_key, period_list, period_sql
 from ...media import per_speech_clip
 from ...query_cache import cached_aggregate
 
@@ -122,7 +122,8 @@ def _responders_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, di
 @router.get("")
 def list_bills(
     q: Optional[str] = None,
-    period: Optional[int] = None,
+    period: Optional[List[int]] = Query(
+        None, description="Electoral period number(s); repeat to scope to several cycles"),
     main_type: Optional[str] = None,
     main_type_not: Optional[str] = None,     # exclude a fotipus, e.g. T (bills)
     main_type_in: Optional[str] = None,      # include any of these fotipusok (CSV)
@@ -141,8 +142,9 @@ def list_bills(
     if q:
         where.append("fold(b.title) LIKE fold(:q) ESCAPE '\\'")
         params["q"] = like_contains(q.strip())
-    if period is not None:
-        where.append("b.period_number = :per"); params["per"] = period
+    per_sql = period_sql(period, "b.period_number")
+    if per_sql:
+        where.append(per_sql)
     if main_type:
         where.append("b.main_type = :mt"); params["mt"] = main_type
     if main_type_not:
@@ -202,7 +204,8 @@ def list_bills(
 
 
 @router.get("/facets")
-def bill_facets(period: Optional[int] = None,
+def bill_facets(period: Optional[List[int]] = Query(
+                    None, description="Electoral period number(s)"),
                 main_type: Optional[str] = None,
                 main_type_not: Optional[str] = None,
                 sponsor: Optional[str] = None,       # restrict to one MP's irományok
@@ -213,12 +216,13 @@ def bill_facets(period: Optional[int] = None,
     profile can list only the document types that MP actually submitted)."""
     # Distinct-value scan over the whole bill table; static per deploy and hit by
     # every filter UI, so memoize per filter-combination (invalidated on DB swap).
-    key = (period, main_type, main_type_not, sponsor)
+    key = (period_key(period), main_type, main_type_not, sponsor)
 
     def _compute():
         where, params = ["1=1"], []
-        if period is not None:
-            where.append("b.period_number = ?"); params.append(period)
+        per_sql = period_sql(period, "b.period_number")
+        if per_sql:
+            where.append(per_sql)
         if main_type:
             where.append("b.main_type = ?"); params.append(main_type)
         if main_type_not:
@@ -266,7 +270,7 @@ def _refine_type(main_type: Optional[str], type_str: Optional[str]) -> str:
     return main_type or ""
 
 
-def _classify_questions(db: sqlite3.Connection, period: Optional[int], top: int):
+def _classify_questions(db: sqlite3.Connection, period: Optional[List[int]], top: int):
     """Shared engine for the Kérdések Sankey and its drill-down: classify every
     question-type iromány in scope by asker faction, by question type and by
     answerer, applying the same top-``top`` ministry ranking so the diagram and
@@ -282,8 +286,9 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[int], top: int)
     qph = ",".join("?" * len(_QUESTION_TYPES))
     where = [f"b.main_type IN ({qph})"]
     params: list = list(_QUESTION_TYPES)
-    if period is not None:
-        where.append("b.period_number = ?"); params.append(period)
+    per_sql = period_sql(period, "b.period_number")
+    if per_sql:
+        where.append(per_sql)
     where_sql = " AND ".join(where)
 
     order_ids: list[str] = []
@@ -368,7 +373,8 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[int], top: int)
 
 @router.get("/questions/sankey")
 def questions_sankey(
-    period: Optional[int] = None,
+    period: Optional[List[int]] = Query(
+        None, description="Electoral period number(s); repeat to scope to several cycles"),
     limit: int = Query(12, ge=1, le=40),   # top-N responding ministries, rest pooled
     include_type: bool = True,             # prepend the question-type column
     db: sqlite3.Connection = Depends(get_db),
@@ -392,7 +398,7 @@ def questions_sankey(
     bill_ids, factions, faction_key, type_key, answerer_key = _classify_questions(
         db, period, limit)
     if not bill_ids:
-        return {"period": period, "total": 0, "nodes": [], "links": []}
+        return {"period": period_list(period), "total": 0, "nodes": [], "links": []}
 
     def asker_of(bid):
         fid = faction_key(bid)
@@ -459,12 +465,14 @@ def questions_sankey(
         "color": asker_meta[ak]["color"],
     } for (ak, ans), n in fa.items()]
 
-    return {"period": period, "total": len(bill_ids), "nodes": nodes, "links": links}
+    return {"period": period_list(period), "total": len(bill_ids),
+            "nodes": nodes, "links": links}
 
 
 @router.get("/questions/list")
 def questions_list(
-    period: Optional[int] = None,
+    period: Optional[List[int]] = Query(
+        None, description="Electoral period number(s); repeat to scope to several cycles"),
     faction: Optional[str] = None,     # asker faction id, or "none" for the no-faction node
     main_type: Optional[str] = None,   # question type code (A/I/K) for the middle column
     answerer: Optional[str] = None,    # ministry | oral | other | unanswered

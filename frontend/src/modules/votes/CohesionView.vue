@@ -52,7 +52,7 @@ async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
   try {
-    const res = await api.voteCohesion({ period: store.cycle })
+    const res = await api.voteCohesion({ period: store.cycles })
     if (seq === loadSeq) data.value = res
   } catch {
     if (seq === loadSeq) error.value = true
@@ -62,7 +62,7 @@ async function load() {
 }
 
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
-watch(() => store.cycle, load)
+watch(() => store.cycles.join(','), load)
 </script>
 
 <template>

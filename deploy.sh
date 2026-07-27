@@ -230,6 +230,14 @@ color_env=(
 )
 [ -n "${PARLAMONITOR_WEB_WORKERS:-}" ]        && color_env+=(-e "PARLAMONITOR_WEB_WORKERS=${PARLAMONITOR_WEB_WORKERS}")
 [ -n "${PARLAMONITOR_FORWARDED_ALLOW_IPS:-}" ] && color_env+=(-e "PARLAMONITOR_FORWARDED_ALLOW_IPS=${PARLAMONITOR_FORWARDED_ALLOW_IPS}")
+# Read-path tuning (only forwarded when set in .env; unset keeps the image
+# defaults). On a host with RAM to spare these are what actually spend it:
+# _SQLITE_MMAP_SIZE must exceed the DB file's size for the whole DB to be
+# memory-mapped, and the query cache is per worker process.
+[ -n "${PARLAMONITOR_SQLITE_MMAP_SIZE:-}" ]   && color_env+=(-e "PARLAMONITOR_SQLITE_MMAP_SIZE=${PARLAMONITOR_SQLITE_MMAP_SIZE}")
+[ -n "${PARLAMONITOR_QUERY_CACHE_TTL:-}" ]    && color_env+=(-e "PARLAMONITOR_QUERY_CACHE_TTL=${PARLAMONITOR_QUERY_CACHE_TTL}")
+[ -n "${PARLAMONITOR_QUERY_CACHE_SIZE:-}" ]   && color_env+=(-e "PARLAMONITOR_QUERY_CACHE_SIZE=${PARLAMONITOR_QUERY_CACHE_SIZE}")
+[ -n "${PARLAMONITOR_MAX_SEARCH_TOTAL:-}" ]   && color_env+=(-e "PARLAMONITOR_MAX_SEARCH_TOTAL=${PARLAMONITOR_MAX_SEARCH_TOTAL}")
 
 # --- start the idle color from the new image --------------------------------
 echo "==> starting $TARGET_CTR"

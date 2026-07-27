@@ -286,8 +286,10 @@ export default {
   },
   factions: {
     title: 'Frakciók',
-    subtitle: 'Frakciószintű összesítő statisztikák.',
+    subtitle: 'Összesítő statisztikák az egyes frakciókhoz tartozó képviselők felszólalásairól.',
     members: 'képviselő',
+    // Plural, for the card link into the filtered MP list (vs. the singular stat label).
+    membersLink: 'képviselők',
     speeches: 'felszólalás',
     speakingTime: 'beszédidő',
     avgPerMp: 'átlag / képviselő',

@@ -47,9 +47,11 @@ const chartItems = computed(() =>
   <StateBlock :loading="loading" :error="error" @retry="load">
     <div v-if="data">
       <section class="card pad" style="margin-bottom:1.2rem;">
+        <h2 class="barhead">{{ $t('factions.speakingTime') + ' (perc)' }}</h2>
         <BarChart
           :items="chartItems"
           :caption="$t('factions.speakingTime') + ' (perc)'"
+          :show-caption="false"
           unit="perc"
           :value-format="(v) => v + ' p'"
         />
@@ -72,7 +74,7 @@ const chartItems = computed(() =>
             <div><dt>{{ $t('factions.avgPerMp') }}</dt><dd>{{ formatSpeakingTime(f.avg_speaking_seconds) }}</dd></div>
           </dl>
           <router-link :to="{ name: 'representatives', query: { faction_id: f.id } }" class="btn secondary small">
-            {{ $t('factions.members') }} →
+            {{ $t('factions.membersLink') }} →
           </router-link>
         </article>
       </div>
@@ -86,6 +88,7 @@ const chartItems = computed(() =>
 </template>
 
 <style scoped>
+.barhead { font-size: .92rem; margin: 0 0 .5rem; color: var(--ink); }
 .fgrid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
 .fcard { position: relative; overflow: hidden; }
 .fbar { position: absolute; top: 0; left: 0; right: 0; height: 5px; }

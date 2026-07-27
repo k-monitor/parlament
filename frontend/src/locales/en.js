@@ -201,7 +201,8 @@ export default {
     noVotes: 'No recorded roll-call votes.', viewVote: 'View vote', allVotes: 'View all votes',
   },
   factions: {
-    title: 'Factions', subtitle: 'Faction-level aggregate statistics.', members: 'members', speeches: 'speeches',
+    title: 'Factions', subtitle: 'Aggregate statistics on the speeches of the MPs in each faction.',
+    members: 'members', membersLink: 'members', speeches: 'speeches',
     speakingTime: 'speaking time', avgPerMp: 'avg / MP', methodology: 'Methodology',
   },
   bills: {

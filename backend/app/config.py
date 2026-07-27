@@ -19,8 +19,14 @@ ALL_MODULES = ("proceedings", "representatives", "bills", "votes")
 # and therefore excluded from representative/faction statistics (STAT-1). Kept
 # configurable (OPS-4) so related chairing/ügyrendi types can be added without a
 # code change. Primarily "ülésvezetés" — the chair's interjections that would
-# otherwise inflate the presiding officer's totals.
-DEFAULT_PROCEDURAL_SPEECH_TYPES = ("ülésvezetés",)
+# otherwise inflate the presiding officer's totals — plus the chair's formal
+# markers opening/closing the committee-report debate, which are procedural
+# announcements rather than substantive contributions.
+DEFAULT_PROCEDURAL_SPEECH_TYPES = (
+    "ülésvezetés",
+    "bizottsági jelentések és az összegző módosító javaslat vitája megkezdve",
+    "bizottsági jelentések és az összegző módosító javaslat vitája lezárva",
+)
 
 
 @dataclass

@@ -760,7 +760,9 @@ snippet — a site-wide capability, not a per-module feature.
   (*felszólalás típusa*, §3.1/§4.1): a speech whose type is a session-management
   type — primarily **`ülésvezetés`**, the chair's procedural interjections
   (calling the next speaker, timekeeping) that would otherwise inflate the
-  presiding officer's totals — is marked `procedural` and omitted from the
+  presiding officer's totals, plus the chair's formal debate markers
+  **`bizottsági jelentések és az összegző módosító javaslat vitája megkezdve`**
+  and **`… vitája lezárva`** — is marked `procedural` and omitted from the
   aggregates. Such speeches remain fully searchable (§5.1) and are still shown
   in the proceedings viewer with their type label (VIE-1), so the record stays
   complete and the exclusion is transparent (TRUST-1). The set of

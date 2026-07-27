@@ -29,6 +29,10 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 # Application code and the built SPA bundle.
 COPY backend/app ./app
+# One-off in-place DB migrations. The served DB lives in the `dbdata` volume, so
+# these are only runnable from INSIDE the image — e.g.
+#   podman-compose run --rm init migrate-procedural
+COPY backend/migrate_*.py ./
 # The scraper package, so the same image can run the continuous sync
 # (`python -m parlamonitor sync`) alongside the loader/API (OPS-1/OPS-2).
 COPY scraper/parlamonitor /app/scraper/parlamonitor

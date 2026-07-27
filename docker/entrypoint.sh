@@ -14,6 +14,10 @@
 #   update           incrementally reconcile the DB to /data and swap (no scrape)
 #   sync             one continuous-sync pass (scrape latest cycle + update DB)
 #   sync-loop        run `sync` forever on an interval (the sidecar's command)
+#   migrate-procedural  re-apply the procedural speech-type rule (STAT-1) to the
+#                    EXISTING DB in place and rebuild the aggregates — needed
+#                    after changing DEFAULT_PROCEDURAL_SPEECH_TYPES, which a
+#                    `sync`/`update` never revisits for already-loaded speeches
 #   <anything else>  exec'd verbatim (e.g. `pytest`, `sh`)
 set -e
 
@@ -66,6 +70,13 @@ case "${1:-serve}" in
         ;;
     sync)
         exec /usr/local/bin/sync-once.sh
+        ;;
+    migrate-procedural)
+        # Operates on the DB in the volume, NOT on /data — no scrape, no rebuild.
+        # Takes the loader's writer lock, so it is safe while the sync sidecar runs.
+        shift
+        echo "[entrypoint] re-applying the procedural speech-type rule to: $DB"
+        exec python migrate_procedural_types.py "$DB" "$@"
         ;;
     speaker-photos)
         # Download portraits for non-roster speakers (ministers / nationality

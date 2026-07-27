@@ -484,6 +484,30 @@ podman-compose run --rm init loader     # one-shot rebuild, then exits
 REBUILD_DB=1 podman-compose run --rm init
 ```
 
+**After changing which speech types are procedural** (`DEFAULT_PROCEDURAL_SPEECH_TYPES`
+in [`backend/app/config.py`](backend/app/config.py), or
+`PARLAMONITOR_PROCEDURAL_SPEECH_TYPES`). `speech.procedural` is decided once, at
+insert time, so a config change does **not** retroactively re-flag speeches that
+are already loaded — and `update`/`sync` won't notice either, since they key off
+changed files and a config change touches none. Deploy the new code first (the
+flag is derived from the image's config), then re-flag the existing DB in place:
+
+```bash
+git pull && ./deploy.sh                        # the new type list must be in the image
+podman-compose run --rm init migrate-procedural # re-flags + rebuilds the aggregates, in place
+```
+
+It prints how many speeches it flipped and how many are now excluded, so a run
+that reports 0 changes is still verifiable. Then purge the CDN cache
+([Cloudflare setup](#cloudflare-setup)) — the API responses in the edge cache
+still carry the old numbers.
+
+> Word clouds are built from *non-procedural* text only, so the affected sittings
+> keep word counts matching the old rule until either
+> `podman-compose run --rm init migrate-procedural --wordcloud` (re-runs NER for
+> just those sittings) or the next full rebuild. The cache in the `dbdata` volume
+> makes a `REBUILD_DB=1` rebuild the cheaper option when many sittings changed.
+
 **Update the application code / SPA** — the zero-downtime blue-green swap
 ([`deploy.sh`](deploy.sh)); see [Zero-downtime code deploys](#zero-downtime-code-deploys):
 

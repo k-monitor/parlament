@@ -31,18 +31,10 @@ const selectedLabels = computed(() =>
     return p ? periodLabel(p) : String(n)
   }))
 
-// Button label: the single selected cycle, both when two are selected, and a
-// count beyond that — the button must stay narrow enough for the header bar.
+// Button label: the cycle itself when exactly one is in scope, otherwise a count
+// — listing even two year spans ("2022–2026, 2018–2022") makes the trigger wider
+// than the header bar can spare. The panel below spells out which ones they are.
 const label = computed(() => {
-  const labels = selectedLabels.value
-  if (!labels.length) return t('cycle.all')
-  return labels.length <= 2 ? labels.join(', ') : t('cycle.count', { n: labels.length })
-})
-// Two full year spans ("2022–2026, 2018–2022") are ~13rem wide, which crowds the
-// mobile header out of one row — there, anything past a single cycle collapses to
-// the count. Both forms are rendered and swapped in CSS (a media query is the only
-// thing that knows how much room the bar actually has).
-const shortLabel = computed(() => {
   const labels = selectedLabels.value
   if (!labels.length) return t('cycle.all')
   return labels.length === 1 ? labels[0] : t('cycle.count', { n: labels.length })
@@ -103,8 +95,7 @@ onUnmounted(() => {
       :title="$t('cycle.label')" :aria-label="$t('cycle.label') + ': ' + label"
       :aria-expanded="open ? 'true' : 'false'" aria-haspopup="true"
     >
-      <span class="cyclebtn-label wide">{{ label }}</span>
-      <span class="cyclebtn-label narrow">{{ shortLabel }}</span>
+      <span class="cyclebtn-label">{{ label }}</span>
       <svg class="cyclebtn-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none"
            stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
            aria-hidden="true" focusable="false">
@@ -138,13 +129,12 @@ onUnmounted(() => {
    whole right-hand cluster lines up on one baseline. */
 .cyclebtn {
   box-sizing: border-box; height: 34px; display: inline-flex; align-items: center; gap: .4rem;
-  max-width: min(13rem, 100%); padding: 0 .7rem; cursor: pointer;
+  max-width: min(11rem, 100%); padding: 0 .7rem; cursor: pointer;
   border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.15);
   border-radius: 8px; color: #fff; font-family: inherit; font-weight: 700; font-size: .8rem;
 }
 .cyclebtn:hover, .cyclebtn.open { background: rgba(255,255,255,.28); }
 .cyclebtn-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cyclebtn-label.narrow { display: none; }
 @media (max-width: 760px) {
   /* On a phone the chooser is the one header control allowed to give way (the
      nav toggle and language button must keep their tap targets), so it shrinks
@@ -155,8 +145,6 @@ onUnmounted(() => {
    in App.vue) so the scope still reads as "3 ciklus" rather than "3 …". */
 @media (max-width: 380px) {
   .cyclebtn { gap: .3rem; padding: 0 .45rem; }
-  .cyclebtn-label.wide { display: none; }
-  .cyclebtn-label.narrow { display: inline; }
 }
 .cyclebtn-chevron { flex-shrink: 0; }
 .cyclebtn.open .cyclebtn-chevron { transform: rotate(180deg); }

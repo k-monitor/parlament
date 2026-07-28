@@ -315,7 +315,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 /* Hamburger toggle: hidden on desktop, revealed at the mobile breakpoint where
    the five nav links no longer fit on one row. */
 .navtoggle {
-  display: none; box-sizing: border-box; height: 34px; width: 38px;
+  display: none; box-sizing: border-box; height: 34px; width: 38px; flex-shrink: 0;
   align-items: center; justify-content: center; cursor: pointer;
   border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.15);
   border-radius: 8px; color: #fff; padding: 0;
@@ -338,7 +338,14 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 @media (max-width: 760px) {
   .brand-text { display: none; }
   .navtoggle { display: inline-flex; order: 3; }
-  .header-controls { order: 2; }
+  /* Tight on a phone: pull the spacing in, and let the control cluster be the
+     part that gives when the row still doesn't fit — everything in it holds its
+     size except the cycle chooser, which ellipsises (see CycleSelect). Without
+     this the hamburger, as the only shrinkable item left, got squashed to a
+     sliver at the screen edge. */
+  .header-bar { gap: .5rem; }
+  .header-controls { order: 2; gap: .3rem; flex-shrink: 1; min-width: 0; }
+  .infolink, .lang { flex-shrink: 0; }
   /* The nav drops out of the bar into a full-width panel beneath the header,
      toggled by the hamburger. The bar itself stays a single tidy row. */
   .mainnav {
@@ -350,5 +357,13 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
   }
   .mainnav.open { display: flex; }
   .mainnav a { padding: .65rem .75rem; font-size: 1rem; }
+}
+
+/* Smallest phones (≈320 px): claw back a couple of dozen pixels from the icon
+   buttons' padding so the cycle chooser can still spell out its scope instead of
+   ellipsising to a single character. Tap targets keep their 34 px height. */
+@media (max-width: 380px) {
+  .infolink { padding: 0 .4rem; }
+  .lang { padding: 0 .45rem; }
 }
 </style>

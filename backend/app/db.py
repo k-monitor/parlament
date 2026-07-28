@@ -58,8 +58,16 @@ def period_list(period: Iterable[int] | None) -> list[int]:
     Every period-aware endpoint takes ``period`` as a *repeatable* param
     (``?period=42&period=43``), because the site's cycle chooser lets the reader
     scope to several cycles at once; a single ``?period=43`` is the one-element
-    case and behaves exactly as it did when the param was scalar."""
-    return sorted({int(p) for p in (period or ())})
+    case and behaves exactly as it did when the param was scalar.
+
+    Bounded at ``_MAX_PERIODS`` distinct values — far beyond any real scope (the
+    House has had a handful of cycles), but enough of a cap that a hand-crafted
+    request can't turn the param into a thousand-term ``IN`` list, or a thousand
+    distinct aggregate-cache keys."""
+    return sorted({int(p) for p in (period or ())})[:_MAX_PERIODS]
+
+
+_MAX_PERIODS = 64
 
 
 def period_sql(period: Iterable[int] | None, column: str) -> str:

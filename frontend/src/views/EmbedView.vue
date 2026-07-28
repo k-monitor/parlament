@@ -40,9 +40,11 @@ const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
 
+// Newest cycle first, matching how the site itself names a multi-cycle scope
+// (store.currentCycleLabel) — the scope is `period`, which is sorted ascending.
 const scopeLabel = computed(() => {
   if (!period.value.length) return t('cycle.all')
-  return period.value.map((n) => {
+  return [...period.value].sort((a, b) => b - a).map((n) => {
     const p = (store.meta?.periods || []).find((x) => x.number === n)
     return p ? periodLabel(p) : String(n)
   }).join(', ')

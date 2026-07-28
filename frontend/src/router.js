@@ -156,7 +156,16 @@ router.beforeEach(async (to) => {
     const periods = (store.meta && store.meta.periods) || []
     const fromUrl = parseCycles(to.query[CYCLE_QUERY], periods)
     if (fromUrl !== undefined) {
-      if (serializeCycles(store.cycles) !== serializeCycles(fromUrl)) setCycles(fromUrl)
+      const canonical = serializeCycles(fromUrl)
+      if (serializeCycles(store.cycles) !== canonical) setCycles(fromUrl)
+      // Rewrite a scope that parsed to something other than what it says — a
+      // stale cycle number, or the cycles out of order ("43,42", "43,99") — so
+      // the address always spells out the scope actually applied, and re-sharing
+      // it can't drift. Settles in one redirect: the canonical form parses to
+      // itself.
+      if (to.query[CYCLE_QUERY] !== canonical) {
+        return { path: to.path, query: { ...to.query, [CYCLE_QUERY]: canonical }, hash: to.hash }
+      }
     } else {
       const desired = serializeCycles(store.cycles)
       if (to.query[CYCLE_QUERY] !== desired) {

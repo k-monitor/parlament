@@ -24,16 +24,28 @@ const periods = computed(() => (store.meta && store.meta.periods) || [])
 const open = ref(false)
 const rootRef = ref(null)
 
+// Selected cycles' labels, newest first.
+const selectedLabels = computed(() =>
+  [...store.cycles].sort((a, b) => b - a).map((n) => {
+    const p = periods.value.find((x) => x.number === n)
+    return p ? periodLabel(p) : String(n)
+  }))
+
 // Button label: the single selected cycle, both when two are selected, and a
 // count beyond that — the button must stay narrow enough for the header bar.
 const label = computed(() => {
-  const sel = [...store.cycles].sort((a, b) => b - a)
-  if (!sel.length) return t('cycle.all')
-  const labels = sel.map((n) => {
-    const p = periods.value.find((x) => x.number === n)
-    return p ? periodLabel(p) : String(n)
-  })
+  const labels = selectedLabels.value
+  if (!labels.length) return t('cycle.all')
   return labels.length <= 2 ? labels.join(', ') : t('cycle.count', { n: labels.length })
+})
+// Two full year spans ("2022–2026, 2018–2022") are ~13rem wide, which crowds the
+// mobile header out of one row — there, anything past a single cycle collapses to
+// the count. Both forms are rendered and swapped in CSS (a media query is the only
+// thing that knows how much room the bar actually has).
+const shortLabel = computed(() => {
+  const labels = selectedLabels.value
+  if (!labels.length) return t('cycle.all')
+  return labels.length === 1 ? labels[0] : t('cycle.count', { n: labels.length })
 })
 
 function isSelected(number) { return store.cycles.includes(number) }
@@ -56,6 +68,11 @@ function selectAll() {
   apply([])
   open.value = false   // "all cycles" is a terminal choice — nothing left to tick
 }
+
+// Leaving the page closes the panel. Keyed on the *path*: ticking a cycle
+// rewrites the query (see `apply`), and that must not close a chooser the reader
+// is still picking cycles in.
+watch(() => route.path, () => { open.value = false })
 
 // Close on an outside click or Escape; the listeners exist only while open.
 function onDocClick(e) {
@@ -86,7 +103,8 @@ onUnmounted(() => {
       :title="$t('cycle.label')" :aria-label="$t('cycle.label') + ': ' + label"
       :aria-expanded="open ? 'true' : 'false'" aria-haspopup="true"
     >
-      <span class="cyclebtn-label">{{ label }}</span>
+      <span class="cyclebtn-label wide">{{ label }}</span>
+      <span class="cyclebtn-label narrow">{{ shortLabel }}</span>
       <svg class="cyclebtn-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none"
            stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
            aria-hidden="true" focusable="false">
@@ -111,18 +129,35 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.cyclesel { position: relative; }
+/* inline-flex, not a plain block: the trigger must be clamped by the wrapper's
+   box (max-width: 100% below), so that when the header squeezes the wrapper the
+   button ellipsises inside it instead of spilling over the language toggle. */
+.cyclesel { position: relative; display: inline-flex; min-width: 0; }
 
 /* The trigger matches the other header controls' box model (see App.vue) so the
    whole right-hand cluster lines up on one baseline. */
 .cyclebtn {
   box-sizing: border-box; height: 34px; display: inline-flex; align-items: center; gap: .4rem;
-  max-width: 13rem; padding: 0 .7rem; cursor: pointer;
+  max-width: min(13rem, 100%); padding: 0 .7rem; cursor: pointer;
   border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.15);
   border-radius: 8px; color: #fff; font-family: inherit; font-weight: 700; font-size: .8rem;
 }
 .cyclebtn:hover, .cyclebtn.open { background: rgba(255,255,255,.28); }
 .cyclebtn-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cyclebtn-label.narrow { display: none; }
+@media (max-width: 760px) {
+  /* On a phone the chooser is the one header control allowed to give way (the
+     nav toggle and language button must keep their tap targets), so it shrinks
+     below its content width and ellipsises rather than pushing them off-screen. */
+  .cyclebtn { max-width: min(9rem, 100%); }
+}
+/* Smallest phones: trim the trigger's own padding too (matching the icon buttons
+   in App.vue) so the scope still reads as "3 ciklus" rather than "3 …". */
+@media (max-width: 380px) {
+  .cyclebtn { gap: .3rem; padding: 0 .45rem; }
+  .cyclebtn-label.wide { display: none; }
+  .cyclebtn-label.narrow { display: inline; }
+}
 .cyclebtn-chevron { flex-shrink: 0; }
 .cyclebtn.open .cyclebtn-chevron { transform: rotate(180deg); }
 

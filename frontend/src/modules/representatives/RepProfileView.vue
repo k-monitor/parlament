@@ -6,7 +6,7 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
-import { formatDate, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
+import { formatDate, formatDateLocal, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import BarChart from '../../components/BarChart.vue'
@@ -100,6 +100,15 @@ function toggleVoteDay(day) {
   toggleDayWith(openVoteDays, voteDayCache, day.date, (date) =>
     api.repVotes(props.id, { date, period: store.cycles, limit: 200 })
       .then((r) => r.votes))
+}
+
+// "2022-05-02 – 2022-11-30" for a committee membership; an open-ended term (no
+// upstream end date) reads as "… – jelenleg". Empty when neither date is known.
+function termRange(c) {
+  const start = formatDateLocal(c && c.start)
+  const end = formatDateLocal(c && c.end)
+  if (!start && !end) return ''
+  return `${start || '?'} – ${end || t('profile.present')}`
 }
 
 const PLACEHOLDER =
@@ -352,6 +361,7 @@ watch(() => store.cycles.join(','), load)
             <ul class="plain">
               <li v-for="(c, i) in profile.committees.slice(0, 12)" :key="i" class="small">
                 {{ c.committee || c }} <span class="muted" v-if="c.role">— {{ c.role }}</span>
+                <span class="muted term" v-if="termRange(c)">{{ termRange(c) }}</span>
               </li>
             </ul>
           </section>
@@ -524,6 +534,8 @@ watch(() => store.cycles.join(','), load)
 .sechead h2 { margin: 0; }
 .timeline, .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
 .timeline li { display: flex; gap: .6rem; align-items: center; }
+/* Committee term dates on their own line, so the committee name stays scannable. */
+.plain .term { display: block; font-variant-numeric: tabular-nums; }
 .billmini { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
 .billitem { display: flex; flex-direction: column; gap: .3rem; padding: .5rem .7rem; border-radius: 8px; color: var(--ink); border: 1px solid var(--line); }
 .billitem:hover { background: var(--accent-soft); text-decoration: none; }

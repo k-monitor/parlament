@@ -44,6 +44,22 @@ export function formatLongDate(iso, locale = 'hu') {
   }
 }
 
+// Date-only (YYYY-MM-DD) for a full UTC timestamp, read in Budapest time. Upstream
+// stamps term boundaries at the Hungarian day edge ("2026-05-12T22:00:00Z" is
+// midnight on the 13th locally), so a naive slice would be a day off.
+export function formatDateLocal(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10)
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Europe/Budapest',
+    }).format(d)
+  } catch {
+    return iso.slice(0, 10)
+  }
+}
+
 // Date + HH:MM for events/votes that carry a time-of-day (e.g. "2026-05-27 08:34").
 export function formatDateTime(iso) {
   if (!iso) return ''

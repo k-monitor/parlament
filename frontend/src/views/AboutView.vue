@@ -1,28 +1,22 @@
 <script setup>
-import { store } from '../store.js'
 import DonateCard from '../components/DonateCard.vue'
 </script>
 
 <template>
-  <article class="card pad" style="max-width:75ch;">
+  <!-- Body copy lives in the locale files as static markup (inline links and
+       emphasis), so every paragraph is rendered with v-html. -->
+  <article class="card pad prose" style="max-width:75ch;">
     <h1>{{ $t('about.title') }}</h1>
-    <p>{{ $t('about.body') }}</p>
+    <p v-html="$t('about.body1')"></p>
+    <p v-html="$t('about.body2')"></p>
+    <p v-html="$t('about.body3')"></p>
+    <p v-html="$t('about.body4')"></p>
+    <p v-html="$t('about.figyusz')"></p>
 
     <h2>{{ $t('about.dataTitle') }}</h2>
-    <p>{{ $t('about.dataBody') }}</p>
-
-    <h2>{{ $t('about.privacyTitle') }}</h2>
-    <p>{{ $t('about.privacyBody') }}</p>
-
-    <h2>{{ $t('about.apiTitle') }}</h2>
-    <p>{{ $t('about.apiBody') }} <a href="/api/docs" target="_blank" rel="noopener">{{ $t('about.apiLink') }}</a>.</p>
-
-    <h2>{{ $t('app.source') }}</h2>
-    <p v-if="store.meta">
-      <a :href="store.meta.source_attribution.url" target="_blank" rel="noopener">{{ store.meta.source_attribution.name }}</a>
-      —
-      <a :href="store.meta.source_attribution.license_url" target="_blank" rel="noopener">{{ $t('app.terms') }}</a>
-    </p>
+    <p v-html="$t('about.dataBody1')"></p>
+    <p v-html="$t('about.dataBody2')"></p>
+    <p v-html="$t('about.dataBody3')"></p>
   </article>
 
   <DonateCard class="about-donate" />
@@ -30,4 +24,10 @@ import DonateCard from '../components/DonateCard.vue'
 
 <style scoped>
 .about-donate { max-width: 75ch; margin-top: 1.5rem; }
+
+/* Long-form copy: roomier lines and visibly underlined inline links (the
+   global link style drops the underline, which reads poorly mid-sentence).
+   :deep() is required because the anchors come from v-html. */
+.prose p { line-height: 1.65; margin: 0 0 .9rem; }
+.prose :deep(a) { text-decoration: underline; text-underline-offset: 2px; }
 </style>

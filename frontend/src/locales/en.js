@@ -377,7 +377,6 @@ export default {
     instagram: 'K-Monitor on Instagram',
     facebook: 'K-Monitor on Facebook',
     feedback: 'Feedback',
-    feedbackSubject: 'Parlamonitor feedback',
   },
   agendaTypes: {
     opening: 'Opening', procedural: 'Procedural', regular: 'Debate', oath: 'Oath', voting: 'Voting',

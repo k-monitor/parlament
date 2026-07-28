@@ -492,7 +492,6 @@ export default {
     instagram: 'K-Monitor az Instagramon',
     facebook: 'K-Monitor a Facebookon',
     feedback: 'Visszajelzés',
-    feedbackSubject: 'Parlamonitor visszajelzés',
   },
   agendaTypes: {
     opening: 'Ülésnap megnyitása',

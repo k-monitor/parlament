@@ -44,6 +44,16 @@ const routes = [
     component: () => import('./modules/representatives/FactionsView.vue'),
   },
   {
+    // Nationality advocates (nemzetiségi szószólók, REP-9) — a sibling page of the
+    // MP list rather than a filter of it: they hold a different mandate (no
+    // faction, no constituency, no vote). Same list component, which reads which
+    // mandate to show from the route name. Declared before `/representatives/:id`
+    // so the static segment is never taken for a person id.
+    path: '/representatives/advocates', name: 'advocates',
+    meta: { module: 'representatives' },
+    component: () => import('./modules/representatives/RepListView.vue'),
+  },
+  {
     path: '/representatives/:id', name: 'profile', meta: { module: 'representatives' },
     component: () => import('./modules/representatives/RepProfileView.vue'), props: true,
   },

@@ -67,7 +67,9 @@ no dropped requests.
 - Scraper output present under [`data/`](data/):
   - `data/processed/*-session.json`, `data/processed/representatives-*.json`,
     `data/processed/bills-*.json` — **required**, used to build the DB.
-  - `data/media/photos/*.jpg` — optional MP portraits; served if present.
+  - `data/processed/advocates-*.json` — optional nationality-advocate
+    (*nemzetiségi szószóló*) registries; loaded if present (REP-9).
+  - `data/media/photos/*.jpg` — optional MP/advocate portraits; served if present.
 
   Produce/refresh them with the scraper (see [scraper/README.md](scraper/README.md)):
 
@@ -75,7 +77,12 @@ no dropped requests.
   python -m parlamonitor proceedings     --cycle 43 ./data
   python -m parlamonitor representatives --cycle 43 --photos ./data
   python -m parlamonitor bills           --cycle 43 ./data
+  python -m parlamonitor advocates       --all-cycles ./data
   ```
+
+  The `advocates` stage is **purely additive** on an existing deployment: it
+  writes new files only, and the next `app.loader --update` loads them (adding the
+  two `person` columns in place) without a rebuild or a restart.
 
 ## Quick start
 
@@ -293,7 +300,8 @@ rebuild and without downtime. Every `PARLAMONITOR_SYNC_INTERVAL` seconds it runs
    day is re-fetched only when it is new, its duration changed, or (for the still
    live latest day) its one-request speech listing changed; bills/votes reuse the
    on-disk detail cache so an unchanged cycle costs only the list query;
-   representatives refresh on a slow cadence (`PARLAMONITOR_SYNC_REPS_MAX_AGE`).
+   representatives and nationality advocates refresh on a slow cadence
+   (`PARLAMONITOR_SYNC_REPS_MAX_AGE`).
    When nothing changed it writes nothing (SCR-2/SCR-4).
 2. **`app.loader --update`** — compares each `processed/*.json` against what the
    DB was last built from (a `load_state` table) and reloads **only the changed

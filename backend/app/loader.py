@@ -245,6 +245,171 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Nationality advocates (nemzetiségi szószólók)
+# ---------------------------------------------------------------------------
+
+def _ensure_advocate_columns(conn: sqlite3.Connection) -> None:
+    """Add ``person.is_advocate`` / ``person.nationality`` to a pre-existing DB.
+
+    Same reasoning as ``_ensure_session_status``: the incremental ``--update`` path
+    snapshots the live DB instead of re-running ``schema.sql``, so without this the
+    first advocate registry loaded after a code deploy would fail on the missing
+    columns. This is what lets the whole feature land on an **already-scraped,
+    already-built** deployment by just dropping in the new ``advocates-*.json`` —
+    no full rebuild. A no-op on a freshly-built DB."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(person)")]
+    if not cols:
+        return
+    if "is_advocate" not in cols:
+        conn.execute("ALTER TABLE person ADD COLUMN is_advocate INTEGER DEFAULT 0")
+    if "nationality" not in cols:
+        conn.execute("ALTER TABLE person ADD COLUMN nationality TEXT")
+
+
+# The upstream per-cycle counters that come as a list of one row per cycle.
+_CYCLE_STAT_KEYS = ("speeches", "billsSubmitted")
+
+
+def _merge_external_stats(existing: dict | None, incoming: dict | None) -> dict | None:
+    """Merge upstream per-cycle counters, the incoming rows winning per cycle.
+
+    An advocate registry is scraped **per cycle**, so a ``--no-details`` run knows
+    only its own cycle's counts; a blind overwrite would drop the other cycles an
+    earlier file (or the MP roster, for someone who has been both) contributed.
+    Non-cycle-keyed entries are replaced wholesale when the incoming one is
+    non-empty."""
+    if not incoming:
+        return existing
+    if not existing:
+        return incoming
+    out = dict(existing)
+    for key, rows in incoming.items():
+        if key in _CYCLE_STAT_KEYS and isinstance(rows, list):
+            by_cycle = {r.get("cycle"): r
+                        for r in (existing.get(key) or []) if isinstance(r, dict)}
+            by_cycle.update({r.get("cycle"): r for r in rows if isinstance(r, dict)})
+            out[key] = sorted(by_cycle.values(),
+                              key=lambda r: (r.get("cycle") is None,
+                                             -(r.get("cycle") or 0)))
+        elif rows:
+            out[key] = rows
+    return out
+
+
+def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
+    """Upsert a cycle's nationality-advocate registry (nemzetiségi szószólók).
+
+    Advocates share the ``person`` table with MPs — their upstream id is the very
+    id the transcripts already carry, so this **enriches the speaker stubs**
+    (``_ensure_person``) the proceedings loader created rather than adding a
+    parallel entity (EXT-2). They are marked ``is_advocate`` and carry the
+    ``nationality`` they speak for; ``is_mp`` is left untouched, so someone who has
+    been both (an advocate in one cycle, an MP in another) keeps both marks, and
+    every optional field is COALESCE-merged so an advocate load never nulls out
+    what the richer MP roster supplied.
+
+    A membership row per cycle (with no faction — an advocate belongs to none)
+    keeps them inside the cycle scope every period-aware view filters on (§4A).
+    Safe to re-run: it replaces only this cycle's advocate rows (ING-4)."""
+    _ensure_advocate_columns(conn)
+    meta = registry.get("meta", {})
+    period = meta.get("cycle")
+    data = registry.get("data", [])
+
+    if period is not None:
+        conn.execute("INSERT INTO electoral_period(number) VALUES (?) "
+                     "ON CONFLICT(number) DO NOTHING", (period,))
+
+    for rec in data:
+        pid = rec.get("personID")
+        if not pid:
+            continue
+
+        # Only the locally-downloaded portrait is used: hot-linking parlament.hu's
+        # image resource is avoided, and leaving it NULL lets `wire_nonmp_photos`
+        # fill it in once the scraper's photo step has fetched the file.
+        photo_file = rec.get("photoFile")
+        photo_uri = f"/media/photos/{photo_file}" if photo_file else None
+
+        prev = conn.execute("SELECT external_stats_json FROM person WHERE person_id=?",
+                            (pid,)).fetchone()
+        stats = _merge_external_stats(
+            _loads_json(prev["external_stats_json"]) if prev else None,
+            rec.get("statistics"))
+
+        conn.execute(
+            """
+            INSERT INTO person(person_id, label, label_full, firstname, lastname,
+                               wikidata_id, wikipedia_url, photo_uri, photo_file,
+                               seat, email, website, highest_education, active,
+                               is_advocate, nationality,
+                               education_json, committees_json, offices_json,
+                               external_stats_json)
+            VALUES (:pid, :label, :label_full, :firstname, :lastname,
+                    :wikidata_id, :wikipedia_url, :photo_uri, :photo_file,
+                    :seat, :email, :website, :highest_education, :active,
+                    1, :nationality, :education, :committees, :offices,
+                    :external_stats)
+            ON CONFLICT(person_id) DO UPDATE SET
+                label=excluded.label,
+                label_full=COALESCE(excluded.label_full, person.label_full),
+                firstname=COALESCE(excluded.firstname, person.firstname),
+                lastname=COALESCE(excluded.lastname, person.lastname),
+                wikidata_id=COALESCE(excluded.wikidata_id, person.wikidata_id),
+                wikipedia_url=COALESCE(excluded.wikipedia_url, person.wikipedia_url),
+                photo_uri=COALESCE(excluded.photo_uri, person.photo_uri),
+                photo_file=COALESCE(excluded.photo_file, person.photo_file),
+                seat=COALESCE(excluded.seat, person.seat),
+                email=COALESCE(excluded.email, person.email),
+                website=COALESCE(excluded.website, person.website),
+                highest_education=COALESCE(excluded.highest_education,
+                                           person.highest_education),
+                active=COALESCE(excluded.active, person.active),
+                is_advocate=1,
+                nationality=COALESCE(excluded.nationality, person.nationality),
+                education_json=COALESCE(excluded.education_json, person.education_json),
+                committees_json=COALESCE(excluded.committees_json, person.committees_json),
+                offices_json=COALESCE(excluded.offices_json, person.offices_json),
+                external_stats_json=excluded.external_stats_json
+            """,
+            {
+                "pid": pid,
+                "label": (rec.get("label") or pid).strip(),
+                "label_full": rec.get("labelFull") or None,
+                "firstname": rec.get("firstname"),
+                "lastname": rec.get("lastname"),
+                "wikidata_id": rec.get("wikidataId"),
+                "wikipedia_url": rec.get("wikipediaUrl"),
+                "photo_uri": photo_uri,
+                "photo_file": photo_file,
+                "seat": rec.get("seat"),
+                "email": rec.get("email"),
+                "website": rec.get("website"),
+                "highest_education": rec.get("highestEducation"),
+                "active": _as_bool(rec.get("active")),
+                "nationality": rec.get("nationality"),
+                "education": _json_or_none(rec.get("education")),
+                "committees": _json_or_none(rec.get("committeeMemberships")
+                                            or rec.get("committees")),
+                "offices": _json_or_none(rec.get("offices")),
+                "external_stats": _json_or_none(stats),
+            },
+        )
+
+        # The advocate's factionless membership row for this cycle. Scoped to
+        # `faction_id IS NULL` on delete so it can never wipe a faction membership
+        # the MP roster loaded for the same person and cycle.
+        conn.execute("DELETE FROM membership WHERE person_id = ? "
+                     "AND period_number IS ? AND faction_id IS NULL", (pid, period))
+        conn.execute("INSERT INTO membership(person_id, faction_id, period_number, "
+                     "position) VALUES (?, NULL, ?, ?)",
+                     (pid, period, rec.get("mandate")))
+    conn.commit()
+    logger.info("Loaded %d nationality advocates (cycle %s)", len(data), period)
+    return len(data)
+
+
+# ---------------------------------------------------------------------------
 # Bills (irományok) registry
 # ---------------------------------------------------------------------------
 
@@ -1497,6 +1662,14 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
             _load_period_meta(conn, registry.get("meta", {}))
             load_representatives(conn, registry)
 
+        # Nationality advocates right after the MP roster: they are `person` rows
+        # too, and load before bills/votes so an advocate who submitted an iromány
+        # is linked as its sponsor rather than staying a label (EXT-2).
+        for ap in sorted((data_dir / "processed").glob("advocates-*.json")):
+            registry = json.loads(ap.read_text())
+            _load_period_meta(conn, registry.get("meta", {}))
+            load_advocates(conn, registry)
+
         # Bills load after representatives so sponsor person/faction links
         # resolve against already-loaded core entities (EXT-2).
         for bp in sorted((data_dir / "processed").glob("bills-*.json")):
@@ -1560,9 +1733,12 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
 # Incremental update (SCR-2 / DB-4) — reload only changed files, then swap
 # ---------------------------------------------------------------------------
 
-# The processed-file globs, in the load order full builds use (reps → bills →
-# votes → sessions) so cross-module person/faction/bill links resolve (EXT-2).
-_PROCESSED_GLOBS = ("representatives-*.json", "bills-*.json",
+# The processed-file globs, in the load order full builds use (reps → advocates →
+# bills → votes → sessions) so cross-module person/faction/bill links resolve
+# (EXT-2). A newly-added glob is "changed" for every existing DB (nothing is in its
+# load_state yet), which is exactly how a new domain lands on an already-built
+# deployment through the incremental path alone.
+_PROCESSED_GLOBS = ("representatives-*.json", "advocates-*.json", "bills-*.json",
                     "votes-*.json", "*-session.json")
 
 
@@ -1696,6 +1872,10 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             registry = json.loads(p.read_text())
             _load_period_meta(conn, registry.get("meta", {}))
             load_representatives(conn, registry)
+        for p in changed["advocates-*.json"]:
+            registry = json.loads(p.read_text())
+            _load_period_meta(conn, registry.get("meta", {}))
+            load_advocates(conn, registry)
         for p in changed["bills-*.json"]:
             load_bills(conn, json.loads(p.read_text()))
         for p in changed["votes-*.json"]:
@@ -1718,15 +1898,19 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
                 rebuild_entity_mentions(conn, db_path.parent,
                                         only_sessions=set(loaded_sessions))
             rebuild_aggregates(conn)
-            # Wire any non-MP speaker portraits the scraper has downloaded since
-            # the last load (global, cheap — see wire_nonmp_photos).
+        # Wire any non-MP speaker portraits the scraper has downloaded since the
+        # last load (global, cheap — see wire_nonmp_photos). Also runs for an
+        # advocates-only update: advocates are non-MP rows, so this is what gives
+        # them a face when their portrait landed after the registry did.
+        if loaded_sessions or changed["advocates-*.json"]:
             wire_nonmp_photos(conn, Path(data_dir) / "media" / "photos")
-        # Re-resolve entity links when the transcript OR the MP roster changed: new
-        # mentions need resolving, and a reps change can flip a name from a Wikipedia
-        # link to an internal profile (or set an MP's K-Monitor link). Cheap when
+        # Re-resolve entity links when the transcript OR a person registry changed:
+        # new mentions need resolving, and a roster change can flip a name from a
+        # Wikipedia link to an internal profile (or set a K-Monitor link). Cheap when
         # nothing new (K-Monitor index + Wikidata names are cached; entity_link is
         # just rebuilt from cache).
-        if loaded_sessions or changed["representatives-*.json"]:
+        if (loaded_sessions or changed["representatives-*.json"]
+                or changed["advocates-*.json"]):
             resolve_entity_links(conn, db_path.parent)
 
         for files in changed.values():
@@ -1851,6 +2035,16 @@ def _json_or_none(v):
     if not v:
         return None
     return json.dumps(v, ensure_ascii=False)
+
+
+def _loads_json(v):
+    """Parse a stored JSON column back to a Python value (``None`` if unusable)."""
+    if not v:
+        return None
+    try:
+        return json.loads(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def _as_bool(v):

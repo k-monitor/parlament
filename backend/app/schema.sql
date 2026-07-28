@@ -47,6 +47,11 @@ CREATE TABLE person (
     highest_education TEXT,
     active            INTEGER,           -- 0/1/NULL
     is_mp             INTEGER DEFAULT 0, -- 1 when present in an MP roster
+    -- Nationality advocate (nemzetiségi szószóló): sits and speaks in the House
+    -- but holds no representative mandate, so they are never in the MP roster and
+    -- have no faction/constituency — `nationality` is their affiliation instead.
+    is_advocate       INTEGER DEFAULT 0, -- 1 when present in an advocate roster
+    nationality       TEXT,              -- e.g. "roma", "szerb" (advocates only)
     -- Richer enrichment kept as JSON for the profile page (arrays of objects):
     education_json        TEXT,
     committees_json       TEXT,

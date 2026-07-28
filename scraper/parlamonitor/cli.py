@@ -19,6 +19,10 @@ politeness/transport knobs come from the environment or flags, never hard-coded
 
     # Bills (irományok) of the current cycle
     python -m parlamonitor bills --cycle 43 ./data
+
+    # Nationality advocates (szószólók) — one cycle, or backfill every cycle
+    python -m parlamonitor advocates --cycle 43 ./data
+    python -m parlamonitor advocates --all-cycles ./data
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ from .config import (Paths, RuntimeConfig, timing_backend, whisper_language,
 from .felicitas import FelicitasClient
 from .http_client import HttpClient
 from .lockfile import acquire
+from .advocates.scrape import advocate_cycles, fetch_advocates, save_advocates
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
 from .votes.scrape import fetch_votes, save_votes
 from .proceedings.scrape import download_period
@@ -217,6 +222,56 @@ def cmd_representatives(args) -> None:
     })
 
 
+def cmd_advocates(args) -> None:
+    """Scrape the nationality-advocate registry (nemzetiségi szószólók).
+
+    ``--cycle`` does one cycle; ``--all-cycles`` backfills every cycle that has
+    advocates (cycle 40 onward), which is what an already-scraped corpus needs to
+    catch up — the sittings themselves are untouched, since the advocates already
+    appear in them as speakers under the very ids this registry is keyed by.
+    Portraits are downloaded by default: there are only ~13 advocates per cycle,
+    so it costs a handful of requests and is what makes their profiles look like
+    an MP's."""
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    felicitas = _client(args)
+    photos_dir = None if args.no_photos else (paths.data / "media" / "photos")
+    written: list[dict] = []
+
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            if args.all_cycles:
+                cycles = advocate_cycles(felicitas)
+            elif args.cycle is not None:
+                cycles = [args.cycle]
+            else:
+                sys.exit("advocates: pass --cycle N or --all-cycles")
+            for cycle in cycles:
+                registry = fetch_advocates(
+                    felicitas, cycle, details=not args.no_details,
+                    limit=args.limit, photos_dir=photos_dir,
+                    link_wikidata=not args.no_wikidata)
+                # A cycle that legitimately has none (or one whose query came back
+                # empty) is not written: an empty registry file would only teach the
+                # loader to forget the advocates it already holds for that cycle.
+                if not registry["data"]:
+                    logger.info("Cycle %s has no advocates; nothing written", cycle)
+                    continue
+                save_advocates(paths, cycle, registry)
+                written.append({"cycle": cycle, "count": registry["meta"]["count"]})
+    finally:
+        felicitas.close()
+
+    _write_log(paths, {
+        "command": "advocates",
+        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "cycles": written,
+        "withDetails": not args.no_details,
+    })
+    logger.info("Advocates: wrote %d cycle registr(y/ies) — %s",
+                len(written), written)
+
+
 def cmd_bills(args) -> None:
     paths = Paths(args.data_dir)
     paths.ensure()
@@ -291,7 +346,8 @@ def cmd_sync(args) -> None:
                 felicitas, paths, cycle, force=args.force,
                 no_detail=args.no_detail, no_offsets=args.no_offsets,
                 reps_max_age=reps_max_age, skip_bills=args.skip_bills,
-                skip_votes=args.skip_votes, skip_reps=args.skip_reps)
+                skip_votes=args.skip_votes, skip_reps=args.skip_reps,
+                skip_advocates=args.skip_advocates)
             # Top up portraits for non-roster speakers of this cycle (ministers /
             # nationality advocates who aren't in the MP roster). Cheap on an idle
             # poll: already-downloaded ids are skipped and 404s are negative-cached,
@@ -307,14 +363,17 @@ def cmd_sync(args) -> None:
     _write_log(paths, {"command": "sync", **summary,
                        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                        "backend": "felicitas-json"})
-    logger.info("Sync done: %d sitting(s) changed, bills=%s votes=%s reps=%s, %d error(s)",
+    logger.info("Sync done: %d sitting(s) changed, bills=%s votes=%s reps=%s "
+                "advocates=%s, %d error(s)",
                 len(summary["sessions"]), summary["bills"], summary["votes"],
-                summary["representatives"], len(summary["errors"]))
+                summary["representatives"], summary["advocates"],
+                len(summary["errors"]))
     # Machine-readable one-liner for a wrapping script / cron log.
     print(json.dumps({"changed": summary["changed"],
                       "sessions": summary["sessions"],
                       "bills": summary["bills"], "votes": summary["votes"],
                       "representatives": summary["representatives"],
+                      "advocates": summary["advocates"],
                       "errors": summary["errors"]}))
     if summary["errors"]:
         sys.exit(1)
@@ -398,6 +457,23 @@ def build_parser() -> argparse.ArgumentParser:
                     help="cap number of MPs (for testing)")
     sp.set_defaults(func=cmd_representatives)
 
+    sp = sub.add_parser("advocates",
+                        help="scrape the nationality-advocate registry "
+                             "(nemzetiségi szószólók)")
+    _common(sp, cycle_required=False)
+    sp.add_argument("--all-cycles", action="store_true",
+                    help="scrape every cycle that has advocates (cycle 40 on) — "
+                         "the backfill for an already-scraped corpus")
+    sp.add_argument("--no-details", action="store_true",
+                    help="roster only, skip the per-person detail queries")
+    sp.add_argument("--no-wikidata", action="store_true",
+                    help="skip the Wikidata/Wikipedia link query")
+    sp.add_argument("--no-photos", action="store_true",
+                    help="skip portrait downloads (on by default: ~13 per cycle)")
+    sp.add_argument("--limit", type=int, default=None,
+                    help="cap number of advocates (for testing)")
+    sp.set_defaults(func=cmd_advocates)
+
     sp = sub.add_parser("bills", help="scrape the cycle's irományok (all document types)")
     _common(sp)
     sp.add_argument("--main-types", default=None,
@@ -443,6 +519,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--skip-bills", action="store_true")
     sp.add_argument("--skip-votes", action="store_true")
     sp.add_argument("--skip-reps", action="store_true")
+    sp.add_argument("--skip-advocates", action="store_true",
+                    help="skip the nationality-advocate refresh")
     sp.set_defaults(func=cmd_sync)
 
     sp = sub.add_parser("speaker-photos",

@@ -30,9 +30,12 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 // routes (a profile / a single bill or document) keep their parent tab active.
 const NAV_SECTIONS = {
   reps: {
-    match: ['representatives', 'factions', 'profile'],
+    match: ['representatives', 'advocates', 'factions', 'profile'],
+    // `profile` is a detail page of both person tabs — which one is decided at
+    // runtime by the profile's mandate (see `tabActive`).
     tabs: [
       { name: 'representatives', key: 'representatives', detail: ['profile'] },
+      { name: 'advocates', key: 'advocates', detail: ['profile'] },
       { name: 'factions', key: 'factions' },
     ],
   },
@@ -67,6 +70,13 @@ const sectionTabs = computed(() =>
   (currentSection.value ? currentSection.value.tabs : []).filter(
     (t) => !(t.name === 'cohesion' && (!COHESION_ENABLED || !store.cycles.length))))
 function tabActive(tab) {
+  // A person profile is a detail page of two different tabs: an MP's belongs
+  // under Képviselők, a nationality advocate's under Nemzetiségi szószólók
+  // (REP-9). They share one route, so the open profile itself reports which
+  // (store.profileIsAdvocate); until it has loaded, treat it as an MP.
+  if (route.name === 'profile') {
+    return tab.name === (store.profileIsAdvocate ? 'advocates' : 'representatives')
+  }
   return route.name === tab.name || (tab.detail || []).includes(route.name)
 }
 

@@ -29,6 +29,7 @@ export default {
     search: 'Keresés',
     sessions: 'Ülésnapok',
     representatives: 'Képviselők',
+    advocates: 'Nemzetiségi szószólók',
     factions: 'Frakciók',
     bills: 'Törvényjavaslatok',
     documents: 'Egyéb irományok',
@@ -232,6 +233,14 @@ export default {
     noResults: 'Nincs a feltételeknek megfelelő képviselő.',
     profile: 'Profil',
     filterByFaction: '{faction} képviselőinek szűrése',
+    // Nemzetiségi szószólók: mandátum nélkül üléseznek és felszólalnak (REP-9).
+    mandate: 'Mandátum',
+    advocateFor: '{nationality} nemzetiségi szószóló',
+    advocatesUnit: 'szószóló',
+    advocateNote: 'A szószólók az Országgyűlés munkájában részt vesznek – felszólalnak és irományokat '
+      + 'nyújtanak be –, de nem képviselők: nincs frakciójuk, választókerületük és szavazati joguk.',
+    searchAdvocatePlaceholder: 'Szószóló keresése név szerint…',
+    noAdvocateResults: 'Nincs a feltételeknek megfelelő szószóló.',
   },
   profile: {
     speeches: 'Felszólalások',
@@ -241,6 +250,7 @@ export default {
     statistics: 'Statisztikák',
     biography: 'Adatok',
     office: 'Tisztség',
+    mandate: 'Mandátum',
     constituency: 'Választókerület',
     education: 'Legmagasabb végzettség',
     email: 'E-mail',

@@ -41,6 +41,14 @@ def _exclude_quorum(alias: str = "v") -> str:
     return f" AND {col} NOT IN ({vals})"
 
 
+def _has_advocate_columns(db: sqlite3.Connection) -> bool:
+    """Whether the (regenerable) DB knows about nationality advocates — false only
+    on a DB built before the advocate registry existed, so the endpoints keep
+    working (MPs only) until the next loader run adds the columns."""
+    return any(r["name"] == "is_advocate"
+               for r in db.execute("PRAGMA table_info(person)"))
+
+
 @router.get("")
 def list_representatives(
     q: Optional[str] = None,
@@ -48,20 +56,42 @@ def list_representatives(
     period: Optional[List[int]] = Query(
         None, description="Electoral period number(s); repeat to scope to several cycles"),
     constituency: Optional[str] = None,
+    role: str = Query("mp", pattern="^(mp|advocate|all)$",
+                      description="mp (default) | advocate (nemzetiségi szószólók) | all"),
+    nationality: Optional[str] = None,
     sort: str = Query("name", pattern="^(name|speeches|speaking_time)$"),
     limit: int = Query(60, ge=1, le=300),
     offset: int = Query(0, ge=0),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    """Browsable, filterable MP list (REP-1). Filters combine."""
-    where = ["p.is_mp = 1"]
+    """Browsable, filterable representative list (REP-1). Filters combine.
+
+    ``role`` picks which mandate the list covers: MPs (the default, so an existing
+    caller sees exactly what it did before), the **nationality advocates**
+    (szószólók — they sit and speak but hold no mandate, REP-9), or both. On a DB
+    predating the advocate registry the parameter degrades to MPs only."""
+    advocates_known = _has_advocate_columns(db)
+    where = []
     params: dict = {}
+    if not advocates_known:
+        # A DB predating the advocate registry knows only MPs, so an advocate-only
+        # request comes back honestly empty instead of quietly listing MPs.
+        where.append("0" if role == "advocate" else "p.is_mp = 1")
+    elif role == "mp":
+        where.append("p.is_mp = 1")
+    elif role == "advocate":
+        where.append("p.is_advocate = 1")
+    else:
+        where.append("(p.is_mp = 1 OR p.is_advocate = 1)")
     if q:
         where.append("fold(p.label) LIKE fold(:q) ESCAPE '\\'")
         params["q"] = like_contains(q.strip())
     if constituency:
         where.append("fold(p.constituency) LIKE fold(:con) ESCAPE '\\'")
         params["con"] = like_contains(constituency)
+    if nationality and advocates_known:
+        where.append("fold(p.nationality) LIKE fold(:nat) ESCAPE '\\'")
+        params["nat"] = like_contains(nationality)
     mem_sql = period_sql(period, "m.period_number")
     if faction_id is not None:
         # One membership row must match both — two independent EXISTS would
@@ -97,9 +127,13 @@ def list_representatives(
 
     total = db.execute(f"SELECT COUNT(*) AS c FROM person p WHERE {where_sql}",
                        params).fetchone()["c"]
+    # An advocate has no faction or constituency; their nationality is the
+    # affiliation the card shows in its place.
+    mandate_cols = ("p.is_advocate, p.nationality," if advocates_known
+                    else "0 AS is_advocate, NULL AS nationality,")
     rows = db.execute(
         f"""SELECT p.person_id, p.label, p.firstname, p.lastname, p.photo_uri,
-                   p.constituency,
+                   p.constituency, {mandate_cols}
                    COALESCE(stat.speech_count, 0) AS speech_count,
                    COALESCE(stat.speaking_seconds, 0) AS speaking_seconds,
                    f.id AS faction_id, f.label AS faction_label, f.color AS faction_color
@@ -117,6 +151,8 @@ def list_representatives(
                 "person_id": r["person_id"], "label": r["label"],
                 "firstname": r["firstname"], "lastname": r["lastname"],
                 "photo_uri": r["photo_uri"], "constituency": r["constituency"],
+                "is_advocate": bool(r["is_advocate"]),
+                "nationality": r["nationality"],
                 "speech_count": r["speech_count"],
                 "speaking_seconds": r["speaking_seconds"],
                 "faction": {"id": r["faction_id"], "label": r["faction_label"],
@@ -278,6 +314,12 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         "seat": p["seat"], "email": p["email"], "website": p["website"],
         "highest_education": p["highest_education"], "active": p["active"],
         "is_mp": bool(p["is_mp"]),
+        # Nationality advocate (nemzetiségi szószóló, REP-9): sits and speaks in
+        # the House with no representative mandate — hence no faction, no
+        # constituency and no vote — so the nationality they speak for is their
+        # identifying affiliation, shown where an MP's faction badge goes.
+        "is_advocate": bool(_col(p, "is_advocate")),
+        "nationality": _col(p, "nationality"),
         # The speaker's government office (tisztség), e.g. "igazságügyi miniszter".
         # Present for office-holders (ministers/state secretaries); it identifies a
         # non-MP speaker — someone who spoke in the House but holds no mandate, so
@@ -767,6 +809,12 @@ def _loads(s):
         return json.loads(s)
     except (ValueError, TypeError):
         return []
+
+
+def _col(row: sqlite3.Row, name: str):
+    """A ``SELECT *`` column that may be absent on an older DB (see
+    ``_has_advocate_columns``), read as ``None`` instead of raising."""
+    return row[name] if name in row.keys() else None
 
 
 _MP_METHODOLOGY = (

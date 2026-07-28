@@ -24,6 +24,10 @@ not needed for v1.
 **Representatives** (``kepviselo-query-provider``):
 
   * ``kepviselo-lista-idopontban`` (cycle + date range, paged) → the MP roster.
+  * ``szoszolo-lista-query`` (cycle) → the **nationality-advocate** roster
+    (*nemzetiségi szószólók*, the portal's "Szószólók" page). Advocates are not
+    MPs and never appear in the MP roster, but they sit in the same person id
+    space, so the per-MP detail queries below work for them unchanged.
   * a family of per-MP detail queries keyed on ``{"pId": <kepviseloId>}``
     (bio, faction history, committees, constituency, education, per-cycle speech
     and bill counts) and a photo resource endpoint.
@@ -324,6 +328,29 @@ class FelicitasClient:
     def representative_detail(self, query: str, person_id: str) -> list[dict]:
         """Run one per-MP detail query (e.g. ``kepviselo-adatok-query``)."""
         return self.select_all(KEPVISELO_PROVIDER, query, {"pId": person_id})
+
+    def advocate_list(self, cycle: int) -> list[dict]:
+        """The nationality-advocate (*nemzetiségi szószóló*) roster of ``cycle``.
+
+        Backs parlament.hu's "Szószólók" page. One row per advocate, carrying the
+        person id (``szoszoloId`` — the same id space as ``kepviseloId``, so it
+        joins to a speech's speaker and to the per-MP detail queries), the name,
+        the **nationality** they speak for, and — thanks to
+        ``pStatisztikaiAdatok`` — that cycle's speech and own-motion counts.
+
+        ``pAktivSzoszolo`` **false** is what returns the cycle's *whole* roster;
+        true narrows it to the currently-sitting advocates (and so yields nothing
+        for a past cycle). A cycle before the office existed (pre-2014) returns an
+        empty list rather than an error, which is how the caller discovers which
+        cycles have advocates at all."""
+        body = {
+            "pCiklus": int(cycle),
+            "pNemzetiseg": [],
+            "pNem": None,
+            "pAktivSzoszolo": False,
+            "pStatisztikaiAdatok": True,
+        }
+        return self.select_all(KEPVISELO_PROVIDER, "szoszolo-lista-query", body)
 
     def photo(self, person_id: str) -> bytes | None:
         """Fetch an MP's portrait image bytes, or ``None`` if absent."""

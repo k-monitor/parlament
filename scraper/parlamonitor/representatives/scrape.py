@@ -81,8 +81,12 @@ def _base_record(row: dict) -> dict:
     return rec
 
 
-def _apply_details(rec: dict, details: dict[str, list[dict]]) -> None:
-    """Fold per-MP detail-query rows into the curated record (in place)."""
+def apply_details(rec: dict, details: dict[str, list[dict]]) -> None:
+    """Fold per-MP detail-query rows into the curated record (in place).
+
+    Shared with the nationality-advocate stage (``parlamonitor.advocates``): an
+    advocate lives in the same person id space, so the same ``DETAIL_QUERIES``
+    answer for them and the curated record keeps one shape for both."""
     adatok = (details.get("kepviselo-adatok-query") or [None])[0]
     if adatok:
         rec.update({
@@ -199,9 +203,9 @@ def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
                 except Exception as e:
                     logger.warning("detail %s failed for %s: %s", q, pid, e)
                     fetched[q] = []
-            _apply_details(rec, fetched)
+            apply_details(rec, fetched)
         if photos_dir is not None and pid:
-            _save_photo(felicitas, photos_dir, pid, rec)
+            save_photo(felicitas, photos_dir, pid, rec)
         records.append(rec)
         if (i + 1) % 25 == 0:
             logger.info("  …%d/%d MPs", i + 1, len(roster))
@@ -222,7 +226,10 @@ def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
     }
 
 
-def _save_photo(felicitas: FelicitasClient, photos_dir, pid: str, rec: dict) -> None:
+def save_photo(felicitas: FelicitasClient, photos_dir, pid: str, rec: dict) -> None:
+    """Download one person's portrait into ``photos_dir`` and note it on ``rec``.
+
+    Shared with the advocate stage; a missing portrait is simply skipped."""
     photos_dir.mkdir(parents=True, exist_ok=True)
     try:
         data = felicitas.photo(pid)
@@ -239,7 +246,7 @@ def _save_photo(felicitas: FelicitasClient, photos_dir, pid: str, rec: dict) -> 
 # --- portraits for speakers who are NOT in the MP roster --------------------
 # Ministers and nationality advocates (nemzetiségi szószólók) speak in the House
 # but are not returned by the MP roster query, so they never get a portrait the
-# way roster MPs do (`_save_photo`). Many of them DO have a portrait in the very
+# way roster MPs do (`save_photo`). Many of them DO have a portrait in the very
 # same Felicitas image resource, keyed by their kepviseloId (a nationality
 # advocate like Gallai Gergely resolves; a minister with no portrait 404s). We
 # fetch those here and cache the 404s so a repeat run stays polite (SCR-4).

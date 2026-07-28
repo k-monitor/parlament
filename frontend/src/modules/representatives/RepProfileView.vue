@@ -2,7 +2,7 @@
 // Representative profile (REP-2/REP-3/REP-5). Shows bio + faction history, the
 // precomputed statistics (with explicit scope + methodology), an accessible
 // trend chart, and a reverse-chronological speech list linking into the viewer.
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
@@ -183,6 +183,9 @@ let loadSeq = 0
 async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
+  // Reset the shell's tab hint too: the previous profile's mandate must not keep
+  // the wrong sub-tab lit while the next person loads.
+  store.profileIsAdvocate = null
   profile.value = stats.value = activity.value = speechDays.value = voteDays.value = null
   questions.value = lawBills.value = otherDocs.value = null
   for (const m of [dayCache, openDays, voteDayCache, openVoteDays])
@@ -223,6 +226,10 @@ async function load() {
     profile.value = p; stats.value = s; activity.value = act
     speechDays.value = days; voteDays.value = v
     questions.value = qd; lawBills.value = lb; otherDocs.value = od
+    // Tell the app shell which person tab this profile belongs under: only the
+    // profile response knows whether this is an MP or a nationality advocate
+    // (one route serves both), and the sub-tab highlight follows it (REP-9).
+    store.profileIsAdvocate = !!p.is_advocate
   } catch {
     if (seq === loadSeq) error.value = true
   } finally {
@@ -232,6 +239,9 @@ async function load() {
 // Gate the first fetch on the manifest so store.cycles is resolved to the latest
 // cycle before we query (otherwise the profile would briefly be scoped to "all").
 onMounted(async () => { await loadMeta().catch(() => {}); load() })
+// Leaving the profile clears the shell's tab hint, so a list page is never
+// highlighted on account of a person who is no longer open.
+onUnmounted(() => { store.profileIsAdvocate = null })
 watch(() => props.id, load)
 // Re-fetch when the user switches the global cycle.
 watch(() => store.cycles.join(','), load)
@@ -240,7 +250,11 @@ watch(() => store.cycles.join(','), load)
 <template>
   <StateBlock :loading="loading" :error="error" @retry="load">
     <div v-if="profile" class="profile">
-      <router-link :to="{ name: 'representatives' }" class="small">‹ {{ $t('reps.title') }}</router-link>
+      <!-- Back to the list this person belongs to: an advocate came from the
+           Nemzetiségi szószólók page, not the MP list. -->
+      <router-link
+        :to="{ name: profile.is_advocate ? 'advocates' : 'representatives' }" class="small"
+      >‹ {{ profile.is_advocate ? $t('nav.advocates') : $t('reps.title') }}</router-link>
 
       <header class="phead card pad">
         <div class="pmain">
@@ -257,6 +271,13 @@ watch(() => store.cycles.join(','), load)
               <div v-if="profile.office" class="office">
                 <span class="office-label">{{ $t('profile.office') }}</span>
                 <span class="office-val">{{ profile.office }}</span>
+              </div>
+              <!-- Nationality advocate (nemzetiségi szószóló): holds no mandate,
+                   so there is no faction or constituency to show — the nationality
+                   they speak for is the identifying affiliation (REP-9). -->
+              <div v-if="profile.is_advocate" class="office">
+                <span class="office-label">{{ $t('profile.mandate') }}</span>
+                <span class="office-val">{{ $t('reps.advocateFor', { nationality: profile.nationality || '' }) }}</span>
               </div>
               <div class="row" style="gap:.8rem;">
                 <FactionBadge :faction="profile.current_faction" link />

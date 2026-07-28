@@ -30,6 +30,17 @@ const loading = ref(false)
 const error = ref(false)
 const factions = ref([])
 
+// This one component serves two sibling pages of the Representatives section (its
+// sub-nav tabs): the MP list and the nationality advocates (szószólók, REP-9).
+// Which one is decided by the route, so each is its own URL — no query state.
+const isAdvocates = computed(() => route.name === 'advocates')
+const role = computed(() => (isAdvocates.value ? 'advocate' : 'mp'))
+
+// The unit the result count is counted in, so the advocates tab doesn't report
+// "N képviselő" for people who are not representatives.
+const countUnit = computed(() =>
+  isAdvocates.value ? t('reps.advocatesUnit') : t('home.stats.representatives'))
+
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
 
@@ -53,11 +64,12 @@ function apply() {
   if (f.faction_id) query.faction_id = f.faction_id
   if (f.sort) query.sort = f.sort
   // Changing a filter resets to the first page (offset is intentionally dropped).
-  router.push({ name: 'representatives', query })
+  // Stays on the current page (MP list or advocates), since the route is the tab.
+  router.push({ name: route.name, query })
 }
 
 function gotoPage(p) {
-  router.push({ name: 'representatives', query: { ...route.query, offset: p * PAGE } })
+  router.push({ name: route.name, query: { ...route.query, offset: p * PAGE } })
 }
 
 // Monotonic load id: overlapping fetches (filter watcher + cycle watcher) can
@@ -72,6 +84,7 @@ async function load() {
     // it scopes the list to MPs serving in that cycle.
     const res = await api.representatives({
       q: route.query.q, faction_id: route.query.faction_id, period: store.cycles,
+      role: role.value,
       sort: route.query.sort || 'speaking_time', limit: PAGE, offset: route.query.offset || 0,
     })
     if (seq === loadSeq) data.value = res
@@ -87,13 +100,18 @@ onMounted(async () => {
   try { factions.value = (await api.factions()).factions } catch {}
   load()
 })
-watch(() => route.query, (q) => {
-  f.q = q.q || ''; f.faction_id = q.faction_id || ''; f.sort = q.sort || 'speaking_time'
+// Watches the route *name* as well as the query: the MP list and the advocates
+// page share this component, so switching sub-tab may reuse the instance — with
+// only the query watched, the list would keep showing the other mandate.
+watch(() => [route.name, route.query], () => {
+  const q = route.query
+  f.q = q.q || ''; f.faction_id = q.faction_id || ''
+  f.sort = q.sort || 'speaking_time'
   load()
 })
 // Changing the cycle resets to the first page; the offset reset triggers load via the query watcher.
 watch(() => store.cycles.join(','), () => {
-  if (route.query.offset) router.push({ name: 'representatives', query: { ...route.query, offset: undefined } })
+  if (route.query.offset) router.push({ name: route.name, query: { ...route.query, offset: undefined } })
   else load()
 })
 let searchTimer = null
@@ -104,20 +122,31 @@ onUnmounted(() => clearTimeout(searchTimer))
 </script>
 
 <template>
-  <h1>{{ $t('reps.title') }}</h1>
+  <h1>{{ isAdvocates ? $t('nav.advocates') : $t('reps.title') }}</h1>
+
+  <!-- What a szószóló is, since they are easily mistaken for MPs: they sit and
+       speak but hold no mandate (REP-9 / TRUST-1). -->
+  <p v-if="isAdvocates" class="muted small advocate-note">{{ $t('reps.advocateNote') }}</p>
 
   <form class="card pad searchform" role="search" @submit.prevent="apply">
     <div class="row" style="gap:.5rem;">
       <input
-        id="r-q" type="search" v-model="f.q" :placeholder="$t('reps.searchPlaceholder')"
-        :aria-label="$t('reps.searchPlaceholder')" @input="onSearchInput" style="flex:1;min-width:200px;"
+        id="r-q" type="search" v-model="f.q"
+        :placeholder="isAdvocates ? $t('reps.searchAdvocatePlaceholder') : $t('reps.searchPlaceholder')"
+        :aria-label="isAdvocates ? $t('reps.searchAdvocatePlaceholder') : $t('reps.searchPlaceholder')"
+        @input="onSearchInput" style="flex:1;min-width:200px;"
       />
-      <button class="btn secondary" type="button" :aria-expanded="showFilters" @click="showFilters = !showFilters">
+      <!-- The only filter here is by faction, which an advocate cannot have, so
+           the panel is offered on the MP tab only. -->
+      <button
+        v-if="!isAdvocates" class="btn secondary" type="button"
+        :aria-expanded="showFilters" @click="showFilters = !showFilters"
+      >
         {{ $t('search.filters') }}
       </button>
     </div>
 
-    <fieldset v-show="showFilters" class="filters">
+    <fieldset v-show="showFilters && !isAdvocates" class="filters">
       <legend class="visually-hidden">{{ $t('search.filters') }}</legend>
       <div class="filter-grid">
         <div>
@@ -136,12 +165,13 @@ onUnmounted(() => clearTimeout(searchTimer))
 
   <StateBlock
     :loading="loading" :error="error"
-    :empty="!!data && data.representatives.length === 0" :empty-text="$t('reps.noResults')"
+    :empty="!!data && data.representatives.length === 0"
+    :empty-text="isAdvocates ? $t('reps.noAdvocateResults') : $t('reps.noResults')"
     @retry="load"
   >
     <div v-if="data">
       <div class="results-head">
-        <p class="muted small" aria-live="polite" style="margin:0;">{{ data.total }} {{ $t('home.stats.representatives') }} · {{ scopeText }}</p>
+        <p class="muted small" aria-live="polite" style="margin:0;">{{ data.total }} {{ countUnit }} · {{ scopeText }}</p>
         <label class="sortctl small muted">
           {{ $t('search.sort') }}
           <select v-model="f.sort" @change="apply">
@@ -156,6 +186,14 @@ onUnmounted(() => clearTimeout(searchTimer))
           <SpeakerLink :speaker="{ person_id: r.person_id, label: r.label, photo_uri: r.photo_uri }" />
           <div class="repmeta">
             <FactionBadge :faction="r.faction" link />
+            <!-- An advocate has no faction/constituency; the nationality they
+                 speak for takes that slot (REP-9). The chip shows the bare
+                 nationality (the tab already says these are advocates), but
+                 carries the full phrase for assistive tech. -->
+            <span
+              v-if="r.is_advocate && r.nationality" class="chip"
+              :aria-label="$t('reps.advocateFor', { nationality: r.nationality })"
+            >{{ r.nationality }}</span>
             <span v-if="r.constituency" class="muted small">📍 {{ r.constituency }}</span>
           </div>
           <div class="repstats small muted">
@@ -172,6 +210,7 @@ onUnmounted(() => clearTimeout(searchTimer))
 
 <style scoped>
 /* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
+.advocate-note { margin: -.4rem 0 1rem; max-width: 62ch; }
 .replist { list-style: none; padding: 0; margin: 0; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
 .repcard { display: flex; flex-direction: column; gap: .5rem; }
 .repmeta { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }

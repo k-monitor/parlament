@@ -19,6 +19,12 @@ export const store = reactive({
   loaded: false,
   failed: false,
   cycles: [], // [] = all cycles; otherwise the electoral-period numbers in scope
+  // Which list the currently-open person profile belongs to: MPs or the
+  // nationality advocates (REP-9). One `/representatives/:id` route serves both,
+  // and only the profile response says which — so the profile view publishes it
+  // here for the app shell, which cannot know it, to highlight the right sub-tab.
+  // Null while nothing (or nothing yet loaded) is open.
+  profileIsAdvocate: null,
   moduleEnabled(name) {
     if (!this.meta) return true // optimistic before load
     return this.meta.modules.some((m) => m.name === name)

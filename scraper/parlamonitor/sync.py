@@ -32,6 +32,10 @@ What each poll checks, cheaply:
 * **Representatives** — refreshed on a slow cadence (``reps_max_age``) since the
   per-MP bio/stats drift gradually; the local portraits are preserved without
   re-downloading.
+* **Nationality advocates** (nemzetiségi szószólók) — on the same slow cadence as
+  the representatives, and only for the latest cycle; a past cycle's advocate
+  roster is closed, so it is backfilled once by ``parlamonitor advocates
+  --all-cycles`` and then left alone.
 """
 
 from __future__ import annotations
@@ -42,13 +46,15 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from . import whisper_align
+from .advocates.scrape import fetch_advocates, save_advocates
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
 from .config import Paths, session_id, timing_backend as _default_timing_backend
 from .config import whisper_language, whisper_model
 from .felicitas import FelicitasClient
 from .proceedings.scrape import _write_json, scrape_day, sitting_number
 from .proceedings.transform import transform_day
-from .representatives.scrape import fetch_representatives, save_representatives
+from .representatives.scrape import (fetch_missing_photos, fetch_representatives,
+                                     save_representatives)
 from .votes.scrape import fetch_votes, save_votes
 
 logger = logging.getLogger(__name__)
@@ -330,13 +336,47 @@ def _sync_representatives(felicitas: FelicitasClient, paths: Paths, cycle: int,
     return True
 
 
+def _sync_advocates(felicitas: FelicitasClient, paths: Paths, cycle: int,
+                    state: dict, *, force: bool, with_detail: bool,
+                    reps_max_age: float) -> bool:
+    """Refresh the cycle's nationality-advocate registry on the reps cadence.
+
+    Same slow-cadence reasoning as the representatives: an advocate's bio and
+    per-cycle counts drift gradually, and there are only ~13 of them. Portraits are
+    topped up through the shared negative-cached helper, so an advocate who already
+    has a portrait on disk (or is known to have none) costs no request."""
+    prev = state.get("advocates") or {}
+    age = _now_ts() - float(prev.get("ts") or 0)
+    if not force and prev and age < reps_max_age:
+        return False
+    registry = fetch_advocates(felicitas, cycle, details=with_detail)
+    if not registry["data"]:
+        # No advocates in this cycle (or an empty upstream answer): record the
+        # check so the cadence holds, but never write an empty registry over one
+        # the loader already holds.
+        state["advocates"] = {"ts": _now_ts(), "at": _now(), "count": 0}
+        return False
+    photos_dir = paths.data / "media" / "photos"
+    fetch_missing_photos(felicitas, photos_dir,
+                         [r.get("personID") for r in registry["data"]])
+    for rec in registry["data"]:
+        pid = rec.get("personID")
+        if pid and (photos_dir / f"{pid}.jpg").exists():
+            rec["photoFile"] = f"{pid}.jpg"
+    save_advocates(paths, cycle, registry)
+    state["advocates"] = {"ts": _now_ts(), "at": _now(),
+                          "count": registry["meta"]["count"]}
+    return True
+
+
 # --- orchestration ---------------------------------------------------------
 
 def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
              force: bool = False, no_detail: bool = False,
              no_offsets: bool = False, reps_max_age: float = DEFAULT_REPS_MAX_AGE,
              skip_bills: bool = False, skip_votes: bool = False,
-             skip_reps: bool = False, timing_backend: str | None = None) -> dict:
+             skip_reps: bool = False, skip_advocates: bool = False,
+             timing_backend: str | None = None) -> dict:
     """One cheap sync pass over ``cycle``. Each domain is isolated so one failing
     query never aborts the others (SCR-5). Returns a summary of what changed."""
     paths.ensure()
@@ -344,7 +384,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
     state = load_state(paths.sync_state)
     summary = {"cycle": cycle, "checkedAt": _now(),
                "sessions": [], "bills": False, "votes": False,
-               "representatives": False, "errors": []}
+               "representatives": False, "advocates": False, "errors": []}
 
     try:
         summary["sessions"] = _sync_proceedings(
@@ -379,10 +419,20 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
             logger.exception("Representatives sync failed")
             summary["errors"].append(f"representatives: {e}")
 
+    if not skip_advocates:
+        try:
+            summary["advocates"] = _sync_advocates(
+                felicitas, paths, cycle, state, force=force,
+                with_detail=not no_detail, reps_max_age=reps_max_age)
+        except Exception as e:
+            logger.exception("Advocates sync failed")
+            summary["errors"].append(f"advocates: {e}")
+
     state["cycle"] = cycle
     state["lastCheckAt"] = summary["checkedAt"]
     save_state(paths.sync_state, state)
 
     summary["changed"] = bool(summary["sessions"] or summary["bills"]
-                              or summary["votes"] or summary["representatives"])
+                              or summary["votes"] or summary["representatives"]
+                              or summary["advocates"])
     return summary

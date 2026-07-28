@@ -298,7 +298,10 @@ Primary use cases:
   §5.5). This is the unit of search and of video seeking.
 - **media** — per session day: HLS `videoFileURI`, duration, license, creator.
 - **person** (representative) — `label`, first/last name, optional Wikidata id,
-  plus enrichable bio fields (party, constituency, term memberships, photo URL).
+  plus enrichable bio fields (party, constituency, term memberships, photo URL),
+  and which mandate they hold: an MP, a **nationality advocate** (with the
+  `nationality` they speak for — REP-9), or neither (a minister or invited guest
+  who spoke). One person can be both across different cycles.
 - **faction / party** — label, optional Wikidata id, color (for charts).
 - **membership** — person ↔ faction ↔ period (factions change over time).
 - **entity** (optional, from NER stage) — in-transcript linked entities
@@ -763,6 +766,37 @@ snippet — a site-wide capability, not a per-module feature.
   recomputed on each ingest; they must never block on live aggregation of the
   full corpus. The aggregates are built over statistics-eligible speeches only,
   per STAT-1.
+- **REP-9 (SHOULD).** **Nationality advocates (*nemzetiségi szószólók*) are
+  ingested as people in their own right.** Each of Hungary's thirteen recognised
+  nationalities elects a *szószóló* who sits in the House, speaks in plenary and
+  submits irományok, but holds **no representative mandate** — and who therefore
+  never appears in the MP roster query the representatives registry is built from
+  (§6/REP-1). Until they are scraped, they exist in the corpus only as the bare
+  speaker stubs the transcripts create: a name with no profile.
+  - The source is `parlament.hu`'s own **Szószólók** page
+    (`/web/guest/szoszolok`, and the active-only `/web/guest/szoszolok-aktiv-`),
+    i.e. the Felicitas `szoszolo-lista-query`, scraped **per electoral cycle** —
+    the office exists from the 2014 cycle on, and each cycle's roster is its own
+    closed set.
+  - An advocate is the **same core `person` entity** as an MP, keyed by the same
+    upstream person id (EXT-2), so their registry **enriches the speaker rows the
+    proceedings already carry** — their speeches, statistics, word-cloud and
+    toplist contributions need no re-scrape and no name matching. They are
+    **marked** as advocates and carry the **nationality** they speak for, which
+    stands in for the faction and constituency they do not have.
+  - Advocates are presented as **their own page in the Representatives section's
+    tab bar** (between the MP list and the factions page), not as a filter of the
+    MP list — they hold a different mandate, and the MP list must keep meaning
+    "representatives". The page has its own URL, so it is linkable and citable, and
+    it honours the global cycle scope (§4A) like every other view. An
+    advocate's profile (REP-2) shows their mandate + nationality where an MP's
+    faction badge goes, and their speech/document statistics (REP-3) are computed
+    exactly as an MP's; the **vote-participation metrics are omitted** (not
+    zeroed), since an advocate has no vote to cast.
+  - The registry is a **separate, additive source record** per cycle: adding it to
+    an already-scraped corpus must not require re-running the MP roster stage or
+    rebuilding the database — the loader's incremental path (ING-5) picks up the
+    new files and extends the `person` schema in place.
 
 - **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
   representative and faction statistics** (speaking time, speech counts, trends —

@@ -9,6 +9,7 @@ reference pipeline so its outputs stay comparable:
       processed/
         <session>-session.json                    # the published session record
         representatives-<cycle>.json              # the MP registry for a cycle
+        advocates-<cycle>.json                    # the nationality-advocate registry
       logs/
         ingest-<timestamp>.json                   # per-run ingestion log (SCR-3)
       parlamonitor.lock                               # concurrency lockfile (SCR-1)
@@ -154,6 +155,15 @@ class Paths:
 
     def representatives_file(self, cycle: int) -> Path:
         return self.processed / f"representatives-{int(cycle)}.json"
+
+    # --- nationality advocates (nemzetiségi szószólók) ----------------------
+    # A file of their own rather than extra rows in the MP registry: the two come
+    # from different upstream queries, and keeping them separate means adding
+    # advocates to an existing scrape doesn't invalidate (or require re-running)
+    # the MP roster stage.
+
+    def advocates_file(self, cycle: int) -> Path:
+        return self.processed / f"advocates-{int(cycle)}.json"
 
     # --- bills -------------------------------------------------------------
 

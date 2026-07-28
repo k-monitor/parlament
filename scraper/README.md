@@ -15,6 +15,7 @@ kept only as reference material; nothing here imports it at runtime.
 | ------ | ------ | ----- |
 | `processed/<session>-session.json` | `parlamonitor.proceedings` | one record per sitting day: ordered speeches, each with agenda item, speaker(s), the whole-day HLS video, and `textContents → textBody → sentences[]` with day-absolute `timeStart`/`timeEnd`. |
 | `processed/representatives-<cycle>.json` | `parlamonitor.representatives` | the MP registry for a cycle: bio, faction & committee history, constituency, education, and per-cycle speech / bill-submission counts. |
+| `processed/advocates-<cycle>.json` | `parlamonitor.advocates` | the **nationality-advocate** registry (*nemzetiségi szószólók*) for a cycle: same record shape as an MP plus the `nationality` they speak for. They are not in the MP roster, but share its id space — so the file is additive and needs no re-run of the MP stage. |
 | `logs/ingest-<ts>.json` | both | per-run ingestion log (run time, sittings added, errors, backend). |
 
 Each speech's speaker carries a `personID` (`kepviseloId`) that joins directly
@@ -36,7 +37,11 @@ Everything goes through the modern, **token-free Felicitas JSON API**
    provenance (used by a future precise-timing stage, not by v1).
 
 **Representatives** — `kepviselo-query-provider`: a paged roster query plus a
-family of per-MP detail queries and a photo resource endpoint.
+family of per-MP detail queries and a photo resource endpoint. The same provider
+serves `szoszolo-lista-query` (cycle → the **nationality-advocate** roster with
+each advocate's nationality and per-cycle counts, verified 2026-07); advocates
+share the MP id space, so the per-MP detail queries and the photo endpoint answer
+for them unchanged.
 
 The reference's CGI (token) and PAIR-proxy (HTML) backends remain documented in
 `OpenParliamentTV-Tools` as fallbacks (SRC-2) but are not needed for v1.
@@ -79,7 +84,17 @@ python -m parlamonitor representatives --cycle 43 --no-details ./data
 
 # Full registry with per-MP detail + portraits (heavier; one run per cycle)
 python -m parlamonitor representatives --cycle 43 --photos ./data
+
+# Nationality advocates (szószólók) — one cycle, or backfill every cycle that
+# has them (40 on). Portraits are downloaded by default (~13 people per cycle).
+python -m parlamonitor advocates --cycle 43 ./data
+python -m parlamonitor advocates --all-cycles ./data
 ```
+
+Adding advocates to an **already-scraped** corpus needs nothing else: the
+sittings already carry the advocates' speeches under the very ids the registry is
+keyed by, so the new files are all the loader's incremental `--update` needs (it
+tracks processed files individually, and adds the two `person` columns in place).
 
 ### Operational knobs (all environment-driven — OPS-4 / SCR-4)
 
@@ -166,6 +181,9 @@ python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
   detail cache above, and the registry JSON is rewritten only when it differs.
 - **Representatives:** refreshed on a slow cadence (`--reps-max-age`, default 12h,
   env `PARLAMONITOR_SYNC_REPS_MAX_AGE`); local portraits are preserved.
+- **Nationality advocates:** same slow cadence, latest cycle only (`--skip-advocates`
+  opts out). Past cycles' advocate rosters are closed, so they are backfilled once
+  with `advocates --all-cycles`.
 
 An idle poll is a handful of requests and writes nothing. Last-seen signatures
 live in `data/sync-state.json`; the run prints a one-line JSON summary of what
@@ -187,7 +205,8 @@ parlamonitor/
   http_client.py       polite, retrying HTTP client
   ssh_proxy.py         optional SSH-tunnel HTTP proxy (paramiko)
   lockfile.py          PID lockfile (concurrency guard)
-  felicitas.py         Felicitas JSON API client (plenary + representatives)
+  felicitas.py         Felicitas JSON API client (plenary + representatives
+                       + szószólók + irományok + szavazások)
   names.py             speaker → name / faction / role / context
   agenda.py            HU agenda-type classification (+ bill-code extraction)
   segment.py           HTML cleanup + Hungarian sentence segmentation
@@ -198,6 +217,9 @@ parlamonitor/
     transform.py       parse + classify + time → <session>-session.json
   representatives/
     scrape.py          roster + per-MP detail → representatives-<cycle>.json
+  advocates/
+    scrape.py          szószóló roster (+ reused per-person detail)
+                       → advocates-<cycle>.json
   bills/
     scrape.py          irományok list + per-bill detail → bills-<cycle>.json
   votes/
@@ -205,6 +227,7 @@ parlamonitor/
   cli.py               workflow orchestration (stages, lockfile, ingest log)
 tests/
   test_pipeline.py     offline tests: transform, timing, names, agenda, segment
+  test_advocates.py    offline tests: szószóló registry shape + cycle discovery
 ```
 
 ## Tests

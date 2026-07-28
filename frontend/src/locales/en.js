@@ -22,7 +22,7 @@ export default {
       status: 'Page {page} of {total}',
     },
   },
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', advocates: 'Nationality advocates', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -166,13 +166,24 @@ export default {
     constituency: 'Constituency', speeches: 'speeches', speakingTime: 'speaking time', sortName: 'By name',
     sortSpeeches: 'By speeches', sortSpeakingTime: 'By speaking time', noResults: 'No matching representatives.', profile: 'Profile',
     filterByFaction: 'Filter representatives of {faction}',
+    // Nationality advocates (szószólók): they sit and speak without a mandate (REP-9).
+    mandate: 'Mandate',
+    advocateFor: '{nationality} nationality advocate',
+    advocatesUnit: 'advocates',
+    advocateNote: 'Each of Hungary\'s 13 recognised nationalities elects an advocate '
+      + '(szószóló). Advocates take part in the work of the Assembly — they speak and '
+      + 'submit documents — but they are not representatives: they have no faction, no '
+      + 'constituency and no vote.',
+    searchAdvocatePlaceholder: 'Search advocates by name…',
+    noAdvocateResults: 'No matching advocates.',
   },
   profile: {
     speeches: 'Speeches',
     questions: 'Submitted questions & interpellations',
     bills: 'Submitted bills & resolution proposals',
     otherDocuments: 'Other submitted documents',
-    statistics: 'Statistics', biography: 'Details', office: 'Office', constituency: 'Constituency',
+    statistics: 'Statistics', biography: 'Details', office: 'Office', mandate: 'Mandate',
+    constituency: 'Constituency',
     education: 'Highest education', email: 'Email', website: 'Website', committees: 'Committee memberships',
     factionHistory: 'Faction history', wikipedia: 'Wikipedia', kmonitor: 'K-Monitor', totalSpeeches: 'Number of speeches',
     totalSpeakingTime: 'Total speaking time', billsSubmitted: 'Bills submitted',

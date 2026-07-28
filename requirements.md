@@ -725,12 +725,16 @@ snippet — a site-wide capability, not a per-module feature.
   - **number of bills submitted** — now provided by the Bills module (§6A). When
     that module is disabled (EXT-6) the metric is hidden, not faked. The headline
     count links to the bills filtered by that representative as sponsor.
-  - **vote absences** — how many roll-call votes the representative was absent
-    from, **both nominally and as a percentage**, provided by the Votes module
-    (§6B). The absence signal is the upstream *„előre bejelentett hiányzó”* vote
-    value (normalized `value_code = absent`, VOTE-3); the percentage is that
-    count over **all roll-call votes the MP could have cast in scope** (every
-    vote they have a roll-call record for, present or not). Like the other
+  - **votes not cast** — on how many roll-call votes the representative cast no
+    vote, **both nominally and as a percentage**, provided by the Votes module
+    (§6B). It counts **every non-voting category** together — *„jelen, nem
+    szavazott”* (`value_code = novote`), *„igazoltan távol”* (the upstream
+    *„előre bejelentett hiányzó”*, `value_code = absent`, VOTE-3) and *„nem volt
+    jelen”* (no roll-call record at all) — i.e. exactly the non-voting slices of
+    the participation pie; the percentage is that count over the **same 100%
+    base as the pie** (all roll-call votes the MP could have cast in scope,
+    excluding time outside their mandate), so headline and chart always agree.
+    The headline links to those roll calls (`value=missed`). Like the other
     metrics it is scoped to the global cycle (§4A). When the Votes module is
     disabled (EXT-6) the metric is hidden, not faked.
 - **REP-4.** **Faction-level** aggregate statistics (totals and averages per MP),

@@ -351,21 +351,23 @@ def get_statistics(person_id: str, period: Optional[List[int]] = Query(
         bills_submitted = (_own_bills_for_cycles(bills_by_cycle, periods)
                            if periods else _latest_own_bills(bills_by_cycle))
 
-    # Attendance (REP-3): how many roll-call votes the MP was absent from, both
-    # nominally and as a share of the votes they could have cast in scope. The
-    # absence signal is the upstream "Előre bejelentett hiányzó" value, normalized
-    # to `value_code = 'absent'`; the denominator is every vote the MP has a
-    # roll-call record for in scope (each MP has one record per vote, present or
-    # not). Only meaningful — and only queried — when the Votes module is live
-    # (EXT-6); its tables may not exist otherwise.
+    # Attendance (REP-3): on how many roll-call votes the MP cast no vote at all,
+    # both nominally and as a share of the votes they could have cast in scope.
+    # "No vote cast" covers every non-voting participation category — "jelen, nem
+    # szavazott" (`value_code = 'novote'`), "igazoltan távol" (the upstream "Előre
+    # bejelentett hiányzó", normalized to `'absent'`) and "nem volt jelen" (no
+    # record at all) — i.e. exactly the pie's three non-voting slices; the
+    # denominator is the pie's 100% base, so headline % and pie agree. Only
+    # meaningful — and only queried — when the Votes module is live (EXT-6); its
+    # tables may not exist otherwise.
     # Voting statistics are only shown for actual MPs (is_mp): a minister or other
     # non-representative has no mandate to attend roll calls, so the whole
     # participation section (the absence metric AND the pie) is suppressed for
     # them — otherwise every roll-call vote would read as "nem volt jelen 100%".
     is_mp = bool(p["is_mp"])
     votes_available = settings.module_enabled("votes")
-    votes_total = votes_absent = 0
-    votes_absent_pct = None
+    votes_total = votes_missed = 0
+    votes_missed_pct = None
     vote_breakdown = None
     if votes_available and is_mp:
         extra = period_and(periods, "v.period_number")
@@ -375,7 +377,7 @@ def get_statistics(person_id: str, period: Optional[List[int]] = Query(
         # was cast — igen/nem/tartózkodás all count as voting), "nem szavazott"
         # (present, no vote), "igazoltan távol" (pre-announced absence) and —
         # derived below — "nem volt jelen" (no record at all for a vote). `total`
-        # counts every record (the denominator for the absence %).
+        # counts every record.
         vrow = db.execute(
             f"""SELECT COUNT(*) AS total,
                        SUM(CASE WHEN vr.value_code IN ('yes','no','abstain') THEN 1 ELSE 0 END) AS voted,
@@ -385,7 +387,6 @@ def get_statistics(person_id: str, period: Optional[List[int]] = Query(
                 WHERE vr.person_id = :pid{extra}{_exclude_quorum()}""", vparams).fetchone()
         votes_total = vrow["total"] or 0
         votes_absent = vrow["absent"] or 0
-        votes_absent_pct = round(100.0 * votes_absent / votes_total, 1) if votes_total else None
 
         # The votes the MP has no record in at all split into two categories.
         # First, of all roll-call votes in scope (those with a per-MP list,
@@ -441,6 +442,13 @@ def get_statistics(person_id: str, period: Optional[List[int]] = Query(
             # NOT include not_mp, so time before/after the mandate never counts.
             "total": voted + novote + votes_absent + not_present,
         }
+        # Headline attendance metric: every occasion the MP cast no vote, over the
+        # pie's 100% base. Equivalent to `total - voted`, but spelled out so the
+        # link between the number and the three legend rows it sums stays obvious.
+        vb_total = vote_breakdown["total"]
+        votes_missed = novote + votes_absent + not_present
+        votes_missed_pct = (round(100.0 * votes_missed / vb_total, 1)
+                            if vb_total else None)
 
     if periods:
         labels = {r["number"]: r["label"] for r in db.execute(
@@ -471,8 +479,10 @@ def get_statistics(person_id: str, period: Optional[List[int]] = Query(
             "bills_by_cycle": bills_by_cycle,
             "votes_available": votes_available,  # false while Votes module is off
             "votes_total": votes_total,          # roll-call votes in scope
-            "votes_absent": votes_absent,        # of those, "előre bejelentett hiányzó"
-            "votes_absent_pct": votes_absent_pct,  # null when no votes in scope
+            # Occasions with no vote cast: novote + absent + not_present, over
+            # `vote_breakdown.total` (null when there is nothing in scope).
+            "votes_missed": votes_missed,
+            "votes_missed_pct": votes_missed_pct,
             "vote_breakdown": vote_breakdown,    # 5-way participation split, null while Votes off
         },
         "by_period": [dict(r) for r in by_period],
@@ -764,10 +774,12 @@ _MP_METHODOLOGY = (
     "időtartamainak összege. A felszólalások száma a feldolgozott ülésnapokon "
     "elhangzott, e képviselőhöz kötött felszólalások darabszáma. A v1-es "
     "időbecslés pozícióalapú (karakterarányos), ezért közelítő — minden "
-    "felszólalásnál átkattintva ellenőrizhető. A hiányzások a név szerinti "
-    "szavazásokon „előre bejelentett hiányzó” jelöléssel rögzített esetek; a "
-    "százalék ezek aránya a képviselő által leadható összes (a vizsgált körbe "
-    "eső) szavazathoz képest."
+    "felszólalásnál átkattintva ellenőrizhető. Az „alkalommal nem szavazott” "
+    "érték azokat a név szerinti szavazásokat számolja, amelyeken a képviselő "
+    "nem adott le szavazatot: „jelen, nem szavazott”, „igazoltan távol” és "
+    "„nem volt jelen” együtt; a százalék ezek aránya a képviselő által "
+    "leadható összes (a vizsgált körbe eső) szavazathoz képest — ugyanahhoz a "
+    "100%-os alaphoz, mint a szavazási részvétel diagram."
 )
 _FACTION_METHODOLOGY = (
     "A frakciószintű összesítések a frakcióhoz rendelt felszólalások alapján "

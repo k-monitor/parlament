@@ -120,7 +120,8 @@ def list_votes(
     bill: Optional[str] = None,             # bill id — votes deciding this bill
     person: Optional[str] = None,           # person_id — scope to one MP's roll call (EXT-2)
     value: Optional[str] = None,            # with `person`: participation segment
-                                            # (voted|novote|absent|not_present) or a raw value_code
+                                            # (voted|novote|absent|not_present|missed)
+                                            # or a raw value_code
     sort: str = "date_desc",
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -150,6 +151,14 @@ def list_votes(
             where.append("v.has_per_mp = 1")
             where.append("NOT EXISTS (SELECT 1 FROM vote_record vr "
                          "WHERE vr.vote_id=v.id AND vr.person_id=:person)")
+        elif value == "missed":
+            # "alkalommal nem szavazott": the profile's headline attendance
+            # metric — every roll call where no vote was cast, i.e. the union of
+            # novote + absent + not_present (the complement of `voted`).
+            where.append("v.has_per_mp = 1")
+            where.append("NOT EXISTS (SELECT 1 FROM vote_record vr "
+                         "WHERE vr.vote_id=v.id AND vr.person_id=:person "
+                         "AND vr.value_code IN ('yes','no','abstain'))")
         else:
             cond = "vr.person_id=:person"
             if value == "voted":  # igen/nem/tartózkodás all count as voting

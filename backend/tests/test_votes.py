@@ -240,10 +240,10 @@ def test_representative_votes_filtered_by_date(client):
 
 
 def test_representative_absence_stats(client, db_path):
-    """REP-3 attendance: the statistics endpoint reports how many roll-call
-    votes the MP was absent from, nominally and as a percentage of the votes
-    they could have cast. k001 has one Igen record; we add two absences across
-    two further votes so the share is 2/3 ≈ 66.7%."""
+    """REP-3 attendance: the statistics endpoint reports on how many roll-call
+    votes the MP cast no vote, nominally and as a percentage of the votes they
+    could have cast. k001 has one Igen record; we add two absences across two
+    further votes so the share is 2/3 ≈ 66.7%."""
     import sqlite3
     c = sqlite3.connect(db_path)
     for vid in ("v-3", "v-4"):
@@ -257,8 +257,8 @@ def test_representative_absence_stats(client, db_path):
     t = client.get("/api/v1/representatives/k001/statistics").json()["totals"]
     assert t["votes_available"] is True
     assert t["votes_total"] == 3
-    assert t["votes_absent"] == 2
-    assert t["votes_absent_pct"] == 66.7
+    assert t["votes_missed"] == 2
+    assert t["votes_missed_pct"] == 66.7
 
 
 def test_representative_vote_breakdown(client, db_path):
@@ -290,7 +290,8 @@ def test_representative_vote_breakdown(client, db_path):
               "VALUES ('v-q', 'k001', 'Kovács Béla', 'Igen', 'yes')")
     c.commit(); c.close()
 
-    b = client.get("/api/v1/representatives/k001/statistics").json()["totals"]["vote_breakdown"]
+    t = client.get("/api/v1/representatives/k001/statistics").json()["totals"]
+    b = t["vote_breakdown"]
     assert b["voted"] == 2        # v-1 Igen + v-3 Tartózkodás (v-q quorum excluded)
     assert "abstain" not in b     # folded into "voted"
     assert b["novote"] == 1       # v-4
@@ -302,6 +303,15 @@ def test_representative_vote_breakdown(client, db_path):
     # k001 served the whole scope (no election history in the fixture → no window
     # filter), so nothing is attributed to "nem volt képviselő".
     assert b["not_mp"] == 0
+    # The headline "alkalommal nem szavazott" metric is the sum of the three
+    # non-voting slices (novote + absent + not_present) over the pie's 100% base,
+    # so the number and the chart can't disagree.
+    assert t["votes_missed"] == 3
+    assert t["votes_missed_pct"] == 60.0
+    # ...and the roll calls it links to are exactly those three votes.
+    missed = client.get("/api/v1/votes", params={"person": "k001", "value": "missed"}).json()
+    assert missed["total"] == 3
+    assert {v["id"] for v in missed["votes"]} == {"v-4", "v-5", "v-6"}
 
 
 def test_vote_breakdown_excludes_pre_mandate_votes(client, db_path):
@@ -347,7 +357,7 @@ def test_non_mp_has_no_vote_breakdown(client, db_path):
     totals = client.get("/api/v1/representatives/m001/statistics").json()["totals"]
     assert totals["vote_breakdown"] is None
     assert totals["votes_total"] == 0
-    assert totals["votes_absent_pct"] is None
+    assert totals["votes_missed_pct"] is None
 
 
 def test_representative_vote_lists_exclude_quorum_checks(client, db_path):

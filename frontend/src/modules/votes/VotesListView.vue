@@ -51,6 +51,7 @@ const scopeValue = computed(() => route.query.value || '')
 const PART_LABELS = {
   voted: 'profile.vbVoted', novote: 'profile.vbNovote',
   absent: 'profile.vbAbsent', not_present: 'profile.vbNotPresent',
+  missed: 'profile.votesAbsent',
 }
 const scopeValueLabel = computed(() => PART_LABELS[scopeValue.value] || '')
 

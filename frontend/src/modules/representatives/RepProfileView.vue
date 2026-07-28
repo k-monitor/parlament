@@ -305,11 +305,13 @@ watch(() => store.cycles.join(','), load)
                 <router-link :to="{ name: 'bills', query: { sponsor: id } }" class="num biglink">{{ stats.totals.bills_submitted }}</router-link>
                 <span class="lbl">{{ $t('profile.billsSubmitted') }}</span>
               </div>
-              <!-- Attendance (REP-3): absences from roll-call votes, nominal + %.
-                   Links to this MP's absent roll calls (shareable, filtered). -->
+              <!-- Attendance (REP-3): roll calls with no vote cast — "nem
+                   szavazott" + "igazoltan távol" + "nem volt jelen" together, so
+                   the headline matches the pie's non-voting slices — nominal + %.
+                   Links to this MP's missed roll calls (shareable, filtered). -->
               <div v-if="stats.totals.votes_available && stats.totals.votes_total">
-                <router-link v-if="showVotes" :to="{ name: 'votes', query: { person: id, value: 'absent' } }" class="num biglink">{{ stats.totals.votes_absent }}<span class="pct" v-if="stats.totals.votes_absent_pct !== null"> · {{ stats.totals.votes_absent_pct }}%</span></router-link>
-                <span v-else class="num">{{ stats.totals.votes_absent }}<span class="pct" v-if="stats.totals.votes_absent_pct !== null"> · {{ stats.totals.votes_absent_pct }}%</span></span>
+                <router-link v-if="showVotes" :to="{ name: 'votes', query: { person: id, value: 'missed' } }" class="num biglink">{{ stats.totals.votes_missed }}<span class="pct" v-if="stats.totals.votes_missed_pct !== null"> · {{ stats.totals.votes_missed_pct }}%</span></router-link>
+                <span v-else class="num">{{ stats.totals.votes_missed }}<span class="pct" v-if="stats.totals.votes_missed_pct !== null"> · {{ stats.totals.votes_missed_pct }}%</span></span>
                 <span class="lbl">{{ $t('profile.votesAbsent') }}</span>
               </div>
             </div>

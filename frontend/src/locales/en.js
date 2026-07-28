@@ -176,7 +176,7 @@ export default {
     education: 'Highest education', email: 'Email', website: 'Website', committees: 'Committee memberships',
     factionHistory: 'Faction history', wikipedia: 'Wikipedia', kmonitor: 'K-Monitor', totalSpeeches: 'Number of speeches',
     totalSpeakingTime: 'Total speaking time', billsSubmitted: 'Bills submitted',
-    votesAbsent: 'Absences from votes',
+    votesAbsent: 'Occasions with no vote cast',
     voteBreakdown: 'Voting participation',
     vbUnit: 'votes',
     vbVoted: 'Voted',

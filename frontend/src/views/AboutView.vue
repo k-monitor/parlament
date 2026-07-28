@@ -5,7 +5,7 @@ import DonateCard from '../components/DonateCard.vue'
 <template>
   <!-- Body copy lives in the locale files as static markup (inline links and
        emphasis), so every paragraph is rendered with v-html. -->
-  <article class="card pad prose" style="max-width:75ch;">
+  <article class="card pad prose">
     <h1>{{ $t('about.title') }}</h1>
     <p v-html="$t('about.body1')"></p>
     <p v-html="$t('about.body2')"></p>
@@ -23,7 +23,7 @@ import DonateCard from '../components/DonateCard.vue'
 </template>
 
 <style scoped>
-.about-donate { max-width: 75ch; margin-top: 1.5rem; }
+.about-donate { margin-top: 1.5rem; }
 
 /* Long-form copy: roomier lines and visibly underlined inline links (the
    global link style drops the underline, which reads poorly mid-sentence).

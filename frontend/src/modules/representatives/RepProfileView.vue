@@ -322,8 +322,13 @@ watch(() => store.cycles.join(','), load)
                 <button type="button" class="num biglink asbtn" @click="scrollToSpeeches">{{ formatSpeakingTime(stats.totals.speaking_seconds) }}</button>
                 <span class="lbl">{{ $t('profile.totalSpeakingTime') }}</span>
               </div>
+              <!-- The count spans every iromány type, so it links to the
+                   irományok list (which serves all types when scoped to one
+                   submitter) — not to the Törvényjavaslatok page, which is
+                   main_type=T only and would read "0 találat" for an MP whose
+                   motions are határozati javaslatok, kérdések, etc. -->
               <div v-if="stats.totals.bills_available">
-                <router-link :to="{ name: 'bills', query: { sponsor: id } }" class="num biglink">{{ stats.totals.bills_submitted }}</router-link>
+                <router-link :to="{ name: 'documents', query: { sponsor: id } }" class="num biglink">{{ stats.totals.bills_submitted }}</router-link>
                 <span class="lbl">{{ $t('profile.billsSubmitted') }}</span>
               </div>
               <!-- Attendance (REP-3): roll calls with no vote cast — "nem

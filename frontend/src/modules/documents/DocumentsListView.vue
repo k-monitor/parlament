@@ -5,6 +5,12 @@
 // only the browse page is distinct. Filter/sort state lives in the URL so a
 // filtered list is shareable, and each MP submitter links to their profile
 // (EXT-2).
+//
+// One exception to "every type except T": with a `sponsor` in the URL the page
+// is one MP's complete iromány list (linked from the "Benyújtott önálló
+// indítványok" profile stat, which counts every type), so törvényjavaslatok are
+// included — the type exclusion is what splits the *browse* pages, not what a
+// per-submitter list should hide.
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
@@ -44,12 +50,36 @@ function clearFilters() {
   apply()
 }
 
+// `sponsor` is not an interactive filter — it arrives as a deep link scoped to
+// one MP (from their profile). It's carried in the URL and preserved across the
+// other filters.
+const sponsor = computed(() => route.query.sponsor || '')
+// The submitter's display name, normally derived from the returned irományok;
+// when the list comes back empty there is nothing to derive it from, so fall
+// back to the person's own label rather than showing a raw person id.
+const sponsorLabel = ref('')
+const sponsorName = computed(() => {
+  for (const b of (data.value && data.value.bills) || []) {
+    const s = (b.sponsors || []).find((x) => x.person_id === sponsor.value)
+    if (s) return s.name
+  }
+  return sponsorLabel.value || sponsor.value
+})
+async function loadSponsorLabel() {
+  sponsorLabel.value = ''
+  if (!sponsor.value) return
+  try {
+    sponsorLabel.value = (await api.representative(sponsor.value)).label || ''
+  } catch { sponsorLabel.value = '' }
+}
+
 function apply() {
   const query = {}
   if (f.q) query.q = f.q
   if (f.type) query.type = f.type
   if (f.status) query.status = f.status
   if (f.sort && f.sort !== 'number') query.sort = f.sort
+  if (sponsor.value) query.sponsor = sponsor.value
   // Changing a filter resets to the first page (offset is intentionally dropped).
   router.push({ name: 'documents', query })
 }
@@ -60,11 +90,18 @@ function gotoPage(p) {
 
 async function loadFacets() {
   try {
-    const r = await api.billFacets({ period: store.cycles, main_type_not: 'T' })
+    const r = await api.billFacets({
+      period: store.cycles, main_type_not: mainTypeNot.value,
+      sponsor: sponsor.value || undefined,
+    })
     types.value = r.types.map((t) => t.type)
     statuses.value = r.statuses
   } catch { types.value = []; statuses.value = [] }
 }
+
+// Bills are excluded on the browse page (they have their own), but not from a
+// single submitter's list — see the note at the top of the file.
+const mainTypeNot = computed(() => (sponsor.value ? undefined : 'T'))
 
 // Monotonic load id: overlapping fetches (filter watcher + cycle watcher) can
 // resolve out of order; only the latest may write state.
@@ -78,7 +115,8 @@ async function load() {
     const res = await api.bills({
       q: route.query.q, type: route.query.type, status: route.query.status,
       period: store.cycles, sort: route.query.sort || 'number',
-      main_type_not: 'T', limit: PAGE, offset: route.query.offset || 0,
+      sponsor: route.query.sponsor, main_type_not: mainTypeNot.value,
+      limit: PAGE, offset: route.query.offset || 0,
     })
     if (seq === loadSeq) data.value = res
   } catch {
@@ -88,10 +126,13 @@ async function load() {
   }
 }
 
-onMounted(() => { loadMeta().catch(() => {}).finally(() => { loadFacets(); load() }) })
-watch(() => route.query, (q) => {
+onMounted(() => {
+  loadMeta().catch(() => {}).finally(() => { loadFacets(); loadSponsorLabel(); load() })
+})
+watch(() => route.query, (q, prev) => {
   f.q = q.q || ''; f.type = q.type || ''; f.status = q.status || ''
   f.sort = q.sort || 'number'
+  if (q.sponsor !== (prev && prev.sponsor)) loadSponsorLabel()
   loadFacets(); load()
 })
 // Re-fetch when the global cycle changes.
@@ -104,8 +145,8 @@ onUnmounted(() => clearTimeout(t))
 </script>
 
 <template>
-  <h1>{{ $t('documents.title') }}</h1>
-  <p class="muted">{{ $t('documents.subtitle') }}</p>
+  <h1>{{ sponsor ? $t('documents.sponsorTitle') : $t('documents.title') }}</h1>
+  <p class="muted">{{ sponsor ? $t('documents.sponsorSubtitle') : $t('documents.subtitle') }}</p>
 
   <form class="card pad searchform" role="search" @submit.prevent="apply">
     <div class="row" style="gap:.5rem;">
@@ -141,6 +182,12 @@ onUnmounted(() => clearTimeout(t))
       </button>
     </fieldset>
   </form>
+
+  <p v-if="sponsor" class="card pad sponsorfilter">
+    <span>{{ $t('documents.bySponsor') }}: <strong>{{ sponsorName }}</strong></span>
+    <router-link :to="{ name: 'profile', params: { id: sponsor } }" class="small">{{ $t('documents.viewProfile') }}</router-link>
+    <router-link :to="{ name: 'documents' }" class="small clear">✕ {{ $t('documents.clearSponsor') }}</router-link>
+  </p>
 
   <StateBlock
     :loading="loading" :error="error"
@@ -203,5 +250,8 @@ onUnmounted(() => clearTimeout(t))
 .billtitle:hover { color: var(--accent); }
 .sponsors { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
 .sponsors .arrow { color: var(--ink-soft); }
+/* Submitter-scoped list: the active filter, its profile link and a way out. */
+.sponsorfilter { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; background: var(--accent-soft); }
+.sponsorfilter .clear { margin-left: auto; }
 .badge.status { background: var(--accent-soft); }
 </style>

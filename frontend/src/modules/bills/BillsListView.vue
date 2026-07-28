@@ -38,20 +38,27 @@ function clearFilters() {
   apply()
 }
 
-// `sponsor` is not an interactive filter — it arrives via a link from an MP
-// (the headline stat / profile bills section). It's carried in the URL and
-// preserved across the other filters.
+// `sponsor` is not an interactive filter — it arrives as a deep link scoped to
+// one MP. It's carried in the URL and preserved across the other filters.
 const sponsor = computed(() => route.query.sponsor || '')
-// The sponsor's display name, derived from the returned bills (avoids a second
-// request to the representatives module just for a label).
+// The sponsor's display name, normally derived from the returned bills; when
+// this MP has no törvényjavaslat in scope there is nothing to derive it from,
+// so fall back to the person's own label rather than showing a raw id.
+const sponsorLabel = ref('')
 const sponsorName = computed(() => {
-  if (!sponsor.value || !data.value) return sponsor.value
-  for (const b of data.value.bills) {
+  for (const b of (data.value && data.value.bills) || []) {
     const s = (b.sponsors || []).find((x) => x.person_id === sponsor.value)
     if (s) return s.name
   }
-  return sponsor.value
+  return sponsorLabel.value || sponsor.value
 })
+async function loadSponsorLabel() {
+  sponsorLabel.value = ''
+  if (!sponsor.value) return
+  try {
+    sponsorLabel.value = (await api.representative(sponsor.value)).label || ''
+  } catch { sponsorLabel.value = '' }
+}
 
 function apply() {
   const query = {}
@@ -99,10 +106,13 @@ async function load() {
   }
 }
 
-onMounted(() => { loadMeta().catch(() => {}).finally(() => { loadFacets(); load() }) })
-watch(() => route.query, (q) => {
+onMounted(() => {
+  loadMeta().catch(() => {}).finally(() => { loadFacets(); loadSponsorLabel(); load() })
+})
+watch(() => route.query, (q, prev) => {
   f.q = q.q || ''; f.status = q.status || ''
   f.sort = q.sort || 'number'
+  if (q.sponsor !== (prev && prev.sponsor)) loadSponsorLabel()
   loadFacets(); load()
 })
 // Re-fetch when the global cycle changes.

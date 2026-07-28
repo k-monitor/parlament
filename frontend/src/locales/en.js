@@ -271,6 +271,13 @@ export default {
   documents: {
     title: 'Other documents',
     subtitle: 'Other documents (irományok) submitted to the National Assembly (resolution proposals, interpellations, questions, reports…) — bills have their own page.',
+    // Scoped to one representative the list covers every document type, bills
+    // included — matching how the profile's submitted-documents stat counts.
+    sponsorTitle: 'Submitted documents',
+    sponsorSubtitle: 'Documents submitted by one representative — every type, bills included.',
+    bySponsor: 'Submitter',
+    viewProfile: 'View profile',
+    clearSponsor: 'Clear filter',
     searchPlaceholder: 'Search in the title…',
     type: 'Type', period: 'Cycle', status: 'Status',
     sortNumber: 'By document number', sortDate: 'By submission', count: 'documents',

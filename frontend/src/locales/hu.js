@@ -374,6 +374,13 @@ export default {
   documents: {
     title: 'Egyéb irományok',
     subtitle: 'Az Országgyűléshez benyújtott egyéb irományok (határozati javaslatok, interpellációk, kérdések, beszámolók…) — a törvényjavaslatok külön oldalon szerepelnek.',
+    // Egy képviselőre szűrt lista: itt minden iromány típus szerepel, a
+    // törvényjavaslatokkal együtt (a képviselői profil statisztikája is így számol).
+    sponsorTitle: 'Benyújtott irományok',
+    sponsorSubtitle: 'Egy képviselő által benyújtott irományok — minden típus, a törvényjavaslatokkal együtt.',
+    bySponsor: 'Benyújtó',
+    viewProfile: 'Képviselő profilja',
+    clearSponsor: 'Szűrő törlése',
     searchPlaceholder: 'Keresés a címben…',
     type: 'Típus',
     period: 'Ciklus',

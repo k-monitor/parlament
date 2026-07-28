@@ -20,6 +20,10 @@
 #                      podman-compose run --rm init reextract-entities --period 43
 #                    Needs a reachable model: the current cycle's is Modal-only, so
 #                    PARLAMONITOR_WORDCLOUD_BACKEND=modal + MODAL_TOKEN_ID/SECRET.
+#   advocates        scrape the nationality-advocate registries (szószólók) into
+#                    /data; the one-off backfill for the earlier cycles, e.g.
+#                      podman-compose run --rm sync advocates --all-cycles
+#                    (the sync sidecar keeps the latest cycle fresh on its own)
 #   migrate-procedural  re-apply the procedural speech-type rule (STAT-1) to the
 #                    EXISTING DB in place and rebuild the aggregates — needed
 #                    after changing DEFAULT_PROCEDURAL_SPEECH_TYPES, which a
@@ -90,6 +94,19 @@ case "${1:-serve}" in
         shift
         echo "[entrypoint] re-applying the procedural speech-type rule to: $DB"
         exec python migrate_procedural_types.py "$DB" "$@"
+        ;;
+    advocates)
+        # Scrape the nationality-advocate registries (nemzetiségi szószólók) into
+        # $DATA_DIR/processed/advocates-<cycle>.json. The sync sidecar already keeps
+        # the LATEST cycle's registry fresh; this is the one-off backfill for the
+        # earlier cycles (their rosters are closed, so it is run once):
+        #   podman-compose run --rm sync advocates --all-cycles
+        # Needs a read-write /data mount and the scrape egress config (proxy / SSH
+        # tunnel), which is why it runs via the `sync` service, not `init`. The DB
+        # picks the files up on the next `update` / sync pass.
+        shift
+        cd /app/scraper
+        exec python -m parlamonitor advocates "$DATA_DIR" "$@"
         ;;
     speaker-photos)
         # Download portraits for non-roster speakers (ministers / nationality

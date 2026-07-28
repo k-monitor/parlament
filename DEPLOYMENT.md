@@ -289,6 +289,29 @@ as every other loader run, no scrape and no JSON reload. Omit `--period` to cove
 every sitting. Directly: `python -m app.loader --reextract-entities --period 43
 <data> <db>`.
 
+#### Backfilling the nationality advocates (`advocates`)
+
+The **szószóló** registries (REP-9) are a new source file per cycle. The `sync`
+sidecar keeps the **latest** cycle's registry fresh on its own (reps cadence, so
+within `PARLAMONITOR_SYNC_REPS_MAX_AGE`), but the earlier cycles' rosters are
+closed and are never probed — they are backfilled **once**, after deploying an
+image that has the stage:
+
+```bash
+./deploy.sh                                          # 1. ship the new image
+podman-compose run --rm sync advocates --all-cycles  # 2. scrape cycles 40+ into ./data
+podman-compose run --rm init update                  # 3. load them (no rebuild)
+```
+
+Step 2 runs via the **`sync`** service, not `init`: it needs the read-write
+`./data` mount and the scrape egress config (politeness knobs, proxy, SSH tunnel).
+It writes `data/processed/advocates-<cycle>.json` plus ~13 portraits per cycle and
+touches nothing else — about 10 minutes at the default 1 s delay. Step 3 is the
+ordinary incremental update: it reloads only those new files, adds the two
+`person` columns in place, and swaps the DB in with no downtime. (Skipping step 3
+is harmless too — the next sync pass does it.) Add `--cycle N` instead of
+`--all-cycles` for a single cycle, `--no-photos` to skip portraits.
+
 ## Continuous sync (keeping in step with parlament.hu)
 
 The bundled **`sync`** service keeps the deployment current without a full

@@ -236,6 +236,52 @@ PARLAMONITOR_HUSPACY_MODEL=hu_core_news_md modal deploy modal_app.py
 **Without Docker** (host scrapes/loads directly): the same three env vars +
 `python -m app.loader --update <data> <db>` (or `build`) offload to Modal.
 
+> **The current cycle's model must actually be reachable.** `hu_core_news_trf`
+> installs nowhere but the Modal image — it is *not* in the container — so with
+> `PARLAMONITOR_WORDCLOUD_BACKEND` left at `auto` (which never selects Modal) or
+> with the `MODAL_TOKEN_*` pair missing, the newest cycle has **no usable model**
+> and every one of its sittings is **skipped**: no entity mentions, so the newest
+> sitting days' transcripts render with no MP-profile and no K-Monitor badges at
+> all (the archive keeps working — its cached md spans are still valid). The
+> loader logs this as a warning naming the affected sittings; grep the `init`/`sync`
+> logs for `no usable model`. Checking the served DB directly:
+>
+> ```bash
+> # entity coverage per cycle (the image has no sqlite3 CLI, so go through python)
+> podman-compose run --rm init python -c '
+> import os, sqlite3
+> c = sqlite3.connect("file:%s?mode=ro" % os.environ["PARLAMONITOR_DB"], uri=True)
+> for row in c.execute("""
+>   SELECT s.period_number, COUNT(DISTINCT s.id),
+>          COUNT(DISTINCT CASE WHEN e.id IS NOT NULL THEN s.id END)
+>   FROM session s
+>   LEFT JOIN speech sp ON sp.session_id = s.id
+>   LEFT JOIN sentence se ON se.speech_id = sp.uid
+>   LEFT JOIN entity e ON e.sentence_id = se.id
+>   GROUP BY 1 ORDER BY 1"""):
+>     print("cycle %s: %s sittings, %s with entity mentions" % row)'
+> ```
+>
+> A cycle whose mention count is short of its sitting count was skipped.
+
+#### Re-running the NLP for one cycle (`reextract-entities`)
+
+A model becoming available changes **no source file**, and `--update` only ever
+revisits sittings whose file changed — so it will not backfill sittings that were
+skipped. Rather than a full `REBUILD_DB=1`, re-run just the NLP over the DB that
+is already built, scoped to one cycle:
+
+```bash
+podman-compose run --rm init reextract-entities --period 43
+```
+
+It snapshots the live DB, re-extracts mentions for that cycle's sittings (any whose
+cached spans still fingerprint-match are reused, so re-runs are free), re-resolves
+`entity_link`, and swaps the result in atomically — zero downtime, same writer lock
+as every other loader run, no scrape and no JSON reload. Omit `--period` to cover
+every sitting. Directly: `python -m app.loader --reextract-entities --period 43
+<data> <db>`.
+
 ## Continuous sync (keeping in step with parlament.hu)
 
 The bundled **`sync`** service keeps the deployment current without a full

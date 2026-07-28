@@ -1102,7 +1102,11 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
     Uses the same HuSpaCy backend and per-cycle model routing as the word cloud
     (Modal when configured, else the local model; current cycle vs archive —
     see ``_session_models``); when a model is available neither way its
-    sittings are skipped, so a bare-host build still succeeds (OPS-4). Cached on disk like the word cloud
+    sittings are skipped, so a bare-host build still succeeds (OPS-4). A skip is
+    **non-destructive** — the sitting keeps whatever mentions it already had rather
+    than being cleared and left empty — and is logged as a warning when it hits the
+    current cycle, since that silently strips every inline link from the newest
+    sitting days. Cached on disk like the word cloud
     (``entity-cache.json``), keyed by a fingerprint of the text + method, so a
     rebuild re-runs NER only for the sittings whose transcript actually changed.
     Each cache entry also records the ``model`` name and its exact ``method``
@@ -1133,8 +1137,12 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
             elif nlp.available(model):
                 mode = "local"
             else:
-                logger.info("entity extraction skipped for model %s "
-                            "(not available locally or via Modal)", model)
+                # A warning, not info: the current cycle's model is Modal-only
+                # (hu_core_news_trf), so a host without the Modal backend silently
+                # produces NO mentions for the live cycle — see the per-sitting
+                # summary below.
+                logger.warning("entity extraction unavailable for model %s "
+                               "(not installed locally, no Modal backend)", model)
                 mode = None
             method = nlp.method_tag(model) + ":" + _ENTITY_LOGIC
             resolved[model] = (mode, method)
@@ -1160,14 +1168,9 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
             except OSError as exc:
                 logger.warning("Could not write entity cache %s (%s)", cache_path, exc)
 
-    if only_sessions is None:
-        sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id DESC")]
-        conn.execute("DELETE FROM entity")
-    else:
-        sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id DESC")
-                if r[0] in only_sessions]
-        for sid in sids:
-            _delete_session_entities(conn, sid)
+    sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id DESC")]
+    if only_sessions is not None:
+        sids = [sid for sid in sids if sid in only_sessions]
 
     def _fetch(sid):
         # Deterministic order (by sentence PK = insertion order) so cached spans
@@ -1194,8 +1197,13 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
                 "VALUES (?,?,?,?,?,?)", rows)
         return len(rows)
 
-    processed = reused = skipped = mentions = 0
-    misses_by: dict[str, list] = {}  # model → [(sid, fp, sent_rows)]
+    # Classify every sitting BEFORE touching the `entity` table. Clearing it up
+    # front — as this used to — made a skip DESTRUCTIVE: a sitting whose model had
+    # become unavailable was wiped and then left empty, so its transcript silently
+    # lost every inline link. Only the sittings we are about to (re)write are cleared.
+    reuse: list[str] = []                     # cache hits — sids only, see below
+    misses_by: dict[str, list] = {}           # model → [(sid, fp, sent_rows)]
+    skipped_sids: list[str] = []
     for sid in sids:
         model = models.get(sid, settings.huspacy_model)
         mode, method = _resolve(model)
@@ -1203,12 +1211,44 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
         fp = _session_fingerprint(method, [t for (_i, t) in sent_rows])
         entry = cache["sessions"].get(sid)
         if entry and entry.get("fp") == fp:
-            mentions += _write(sent_rows, entry["spans"])
-            reused += 1
+            reuse.append(sid)
         elif mode is None:
-            skipped += 1
+            skipped_sids.append(sid)
         else:
             misses_by.setdefault(model, []).append((sid, fp, sent_rows))
+
+    if skipped_sids:
+        # Skipping the CURRENT cycle is the loud case: those are the days the site
+        # front page links to, and they end up with no inline links at all. Archive
+        # sittings normally never reach here (their cached spans match), so a skip
+        # there is worth a line too, just not an alarm.
+        current = [s for s in skipped_sids
+                   if models.get(s, settings.huspacy_model) == settings.huspacy_model]
+        (logger.warning if current else logger.info)(
+            "entity extraction skipped for %d sitting(s) with no usable model — "
+            "%d of them in the CURRENT cycle (%s): their transcripts render with NO "
+            "inline entity links. Set PARLAMONITOR_WORDCLOUD_BACKEND=modal with "
+            "MODAL_TOKEN_ID/MODAL_TOKEN_SECRET, or install %s locally.",
+            len(skipped_sids), len(current),
+            ", ".join(sorted(current)[:10]) or "none", settings.huspacy_model)
+
+    if only_sessions is None and not skipped_sids:
+        conn.execute("DELETE FROM entity")   # whole corpus rewritten; nothing to keep
+    else:
+        for sid in reuse:
+            _delete_session_entities(conn, sid)
+        for misses in misses_by.values():
+            for (sid, _fp, _rows) in misses:
+                _delete_session_entities(conn, sid)
+
+    processed = mentions = 0
+    reused = len(reuse)
+    skipped = len(skipped_sids)
+    # A cache hit re-fetches its sentence rows here instead of carrying them across
+    # the classification pass (which would hold the whole corpus' text at once); the
+    # query is the same deterministic one, so the cached spans still line up.
+    for sid in reuse:
+        mentions += _write(_fetch(sid), cache["sessions"][sid]["spans"])
 
     def _emit(sid, fp, sent_rows, per_sentence_spans, model, method):
         # ``model``/``method`` record which HuSpaCy model produced the entry, so
@@ -1715,6 +1755,80 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
     return True
 
 
+def reextract_entities(db_path: str | Path, *, period: int | None = None) -> bool:
+    """Re-run entity NER + link resolution over an EXISTING DB, in place (NEL, §10).
+
+    The escape hatch for the case ``--update`` cannot cover: the NLP passes are
+    scoped to the sittings whose *source file* changed, so a change on the model
+    side alone — a model becoming available (the Modal backend finally configured),
+    or a sitting having been skipped when it wasn't — is a no-op for an update even
+    though those sittings hold no (or stale-method) mentions. This re-runs the NLP
+    for a chosen electoral period against the DB that is already built, without
+    reloading any JSON and without the multi-minute full rebuild.
+
+    ``period`` scopes it to one electoral period (the usual case: only the current
+    cycle needs the expensive model); ``None`` covers every sitting. Sittings whose
+    cached spans still fingerprint-match are reused, so this is cheap for anything
+    already done. Snapshot-and-swap like :func:`update_database`, so the serving API
+    picks the result up on its next request with no downtime, and it takes the same
+    writer lock as every other loader run.
+
+    Returns ``True`` when the DB was replaced, ``False`` when there was nothing to do.
+    """
+    with _writer_lock(Path(db_path)):
+        return _reextract_entities(db_path, period=period)
+
+
+def _reextract_entities(db_path: str | Path, *, period: int | None = None) -> bool:
+    db_path = Path(db_path)
+    if not db_path.exists():
+        logger.error("No DB at %s — build it first", db_path)
+        return False
+
+    tmp_path = db_path.with_suffix(db_path.suffix + ".building")
+    _remove_db_files(tmp_path)
+    src = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    conn = connect(tmp_path)
+    try:
+        src.backup(conn)
+    finally:
+        src.close()
+
+    ok = False
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        only: set[str] | None = None
+        if period is not None:
+            only = {r[0] for r in conn.execute(
+                "SELECT id FROM session WHERE period_number = ?", (period,))}
+            if not only:
+                logger.warning("No sittings in period %s — nothing to re-extract", period)
+                return False
+            logger.info("Re-extracting entity mentions for %d sitting(s) in period %s",
+                        len(only), period)
+        rebuild_entity_mentions(conn, db_path.parent, only_sessions=only)
+        # entity_link is rebuilt wholesale from the mentions of the WHOLE corpus, so
+        # this always runs unscoped — a period-scoped mention pass still changes which
+        # names exist overall.
+        resolve_entity_links(conn, db_path.parent)
+        n_ment, n_names = conn.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT entity_key) FROM entity").fetchone()
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.commit()
+        ok = True
+    finally:
+        conn.close()
+        if not ok:
+            _remove_db_files(tmp_path)
+
+    os.replace(tmp_path, db_path)
+    _remove_db_side_files(tmp_path)
+    logger.info("Re-extracted entities into %s (%d mentions, %d distinct names)",
+                db_path, n_ment, n_names)
+    return True
+
+
 def _load_period_meta(conn: sqlite3.Connection, meta: dict) -> None:
     num = meta.get("cycle")
     if num is None:
@@ -1791,6 +1905,15 @@ def main(argv=None) -> int:
                          "result (fast, zero-downtime); full build if no DB yet")
     ap.add_argument("--session", help="load only this session id (e.g. 43003); "
                     "full-build only")
+    ap.add_argument("--reextract-entities", action="store_true",
+                    help="re-run entity NER + link resolution over the EXISTING DB "
+                         "in place (no JSON reload, no full rebuild) and swap it in; "
+                         "use with --period to scope it to one electoral cycle. The "
+                         "way to pick up a model-side change, which --update — scoped "
+                         "to changed source files — never revisits")
+    ap.add_argument("--period", type=int,
+                    help="electoral cycle number to scope --reextract-entities to "
+                         "(e.g. 43); omit to cover every sitting")
     ap.add_argument("--skip-wordcloud", action="store_true",
                     help="skip per-sitting word-cloud/new-words term extraction "
                          "(faster dev rebuild; those views come up empty)")
@@ -1799,7 +1922,16 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("parlamonitor.loader").setLevel(logging.INFO)
-    if args.update:
+    if args.period is not None and not args.reextract_entities:
+        ap.error("--period is only valid with --reextract-entities")
+    if args.reextract_entities:
+        if args.update or args.session:
+            ap.error("--reextract-entities operates on the existing DB; it cannot be "
+                     "combined with --update or --session")
+        # data_dir is unused here (nothing is reloaded) but stays a required
+        # positional so every loader invocation has the same shape.
+        reextract_entities(args.db_path, period=args.period)
+    elif args.update:
         if args.session:
             ap.error("--session is only valid for a full build, not --update")
         update_database(args.data_dir, args.db_path,

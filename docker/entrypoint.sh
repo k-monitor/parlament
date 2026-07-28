@@ -14,6 +14,12 @@
 #   update           incrementally reconcile the DB to /data and swap (no scrape)
 #   sync             one continuous-sync pass (scrape latest cycle + update DB)
 #   sync-loop        run `sync` forever on an interval (the sidecar's command)
+#   reextract-entities  re-run entity NER + link resolution over the EXISTING DB
+#                    and swap it in (no scrape, no JSON reload, no full rebuild).
+#                    Scope it to one cycle with --period, e.g.
+#                      podman-compose run --rm init reextract-entities --period 43
+#                    Needs a reachable model: the current cycle's is Modal-only, so
+#                    PARLAMONITOR_WORDCLOUD_BACKEND=modal + MODAL_TOKEN_ID/SECRET.
 #   migrate-procedural  re-apply the procedural speech-type rule (STAT-1) to the
 #                    EXISTING DB in place and rebuild the aggregates — needed
 #                    after changing DEFAULT_PROCEDURAL_SPEECH_TYPES, which a
@@ -70,6 +76,13 @@ case "${1:-serve}" in
         ;;
     sync)
         exec /usr/local/bin/sync-once.sh
+        ;;
+    reextract-entities)
+        # Operates on the DB in the volume, NOT on /data — no scrape, no reload.
+        # Takes the loader's writer lock, so it is safe while the sync sidecar runs.
+        shift
+        echo "[entrypoint] re-extracting entity mentions + links in: $DB"
+        exec python -m app.loader --reextract-entities "$DATA_DIR" "$DB" -v "$@"
         ;;
     migrate-procedural)
         # Operates on the DB in the volume, NOT on /data — no scrape, no rebuild.

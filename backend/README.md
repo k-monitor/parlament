@@ -28,7 +28,24 @@ it in atomically (DB-4):
 ```bash
 python -m app.loader ../data parlamonitor.db          # full rebuild
 python -m app.loader ../data parlamonitor.db --session 43003   # one sitting
+python -m app.loader ../data parlamonitor.db --update           # only what changed
 ```
+
+To re-run just the entity NER + link resolution over an already-built DB — the one
+thing `--update` cannot do, since it only revisits sittings whose *source file*
+changed and a model becoming available changes no file:
+
+```bash
+python -m app.loader --reextract-entities --period 43 ../data parlamonitor.db
+```
+
+Sittings whose cached spans still fingerprint-match are reused, so this is cheap
+to re-run; omit `--period` to cover every sitting. The current cycle's default
+model (`hu_core_news_trf`) loads only on Modal, so it needs
+`PARLAMONITOR_WORDCLOUD_BACKEND=modal` + `MODAL_TOKEN_*`, or a locally installed
+model via `PARLAMONITOR_HUSPACY_MODEL`. Without either, the current cycle's
+sittings are skipped and their transcripts show no inline entity links — the
+loader warns and names them.
 
 ## Run the API
 

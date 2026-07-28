@@ -71,7 +71,7 @@ class RuntimeConfig:
     timeout: float = 40.0           # per-request timeout (seconds)
     proxy: str | None = None        # optional SOCKS5/HTTP proxy URL
     user_agent: str = (
-        "OrszaggyulesWatch/1.0 (+https://github.com/k-monitor; civic-tech)"
+        "Parlamonitor/1.0 (+https://github.com/k-monitor; info@k-monitor.hu)"
     )
 
     # Optional SSH tunnel: route parlament.hu traffic through an SSH host so it

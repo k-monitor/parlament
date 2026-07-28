@@ -287,7 +287,7 @@ class Settings:
     # The site 403s a bare requests UA; reuse the descriptive Wikidata-style UA.
     kmonitor_user_agent: str = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_KMONITOR_USER_AGENT",
-                       "Parlamonitor/1.0 (+https://github.com/k-monitor; civic-tech)").strip())
+                       "Parlamonitor/1.0 (+https://github.com/k-monitor; info@k-monitor.hu)").strip())
 
     def module_enabled(self, name: str) -> bool:
         return name in self.enabled_modules

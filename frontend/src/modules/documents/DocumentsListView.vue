@@ -38,15 +38,18 @@ const f = reactive({
   q: route.query.q || '',
   type: route.query.type || '',
   status: route.query.status || '',
+  // Did the MP who asked accept the answer they got? (interpellációk only)
+  verdict: route.query.verdict || '',
   sort: route.query.sort || 'number',
 })
 // Open the filter panel on load when a filter is already active (e.g. a shared
 // or deep-linked list), so its filters are visible rather than hidden.
-const showFilters = ref(!!(route.query.type || route.query.status))
+const showFilters = ref(!!(route.query.type || route.query.status || route.query.verdict))
 
 function clearFilters() {
   f.type = ''
   f.status = ''
+  f.verdict = ''
   apply()
 }
 
@@ -78,6 +81,7 @@ function apply() {
   if (f.q) query.q = f.q
   if (f.type) query.type = f.type
   if (f.status) query.status = f.status
+  if (f.verdict) query.verdict = f.verdict
   if (f.sort && f.sort !== 'number') query.sort = f.sort
   if (sponsor.value) query.sponsor = sponsor.value
   // Changing a filter resets to the first page (offset is intentionally dropped).
@@ -116,6 +120,7 @@ async function load() {
       q: route.query.q, type: route.query.type, status: route.query.status,
       period: store.cycles, sort: route.query.sort || 'number',
       sponsor: route.query.sponsor, main_type_not: mainTypeNot.value,
+      answer_verdict: route.query.verdict || undefined,
       limit: PAGE, offset: route.query.offset || 0,
     })
     if (seq === loadSeq) data.value = res
@@ -131,7 +136,7 @@ onMounted(() => {
 })
 watch(() => route.query, (q, prev) => {
   f.q = q.q || ''; f.type = q.type || ''; f.status = q.status || ''
-  f.sort = q.sort || 'number'
+  f.verdict = q.verdict || ''; f.sort = q.sort || 'number'
   if (q.sponsor !== (prev && prev.sponsor)) loadSponsorLabel()
   loadFacets(); load()
 })
@@ -175,6 +180,17 @@ onUnmounted(() => clearTimeout(t))
             <option value="">{{ $t('search.all') }}</option>
             <option v-for="s in statuses" :key="s" :value="s">{{ s }}</option>
           </select>
+        </div>
+        <!-- Only question-type irományok record the asking MP's verdict on the
+             answer, so this narrows the list to interpellációk by itself. -->
+        <div>
+          <label for="d-verdict">{{ $t('documents.verdict') }}</label>
+          <select id="d-verdict" v-model="f.verdict" @change="apply">
+            <option value="">{{ $t('search.all') }}</option>
+            <option value="accepted">{{ $t('documents.verdictAccepted') }}</option>
+            <option value="rejected">{{ $t('documents.verdictRejected') }}</option>
+          </select>
+          <p class="muted small hint">{{ $t('documents.verdictHint') }}</p>
         </div>
       </div>
       <button class="btn secondary small" type="button" style="margin-top:.6rem;" @click="clearFilters">
@@ -248,6 +264,7 @@ onUnmounted(() => clearTimeout(t))
 .billnum { font-weight: 800; color: var(--accent); }
 .billtitle { color: var(--ink); font-weight: 600; }
 .billtitle:hover { color: var(--accent); }
+.hint { margin: .25rem 0 0; }
 .sponsors { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
 .sponsors .arrow { color: var(--ink-soft); }
 /* Submitter-scoped list: the active filter, its profile link and a way out. */

@@ -130,6 +130,35 @@ def test_list_bills_filter_by_sponsor(client):
     assert sp["faction"]["label"] == "Fidesz"
 
 
+def test_list_documents_filter_by_answer_verdict(client, db_path):
+    """The documents list can be narrowed to the questions whose asking MP
+    accepted — or rejected — the answer they were given, read from the verdict
+    bill event. Without such an event a question matches neither value."""
+    import sqlite3
+    assert client.get("/api/v1/bills",
+                      params={"answer_verdict": "accepted"}).json()["total"] == 0
+    assert client.get("/api/v1/bills",
+                      params={"answer_verdict": "rejected"}).json()["total"] == 0
+
+    c = sqlite3.connect(db_path)
+    c.execute("""INSERT INTO bill_event (bill_id, ord, event_date, name)
+                 VALUES ('doc-uuid-3', 11, '2026-06-02T11:30:00Z',
+                         'képviselő elfogadta a választ')""")
+    c.commit(); c.close()
+
+    d = client.get("/api/v1/bills",
+                   params={"main_type_not": "T", "answer_verdict": "accepted"}).json()
+    assert d["total"] == 1 and d["bills"][0]["bill_number"] == "I/5"
+    assert client.get("/api/v1/bills",
+                      params={"answer_verdict": "rejected"}).json()["total"] == 0
+    # combines with the other filters (an unrelated type rules the match out)
+    assert client.get("/api/v1/bills", params={
+        "answer_verdict": "accepted", "type": "törvényjavaslat"}).json()["total"] == 0
+    # unknown verdict values are rejected rather than silently ignored
+    assert client.get("/api/v1/bills",
+                      params={"answer_verdict": "maybe"}).status_code == 422
+
+
 def test_list_bills_search_and_status(client):
     assert client.get("/api/v1/bills", params={"q": "költségvetés"}).json()["total"] == 1
     assert client.get("/api/v1/bills", params={"status": "kihirdetve"}).json()["total"] == 1

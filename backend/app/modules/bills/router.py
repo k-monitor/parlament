@@ -28,6 +28,13 @@ router = APIRouter(prefix="/bills", tags=["bills"])
 # so the bill page can embed the answer video (VIE-9).
 _ANSWER_EVENTS = ("kérdés megválaszolva", "interpelláció szóban megválaszolva")
 
+# The asking MP's verdict on that oral answer, recorded as its own bill event.
+# In practice only interpellációk carry it (the House then votes on an answer the
+# MP rejected), and a question gets at most one of the two — so they make a clean
+# two-way filter on the documents list: did the MP who asked accept the reply?
+_VERDICT_EVENTS = {"accepted": "képviselő elfogadta a választ",
+                   "rejected": "képviselő elutasította a választ"}
+
 # Debate brackets: a plenary debate is opened and closed by a pair of bill
 # events, each tied (via the shared speech UUID, EXT-2) to the plenary speech
 # that announced it. The speeches *between* those two anchors are the debate
@@ -131,6 +138,10 @@ def list_bills(
     type: Optional[str] = None,              # exact iromány type (category)
     status: Optional[str] = None,
     sponsor: Optional[str] = None,           # person_id — bills by this MP
+    answer_verdict: Optional[str] = Query(
+        None, pattern="^(accepted|rejected)$",
+        description="Question-type irományok where the asking MP accepted / "
+                    "rejected the answer given to them"),
     sort: str = Query("number", pattern="^(number|date)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -170,6 +181,12 @@ def list_bills(
     if sponsor:
         where.append("EXISTS (SELECT 1 FROM bill_sponsor bs WHERE bs.bill_id=b.id "
                      "AND bs.person_id=:sp)"); params["sp"] = sponsor
+    if answer_verdict:
+        # `IN (subquery)` rather than a correlated EXISTS: the verdict events are
+        # a thin slice of bill_event with no index on `name`, so one scan of the
+        # small table beats an index probe per candidate bill (~5× here).
+        where.append("b.id IN (SELECT bill_id FROM bill_event WHERE name = :av)")
+        params["av"] = _VERDICT_EVENTS[answer_verdict]
     where_sql = " AND ".join(where)
 
     # number_sort restarts every cycle, so rank by period first — otherwise an

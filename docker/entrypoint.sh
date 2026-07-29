@@ -20,6 +20,12 @@
 #                      podman-compose run --rm init reextract-entities --period 43
 #                    Needs a reachable model: the current cycle's is Modal-only, so
 #                    PARLAMONITOR_WORDCLOUD_BACKEND=modal + MODAL_TOKEN_ID/SECRET.
+#   officeholders    scrape the office-holder registry (tisztségviselők) — every
+#                    office term with its real dates, MPs and non-MPs alike — into
+#                    /data; the one-off backfill for a corpus scraped before the
+#                    stage existed, e.g.
+#                      podman-compose run --rm sync officeholders
+#                    (the sync sidecar then keeps it fresh on its own)
 #   advocates        scrape the nationality-advocate registries (szószólók) into
 #                    /data; the one-off backfill for the earlier cycles, e.g.
 #                      podman-compose run --rm sync advocates --all-cycles
@@ -107,6 +113,20 @@ case "${1:-serve}" in
         shift
         cd /app/scraper
         exec python -m parlamonitor advocates "$DATA_DIR" "$@"
+        ;;
+    officeholders)
+        # Scrape the office-holder registry (tisztségviselők) into
+        # $DATA_DIR/processed/officeholders.json: every office term with its real
+        # dates, MPs and non-MPs alike (REP-2a). The sync sidecar refreshes it on the
+        # representatives' cadence; this is the one-off backfill for a deployment
+        # whose corpus was scraped before the stage existed:
+        #   podman-compose run --rm sync officeholders
+        # Cycle-less, so it backfills the whole archive in one pass (a handful of
+        # requests). Needs a read-write /data mount and the scrape egress config,
+        # hence the `sync` service. The DB picks it up on the next `update`/sync.
+        shift
+        cd /app/scraper
+        exec python -m parlamonitor officeholders "$DATA_DIR" "$@"
         ;;
     speaker-photos)
         # Download portraits for non-roster speakers (ministers / nationality

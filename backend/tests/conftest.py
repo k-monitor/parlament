@@ -115,6 +115,30 @@ def _registry():
     }
 
 
+def _officeholders_registry():
+    """The office-holder registry (tisztségviselők): every office term with its real
+    dates. Covers an MP already in the roster (whose own record repeats one of the
+    terms — the loader keeps the two sources apart) and somebody who never spoke in
+    the House, so the loader's skip of people outside the corpus is exercised."""
+    return {
+        "meta": {"asOf": "2026-07-29", "source": "felicitas-tisztsegviselok-api",
+                 "count": 2, "terms": 3, "rows": 3, "skippedRows": 0},
+        "data": [
+            {"personID": "k001", "label": "Kovács Béla", "labelFull": "Kovács Béla",
+             "offices": [
+                 {"title": "az Országgyűlés jegyzője",
+                  "start": "2026-05-09T22:00:00Z", "end": None},
+                 {"title": "Belügyminisztérium államtitkára",
+                  "start": "2018-05-21T22:00:00Z", "end": "2022-05-24T12:00:00Z"},
+             ]},
+            {"personID": "zzz9", "label": "Sosem Beszélt", "labelFull": None,
+             "offices": [{"title": "köztársasági elnök",
+                          "start": "2012-05-09T22:00:00Z",
+                          "end": "2017-05-09T21:59:59Z"}]},
+        ],
+    }
+
+
 def _bills_registry():
     """Three irományok: two törvényjavaslatok (mainType T) — one with a known-MP
     sponsor (links to k001), one government bill (no MP link) — and one non-bill
@@ -281,6 +305,8 @@ def data_dir(tmp_path):
         json.dumps(_votes_registry(), ensure_ascii=False))
     (data / "processed" / "43001-session.json").write_text(
         json.dumps(_session_record(), ensure_ascii=False))
+    (data / "processed" / "officeholders.json").write_text(
+        json.dumps(_officeholders_registry(), ensure_ascii=False))
     return data
 
 

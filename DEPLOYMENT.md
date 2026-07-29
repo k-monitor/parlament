@@ -312,6 +312,37 @@ ordinary incremental update: it reloads only those new files, adds the two
 is harmless too — the next sync pass does it.) Add `--cycle N` instead of
 `--all-cycles` for a single cycle, `--no-photos` to skip portraits.
 
+#### Backfilling the office terms (`officeholders`)
+
+The **office-holder registry** (*tisztségviselők*, REP-2a) dates every government /
+House office a person held — and is the only source that dates a **non-MP**
+minister's or state secretary's office at all. It is **cycle-less**: one pass
+backfills the whole archive, so an already-scraped corpus needs this once, after
+deploying an image that has the stage:
+
+```bash
+./deploy.sh                                     # 1. ship the new image
+podman-compose run --rm sync officeholders       # 2. scrape the registry into ./data
+podman-compose run --rm init update             # 3. load it (no rebuild)
+```
+
+Step 2 runs via the **`sync`** service (read-write `./data` + scrape egress, as
+above) and costs a handful of requests — a few seconds. It writes
+`data/processed/officeholders.json` and touches nothing else; the already-scraped
+sittings, rosters, bills and votes are all left alone. Step 3 is the ordinary
+incremental update: the new file is unknown to the DB's `load_state`, so it is
+treated as changed, `person_office` is **created in place** on the existing DB, the
+terms load for every person already in the corpus, and the result swaps in with no
+downtime. Nothing else is reloaded and no aggregate is rebuilt.
+
+Both steps are optional in the sense that the **sync sidecar does them by itself**
+on the representatives' cadence (`PARLAMONITOR_SYNC_REPS_MAX_AGE`, 12 h by default),
+so a deployment left alone backfills within half a day; running them explicitly is
+just how you get it now. Afterwards a reshuffle is picked up automatically, and the
+office dates on every profile are read straight from these terms — there is no
+per-profile migration to run. Add `--skip-officeholders` to
+`PARLAMONITOR_SYNC_ARGS` to opt the sidecar out.
+
 ## Continuous sync (keeping in step with parlament.hu)
 
 The bundled **`sync`** service keeps the deployment current without a full

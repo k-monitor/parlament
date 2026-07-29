@@ -367,7 +367,7 @@ merely because an accent was omitted (or added).
   This is a site-wide rule, not a per-module feature.
 - **FOLD-2 (MUST).** It applies to **all** such boxes, not only proceedings
   search — at minimum: the **representatives** name search (REP-1), the **bills**
-  title-text filter (BILL-1), the **other irományok** title-text filter (BILL-9),
+  title/number filter (BILL-1), the **other irományok** title/number filter (BILL-9),
   and the **votes** subject/iromány-number filter (VOTE-1). Any text box added by
   a future module inherits the rule by default.
 - **FOLD-3.** Folding is **symmetric and total**: the comparison normalizes both
@@ -728,12 +728,28 @@ snippet — a site-wide capability, not a per-module feature.
   most recent office in scope is often *not* the person's current post (a state
   secretary promoted since, a former minister now on the back benches), and undated
   it reads as if it were. The dates are the upstream **appointment/dismissal
-  boundaries** where the person's office list reports them (consecutive spells of one
+  boundaries** where a term for that office is on record (consecutive spells of one
   post, which upstream splits at every cycle boundary, read as a single term); an
   office **still held** has no end date — it reads *„… – jelenleg”*, never the last
-  sitting day, which would announce a departure that never happened. Where upstream
-  reports no term, the dates are the span of the speeches carrying the title, which
-  bounds the office only **from below** and is labelled as such (*„legalább …”*).
+  sitting day, which would announce a departure that never happened. Where no term is
+  on record, the dates come from the speeches carrying the title, which bound the
+  office only **from below** and are labelled as such (*„legalább … óta”*); an **end
+  date is shown only once the person has spoken without that office since** — the
+  only evidence in the data that they left it.
+  The profile also lists the person's **whole office history** in its own panel —
+  every office they ever held, **historical ones included**, newest first, each with
+  its term. Unlike the statistics this is biography, so it is **not** cycle-scoped.
+- **REP-2a (MUST).** Office terms come from the **office-holder registry**
+  (*tisztségviselők*, SRC: `officeholders.json`), the upstream listing of every
+  recorded office term with its real dates — **not** from what a speech happens to
+  call the speaker. This is the only source that covers a **non-MP** minister or
+  state secretary: they appear in no roster (not an MP, not a nationality advocate),
+  so before it their office could only be guessed from their speeches — which never
+  says when the office began, nor that they still hold it. The per-MP office list
+  that comes with the MP/advocate roster is kept as a second, equivalent source; the
+  two are stored separately so either can be reloaded on its own, and a term both
+  report is shown once. A corpus scraped before the registry existed keeps working
+  (offices then fall back to the speech-derived dating above).
 - **REP-3 (MUST).** Per-representative **statistics**, computed over the
   **statistics-eligible speeches only** (procedural/chairing speeches excluded
   per STAT-1), including at least:
@@ -862,12 +878,15 @@ iromány type** (határozati javaslatok, interpellációk, kérdések, beszámol
 is surfaced on a separate browse page (BILL-9) over the same data layer.
 
 - **BILL-1 (MUST).** A **browsable, filterable list of bills**, paginated and
-  filterable by **status**, **type**, **sponsor**, and **title text**; filters
+  filterable by **status**, **type**, **sponsor**, and **free text**; filters
   combine. List/filter state is in the **URL query** (deep-linkable, shareable) —
   including the sponsor filter so a link like `/bills?sponsor=<personID>` reopens
   the list scoped to that representative. The **electoral period** is set by the
-  global cycle selector (§4A). The title-text filter is **accent-insensitive**
-  (§4B FOLD-1).
+  global cycle selector (§4A). The free-text filter matches the **title *and* the
+  iromány number** — readers cite an iromány by its number (`T/438`) as often as
+  by title, so typing one must find it, and a fully typed number **ranks ahead**
+  of the longer numbers it is a prefix of (`T/438` before `T/4388`). Text
+  matching is **accent- and case-insensitive** (§4B FOLD-1).
 - **BILL-2 (MUST).** A **bill detail** view shows the bill number, title, type,
   status, submission date, and its sponsors. It links to the **official bill
   text on parlament.hu** (LEGAL-1); the PDF is **embedded inline but loaded on
@@ -930,9 +949,10 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   filterable list page** ("Egyéb irományok"), separate from the
   törvényjavaslatok page, paginated and filterable by
   **document type** (interpelláció, kérdés, határozati javaslat, …), **status**
-  and **title text**; filters combine and live in the **URL query**
+  and **free text** (title *and* iromány number, as BILL-1); filters combine and
+  live in the **URL query**
   (deep-linkable). The **electoral period** is set by the global cycle selector
-  (§4A). The title-text filter is **accent-insensitive** (§4B FOLD-1). It shares
+  (§4A). The free-text filter is **accent-insensitive** (§4B FOLD-1). It shares
   the Bills module's data layer and `/api/v1/bills`
   routes (scoped by `main_type`: `= T` for bills, `!= T` for this page) and the
   **same detail view** (BILL-2/BILL-7) — only the browse page is distinct, so no

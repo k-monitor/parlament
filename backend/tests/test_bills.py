@@ -164,6 +164,32 @@ def test_list_bills_search_and_status(client):
     assert client.get("/api/v1/bills", params={"status": "kihirdetve"}).json()["total"] == 1
 
 
+def test_list_bills_search_matches_bill_number(client, db_path):
+    """BILL-1: the free-text filter matches the iromány number too, so typing
+    "T/101" finds that iromány rather than nothing."""
+    d = client.get("/api/v1/bills", params={"q": "T/101"}).json()
+    assert d["total"] == 1 and d["bills"][0]["bill_number"] == "T/101"
+    # folded like every other simple filter (FOLD-1), and the number of any
+    # iromány type is searchable, not just a bill's
+    assert client.get("/api/v1/bills", params={"q": "t/101"}).json()["total"] == 1
+    assert client.get("/api/v1/bills",
+                      params={"q": "I/5"}).json()["bills"][0]["bill_number"] == "I/5"
+    # a bare number matches on the number as well as anywhere in the title
+    assert {b["bill_number"] for b in
+            client.get("/api/v1/bills", params={"q": "101"}).json()["bills"]} == {"T/101"}
+
+    # the whole number typed comes first, ahead of the longer numbers it is a
+    # prefix of — even though those sort higher by number
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("""INSERT INTO bill (id, bill_number, number_sort, period_number,
+                                   title, type, main_type)
+                 VALUES ('bill-uuid-9', 'T/1010', 1010, 43, 'Kilencedik', 'törvényjavaslat', 'T')""")
+    c.commit(); c.close()
+    d = client.get("/api/v1/bills", params={"q": "T/101"}).json()
+    assert [b["bill_number"] for b in d["bills"]] == ["T/101", "T/1010"]
+
+
 def test_bill_facets(client):
     d = client.get("/api/v1/bills/facets").json()
     assert "tárgysorozatban" in d["statuses"]

@@ -116,21 +116,32 @@ function termRange(c) {
 // even when it is one they held cycles ago (a state secretary promoted since, or a
 // former minister who is now a back-bench MP), so it is never shown undated (REP-2).
 // `dates_from = 'term'` means upstream reported the appointment/dismissal dates;
-// otherwise they are the span of the speeches carrying the title, which only bounds
-// the office from below — hence the "legalább" ("at least") wording there.
+// otherwise they come from the speeches carrying the title, which only bound the
+// office from below — hence the "legalább" ("at least") wording there. Either way a
+// null end means the office is still held, and is never filled in with a date.
 const officeTerm = computed(() => {
   const term = profile.value && profile.value.office_term
   if (!term) return null
   const start = formatDateLocal(term.start)
   const end = formatDateLocal(term.end)
   if (!start && !end) return null
-  const range = `${start || '?'} – ${end || t('profile.present')}`
   const exact = term.dates_from === 'term'
+  // An office still held has no end date: "2026-05-09 – jelenleg" for a reported
+  // term, "legalább 2026-05-26 óta" when only the speeches date it (there even the
+  // start is a lower bound — the appointment predates the first speech with it).
+  let label
+  if (!end) {
+    label = exact ? `${start} – ${t('profile.present')}`
+                  : t('profile.officeTermSince', { date: start })
+  } else {
+    const range = `${start || '?'} – ${end}`
+    label = exact ? range : t('profile.officeTermApprox', { range })
+  }
   // The cycle labels only describe the speech span, which an upstream term can
   // outrun — so they annotate the approximate case, never the exact one.
   const cycles = exact ? '' : (term.cycles || []).map(cycleLabel).join(', ')
   return {
-    label: exact ? range : t('profile.officeTermApprox', { range }),
+    label,
     note: t(exact ? 'profile.officeTermNote' : 'profile.officeTermSpeechesNote')
       + (cycles ? ` · ${cycles}` : ''),
   }
@@ -407,6 +418,20 @@ watch(() => store.cycles.join(','), load)
               <li v-for="(h, i) in profile.faction_history" :key="i">
                 <FactionBadge :faction="h.faction" link />
                 <span class="muted small">{{ h.cycle }}</span>
+              </li>
+            </ul>
+          </section>
+
+          <!-- Every office (tisztség) the person ever held, newest first, each with
+               its real term from the office-holder registry (REP-2). Historical ones
+               included — the header shows only the most recent one, and for a former
+               minister who is now a back-bench MP that is the whole story otherwise. -->
+          <section class="card pad" v-if="profile.offices && profile.offices.length">
+            <h2>{{ $t('profile.officeHistory') }}</h2>
+            <ul class="plain">
+              <li v-for="(o, i) in profile.offices" :key="i" class="small">
+                {{ o.title }}
+                <span class="muted term" v-if="termRange(o)">{{ termRange(o) }}</span>
               </li>
             </ul>
           </section>

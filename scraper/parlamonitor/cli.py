@@ -23,6 +23,9 @@ politeness/transport knobs come from the environment or flags, never hard-coded
     # Nationality advocates (szószólók) — one cycle, or backfill every cycle
     python -m parlamonitor advocates --cycle 43 ./data
     python -m parlamonitor advocates --all-cycles ./data
+
+    # Office holders (tisztségviselők): every office term with its real dates
+    python -m parlamonitor officeholders ./data
 """
 
 from __future__ import annotations
@@ -43,6 +46,7 @@ from .http_client import HttpClient
 from .lockfile import acquire
 from .advocates.scrape import advocate_cycles, fetch_advocates, save_advocates
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
+from .officeholders.scrape import fetch_office_holders, save_office_holders
 from .votes.scrape import fetch_votes, save_votes
 from .proceedings.scrape import download_period
 from .proceedings.transform import transform_day
@@ -273,6 +277,42 @@ def cmd_advocates(args) -> None:
                 len(written), written)
 
 
+def cmd_officeholders(args) -> None:
+    """Scrape the office-holder registry (tisztségviselők): every government /
+    House office term with its real start and end date.
+
+    Cycle-less and cheap (a handful of paged requests for the whole archive), and
+    the only source that dates the office of a **non-MP** minister or state
+    secretary — who is in no roster, so nothing else does."""
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    felicitas = _client(args)
+    registry = None
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            registry = fetch_office_holders(felicitas, as_of=args.as_of)
+            # An empty registry is never written: it would only teach the loader to
+            # forget the office terms it already holds (cf. the advocates stage).
+            if registry["data"]:
+                save_office_holders(paths, registry)
+            else:
+                logger.warning("Office-holder registry came back empty; "
+                               "nothing written")
+    finally:
+        felicitas.close()
+
+    meta = (registry or {}).get("meta", {})
+    _write_log(paths, {
+        "command": "officeholders",
+        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "asOf": meta.get("asOf"),
+        "people": meta.get("count", 0),
+        "terms": meta.get("terms", 0),
+    })
+    logger.info("Office holders: %s people, %s office terms",
+                meta.get("count", 0), meta.get("terms", 0))
+
+
 def cmd_bills(args) -> None:
     paths = Paths(args.data_dir)
     paths.ensure()
@@ -348,7 +388,8 @@ def cmd_sync(args) -> None:
                 no_detail=args.no_detail, no_offsets=args.no_offsets,
                 reps_max_age=reps_max_age, skip_bills=args.skip_bills,
                 skip_votes=args.skip_votes, skip_reps=args.skip_reps,
-                skip_advocates=args.skip_advocates)
+                skip_advocates=args.skip_advocates,
+                skip_office_holders=args.skip_officeholders)
             # Top up portraits for non-roster speakers of this cycle (ministers /
             # nationality advocates who aren't in the MP roster). Cheap on an idle
             # poll: already-downloaded ids are skipped and 404s are negative-cached,
@@ -479,6 +520,16 @@ def build_parser() -> argparse.ArgumentParser:
                     help="cap number of advocates (for testing)")
     sp.set_defaults(func=cmd_advocates)
 
+    sp = sub.add_parser("officeholders",
+                        help="scrape the office-holder registry (tisztségviselők): "
+                             "every office term with its real dates, MPs and "
+                             "non-MPs alike")
+    _common(sp, cycle_required=False)
+    sp.add_argument("--as-of", default=None,
+                    help="upper date bound of the listing, YYYY-MM-DD "
+                         "(default: today)")
+    sp.set_defaults(func=cmd_officeholders)
+
     sp = sub.add_parser("bills", help="scrape the cycle's irományok (all document types)")
     _common(sp)
     sp.add_argument("--main-types", default=None,
@@ -526,6 +577,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--skip-reps", action="store_true")
     sp.add_argument("--skip-advocates", action="store_true",
                     help="skip the nationality-advocate refresh")
+    sp.add_argument("--skip-officeholders", action="store_true",
+                    help="skip the office-holder (tisztségviselők) refresh")
     sp.set_defaults(func=cmd_sync)
 
     sp = sub.add_parser("speaker-photos",

@@ -153,7 +153,11 @@ def list_bills(
     where = ["1=1"]
     params: dict = {}
     if q:
-        where.append("fold(b.title) LIKE fold(:q) ESCAPE '\\'")
+        # Readers look an iromány up by its number ("T/438") as often as by
+        # title, so the free-text filter matches both (BILL-1) — as the votes
+        # list already does for its bill numbers.
+        where.append("(fold(b.title) LIKE fold(:q) ESCAPE '\\' "
+                     "OR fold(b.bill_number) LIKE fold(:q) ESCAPE '\\')")
         params["q"] = like_contains(q.strip())
     per_sql = period_sql(period, "b.period_number")
     if per_sql:
@@ -196,6 +200,11 @@ def list_bills(
     # current-cycle bill appears.
     order = {"number": "b.period_number DESC, b.number_sort DESC",
              "date": "b.submitted_date DESC"}[sort]
+    if q:
+        # A reader who typed a whole iromány number wants *that* iromány first,
+        # not the longer numbers it is a prefix of ("T/438" before "T/4388").
+        order = "(fold(b.bill_number) = fold(:q_exact)) DESC, " + order
+        params["q_exact"] = q.strip()
 
     total = db.execute(f"SELECT COUNT(*) AS c FROM bill b WHERE {where_sql}",
                        params).fetchone()["c"]

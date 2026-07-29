@@ -136,9 +136,51 @@ def _ensure_person(conn: sqlite3.Connection, person_id: str, label: str,
 # Representatives registry
 # ---------------------------------------------------------------------------
 
+def _ensure_person_office(conn: sqlite3.Connection) -> None:
+    """Create ``person_office`` on a pre-existing DB, so the office-term history
+    (REP-2) lands on an **already-built** deployment through the incremental update
+    alone (dropping in ``officeholders.json``), with no full rebuild."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS person_office (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            person_id     TEXT NOT NULL REFERENCES person(person_id),
+            title         TEXT NOT NULL,
+            date_start    TEXT,
+            date_end      TEXT,
+            source        TEXT NOT NULL DEFAULT 'registry'
+        )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_person_office_person "
+                 "ON person_office(person_id)")
+
+
+def _load_person_offices(conn: sqlite3.Connection, person_id: str,
+                         offices, source: str) -> int:
+    """Replace ``person_id``'s office terms **from this source** (REP-2).
+
+    ``offices`` is a list of ``{title, start, end}`` — the shape both the MP
+    roster's ``offices`` and the office-holder registry use. The delete is
+    source-scoped, so reloading one source never drops what the other supplied;
+    a term with no title is skipped (there would be nothing to show)."""
+    conn.execute("DELETE FROM person_office WHERE person_id = ? AND source = ?",
+                 (person_id, source))
+    n = 0
+    for o in offices or []:
+        if not isinstance(o, dict):
+            continue
+        title = (o.get("title") or "").strip()
+        if not title:
+            continue
+        conn.execute("INSERT INTO person_office(person_id, title, date_start, "
+                     "date_end, source) VALUES (?,?,?,?,?)",
+                     (person_id, title, o.get("start"), o.get("end"), source))
+        n += 1
+    return n
+
+
 def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
     """Upsert the MP registry. Adds bio/enrichment to person rows and faction
     membership history; safe to re-run (replaces each MP's derived rows)."""
+    _ensure_person_office(conn)
     meta = registry.get("meta", {})
     period = meta.get("cycle")
     data = registry.get("data", [])
@@ -229,6 +271,10 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
         # blanket delete-by-person would wipe the other cycles' rows when this
         # registry is loaded — leaving the per-cycle list/faction scope (§4A)
         # showing only MPs unique to the last-loaded cycle.
+        # The MP's own office (tisztség) terms, as term rows the profile can list
+        # (REP-2). `offices_json` keeps the same data for older readers.
+        _load_person_offices(conn, pid, rec.get("offices"), "roster")
+
         conn.execute("DELETE FROM membership WHERE person_id = ? AND period_number IS ?",
                      (pid, period))
         for h in rec.get("factionHistory") or []:
@@ -312,6 +358,7 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
     keeps them inside the cycle scope every period-aware view filters on (§4A).
     Safe to re-run: it replaces only this cycle's advocate rows (ING-4)."""
     _ensure_advocate_columns(conn)
+    _ensure_person_office(conn)
     meta = registry.get("meta", {})
     period = meta.get("cycle")
     data = registry.get("data", [])
@@ -396,6 +443,8 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
             },
         )
 
+        _load_person_offices(conn, pid, rec.get("offices"), "roster")
+
         # The advocate's factionless membership row for this cycle. Scoped to
         # `faction_id IS NULL` on delete so it can never wipe a faction membership
         # the MP roster loaded for the same person and cycle.
@@ -407,6 +456,58 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
     conn.commit()
     logger.info("Loaded %d nationality advocates (cycle %s)", len(data), period)
     return len(data)
+
+
+# ---------------------------------------------------------------------------
+# Office holders (tisztségviselők)
+# ---------------------------------------------------------------------------
+
+def _load_office_holders_file(conn: sqlite3.Connection, data_dir: Path) -> int:
+    """Load ``processed/officeholders.json`` if the scrape has produced one.
+
+    Absent on a corpus scraped before this stage existed, which is not an error —
+    profiles then fall back to dating an office from its speeches."""
+    path = Path(data_dir) / "processed" / "officeholders.json"
+    if not path.exists():
+        logger.info("No officeholders.json in %s — skipping office terms",
+                    path.parent)
+        return 0
+    return load_office_holders(conn, json.loads(path.read_text()))
+
+
+def load_office_holders(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load the office-holder registry: every office (*tisztség*) term with its
+    upstream start/end dates, for MPs and non-MPs alike (REP-2).
+
+    This is what dates the office of a **non-MP** minister or state secretary: they
+    are in no roster, so before this their profile could only bound the office by
+    the speeches carrying it — never saying when it really began, nor that they
+    still hold it.
+
+    Only people **already in** ``person`` get rows: everyone in this registry who
+    never spoke in the House is outside our corpus (they'd be a profile with nothing
+    on it), so they are counted and skipped, not inserted. Safe to re-run — it
+    replaces the registry-sourced terms of every person it names (ING-4), leaving
+    the roster-sourced ones alone."""
+    _ensure_person_office(conn)
+    data = registry.get("data", [])
+    known = {r[0] for r in conn.execute("SELECT person_id FROM person")}
+    people = terms = skipped = 0
+    for rec in data:
+        pid = rec.get("personID")
+        if not pid:
+            continue
+        if pid not in known:
+            skipped += 1
+            continue
+        n = _load_person_offices(conn, pid, rec.get("offices"), "registry")
+        if n:
+            people += 1
+            terms += n
+    conn.commit()
+    logger.info("Loaded %d office term(s) for %d people (%d not in the corpus, "
+                "skipped)", terms, people, skipped)
+    return terms
 
 
 # ---------------------------------------------------------------------------
@@ -1689,6 +1790,11 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
             load_session(conn, record)
             loaded += 1
 
+        # Office holders load LAST of the registries: a non-MP minister exists as a
+        # `person` row only once the sittings they spoke in are in (the speaker stub),
+        # and their office terms are exactly what this registry supplies (REP-2).
+        _load_office_holders_file(conn, data_dir)
+
         # Lemmatize / entity-extract each sitting's text into session_word_count
         # before the aggregates so word_doc_freq can derive from it (WCLOUD-2);
         # cached on disk in the DB's dir (writable + persisted; the source data
@@ -1739,7 +1845,7 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
 # load_state yet), which is exactly how a new domain lands on an already-built
 # deployment through the incremental path alone.
 _PROCESSED_GLOBS = ("representatives-*.json", "advocates-*.json", "bills-*.json",
-                    "votes-*.json", "*-session.json")
+                    "votes-*.json", "*-session.json", "officeholders.json")
 
 
 def _file_sig(path: Path) -> tuple[float, int]:
@@ -1887,6 +1993,13 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             sid = record.get("meta", {}).get("session")
             if sid:
                 loaded_sessions.append(sid)
+
+        # Office terms after the sittings, and also when only a sitting changed: a
+        # non-MP minister becomes a `person` row the day their first speech lands,
+        # and this registry is the only thing that dates their office (REP-2). It is
+        # a single small file, so re-reading it costs nothing.
+        if changed["officeholders.json"] or loaded_sessions:
+            _load_office_holders_file(conn, data_dir)
 
         # Aggregates are speech-derived, so they only need rebuilding when a
         # sitting changed (bills/votes/reps carry their own rows). Word counts are

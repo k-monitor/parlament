@@ -95,6 +95,17 @@ SZAVAZAS_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
 KEPVISELO_REBIND = (f"{BASE}/web/guest/felicitas/api/query/parameter/rebind/"
                    "kepviseloadatok-kepviselo-kepviselolista-idopont/"
                    "kepviselo-lista-idopontban-query")
+# Office holders (*tisztségviselők*): every recorded term of government / House
+# office with its real start and end date, for MPs and non-MPs alike. Its one
+# query is named ``tisztsegviselo`` (no ``-query`` suffix — that spelling 404s).
+TISZTSEGVISELO_PROVIDER = (f"{BASE}/felicitas/api/query/select/"
+                   "tisztsegviselok-registry/tisztsegviselok-query-provider")
+# The registry's earliest date bound; the portal's own page passes the system
+# epoch (``systemEpochDate`` in its page config), i.e. the first day of the
+# freely-elected Assembly.
+OFFICE_EPOCH = "1990-05-02"
+# ~1 800 terms all-time, so the whole registry is 5 requests instead of 73.
+_OFFICE_PAGE_SIZE = 400
 PHOTO_RESOURCE = (f"{BASE}/web/guest/felicitas/api/query/resource/"
                  "kepviseloexportok/kepviselo-exported-queries-provider/"
                  "kepviselo-kepek")
@@ -407,6 +418,40 @@ class FelicitasClient:
             "pStatisztikaiAdatok": True,
         }
         return self.select_all(KEPVISELO_PROVIDER, "szoszolo-lista-query", body)
+
+    def office_holders(self, *, as_of: str,
+                       earliest: str = OFFICE_EPOCH) -> list[dict]:
+        """Every recorded term of **government / House office** (*tisztség*), for
+        MPs and non-MPs alike — the registry behind parlament.hu's "Tisztségviselők"
+        page (``/web/guest/tisztsegviselok``, verified 2026-07).
+
+        One row per (person, office, term): ``kepvId`` (the person id, same space as
+        ``kepviseloId`` — so it joins straight to a speech's speaker), ``nev``,
+        ``tisztseg`` (the office name), and ``tol``/``ig`` — the **real appointment
+        and dismissal timestamps**, with ``ig`` null while the office is still held.
+
+        This is the only source that dates the office of a **non-MP** minister or
+        state secretary: they are in no roster (not an MP, not an advocate), so
+        their profile would otherwise have to guess the term from their speeches.
+
+        Every office category is requested (``pMiniszterelnok`` … ``pEgyebTisztseg``)
+        — with the four the portal ticks by default the listing is ~⅔ of the rows,
+        silently dropping e.g. an MNB or Közbeszerzési Hatóság seat. ``pTisztsegIg``
+        bounds the listing at ``as_of`` (a date, ``YYYY-MM-DD``); ``pTisztsegTol`` is
+        deliberately NOT sent — passing it drops the terms that began before it,
+        including some that are still running."""
+        body = {
+            "pLegkorabbiDatumValue": earliest,
+            "pTisztsegIg": as_of,
+            "pMiniszterelnok": True,
+            "pMiniszter": True,
+            "pAllamtitkar": True,
+            "pParlamenti": True,
+            "pEgyebVezetoTisztseg": True,
+            "pEgyebTisztseg": True,
+        }
+        return self.select_all(TISZTSEGVISELO_PROVIDER, "tisztsegviselo", body,
+                               size=_OFFICE_PAGE_SIZE)
 
     def photo(self, person_id: str) -> bytes | None:
         """Fetch an MP's portrait image bytes, or ``None`` if absent."""

@@ -20,6 +20,7 @@ assert *which* sittings get re-scraped on each poll:
 from __future__ import annotations
 
 import collections
+import json
 
 import pytest
 
@@ -254,3 +255,84 @@ def test_announced_day_with_no_speeches_is_ingested_then_filled(patched):
     s2 = _run(fel, paths)
     assert scraped == ["43002"]
     assert s2["sessions"] == ["43002"]
+
+
+# --- office holders (tisztségviselők) --------------------------------------
+
+class FakeOfficeFelicitas(FakeFelicitas):
+    """Adds the office-holder listing, so the sync's own cadence/fingerprint
+    bookkeeping for it can be driven without touching the network."""
+
+    def __init__(self, rows, **kw):
+        super().__init__(days=[], speeches={}, **kw)
+        self.rows = rows
+
+    def office_holders(self, *, as_of, earliest=None):
+        self.calls["office_holders"] += 1
+        return [dict(r) for r in self.rows]
+
+
+def _run_offices(fel, paths, *, force=False):
+    """A poll with only the office-holder step live (the other domains need their
+    own fakes, and the reps refresh would reach out to Wikidata)."""
+    return sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                         skip_reps=True, skip_advocates=True, force=force)
+
+
+def _expire_office_cadence(paths):
+    """Age the last office-holder check so the next poll re-fetches (the registry is
+    refreshed on the slow representatives cadence)."""
+    state = sync.load_state(paths.sync_state)
+    state["officeHolders"]["ts"] = 0
+    sync.save_state(paths.sync_state, state)
+
+
+def _office_row(pid, title, tol, ig=None):
+    return {"kepvId": pid, "nev": f"Név {pid}", "nevElonevNelkul": f"Név {pid}",
+            "tisztseg": title, "tol": tol, "ig": ig}
+
+
+def test_office_holders_written_once_then_only_when_they_change(patched):
+    """The registry is fetched on the reps cadence and rewritten only when its
+    contents actually changed — so an idle poll costs nothing and leaves the loader
+    nothing to do, while a reshuffle (a term closed) lands."""
+    paths, _ = patched
+    fel = FakeOfficeFelicitas([_office_row("v076", "közlekedési és beruházási "
+                                           "miniszter", "2026-05-12T22:00:00Z")])
+    assert _run_offices(fel, paths)["officeHolders"] is True
+    written = paths.officeholders_file()
+    assert written.exists()
+    first_mtime = written.stat().st_mtime_ns
+
+    # Within the cadence: not even fetched.
+    assert _run_offices(fel, paths)["officeHolders"] is False
+    assert fel.calls["office_holders"] == 1
+
+    # Cadence expired, registry unchanged: fetched, but not rewritten.
+    _expire_office_cadence(paths)
+    assert _run_offices(fel, paths)["officeHolders"] is False
+    assert fel.calls["office_holders"] == 2
+    assert written.stat().st_mtime_ns == first_mtime
+
+    # A reshuffle: the office changes hands, so the file is rewritten.
+    fel.rows = [_office_row("v076", "közlekedési és beruházási miniszter",
+                            "2026-05-12T22:00:00Z", "2026-08-31T21:59:59Z")]
+    _expire_office_cadence(paths)
+    assert _run_offices(fel, paths)["officeHolders"] is True
+    reg = json.loads(written.read_text())
+    assert reg["data"][0]["offices"][0]["end"] == "2026-08-31T21:59:59Z"
+
+
+def test_empty_office_registry_never_overwrites_what_is_held(patched):
+    """An empty upstream answer must not clobber a registry already on disk (the
+    loader would then forget every office term)."""
+    paths, _ = patched
+    fel = FakeOfficeFelicitas([_office_row("v076", "miniszter",
+                                           "2026-05-12T22:00:00Z")])
+    _run_offices(fel, paths)
+    before = paths.officeholders_file().read_text()
+
+    fel.rows = []
+    _expire_office_cadence(paths)
+    assert _run_offices(fel, paths)["officeHolders"] is False
+    assert paths.officeholders_file().read_text() == before

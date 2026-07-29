@@ -16,6 +16,7 @@ kept only as reference material; nothing here imports it at runtime.
 | `processed/<session>-session.json` | `parlamonitor.proceedings` | one record per sitting day: ordered speeches, each with agenda item, speaker(s), the whole-day HLS video, and `textContents → textBody → sentences[]` with day-absolute `timeStart`/`timeEnd`. |
 | `processed/representatives-<cycle>.json` | `parlamonitor.representatives` | the MP registry for a cycle: bio, faction & committee history, constituency, education, and per-cycle speech / bill-submission counts. |
 | `processed/advocates-<cycle>.json` | `parlamonitor.advocates` | the **nationality-advocate** registry (*nemzetiségi szószólók*) for a cycle: same record shape as an MP plus the `nationality` they speak for. They are not in the MP roster, but share its id space — so the file is additive and needs no re-run of the MP stage. |
+| `processed/officeholders.json` | `parlamonitor.officeholders` | the **office-holder** registry (*tisztségviselők*): every recorded term of government / House office with its **real** start and end date (open while still held), grouped by person. Cycle-less, and the only source that dates the office of a **non-MP** minister or state secretary — who is in no roster at all. |
 | `logs/ingest-<ts>.json` | both | per-run ingestion log (run time, sittings added, errors, backend). |
 
 Each speech's speaker carries a `personID` (`kepviseloId`) that joins directly
@@ -226,6 +227,9 @@ parlamonitor/
   advocates/
     scrape.py          szószóló roster (+ reused per-person detail)
                        → advocates-<cycle>.json
+  officeholders/
+    scrape.py          tisztségviselő registry (office terms, real dates,
+                       MPs and non-MPs) → officeholders.json
   bills/
     scrape.py          irományok list + per-bill detail → bills-<cycle>.json
   votes/
@@ -234,6 +238,7 @@ parlamonitor/
 tests/
   test_pipeline.py     offline tests: transform, timing, names, agenda, segment
   test_advocates.py    offline tests: szószóló registry shape + cycle discovery
+  test_officeholders.py offline tests: office-term grouping + open-ended terms
 ```
 
 ## Tests

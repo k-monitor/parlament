@@ -36,6 +36,10 @@ What each poll checks, cheaply:
   the representatives, and only for the latest cycle; a past cycle's advocate
   roster is closed, so it is backfilled once by ``parlamonitor advocates
   --all-cycles`` and then left alone.
+* **Office holders** (tisztségviselők) — the cycle-less registry of office terms,
+  on the representatives' cadence: a reshuffle closes one term and opens another,
+  and for a **non-MP** minister nothing else records it. Rewritten only when its
+  contents changed.
 """
 
 from __future__ import annotations
@@ -51,6 +55,7 @@ from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
 from .config import Paths, session_id, timing_backend as _default_timing_backend
 from .config import whisper_language, whisper_model
 from .felicitas import FelicitasClient
+from .officeholders.scrape import fetch_office_holders, save_office_holders
 from .proceedings.scrape import _write_json, scrape_day, sitting_number
 from .proceedings.transform import transform_day
 from .representatives.scrape import (fetch_missing_photos, fetch_representatives,
@@ -369,6 +374,36 @@ def _sync_advocates(felicitas: FelicitasClient, paths: Paths, cycle: int,
     return True
 
 
+def _sync_office_holders(felicitas: FelicitasClient, paths: Paths, state: dict,
+                         *, force: bool, reps_max_age: float) -> bool:
+    """Refresh the office-holder registry (tisztségviselők) on the reps cadence.
+
+    Cycle-less and cheap (a handful of paged requests for the whole archive), and
+    the thing that keeps a **sitting** office current: a reshuffle closes one term
+    and opens another, and for a non-MP minister no other source says so. Rewritten
+    only when the contents actually changed, so an unchanged registry leaves the
+    loader nothing to do."""
+    prev = state.get("officeHolders") or {}
+    age = _now_ts() - float(prev.get("ts") or 0)
+    if not force and prev and age < reps_max_age:
+        return False
+    registry = fetch_office_holders(felicitas)
+    if not registry["data"]:
+        # Never write an empty registry over one the loader already holds; the
+        # check is still recorded so the cadence holds.
+        state["officeHolders"] = {"ts": _now_ts(), "at": _now(), "terms": 0}
+        return False
+    fp = hashlib.sha256(
+        json.dumps(registry["data"], sort_keys=True, ensure_ascii=False)
+        .encode()).hexdigest()
+    state["officeHolders"] = {"ts": _now_ts(), "at": _now(), "fp": fp,
+                              "terms": registry["meta"]["terms"]}
+    if not force and prev.get("fp") == fp:
+        return False
+    save_office_holders(paths, registry)
+    return True
+
+
 # --- orchestration ---------------------------------------------------------
 
 def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
@@ -376,6 +411,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
              no_offsets: bool = False, reps_max_age: float = DEFAULT_REPS_MAX_AGE,
              skip_bills: bool = False, skip_votes: bool = False,
              skip_reps: bool = False, skip_advocates: bool = False,
+             skip_office_holders: bool = False,
              timing_backend: str | None = None) -> dict:
     """One cheap sync pass over ``cycle``. Each domain is isolated so one failing
     query never aborts the others (SCR-5). Returns a summary of what changed."""
@@ -384,7 +420,8 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
     state = load_state(paths.sync_state)
     summary = {"cycle": cycle, "checkedAt": _now(),
                "sessions": [], "bills": False, "votes": False,
-               "representatives": False, "advocates": False, "errors": []}
+               "representatives": False, "advocates": False,
+               "officeHolders": False, "errors": []}
 
     try:
         summary["sessions"] = _sync_proceedings(
@@ -427,6 +464,16 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
         except Exception as e:
             logger.exception("Advocates sync failed")
             summary["errors"].append(f"advocates: {e}")
+
+    if not skip_office_holders:
+        # On the representatives' cadence: person enrichment too, just the slice
+        # that also covers the non-MPs.
+        try:
+            summary["officeHolders"] = _sync_office_holders(
+                felicitas, paths, state, force=force, reps_max_age=reps_max_age)
+        except Exception as e:
+            logger.exception("Office-holder sync failed")
+            summary["errors"].append(f"officeholders: {e}")
 
     state["cycle"] = cycle
     state["lastCheckAt"] = summary["checkedAt"]

@@ -308,19 +308,24 @@ def test_representative_profile(client):
     assert client.get("/api/v1/representatives/n002").json()["wikipedia_url"] is None
 
 
-def _load_minister_speech(db_path):
+def _load_minister_speech(db_path, session="43015", sitting=15, date="2026-06-30",
+                          office="igazságügyi miniszter", conn=None):
     """Load one sitting day whose speaker is a non-MP minister, so their profile is
-    built from a speech carrying a government office (tisztség)."""
+    built from a speech carrying a government office (tisztség). ``office=None``
+    loads a day on which the same person speaks holding no office."""
     from app import loader
-    c = loader.connect(db_path)
+    c = conn or loader.connect(db_path)
+    person = {"label": "Törőcsikné Görög Márta", "context": "main-speaker",
+              "personID": "0052"}
+    if office:
+        person["office"] = office
     loader.load_session(c, {
-        "meta": {"session": "43015", "electoralPeriod": 43, "sitting": 15,
-                 "date": "2026-06-30", "dayVideoURI": "https://example/p.m3u8",
+        "meta": {"session": session, "electoralPeriod": 43, "sitting": sitting,
+                 "date": date, "dayVideoURI": "https://example/p.m3u8",
                  "timingMethod": "estimated-day-offset"},
-        "data": [{"originID": "43-15-1", "speechIndex": 1,
+        "data": [{"originID": f"43-{sitting}-1", "speechIndex": 1,
                   "agendaItem": {"title": "Interpelláció", "type": "regular"},
-                  "people": [{"label": "Törőcsikné Görög Márta", "context": "main-speaker",
-                              "personID": "0052", "office": "igazságügyi miniszter"}],
+                  "people": [person],
                   "media": {"videoFileURI": "https://example/p.m3u8", "duration": 7200},
                   "textContents": [{"textBody": [{"sentences": [
                       {"text": "Tisztelt Ház!", "timeStart": 0.0, "timeEnd": 30.0}]}]}],
@@ -338,15 +343,95 @@ def test_profile_shows_office_for_non_mp_speaker(client, db_path):
     assert d["is_mp"] is False
     assert d["office"] == "igazságügyi miniszter"
     assert d["current_faction"] is None
-    # The office is dated (REP-2): with no upstream term for it, the span of the
-    # speeches carrying the title bounds it from below ("held at least until").
+    # The office is dated (REP-2): with no upstream term for it, the speeches
+    # carrying the title date it — from below ("held at least since"). It is the
+    # office on their latest speech, so it is still held as far as we know: no end
+    # date, which would otherwise read as a departure the data never recorded.
     assert d["office_term"]["dates_from"] == "speeches"
     assert d["office_term"]["start"] == "2026-06-30"
-    assert d["office_term"]["end"] == "2026-06-30"
+    assert d["office_term"]["ongoing"] is True
+    assert d["office_term"]["end"] is None
     assert d["office_term"]["cycles"] == [43]
     # An ordinary MP (no government office) reports no office.
     mp = client.get("/api/v1/representatives/k001").json()
     assert mp["office"] is None and mp["office_term"] is None
+
+
+def test_profile_lists_every_office_with_its_real_term(client):
+    """REP-2: the profile lists the person's whole office history, newest first, with
+    the upstream term dates — historical offices included, and not cycle-scoped (it
+    is biography). An office still held keeps its open end."""
+    d = client.get("/api/v1/representatives/k001").json()
+    assert [(o["title"], o["start"], o["end"]) for o in d["offices"]] == [
+        ("az Országgyűlés jegyzője", "2026-05-09T22:00:00Z", None),
+        ("Belügyminisztérium államtitkára", "2018-05-21T22:00:00Z",
+         "2022-05-24T12:00:00Z")]
+    # Same list under a cycle scope: an office term is not a per-cycle fact, and
+    # the 2018 one predates the only cycle in the fixture.
+    assert client.get("/api/v1/representatives/k001",
+                      params={"period": 43}).json()["offices"] == d["offices"]
+
+
+def test_profile_office_list_merges_the_two_sources_without_duplicates(client, db_path):
+    """The registry and the per-MP roster report the same upstream terms, so a term
+    both carry is listed once — while a term only one of them has is still shown."""
+    from app import loader
+    c = loader.connect(db_path)
+    loader._load_person_offices(c, "k001", [
+        # the same term the registry already supplies
+        {"title": "az Országgyűlés jegyzője",
+         "start": "2026-05-09T22:00:00Z", "end": None},
+        # ...and one only the roster knows about
+        {"title": "a Közbeszerzések Tanácsának tagja",
+         "start": "2006-12-01T23:00:00Z", "end": "2010-04-28T21:59:59Z"},
+    ], "roster")
+    c.commit()
+    c.close()
+    offices = client.get("/api/v1/representatives/k001").json()["offices"]
+    assert [o["title"] for o in offices] == [
+        "az Országgyűlés jegyzője",
+        "Belügyminisztérium államtitkára",
+        "a Közbeszerzések Tanácsának tagja"]
+
+
+def test_non_mp_office_dated_from_the_office_holder_registry(client, db_path):
+    """The registry is the only source that dates a **non-MP** minister's office —
+    they are in no roster. With it loaded, their header term is the real appointment
+    (not the first speech that mentioned the office), and stays open while held."""
+    from app import loader
+    _load_minister_speech(db_path).close()
+    loader_conn = loader.connect(db_path)
+    loader.load_office_holders(loader_conn, {"data": [
+        {"personID": "0052", "label": "Törőcsikné Görög Márta", "offices": [
+            {"title": "igazságügyi miniszter",
+             "start": "2026-05-12T22:00:00Z", "end": None}]}]})
+    loader_conn.close()
+
+    d = client.get("/api/v1/representatives/0052").json()
+    assert d["is_mp"] is False
+    assert d["office"] == "igazságügyi miniszter"
+    # Real appointment date, not the 2026-06-30 sitting the speech was on.
+    assert d["office_term"] == {"start": "2026-05-12T22:00:00Z", "end": None,
+                                "dates_from": "term", "ongoing": True,
+                                "cycles": [43]}
+    assert d["offices"] == [{"title": "igazságügyi miniszter",
+                             "start": "2026-05-12T22:00:00Z", "end": None}]
+
+
+def test_profile_office_ends_once_speaker_appears_without_it(client, db_path):
+    """A speech-dated office (no upstream term) gets an end date only once the person
+    has spoken *without* it since — then they demonstrably left, and the last speech
+    carrying the title is the best "held at least until" the data supports."""
+    c = _load_minister_speech(db_path)
+    _load_minister_speech(db_path, session="43016", sitting=16, date="2026-07-02",
+                          office=None, conn=c)
+    c.close()
+    d = client.get("/api/v1/representatives/0052").json()
+    assert d["office"] == "igazságügyi miniszter"
+    assert d["office_term"]["dates_from"] == "speeches"
+    assert d["office_term"]["ongoing"] is False
+    assert d["office_term"]["start"] == "2026-06-30"
+    assert d["office_term"]["end"] == "2026-06-30"
 
 
 def test_profile_office_dated_from_upstream_term(client, db_path):
@@ -376,6 +461,24 @@ def test_profile_office_dated_from_upstream_term(client, db_path):
     assert d["office_term"]["dates_from"] == "term"
     assert d["office_term"]["start"] == "2022-05-24T22:00:00Z"
     assert d["office_term"]["end"] == "2030-05-12T21:59:59Z"
+
+
+def test_profile_office_still_held_reports_no_end_date(client, db_path):
+    """An office the person still holds has an open-ended upstream term, and stays
+    open-ended on the profile (the UI reads it as "… – jelenleg"). Substituting the
+    last sitting day would announce a departure that never happened."""
+    import json
+    c = _load_minister_speech(db_path)
+    c.execute("UPDATE person SET offices_json = ? WHERE person_id = '0052'",
+              (json.dumps([{"title": "igazságügyi miniszter",
+                            "start": "2026-05-09T12:38:00Z", "end": None}],
+                          ensure_ascii=False),))
+    c.commit()
+    c.close()
+    d = client.get("/api/v1/representatives/0052").json()
+    assert d["office_term"]["dates_from"] == "term"
+    assert d["office_term"]["start"] == "2026-05-09T12:38:00Z"
+    assert d["office_term"]["end"] is None
 
 
 def test_representative_statistics_shows_bills_when_module_enabled(client):

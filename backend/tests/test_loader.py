@@ -150,6 +150,51 @@ def test_non_mp_speaker_office_stored(db_path):
     c.close()
 
 
+def test_office_holder_registry_loaded_for_people_in_the_corpus(conn):
+    """REP-2: the office-holder registry lands as dated ``person_office`` terms —
+    but only for people the corpus knows. Somebody who never spoke is skipped, not
+    inserted as an otherwise-empty profile."""
+    rows = conn.execute(
+        "SELECT title, date_start, date_end, source FROM person_office "
+        "WHERE person_id='k001' AND source='registry' ORDER BY date_start DESC"
+    ).fetchall()
+    assert [(r["title"], r["date_end"]) for r in rows] == [
+        ("az Országgyűlés jegyzője", None),          # still held: open end
+        ("Belügyminisztérium államtitkára", "2022-05-24T12:00:00Z")]
+    assert rows[0]["date_start"] == "2026-05-09T22:00:00Z"
+    # 'zzz9' is in the registry but has no speech, hence no person row.
+    assert conn.execute("SELECT COUNT(*) FROM person WHERE person_id='zzz9'"
+                        ).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM person_office WHERE person_id='zzz9'"
+                        ).fetchone()[0] == 0
+
+
+def test_office_terms_are_per_source_so_a_reload_keeps_the_other(db_path):
+    """The two sources of office terms (the all-time registry and the per-MP roster)
+    are kept apart: reloading either replaces only its own rows, so neither ever
+    drops what the other supplied."""
+    c = loader.connect(db_path)
+    loader._load_person_offices(c, "k001", [
+        {"title": "Belügyminisztérium államtitkára",
+         "start": "2018-05-21T22:00:00Z", "end": "2022-05-24T12:00:00Z"}], "roster")
+    c.commit()
+    by_source = dict(c.execute(
+        "SELECT source, COUNT(*) FROM person_office WHERE person_id='k001' "
+        "GROUP BY source").fetchall())
+    assert by_source == {"registry": 2, "roster": 1}
+
+    # Re-running the registry load leaves the roster row alone (and is idempotent).
+    loader.load_office_holders(c, {"data": [
+        {"personID": "k001", "offices": [
+            {"title": "az Országgyűlés jegyzője",
+             "start": "2026-05-09T22:00:00Z", "end": None}]}]})
+    by_source = dict(c.execute(
+        "SELECT source, COUNT(*) FROM person_office WHERE person_id='k001' "
+        "GROUP BY source").fetchall())
+    assert by_source == {"registry": 1, "roster": 1}
+    c.close()
+
+
 def test_wire_nonmp_photos(db_path, tmp_path):
     """A non-MP speaker's downloaded portrait (`<pid>.jpg` on disk) is wired onto
     their profile; an MP's roster photo and a non-MP with no file are untouched."""

@@ -165,6 +165,14 @@ class Paths:
     def advocates_file(self, cycle: int) -> Path:
         return self.processed / f"advocates-{int(cycle)}.json"
 
+    # --- office holders (tisztségviselők) -----------------------------------
+    # One cycle-less file: the upstream registry is a single all-time listing of
+    # government/House offices (*tisztségek*) with their real start/end dates, for
+    # MPs and non-MPs alike, so there is nothing per-cycle to key it by.
+
+    def officeholders_file(self) -> Path:
+        return self.processed / "officeholders.json"
+
     # --- bills -------------------------------------------------------------
 
     def bills_file(self, cycle: int) -> Path:

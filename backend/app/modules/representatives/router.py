@@ -42,6 +42,41 @@ def _exclude_quorum(alias: str = "v") -> str:
     return f" AND {col} NOT IN ({vals})"
 
 
+def _person_offices(db: sqlite3.Connection, person_id: str,
+                    fallback_json: list) -> list[dict]:
+    """Every office (*tisztség*) term this person held, newest first (REP-2).
+
+    Read from ``person_office``, which the loader fills from two sources: the
+    all-time **office-holder registry** (the only one that covers a non-MP minister
+    or state secretary) and the per-MP roster's office list. Both report the same
+    upstream terms, so a term present in both is returned once — the registry's copy
+    winning, as it is the whole-archive source. Falls back to the person's
+    ``offices_json`` when the table is absent or holds nothing for them (a DB loaded
+    before it existed), so no profile loses its office list waiting for a reload."""
+    try:
+        rows = db.execute(
+            """SELECT title, date_start, date_end FROM person_office
+               WHERE person_id = ?
+               ORDER BY source = 'registry' DESC, date_start DESC""",
+            (person_id,)).fetchall()
+    except sqlite3.OperationalError:      # no person_office yet
+        rows = None
+    if not rows:
+        return [o for o in fallback_json if isinstance(o, dict)]
+    out: list[dict] = []
+    seen: set = set()
+    for r in rows:
+        key = (r["title"], r["date_start"])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"title": r["title"], "start": r["date_start"],
+                    "end": r["date_end"]})
+    # `source` decided which duplicate won, so sort by date for display order.
+    out.sort(key=lambda o: o["start"] or "", reverse=True)
+    return out
+
+
 def _has_advocate_columns(db: sqlite3.Connection) -> bool:
     """Whether the (regenerable) DB knows about nationality advocates — false only
     on a DB built before the advocate registry existed, so the endpoints keep
@@ -304,7 +339,7 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
                      "label": h.get("label"), "color": colors.get(h.get("label"))}
                     if h.get("label") else None}
         for h in _loads(p["faction_history_json"])]
-    offices = _loads(p["offices_json"])
+    offices = _person_offices(db, person_id, _loads(p["offices_json"]))
     office = _current_office(db, person_id, period, offices)
     return {
         "person_id": p["person_id"], "label": p["label"],
@@ -337,7 +372,10 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         "faction_history": faction_history,
         "education": _loads(p["education_json"]),
         "committees": _loads(p["committees_json"]),
-        "offices": _loads(p["offices_json"]),
+        # Their whole office history, newest first — every office (tisztség) they
+        # ever held with its real term, historical ones included (REP-2). Not
+        # cycle-scoped: it is biography, like `faction_history` and `committees`.
+        "offices": offices,
         "election_history": _loads(p["election_history_json"]),
     }
 
@@ -831,8 +869,9 @@ def _current_office(db: sqlite3.Connection, person_id: str,
     speech within the day). An undated title reads as the person's *current* post,
     which it often is not, so we also report **when it applies** (REP-2): the term
     from the upstream office list when it names the same post, else the span of the
-    speeches carrying it, plus the cycles those speeches fall in. Scoped to the
-    selected cycle (§4A) when ``period`` is set, matching the rest of the profile.
+    speeches carrying it, plus the cycles those speeches fall in and whether the
+    office is still held (``ongoing`` — then it has no end date, see below). Scoped
+    to the selected cycle (§4A) when ``period`` is set, like the rest of the profile.
     Returns None for a speaker who never held one (every ordinary MP), so the UI
     shows it only for the ministers / state secretaries who do."""
     extra = period_and(period, "sp.period_number")
@@ -855,18 +894,28 @@ def _current_office(db: sqlite3.Connection, person_id: str,
     # when the post is still held (upstream leaves it open), because substituting
     # any date there would announce a departure that never happened: the last
     # sitting day is not the day the prime minister stopped being prime minister.
-    # Only with no upstream term at all do the speeches supply both dates, and then
-    # they bound the office from below ("held at least between"), which the UI says.
+    if start:
+        return {"title": row["title"], "start": start, "end": end,
+                # The appointment/dismissal boundaries; a null end = still in office.
+                "dates_from": "term", "ongoing": end is None, "cycles": cycles}
+    # No upstream term (the usual case for a non-MP minister, who gets no MP
+    # enrichment at all): the speeches carrying the title are all we know, and they
+    # bound the office only from below — "held at least since", which the UI says.
+    # An end date is reported ONLY once we have seen the person speak *without* this
+    # office since; while it is still the office on their latest speech, the office
+    # is open-ended exactly as an upstream term would be, because the last sitting
+    # day of the data says nothing about them having left.
+    ongoing = row["last_date"] == db.execute(
+        f"""SELECT MAX(ss.date)
+            FROM speech sp JOIN session ss ON ss.id = sp.session_id
+            WHERE sp.person_id = :pid{extra}""", params).fetchone()[0]
     return {
         "title": row["title"],
-        "start": start or row["first_date"],
-        "end": end if start else row["last_date"],
-        # 'term' dates are the appointment/dismissal boundaries (with a null end
-        # meaning "still in office"); 'speeches' dates only bound the title from
-        # below, which the UI words differently.
-        "dates_from": "term" if start else "speeches",
-        # The cycles **in scope** in which the person spoke holding this title — the
-        # cycles of the speech span, which a longer upstream term can outrun.
+        "start": row["first_date"],
+        "end": None if ongoing else row["last_date"],
+        "dates_from": "speeches",
+        "ongoing": ongoing,
+        # The cycles **in scope** in which the person spoke holding this title.
         "cycles": cycles,
     }
 

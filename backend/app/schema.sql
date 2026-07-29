@@ -73,6 +73,24 @@ CREATE TABLE membership (
 );
 CREATE INDEX idx_membership_person ON membership(person_id);
 
+-- person <-> government/House office (tisztség) <-> term: one row per office a
+-- person held, with the upstream appointment/dismissal dates (`date_end` NULL =
+-- still in office). Two sources feed it, distinguished by `source` so each can be
+-- reloaded on its own (REP-2):
+--   'registry' — the all-time office-holder listing (tisztségviselők), the ONLY
+--                source for a non-MP minister/state secretary, who is in no roster;
+--   'roster'   — the per-MP office list that comes with the MP/advocate registry.
+-- They report the same upstream rows, so reads dedupe on (title, date_start).
+CREATE TABLE person_office (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id     TEXT NOT NULL REFERENCES person(person_id),
+    title         TEXT NOT NULL,
+    date_start    TEXT,
+    date_end      TEXT,
+    source        TEXT NOT NULL DEFAULT 'registry'
+);
+CREATE INDEX idx_person_office_person ON person_office(person_id);
+
 -- ---------------------------------------------------------------------------
 -- Proceedings module
 -- ---------------------------------------------------------------------------

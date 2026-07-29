@@ -457,6 +457,14 @@ export default {
     sortOldest: 'Legrégebbi elöl',
     sortAttendanceDesc: 'Legnagyobb részvétel elöl',
     sortAttendanceAsc: 'Legkisebb részvétel elöl',
+    sortCrossDesc: 'Legtöbb frakciótól eltérő szavazat elöl',
+    sortCrossAsc: 'Legkevesebb frakciótól eltérő szavazat elöl',
+    crossVoting: 'frakciótól eltérő',
+    crossVotingTitle: '{n} képviselő szavazott a saját frakciója álláspontjától eltérően — ' +
+      'a leadott szavazatok {pct}-a. Az Országgyűlés hivatalos „frakcióval szemben” adata.',
+    crossVotingNote: 'A „frakciótól eltérő” oszlop az Országgyűlés hivatalos adata arról, ' +
+      'hány képviselő szavazott az adott frakció álláspontjától eltérően. Azt nem közli, ' +
+      'hogy név szerint kik — ezért a névsorban sem jelöljük.',
     attendance: 'Részvétel',
     attendanceTitle: 'Részvétel: {present} leadott szavazat a {seats} képviselői helyből. ' +
       'A „jelen, nem szavazott” és az „igazoltan távol” nem számít részvételnek.',

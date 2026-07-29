@@ -14,7 +14,10 @@ const route = useRoute()
 const router = useRouter()
 
 const PAGE = 50
-const SORTS = ['date_desc', 'date_asc', 'attendance_desc', 'attendance_asc']
+const SORTS = ['date_desc', 'date_asc', 'attendance_desc', 'attendance_asc',
+               'crossvoting_desc', 'crossvoting_asc']
+// How many defecting factions a card names before collapsing the rest into "+N".
+const CROSS_FACTIONS_SHOWN = 4
 
 const data = ref(null)
 const loading = ref(false)
@@ -111,6 +114,21 @@ const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote',
 // per-faction breakdown (a list or show-of-hands vote).
 function attendancePct(v) {
   return v.attendance == null ? '' : Math.round(v.attendance * 100) + '%'
+}
+
+// Cross-voting: the MPs who broke their own faction's line, as served by the API.
+// Null on a vote with no per-faction breakdown and on a presence check (where the
+// figure would not mean dissent), so the chip simply doesn't appear there.
+function crossPct(v) {
+  if (v.defector_share == null) return ''
+  return (100 * v.defector_share).toLocaleString('hu-HU',
+    { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'
+}
+function crossFactions(v) {
+  return (v.defector_factions || []).slice(0, CROSS_FACTIONS_SHOWN)
+}
+function crossFactionsMore(v) {
+  return Math.max(0, (v.defector_factions || []).length - CROSS_FACTIONS_SHOWN)
 }
 
 function voteParts(v) {
@@ -246,6 +264,8 @@ onUnmounted(() => clearTimeout(searchTimer))
             <option value="date_asc">{{ $t('votes.sortOldest') }}</option>
             <option value="attendance_desc">{{ $t('votes.sortAttendanceDesc') }}</option>
             <option value="attendance_asc">{{ $t('votes.sortAttendanceAsc') }}</option>
+            <option value="crossvoting_desc">{{ $t('votes.sortCrossDesc') }}</option>
+            <option value="crossvoting_asc">{{ $t('votes.sortCrossAsc') }}</option>
           </select>
         </label>
       </div>
@@ -284,6 +304,19 @@ onUnmounted(() => clearTimeout(searchTimer))
                   :title="$t('votes.attendanceTitle', { present: v.present, seats: v.seats })">
               {{ $t('votes.attendance') }} <b>{{ attendancePct(v) }}</b>
             </span>
+            <span v-if="v.defectors" class="c cross"
+                  :title="$t('votes.crossVotingTitle', { n: v.defectors, pct: crossPct(v) })">
+              <b>{{ v.defectors }}</b> {{ $t('votes.crossVoting') }} ({{ crossPct(v) }})
+            </span>
+          </div>
+          <!-- Which factions actually split — the cross-voting number broken down,
+               so the ranking is readable without opening the vote. -->
+          <div v-if="v.defectors" class="vcross small muted">
+            <span v-for="fx in crossFactions(v)" :key="fx.name" class="xf">
+              <span class="dot" :style="{ background: fx.color || '#bbb' }" aria-hidden="true"></span>
+              {{ fx.name }} <b>{{ fx.defectors }}</b>
+            </span>
+            <span v-if="crossFactionsMore(v)" class="xf">+{{ crossFactionsMore(v) }}</span>
           </div>
         </li>
       </ul>
@@ -321,6 +354,14 @@ onUnmounted(() => clearTimeout(searchTimer))
 .vcounts .c.yes { color: #2e7d32; }
 .vcounts .c.no { color: #c62828; }
 .vcounts .c.abstain { color: var(--ink-faint); }
-/* attendance sits apart from the yes/no/abstain triplet — it is a ratio, not a tally */
+/* attendance and cross-voting sit apart from the yes/no/abstain triplet — they are
+   derived measures, not tallies */
 .vcounts .c.att { color: var(--ink-faint); margin-left: auto; cursor: help; }
+/* cross-voting always follows attendance (a vote only has one if it has the
+   other), so it rides that item's margin-left:auto to the right edge */
+.vcounts .c.cross { color: var(--ink-faint); cursor: help; }
+/* the factions behind the cross-voting number */
+.vcross { display: flex; flex-wrap: wrap; gap: .15rem .8rem; }
+.vcross .xf { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
+.vcross .dot { width: .5rem; height: .5rem; border-radius: 50%; flex: none; display: inline-block; }
 </style>

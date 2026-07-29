@@ -155,6 +155,103 @@ def test_list_votes_sort_by_attendance(client):
     assert one["total"] == 2 and [v["id"] for v in one["votes"]] == ["v-1"]
 
 
+def _add_vote_with_defections(db_path, vote_id, factions, *,
+                              date="2026-05-28T10:00:00Z", mode="Listás"):
+    """Insert a roll-call vote whose per-faction breakdown carries defections.
+
+    `factions` is a list of (name, yes, no, abstain, against) tuples, `against`
+    being the upstream string figure ("3 fő"). Used instead of widening the shared
+    fixture, whose two votes are pinned by the cohesion and attendance tests."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("INSERT INTO vote (id, period_number, vote_datetime, voting_mode, "
+              "subject, result, has_per_mp) VALUES (?, 43, ?, ?, 'tárgy', "
+              "'Elfogadva', 1)", (vote_id, date, mode))
+    for ord_, (name, yes, no, abstain, against) in enumerate(factions):
+        c.execute(
+            """INSERT INTO vote_faction_stat
+                   (vote_id, ord, faction_name, total, yes, no, abstain,
+                    absent, not_voting, against_faction)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)""",
+            (vote_id, ord_, name, yes + no + abstain, yes, no, abstain, against))
+    c.commit(); c.close()
+
+
+def test_list_votes_crossvoting(client):
+    """Every listed vote carries its cross-voting: how many MPs broke their own
+    faction's line, summed from the upstream per-faction figure. The fixture's
+    factions all held the line ("0 fő"), so v-1 is a real zero — distinct from
+    v-2, which has no per-faction breakdown at all and so has no number."""
+    d = client.get("/api/v1/votes").json()
+    by_id = {v["id"]: v for v in d["votes"]}
+    assert by_id["v-1"]["defectors"] == 0
+    assert by_id["v-1"]["defector_share"] == 0.0
+    assert by_id["v-1"]["defector_factions"] == []
+    assert by_id["v-2"]["defectors"] is None
+    assert by_id["v-2"]["defector_share"] is None
+
+
+def test_list_votes_crossvoting_breakdown(client, db_path):
+    """The number is broken down by faction, largest breach first, and only the
+    factions that actually split are named. The share is over the votes cast."""
+    _add_vote_with_defections(db_path, "v-x", [
+        ("Fidesz", 10, 2, 0, "2 fő"),
+        ("TISZA", 0, 5, 0, "0 fő"),
+        ("független", 1, 0, 2, "1 fő"),
+    ])
+    v = next(x for x in client.get("/api/v1/votes").json()["votes"]
+             if x["id"] == "v-x")
+    assert v["defectors"] == 3
+    assert v["defector_share"] == 0.15                 # 3 of 20 cast
+    assert [(f["name"], f["defectors"]) for f in v["defector_factions"]] == [
+        ("Fidesz", 2), ("független", 1)]
+
+
+def test_list_votes_sort_by_crossvoting(client, db_path):
+    """The cross-voting orderings rank the divisions where party discipline broke
+    down most (and least); a vote with no number (v-2, a list vote with no
+    breakdown) sorts last in *both* directions rather than leading the ascending
+    one, as with attendance."""
+    _add_vote_with_defections(db_path, "v-x", [("Fidesz", 10, 2, 0, "2 fő")])
+    desc = client.get("/api/v1/votes", params={"sort": "crossvoting_desc"}).json()
+    assert desc["sort"] == "crossvoting_desc"
+    assert [v["id"] for v in desc["votes"]] == ["v-x", "v-1", "v-2"]
+    asc = client.get("/api/v1/votes", params={"sort": "crossvoting_asc"}).json()
+    assert asc["sort"] == "crossvoting_asc"
+    assert [v["id"] for v in asc["votes"]] == ["v-1", "v-x", "v-2"]
+    # Paging/filtering still apply on top of the aggregate join.
+    one = client.get("/api/v1/votes", params={"sort": "crossvoting_desc",
+                                             "limit": 1}).json()
+    assert one["total"] == 3 and [v["id"] for v in one["votes"]] == ["v-x"]
+
+
+def test_crossvoting_skips_presence_checks(client, db_path):
+    """A presence check puts no question to the House, so its large "against
+    faction" figures are not dissent — such a vote carries no cross-voting number
+    and therefore never tops the ranking."""
+    _add_vote_with_defections(db_path, "v-p", [("Fidesz", 10, 30, 0, "30 fő")],
+                              mode="Jelenlét megállapítás")
+    d = client.get("/api/v1/votes", params={"sort": "crossvoting_desc"}).json()
+    by_id = {v["id"]: v for v in d["votes"]}
+    assert by_id["v-p"]["defectors"] is None
+    assert by_id["v-p"]["defector_factions"] == []
+    assert d["votes"][-1]["id"] != "v-1"               # the nulls sort last
+    assert client.get("/api/v1/votes/v-p").json()["defectors"] is None
+
+
+def test_get_vote_crossvoting(client, db_path):
+    """The detail carries the same summary the list ranks by, so a vote opened
+    from that ranking shows the number it was ranked on."""
+    _add_vote_with_defections(db_path, "v-x", [
+        ("Fidesz", 10, 2, 0, "2 fő"), ("TISZA", 0, 5, 0, "0 fő")])
+    d = client.get("/api/v1/votes/v-x").json()
+    assert d["defectors"] == 2 and d["defector_share"] == 0.1176
+    assert [f["name"] for f in d["defector_factions"]] == ["Fidesz"]
+    # The per-faction figure it is summed from stays on the breakdown rows.
+    assert {fs["faction_name"]: fs["against_faction"] for fs in d["faction_stats"]} == {
+        "Fidesz": "2 fő", "TISZA": "0 fő"}
+
+
 def test_vote_facets(client):
     d = client.get("/api/v1/votes/facets").json()
     assert "Elfogadva" in d["results"] and "Elutasítva" in d["results"]

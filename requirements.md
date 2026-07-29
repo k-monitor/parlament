@@ -999,7 +999,8 @@ header).
   **URL query** (deep-linkable, shareable), including a `bill` scope so a link
   like `/votes?bill=<iromanyId>` reopens the list scoped to one bill's votes.
   Each row shows the datetime, subject, result, the igen/nem/tartózkodás tally
-  (as a bar), and the bill(s) the vote decided.
+  (as a bar), and the bill(s) the vote decided. The list is **sortable** by
+  datetime, by **attendance**, and by **cross-voting** (VOTE-9).
 - **VOTE-2 (MUST).** A **vote detail** view shows the vote's datetime, voting
   mode, subject, result, the aggregate tally and the total votes cast, and the
   **bill(s) it decided** (BILL/iromány links, VOTE-5). It surfaces the
@@ -1051,7 +1052,21 @@ header).
   roll-call **participation breakdown** is likewise embeddable (§4C). Remaining
   future work: **the hemicycle seating chart** (the Felicitas
   `szavazas-patko-query` returns per-seat SVG geometry + each MP's vote — out of
-  scope for v1) and further vote-based statistics (e.g. per-MP defection rates).
+  scope for v1) and further vote-based statistics (e.g. per-MP defection rates —
+  the *per-vote* figure ships as VOTE-9).
+- **VOTE-9 (MUST).** Every listed vote carries its **cross-voting**: how many MPs
+  voted against their own faction's position, as a count and as a share of the
+  votes cast, broken down by the factions that split — and the list can be
+  **ordered by it**, so the divisions where party discipline broke down are one
+  click away. The number **MUST** be the Assembly's own per-faction *„frakcióval
+  szemben”* figure summed over the real factions, never derived from the tallies:
+  a faction's line is its *declared* position, so a minority-against-majority
+  reconstruction reproduces the official figure for only ~82% of non-zero faction
+  rows. For the same reason the roll call **MUST NOT** mark any individual MP as
+  having crossed — the source does not say who (TRUST-1). A presence check
+  (*Jelenlét megállapítás*) puts no question to the House, so it carries **no**
+  cross-voting number rather than a misleading one. The vote detail shows the
+  per-faction figure it is summed from, with a methodology note (TRUST-1).
 
 ---
 

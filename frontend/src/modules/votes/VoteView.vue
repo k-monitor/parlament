@@ -27,6 +27,22 @@ const groups = computed(() => {
     .map((code) => ({ code, records: by[code] }))
 })
 
+// Cross-voting (MPs who broke their faction's line) as served by the API — the
+// house-wide sum of the per-faction "frakcióval szemben" column below it.
+const crossPct = computed(() => {
+  const s = vote.value && vote.value.defector_share
+  if (s == null) return ''
+  return (100 * s).toLocaleString('hu-HU',
+    { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'
+})
+
+// The upstream figure is a string ("3 fő"); show a dash rather than a bare 0-ish
+// blank when a faction held its line.
+function againstFaction(fs) {
+  const m = /\d+/.exec(fs.against_faction || '')
+  return m ? Number(m[0]) : null
+}
+
 function factionParts(fs) {
   const yes = fs.yes || 0, no = fs.no || 0, abstain = fs.abstain || 0
   const total = yes + no + abstain || 1
@@ -94,6 +110,9 @@ watch(() => props.id, load)
           <span class="c yes"><b>{{ vote.yes ?? 0 }}</b> {{ $t('votes.yes') }}</span>
           <span class="c no"><b>{{ vote.no ?? 0 }}</b> {{ $t('votes.no') }}</span>
           <span class="c abstain"><b>{{ vote.abstain ?? 0 }}</b> {{ $t('votes.abstain') }}</span>
+          <span v-if="vote.defectors" class="c cross">
+            <b>{{ vote.defectors }}</b> {{ $t('votes.crossVoting') }} ({{ crossPct }})
+          </span>
         </div>
       </header>
 
@@ -107,6 +126,7 @@ watch(() => props.id, load)
               <th class="num">{{ $t('votes.yes') }}</th><th class="num">{{ $t('votes.no') }}</th>
               <th class="num">{{ $t('votes.abstain') }}</th><th class="num">{{ $t('votes.novote') }}</th>
               <th class="num">{{ $t('votes.absent') }}</th><th class="num">{{ $t('votes.total') }}</th>
+              <th class="num">{{ $t('votes.againstFaction') }}</th>
               <th></th>
             </tr></thead>
             <tbody>
@@ -118,6 +138,9 @@ watch(() => props.id, load)
                 <td class="num">{{ fs.yes ?? 0 }}</td><td class="num">{{ fs.no ?? 0 }}</td>
                 <td class="num">{{ fs.abstain ?? 0 }}</td><td class="num">{{ fs.not_voting ?? 0 }}</td>
                 <td class="num">{{ fs.absent ?? 0 }}</td><td class="num"><b>{{ fs.total ?? 0 }}</b></td>
+                <td class="num against" :class="{ broke: againstFaction(fs) }">
+                  {{ againstFaction(fs) == null ? '–' : againstFaction(fs) }}
+                </td>
                 <td class="fbarcell">
                   <span class="fbar" aria-hidden="true">
                     <span class="seg yes" :style="{ width: factionParts(fs).yes + '%' }"></span>
@@ -129,6 +152,7 @@ watch(() => props.id, load)
             </tbody>
           </table>
         </div>
+        <p class="muted small crossnote">{{ $t('votes.crossVotingNote') }}</p>
       </section>
 
       <!-- Per-MP roll call -->
@@ -181,6 +205,7 @@ watch(() => props.id, load)
 .tallycounts .c.yes { color: #2e7d32; }
 .tallycounts .c.no { color: #c62828; }
 .tallycounts .c.abstain { color: var(--ink-faint); }
+.tallycounts .c.cross { color: var(--ink-faint); margin-left: auto; }
 
 .vote section > h2 {
   display: flex; align-items: center; gap: .55rem; margin: 0 0 .8rem; font-size: 1.15rem;
@@ -198,6 +223,9 @@ watch(() => props.id, load)
 .dtable th.num, .dtable td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .fname { display: flex; align-items: center; gap: .45rem; font-weight: 600; }
 .dot { width: .7rem; height: .7rem; border-radius: 50%; flex: none; display: inline-block; }
+.against { color: var(--ink-faint); }
+.against.broke { color: #c79a2e; font-weight: 700; }
+.crossnote { margin: .8rem 0 0; }
 .fbarcell { width: 8rem; }
 .fbar { display: flex; height: .65rem; width: 8rem; border-radius: 999px; overflow: hidden; background: var(--line); }
 .fbar .seg.yes { background: #2e7d32; }

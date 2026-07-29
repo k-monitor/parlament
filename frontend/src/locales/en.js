@@ -349,6 +349,14 @@ export default {
     sortOldest: 'Oldest first',
     sortAttendanceDesc: 'Highest attendance first',
     sortAttendanceAsc: 'Lowest attendance first',
+    sortCrossDesc: 'Most cross-voting first',
+    sortCrossAsc: 'Least cross-voting first',
+    crossVoting: 'against faction line',
+    crossVotingTitle: '{n} representatives voted against their own faction’s position — ' +
+      '{pct} of the votes cast. The Assembly’s own “frakcióval szemben” figure.',
+    crossVotingNote: 'The “against faction line” column is the Assembly’s own count of how ' +
+      'many members voted against their faction’s position. It does not say which members — ' +
+      'so none are marked as such in the roll call.',
     attendance: 'Attendance',
     attendanceTitle: 'Attendance: {present} votes cast out of {seats} seats. ' +
       '“Present, did not vote” and “excused absent” do not count as attendance.',

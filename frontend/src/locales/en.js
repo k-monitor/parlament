@@ -298,11 +298,13 @@ export default {
     clickHint: 'Click a flow to list the questions behind it, or a node (type / faction / answerer) for all of its questions.',
     hideType: 'Hide question type',
     showType: 'Show question type',
+    ungroupOther: 'Ungroup “Other ministry”',
+    groupOther: 'Group “Other ministry”',
     close: 'Close',
     askerHeading: 'Asker (faction)',
     typeHeading: 'Question type',
     answererHeading: 'Answerer',
-    methodology: 'The asker is the faction of the MP who submitted the question; the answerer is the responding ministry (minister / state secretary), whether answered orally or in writing. Use “Show question type” to prepend a column that splits the flow by question type (interpellation, question, immediate question or written). Only the busiest ministries appear separately — the rest are pooled into an “Other ministry” node. The cycle is set by the header’s cycle selector.',
+    methodology: 'The asker is the faction of the MP who submitted the question; the answerer is the responding ministry (minister / state secretary), whether answered orally or in writing. Use “Show question type” to prepend a column that splits the flow by question type (interpellation, question, immediate question or written). Only the busiest ministries appear separately — the rest are pooled into an “Other ministry” node; “Ungroup «Other ministry»” opens that pool so every responder gets its own row. The cycle is set by the header’s cycle selector.',
     type: {
       I: 'Interpellation',
       K: 'Question',
@@ -312,6 +314,7 @@ export default {
     node: {
       oral: 'Answered orally',
       other: 'Other ministry',
+      unnamed: 'Unnamed ministry',
       unanswered: 'Unanswered',
       nofaction: 'Independent / other',
     },

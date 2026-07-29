@@ -76,7 +76,8 @@ function fetchForKind() {
     case 'faction-speaking':
       return api.factions(period.value)
     case 'questions-sankey':
-      return api.questionsSankey(period.value, route.query.types === '1')
+      return api.questionsSankey(
+        period.value, route.query.types === '1', route.query.all === '1')
     case 'faction-cohesion':
       return api.voteCohesion({ period: period.value })
     case 'vote-participation':

@@ -406,11 +406,13 @@ export default {
     clickHint: 'Kattints egy folyamra a mögötte lévő kérdések megjelenítéséhez, vagy egy csomópontra (típus / frakció / válaszadó) az összes hozzá tartozó kérdésért.',
     hideType: 'Kérdéstípus elrejtése',
     showType: 'Kérdéstípus megjelenítése',
+    ungroupOther: 'Egyéb tárca szétbontása',
+    groupOther: 'Egyéb tárca összevonása',
     close: 'Bezárás',
     askerHeading: 'Kérdező (frakció)',
     typeHeading: 'Kérdés típusa',
     answererHeading: 'Válaszadó',
-    methodology: 'A kérdező a kérdést benyújtó képviselő frakciója; a válaszadó a válaszoló tárca (miniszter/államtitkár) – akár szóban, akár írásban válaszolták meg a kérdést. A „Kérdéstípus megjelenítése” gombbal egy vezető oszlop kapcsolható be, amely a kérdés típusa (interpelláció, kérdés, azonnali kérdés vagy írásbeli) szerint bontja a folyamot. A csak a legtöbbet válaszoló tárcák jelennek meg külön, a többi az „Egyéb tárca” csomópontban összesül. A ciklust a fejléc ciklusválasztója szabja meg.',
+    methodology: 'A kérdező a kérdést benyújtó képviselő frakciója; a válaszadó a válaszoló tárca (miniszter/államtitkár) – akár szóban, akár írásban válaszolták meg a kérdést. A „Kérdéstípus megjelenítése” gombbal egy vezető oszlop kapcsolható be, amely a kérdés típusa (interpelláció, kérdés, azonnali kérdés vagy írásbeli) szerint bontja a folyamot. A csak a legtöbbet válaszoló tárcák jelennek meg külön, a többi az „Egyéb tárca” csomópontban összesül; az „Egyéb tárca szétbontása” gombbal ez a csomópont felnyitható, és minden válaszadó külön sorban jelenik meg. A ciklust a fejléc ciklusválasztója szabja meg.',
     type: {
       I: 'Interpelláció',
       K: 'Kérdés',
@@ -420,6 +422,7 @@ export default {
     node: {
       oral: 'Szóban megválaszolva',
       other: 'Egyéb tárca',
+      unnamed: 'Nem megnevezett tárca',
       unanswered: 'Megválaszolatlan',
       nofaction: 'Független / egyéb',
     },

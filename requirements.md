@@ -965,7 +965,11 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   combined node (the upstream data records no responding ministry there), with a
   further node for questions still **unanswered**. Only the busiest ministries
   stay as their own node — the remainder pool into one "other ministry" node so
-  the diagram stays glanceable. **Each flow (ribbon) is clickable** — selecting
+  the diagram stays glanceable; that pool can be **ungrouped** on demand
+  ("Egyéb tárca szétbontása", `?all=1`), giving every responder its own node —
+  a taller but complete answerer column, and the drill-down follows the same
+  grouping so a clicked flow always lists exactly its questions.
+  **Each flow (ribbon) is clickable** — selecting
   it lists the individual questions behind it at the bottom of the page,
   paginated and newest-first, each linking to its detail view and showing its
   submitter(s) (EXT-2); the ribbons and nodes are keyboard-focusable so the same

@@ -219,15 +219,18 @@ const active = ref(-1)   // hovered/focused node index (highlight its ribbons)
           >
             <title>{{ b.label }}: {{ b.total }}</title>
           </rect>
+          <!-- A long label is truncated to fit its gutter, so it carries the
+               full text as a tooltip (the bar alone is a thin hover target when
+               a column has many small nodes). -->
           <text
             v-if="b.column === 0" :x="b.x - 6" :y="b.labelY"
             class="nlabel" text-anchor="end" dominant-baseline="middle"
-          >{{ trunc(b.label) }} <tspan class="nval">({{ b.total }})</tspan></text>
+          ><title>{{ b.label }}: {{ b.total }}</title>{{ trunc(b.label) }} <tspan class="nval">({{ b.total }})</tspan></text>
           <text
             v-else :x="b.x + NODE_W + 6" :y="b.labelY"
             class="nlabel" :class="{ halo: b.column !== layout.lastCol }"
             text-anchor="start" dominant-baseline="middle"
-          >{{ trunc(b.label) }} <tspan class="nval">({{ b.total }})</tspan></text>
+          ><title>{{ b.label }}: {{ b.total }}</title>{{ trunc(b.label) }} <tspan class="nval">({{ b.total }})</tspan></text>
         </g>
       </svg>
     </div>

@@ -270,11 +270,13 @@ def _refine_type(main_type: Optional[str], type_str: Optional[str]) -> str:
     return main_type or ""
 
 
-def _classify_questions(db: sqlite3.Connection, period: Optional[List[int]], top: int):
+def _classify_questions(db: sqlite3.Connection, period: Optional[List[int]], top: int,
+                        expand_other: bool = False):
     """Shared engine for the Kérdések Sankey and its drill-down: classify every
     question-type iromány in scope by asker faction, by question type and by
     answerer, applying the same top-``top`` ministry ranking so the diagram and
-    the per-flow list agree.
+    the per-flow list agree. With ``expand_other`` the ranking is dropped and
+    every named responder keeps its own node ("ungroup the other bucket").
 
     Returns ``(order_ids, factions, faction_key, type_key, answerer_key)`` where
     ``order_ids`` is the question bill ids newest-first, ``faction_key(bid)`` is
@@ -338,13 +340,14 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[List[int]], top
         return oral_ministry[bid] if bid in oral_ministry else written_ministry.get(bid)
 
     # Rank responders (oral and written together) so only the busiest keep their
-    # own node; the rest pool into "other".
+    # own node; the rest pool into "other". `expand_other` keeps every responder.
     ministry_totals: Counter = Counter()
     for bid in oral_ministry.keys() | written_ministry.keys():
         m = responder_label(bid)
         if m:
             ministry_totals[m] += 1
-    top_ministries = {m for m, _ in ministry_totals.most_common(top)}
+    top_ministries = (set(ministry_totals) if expand_other
+                      else {m for m, _ in ministry_totals.most_common(top)})
 
     def faction_key(bid: str) -> Optional[int]:
         fid = asker_faction.get(bid)
@@ -364,8 +367,12 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[List[int]], top
         if not m:
             # answered, but the responder isn't named upstream: keep the
             # "answered orally" node for plenary answers; pool the (rare)
-            # unnamed written answers into "other"
-            return ("oral", "") if answered_orally else ("other", "")
+            # unnamed written answers into "other" — with the pool ungrouped
+            # they are all that would be left in it, so name them for what they
+            # are ("unnamed") instead of "other ministry".
+            if answered_orally:
+                return ("oral", "")
+            return ("unnamed", "") if expand_other else ("other", "")
         return ("ministry", m) if m in top_ministries else ("other", "")
 
     return order_ids, factions, faction_key, type_key, answerer_key
@@ -377,6 +384,7 @@ def questions_sankey(
         None, description="Electoral period number(s); repeat to scope to several cycles"),
     limit: int = Query(12, ge=1, le=40),   # top-N responding ministries, rest pooled
     include_type: bool = True,             # prepend the question-type column
+    expand_other: bool = False,            # ungroup the pool: one node per responder
     db: sqlite3.Connection = Depends(get_db),
 ):
     """Sankey data for the Kérdések page (BILL-11): every question-type iromány
@@ -390,13 +398,15 @@ def questions_sankey(
     diagram to just faction → answerer. Derived at query time from the shared
     bill / bill_event / bill_sponsor data (EXT-2); honours the global cycle
     (§4A). Only the top-``limit`` ministries stay glanceable — the rest are
-    pooled into one "other" node. Each node carries the identity a click needs to
-    drill into ``/questions/list`` (asker nodes their ``faction_id``, type nodes
-    their ``main_type``, ministry nodes their label)."""
+    pooled into one "other" node; ``expand_other`` ungroups that pool, giving
+    every responder its own node (a taller but complete answerer column). Each
+    node carries the identity a click needs to drill into ``/questions/list``
+    (asker nodes their ``faction_id``, type nodes their ``main_type``, ministry
+    nodes their label)."""
     from collections import Counter
 
     bill_ids, factions, faction_key, type_key, answerer_key = _classify_questions(
-        db, period, limit)
+        db, period, limit, expand_other)
     if not bill_ids:
         return {"period": period_list(period), "total": 0, "nodes": [], "links": []}
 
@@ -475,9 +485,10 @@ def questions_list(
         None, description="Electoral period number(s); repeat to scope to several cycles"),
     faction: Optional[str] = None,     # asker faction id, or "none" for the no-faction node
     main_type: Optional[str] = None,   # question type code (A/I/K) for the middle column
-    answerer: Optional[str] = None,    # ministry | oral | other | unanswered
+    answerer: Optional[str] = None,    # ministry | oral | other | unnamed | unanswered
     ministry: Optional[str] = None,    # the ministry label when answerer == "ministry"
     top: int = Query(12, ge=1, le=40),  # MUST match the Sankey's `limit` so nodes agree
+    expand_other: bool = False,        # MUST match the Sankey's `expand_other`
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: sqlite3.Connection = Depends(get_db),
@@ -487,11 +498,12 @@ def questions_list(
     type is ``main_type`` and/or whose answerer is ``answerer`` (a specific
     ``ministry`` when ``answerer == "ministry"``). A clicked stage-1 ribbon fixes
     faction+type, a stage-2 ribbon fixes type+answerer, a node fixes just itself.
-    Uses the same classification as the diagram (same ``top`` ranking) so a
-    clicked flow lists exactly its questions. Paginated, newest-first; each links
-    back to its detail view. Omitting the filters lists every question."""
+    Uses the same classification as the diagram (same ``top`` ranking and
+    ``expand_other`` setting) so a clicked flow lists exactly its questions.
+    Paginated, newest-first; each links back to its detail view. Omitting the
+    filters lists every question."""
     order_ids, _factions, faction_key, type_key, answerer_key = _classify_questions(
-        db, period, top)
+        db, period, top, expand_other)
 
     want = (answerer, ministry or "") if answerer == "ministry" else (answerer, "")
 

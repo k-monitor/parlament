@@ -35,6 +35,11 @@ const error = ref(false)
 // matching structure either way.
 const showType = ref(route.query.types === '1')
 
+// Whether the pooled "Egyéb tárca" node is ungrouped into one node per
+// responder. Off by default (the pool keeps the diagram glanceable); `?all=1`
+// expands it, deep-linkable and carried into an embed like `types`.
+const showAll = ref(route.query.all === '1')
+
 const columnHeadings = computed(() => showType.value
   ? [t('questions.typeHeading'), t('questions.askerHeading'), t('questions.answererHeading')]
   : [t('questions.askerHeading'), t('questions.answererHeading')])
@@ -43,6 +48,10 @@ const columnHeadings = computed(() => showType.value
 // so the URL stays the single source of truth (and back/forward works).
 function toggleType() {
   router.replace({ query: { ...route.query, types: showType.value ? undefined : '1' } })
+}
+
+function toggleAll() {
+  router.replace({ query: { ...route.query, all: showAll.value ? undefined : '1' } })
 }
 
 // Resolve backend node "kind"s (which carry no label for the special nodes)
@@ -66,6 +75,19 @@ const nodes = computed(() => (data.value ? data.value.nodes.map((n) => ({
   color: n.color || (n.side === 'asker' ? 'var(--accent)' : '#9c9188'),
 })) : []))
 
+// The ungroup toggle is only worth offering when there is a pool to open (or
+// when it is already open, so it can be closed again).
+const hasOther = computed(() => showAll.value
+  || !!data.value?.nodes.some((n) => n.kind === 'other'))
+
+// An ungrouped answerer column is one row per responder, so the embedded
+// iframe (a fixed height in the paste-ready snippet) has to grow with it.
+const embedHeight = computed(() => {
+  const col = showType.value ? 2 : 1
+  const rows = nodes.value.filter((n) => n.column === col).length
+  return 560 + Math.max(0, rows - 14) * 17
+})
+
 const scopeLabel = computed(() => {
   const c = currentCycleLabel()
   return c ? t('cycle.scope', { cycle: c }) : t('cycle.scopeAll')
@@ -80,7 +102,7 @@ async function load() {
   loading.value = true; error.value = false
   clearFlow()
   try {
-    const res = await api.questionsSankey(store.cycles, showType.value)
+    const res = await api.questionsSankey(store.cycles, showType.value, showAll.value)
     if (seq === loadSeq) data.value = res
   } catch {
     if (seq === loadSeq) error.value = true
@@ -168,6 +190,7 @@ async function loadFlow() {
       main_type: flow.value.main_type,
       answerer: flow.value.answerer,
       ministry: flow.value.ministry,
+      expand_other: showAll.value,   // must match the diagram's grouping
       limit: PAGE, offset: flowOffset.value,
     })
     if (seq === flowSeq) flowData.value = res
@@ -189,6 +212,10 @@ watch(() => store.cycles.join(','), load)
 watch(() => route.query.types, (v) => {
   const s = v === '1'
   if (s !== showType.value) { showType.value = s; load() }
+})
+watch(() => route.query.all, (v) => {
+  const s = v === '1'
+  if (s !== showAll.value) { showAll.value = s; load() }
 })
 </script>
 
@@ -212,10 +239,17 @@ watch(() => route.query.types, (v) => {
         <p class="muted small">
           {{ data.total }} {{ $t('questions.count') }} · {{ scopeLabel }}
         </p>
-        <button
-          type="button" class="btn secondary small" :aria-pressed="showType"
-          @click="toggleType"
-        >{{ showType ? $t('questions.hideType') : $t('questions.showType') }}</button>
+        <div class="q-btns">
+          <button
+            type="button" class="btn secondary small" :aria-pressed="showType"
+            @click="toggleType"
+          >{{ showType ? $t('questions.hideType') : $t('questions.showType') }}</button>
+          <!-- <button
+            v-if="hasOther"
+            type="button" class="btn secondary small" :aria-pressed="showAll"
+            @click="toggleAll"
+          >{{ showAll ? $t('questions.groupOther') : $t('questions.ungroupOther') }}</button> -->
+        </div>
       </div>
       <div class="card pad">
         <SankeyDiagram
@@ -229,8 +263,8 @@ watch(() => route.query.types, (v) => {
           <p class="muted small hint">{{ $t('questions.clickHint') }}</p>
           <EmbedButton
             kind="questions-sankey" :title="$t('questions.title')"
-            :params="{ types: showType ? '1' : undefined }"
-            :height="560" :max-width="900"
+            :params="{ types: showType ? '1' : undefined, all: showAll ? '1' : undefined }"
+            :height="embedHeight" :max-width="900"
           />
         </div>
       </div>
@@ -298,6 +332,7 @@ watch(() => route.query.types, (v) => {
 /* Count on the left, the type-axis toggle on the right, above the chart. */
 .q-controls { display: flex; align-items: center; justify-content: space-between; gap: .8rem; flex-wrap: wrap; margin-bottom: .75rem; }
 .q-controls p { margin: 0; }
+.q-btns { display: flex; gap: .5rem; flex-wrap: wrap; }
 /* In the figure footer row the hint sits left, pushing the embed button right. */
 .hint { margin: 0; margin-right: auto; }
 .flowpanel { margin-top: 1.5rem; scroll-margin-top: 5rem; }

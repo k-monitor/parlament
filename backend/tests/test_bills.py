@@ -439,6 +439,76 @@ def test_questions_sankey_written_answer_without_responder_pools_to_other(client
     assert not any(n["kind"] == "written" for n in answerers)
 
 
+def _seed_second_question(db_path, ministry):
+    """A second answered question (a plain kérdés) with its own responder, so the
+    top-N ranking has something to pool into 'other'."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("""INSERT INTO bill (id, bill_number, number_sort, period_number,
+                     title, type, main_type, status)
+                 VALUES ('q-2','K/78',78,43,'Kérdés a hidakról',
+                         'kérdés','K','lezárva')""")
+    c.execute("""INSERT INTO bill_sponsor (bill_id, person_id, faction_id, label, ord)
+                 VALUES ('q-2','k001',7,'Kovács Béla',0)""")
+    c.execute("""INSERT INTO bill_event (bill_id, ord, event_date, name, related_label)
+                 VALUES ('q-2', 10, '2026-06-03T11:00:00Z',
+                         'kérdés megválaszolva', ?)""", (ministry,))
+    c.commit(); c.close()
+
+
+def test_questions_sankey_expand_other_ungroups_the_pool(client, db_path):
+    """`expand_other` ungroups the pooled 'Egyéb tárca' node: with limit=1 the
+    runner-up responder is pooled, and expanding gives it its own ministry node
+    while the total flow is unchanged."""
+    _seed_question_answer(db_path, "interpelláció szóban megválaszolva",
+                          "Belügyminisztérium államtitkára")
+    _seed_second_question(db_path, "agrárminiszter")
+    grouped = client.get("/api/v1/bills/questions/sankey",
+                         params={"limit": 1}).json()
+    ga = [n for n in grouped["nodes"] if n["side"] == "answerer"]
+    assert any(n["kind"] == "other" for n in ga)          # runner-up is pooled
+    assert len([n for n in ga if n["kind"] == "ministry"]) == 1
+
+    exp = client.get("/api/v1/bills/questions/sankey",
+                     params={"limit": 1, "expand_other": "true"}).json()
+    ea = [n for n in exp["nodes"] if n["side"] == "answerer"]
+    assert not any(n["kind"] == "other" for n in ea)      # nothing left pooled
+    assert {n["label"] for n in ea if n["kind"] == "ministry"} == {
+        "Belügyminisztérium államtitkára", "agrárminiszter"}
+    # same questions, same flow volume — only the answerer column is finer
+    assert exp["total"] == grouped["total"]
+    assert (sum(l["value"] for l in exp["links"])
+            == sum(l["value"] for l in grouped["links"]))
+
+
+def test_questions_list_matches_the_expanded_diagram(client, db_path):
+    """The drill-down honours `expand_other` too, so a node that only exists when
+    the pool is open is still listable (and isn't under the grouped ranking)."""
+    _seed_question_answer(db_path, "interpelláció szóban megválaszolva",
+                          "Belügyminisztérium államtitkára")
+    _seed_second_question(db_path, "agrárminiszter")
+    params = {"top": 1, "answerer": "ministry", "ministry": "agrárminiszter"}
+    assert client.get("/api/v1/bills/questions/list", params=params).json()["total"] == 0
+    hit = client.get("/api/v1/bills/questions/list",
+                     params={**params, "expand_other": "true"}).json()
+    assert [b["bill_number"] for b in hit["bills"]] == ["K/78"]
+
+
+def test_questions_sankey_expand_other_names_unnamed_responders(client, db_path):
+    """With the pool ungrouped, an answered question whose responder isn't named
+    upstream is all that would be left in 'other' — it gets its own 'unnamed'
+    node instead."""
+    _seed_question_answer(db_path, "kérdés írásban megválaszolva")   # no label
+    j = client.get("/api/v1/bills/questions/sankey",
+                   params={"expand_other": "true"}).json()
+    answerers = [n for n in j["nodes"] if n["side"] == "answerer"]
+    assert any(n["kind"] == "unnamed" for n in answerers)
+    assert not any(n["kind"] == "other" for n in answerers)
+    r = client.get("/api/v1/bills/questions/list",
+                   params={"answerer": "unnamed", "expand_other": "true"}).json()
+    assert [b["bill_number"] for b in r["bills"]] == ["I/5"]
+
+
 def test_questions_list_drills_into_a_flow(client, db_path):
     """A clicked flow lists exactly its questions: the interpelláció doc-uuid-3
     (asker faction Fidesz) answered orally by a ministry. The faction node's id

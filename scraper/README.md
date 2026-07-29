@@ -31,8 +31,14 @@ Everything goes through the modern, **token-free Felicitas JSON API**
 1. `ulesnapok-query` (cycle + date range) → session days + UUIDs.
 2. `ulesnapok-aktusok-query` (day UUID) → every speech grouped by agenda act,
    with its join number, speaker, `felszolaloId`, type, committee and duration.
-3. `ulesnap-felszolalas-adata-query` (speech UUID) → the full speech text.
-4. `ulesnapok-video-query` (day UUID) → the whole-day HLS playlist on
+3. `ulesnap-felszolalasai` (day UUID, `pUlesnapId`) → the day's **complete** flat
+   speech listing. Query 2 reports a speech only through the agenda act it is
+   linked to, so speeches linked to none — chiefly those with no "Felszólalás
+   oka" (type) — are missing from it (≥8 200 speeches, 5.8%, over the archive);
+   the two are merged so no speech is lost, each recovered one inheriting the act
+   of the speech it follows.
+4. `ulesnap-felszolalas-adata-query` (speech UUID) → the full speech text.
+5. `ulesnapok-video-query` (day UUID) → the whole-day HLS playlist on
    `sgis.parlament.hu`. Per-speech offsets are also resolved and recorded for
    provenance (used by a future precise-timing stage, not by v1).
 

@@ -189,6 +189,10 @@ def _speech_entry(cycle: int, sitting: int, sp: dict, date: str,
         # Video-only / no transcript — published in degraded form, flagged, never
         # dropped (SCR-5 / VIE-8).
         debug["confidence_reason"] = "no-proceedings-text"
+    if sp.get("from_roster"):
+        # Recovered from the day's flat speech roster: parlament.hu links it to no
+        # agenda act, so it sits under its neighbour's (felicitas._merge_roster).
+        debug["agendaItemInferred"] = True
     if sp.get("person_id"):
         debug["personID"] = sp["person_id"]
     if sp.get("committee_id"):

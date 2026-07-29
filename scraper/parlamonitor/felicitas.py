@@ -12,9 +12,14 @@ covers both data domains the scraper needs:
      by agenda act, each with its join number (``sorszam``), UUID, speaker,
      ``felszolaloId`` (the representative id — a cross-module link, EXT-2),
      type, committee, start time and duration.
-  3. ``ulesnap-felszolalas-adata-query`` (speech UUID) → that speech's full text
+  3. ``ulesnap-felszolalasai``      (day UUID, paged) → the day's **complete**
+     flat speech listing (the portal's own "ülésnap felszólalásai" table): join
+     number, UUID, speaker, representative id, type, start time and duration —
+     but no agenda act. Query (2) is *not* complete on its own (see
+     :data:`DAY_SPEECH_ROSTER_QUERY`), so the two are merged.
+  4. ``ulesnap-felszolalas-adata-query`` (speech UUID) → that speech's full text
      (HTML), speaker, type and duration.
-  4. ``ulesnapok-video-query``      (day UUID, ``pTeljes=true``) → a ``playseq.php``
+  5. ``ulesnapok-video-query``      (day UUID, ``pTeljes=true``) → a ``playseq.php``
      URL that resolves to the whole-day HLS playlist on ``sgis.parlament.hu``.
 
 This token-free JSON path replaces the reference pipeline's fragile PAIR-proxy
@@ -42,7 +47,7 @@ import logging
 import re
 
 from . import magyarkozlony
-from .http_client import HttpClient
+from .http_client import HttpClient, HttpError
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,21 @@ BASE = "https://www.parlament.hu"
 PLENARY_PROVIDER = (f"{BASE}/felicitas/api/query/select/"
                     "plenarisulesadatok-plenarisules-registry/"
                     "plenaris-ules-adatok-query-provider")
+# The day's flat speech listing (paged, ``{"pUlesnapId": <day uuid>}``), behind the
+# portal's own "ülésnap felszólalásai" table. Unlike ``ulesnapok-aktusok-query`` it
+# is COMPLETE: that query reports a speech only through the agenda act it is linked
+# to, and speeches linked to no act are silently absent from it — chiefly the ones
+# with no "Felszólalás oka" (type): a speaker's continuation after being
+# interrupted, an unclassified remark. Sitting 43015 listed 287 of its 303 speeches
+# that way, the 16 gaps being exactly the type-less rows (e.g. #300, Dr. Árvay
+# Nikolett's continued rapporteur reply); across the 713 archived days ≥8 200
+# speeches (5.8%) were missing, and on legacy days the act links are sparse enough
+# that whole sittings nearly vanished (day 40039: 11 of 139 listed). Note the query
+# name carries no ``-query`` suffix — that spelling 404s.
+DAY_SPEECH_ROSTER_QUERY = "ulesnap-felszolalasai"
+# One request per day instead of ~13: the longest sitting on record has 522
+# speeches, and select_all still pages if a day ever exceeds this.
+_DAY_ROSTER_PAGE_SIZE = 1000
 KEPVISELO_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
                      "registry/kepviselo-query-provider")
 IROMANY_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
@@ -131,21 +151,27 @@ class FelicitasClient:
 
     # ---- generic POST select --------------------------------------------
 
-    def _select(self, provider: str, query: str, body: dict, page: int = 0) -> dict:
+    def _select(self, provider: str, query: str, body: dict, page: int = 0,
+                size: int | None = None) -> dict:
         url = f"{provider}/{query}?page={page}"
+        if size:
+            # Pages are 25 rows by default; `size` widens them (the backend caps
+            # it at 1000), so a long listing costs one request instead of a dozen.
+            url += f"&size={size}"
         self.http.polite_sleep()
         return self.http.post_json(url, body, headers=_REFERER)
 
-    def select_all(self, provider: str, query: str, body: dict) -> list[dict]:
+    def select_all(self, provider: str, query: str, body: dict,
+                   size: int | None = None) -> list[dict]:
         """Page through a select query and return all rows as field-name dicts."""
-        first = self._select(provider, query, body, page=0)
+        first = self._select(provider, query, body, page=0, size=size)
         rows = rows_as_dicts(first)
         resp = first.get("response") or {}
         total = resp.get("totalSize") or len(rows)
         page_size = resp.get("pageSize") or len(rows) or 1
         page = 1
         while len(rows) < total:
-            payload = self._select(provider, query, body, page=page)
+            payload = self._select(provider, query, body, page=page, size=size)
             chunk = rows_as_dicts(payload)
             if not chunk:
                 break
@@ -181,12 +207,35 @@ class FelicitasClient:
             })
         return out
 
-    def day_speeches(self, day_uuid: str) -> list[dict]:
-        """Per-speech listing of a day from ``ulesnapok-aktusok-query``.
+    def day_speech_roster(self, day_uuid: str) -> list[dict]:
+        """The day's COMPLETE flat speech listing (:data:`DAY_SPEECH_ROSTER_QUERY`).
 
-        Returns one dict per speech across all agenda acts, in source order,
+        One row per speech in join-number order — UUID, ``sorszam``, speaker (bare
+        name, no faction suffix), representative id, type, start time, duration —
+        with no agenda act, committee or bill references. Used to complete the
+        agenda-grouped listing in :meth:`day_speeches`."""
+        rows = self.select_all(PLENARY_PROVIDER, DAY_SPEECH_ROSTER_QUERY,
+                               {"pUlesnapId": day_uuid},
+                               size=_DAY_ROSTER_PAGE_SIZE)
+        return [{
+            "sorszam": r.get("sorszam"),
+            "speech_uuid": r.get("felszolalas"),
+            "speaker": r.get("felszolalo"),
+            "person_id": r.get("felszolaloId"),
+            "type": r.get("felszolasOka"),
+            "kezdete": r.get("felszolalasKezdete"),
+            "duration": r.get("videoIdoMasodperc"),
+        } for r in rows]
+
+    def day_speeches(self, day_uuid: str) -> list[dict]:
+        """Per-speech listing of a day from ``ulesnapok-aktusok-query``, completed
+        from the flat day roster.
+
+        Returns one dict per speech across all agenda acts, in join-number order,
         each carrying the agenda-act name, join number, speaker, representative
-        id, type, committee, start time, duration and any bill references."""
+        id, type, committee, start time, duration and any bill references. Speeches
+        the agenda-grouped query omits are folded in from
+        :meth:`day_speech_roster` (see :func:`_merge_roster`)."""
         payload = self._select(PLENARY_PROVIDER, "ulesnapok-aktusok-query",
                                {"pId": day_uuid})
         out: list[dict] = []
@@ -214,7 +263,14 @@ class FelicitasClient:
                     "aktus": aktus_name,
                     "bills": bills,
                 })
-        return out
+        try:
+            roster = self.day_speech_roster(day_uuid)
+        except HttpError as e:
+            # The roster only ADDS speeches; losing it degrades the day to the
+            # (incomplete) agenda-grouped listing rather than failing the scrape.
+            logger.warning("speech roster for day %s unavailable: %s", day_uuid, e)
+            return out
+        return _merge_roster(out, roster, day_uuid)
 
     def speech_text(self, speech_uuid: str) -> dict | None:
         """Full text + metadata for one speech (``ulesnap-felszolalas-adata-query``).
@@ -731,3 +787,47 @@ def _parse_type_table(nested) -> tuple[str | None, list[str]]:
         if iromany and iromany.strip() not in ("", "-"):
             bills.extend(_BILL_CODE_RE.findall(iromany))
     return stype, sorted(set(bills))
+
+
+def _merge_roster(listing: list[dict], roster: list[dict],
+                  day_uuid: str | None = None) -> list[dict]:
+    """Fold the speeches the agenda-grouped listing omits into it.
+
+    The roster (:data:`DAY_SPEECH_ROSTER_QUERY`) is the complete set of the day's
+    speeches but knows no agenda act, while the agenda-grouped listing knows the
+    acts but drops every speech that is linked to none. So each roster speech the
+    listing does not have is inserted at its join-number position, inheriting the
+    agenda act of the speech it follows — it is a continuation of that act's
+    debate — or, when it comes before any known act, of the speech that follows it.
+    Without an act the transform would file it under a stray agenda item and the
+    site's sitting-day view (which renders speeches per agenda item) would drop it.
+
+    The listing's own rows are never overwritten: they carry the act, committee and
+    bill references the roster lacks. Order is by ``sorszam``, stable, so a speech
+    the source lists once per act (see ``_dedup_speeches``) keeps its run.
+    """
+    known = {s.get("speech_uuid") for s in listing if s.get("speech_uuid")}
+    extra = [dict(r, committee_id=None, is_committee=False, aktus_id=None,
+                  aktus=None, bills=[], from_roster=True)
+             for r in roster
+             if r.get("speech_uuid") and r["speech_uuid"] not in known]
+    if not extra:
+        return listing
+    logger.info("day %s: %d speech(es) missing from the agenda listing, "
+                "filled from the roster (%d listed, %d total)",
+                day_uuid, len(extra), len(listing), len(listing) + len(extra))
+    merged = sorted(listing + extra,
+                    key=lambda s: (s.get("sorszam") is None, s.get("sorszam") or 0))
+    act = None
+    for sp in merged:                       # inherit from the preceding act
+        if sp.get("aktus_id") or sp.get("aktus"):
+            act = (sp.get("aktus_id"), sp.get("aktus"))
+        elif act:
+            sp["aktus_id"], sp["aktus"] = act
+    act = None
+    for sp in reversed(merged):             # leading gap: from the following act
+        if sp.get("aktus_id") or sp.get("aktus"):
+            act = (sp.get("aktus_id"), sp.get("aktus"))
+        elif act:
+            sp["aktus_id"], sp["aktus"] = act
+    return merged

@@ -511,11 +511,13 @@ def test_transform_marks_speechless_day_scheduled():
 class _FakeFelicitasDay:
     """Minimal Felicitas stand-in for scrape_day: an announced day has no speeches
     and no resolvable recording yet."""
-    def __init__(self, speeches, video=None, texts=None, offsets=None):
+    def __init__(self, speeches, video=None, texts=None, offsets=None,
+                 details=None):
         self._speeches = speeches
         self._video = video
         self._texts = texts or {}
         self._offsets = offsets or {}
+        self._details = details or {}
 
     def day_speeches(self, uuid):
         return list(self._speeches)
@@ -524,7 +526,7 @@ class _FakeFelicitasDay:
         return self._video
 
     def speech_text(self, uuid):
-        return {"html": self._texts.get(uuid, "")}
+        return {"html": self._texts.get(uuid, ""), **self._details.get(uuid, {})}
 
     def speech_offsets(self, uuid):
         return self._offsets.get(uuid)
@@ -647,6 +649,148 @@ def test_awaiting_content(tmp_path):
 
 def test_sitting_number_from_felirat():
     assert sitting_number({"datum_felirat": "2026.06.23.(11)"}) == 11
+
+
+# --- complete day speech listing (agenda listing + flat roster) -------------
+
+def _listed(sorszam, uuid, aktus, **kw):
+    return {"sorszam": sorszam, "speech_uuid": uuid, "speaker": f"A ({uuid})",
+            "type": "felszólalás", "aktus": aktus, "aktus_id": aktus,
+            "bills": [], "committee_id": None, "is_committee": False, **kw}
+
+
+def _roster(sorszam, uuid, stype=None):
+    return {"sorszam": sorszam, "speech_uuid": uuid, "speaker": "Árvay Nikolett",
+            "person_id": "0032", "type": stype, "kezdete": None, "duration": 66}
+
+
+def test_merge_roster_fills_speeches_missing_from_agenda_listing():
+    """Regression (sitting 43015, speech #300): ``ulesnapok-aktusok-query`` reports
+    a speech only through the agenda act it is linked to, so speeches linked to
+    none — chiefly those with no "Felszólalás oka" — were absent from the day
+    entirely (16 of 303 that day). The flat day roster fills them in, each under
+    the act of the speech it follows, so the sitting-day view shows it."""
+    from parlamonitor.felicitas import _merge_roster
+
+    listing = [_listed(1, "u1", "act A"), _listed(3, "u3", "act B")]
+    roster = [_roster(1, "u1"), _roster(2, "u2"), _roster(3, "u3"),
+              _roster(4, "u4", "ülésvezetés")]
+    merged = _merge_roster(listing, roster)
+
+    assert [s["sorszam"] for s in merged] == [1, 2, 3, 4]
+    recovered = {s["speech_uuid"]: s for s in merged if s.get("from_roster")}
+    assert set(recovered) == {"u2", "u4"}
+    # Each inherits the act of the speech it continues, so it lands in the same
+    # agenda item instead of a stray one.
+    assert recovered["u2"]["aktus"] == "act A"
+    assert recovered["u4"]["aktus"] == "act B"
+    assert recovered["u4"]["type"] == "ülésvezetés"
+    # The agenda listing's own rows keep their act/speaker (it knows more).
+    assert merged[0]["speaker"] == "A (u1)"
+    assert merged[0].get("from_roster") is None
+
+
+def test_merge_roster_leading_gap_inherits_following_act():
+    from parlamonitor.felicitas import _merge_roster
+
+    merged = _merge_roster([_listed(2, "u2", "act A")],
+                           [_roster(1, "u1"), _roster(2, "u2")])
+    assert merged[0]["speech_uuid"] == "u1"
+    assert merged[0]["aktus"] == "act A"
+
+
+def test_merge_roster_noop_when_listing_is_complete():
+    from parlamonitor.felicitas import _merge_roster
+
+    listing = [_listed(1, "u1", "act A"), _listed(2, "u2", "act A")]
+    assert _merge_roster(listing, [_roster(1, "u1"), _roster(2, "u2")]) is listing
+
+
+def test_scrape_day_takes_speaker_from_detail_for_roster_speech():
+    """The flat roster gives a bare name, so a recovered speech would land without
+    a faction; the detail query's speaker carries the "(TISZA)" suffix."""
+    speeches = [
+        {"speech_uuid": "u1", "sorszam": 1, "speaker": "Kovács Anna (Fidesz)"},
+        {"speech_uuid": "u2", "sorszam": 2, "speaker": "Árvay Nikolett",
+         "from_roster": True},
+    ]
+    fake = _FakeFelicitasDay(
+        speeches=speeches,
+        details={"u1": {"speaker": "KOVÁCS ANNA"},
+                 "u2": {"speaker": "Dr. Árvay Nikolett (TISZA)"}})
+    by_uuid = {sp["speech_uuid"]: sp
+               for sp in scrape_day(fake, 43, _felicitas_day())["speeches"]}
+    assert by_uuid["u2"]["speaker"] == "Dr. Árvay Nikolett (TISZA)"
+    # An agenda-listed speech keeps the listing's speaker (the detail query's is
+    # the transcript's shouty rendering).
+    assert by_uuid["u1"]["speaker"] == "Kovács Anna (Fidesz)"
+
+
+def test_scrape_day_reuses_prior_text_and_fetches_only_new_speeches():
+    """Backfill mode: re-listing a day to pick up its previously-missed speeches
+    keeps the text/offsets already downloaded and requests only the new speech."""
+    class _Counting(_FakeFelicitasDay):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.fetched = []
+
+        def speech_text(self, uuid):
+            self.fetched.append(uuid)
+            return super().speech_text(uuid)
+
+    speeches = [
+        {"speech_uuid": "u1", "sorszam": 1, "speaker": "Kovács Anna (Fidesz)"},
+        {"speech_uuid": "u2", "sorszam": 2, "speaker": "Árvay Nikolett",
+         "from_roster": True},
+    ]
+    fake = _Counting(speeches=speeches, texts={"u2": "<p>Új.</p>"})
+    prior = {"u1": {"speech_uuid": "u1", "text_html": "<p>Régi.</p>",
+                    "role": "miniszter", "video_off_start": 10.0,
+                    "video_off_end": 40.0}}
+    bundle = scrape_day(fake, 43, _felicitas_day(), prior=prior)
+
+    assert fake.fetched == ["u2"]           # the held speech cost no request
+    by_uuid = {sp["speech_uuid"]: sp for sp in bundle["speeches"]}
+    assert by_uuid["u1"]["text_html"] == "<p>Régi.</p>"
+    assert by_uuid["u1"]["role"] == "miniszter"
+    assert by_uuid["u1"]["video_off_start"] == 10.0
+    assert by_uuid["u2"]["text_html"] == "<p>Új.</p>"
+
+
+def test_prior_speeches_skips_textless_speeches(tmp_path):
+    # A speech whose transcript has not been published yet must NOT be reused —
+    # it still has to be re-requested until its text lands.
+    import json as _json
+    from parlamonitor.proceedings.scrape import _prior_speeches
+
+    p = tmp_path / "raw.json"
+    p.write_text(_json.dumps({"speeches": [
+        {"speech_uuid": "u1", "text_html": "<p>x</p>"},
+        {"speech_uuid": "u2", "text_html": ""},
+        {"sorszam": 3, "text_html": "<p>y</p>"},          # no uuid → unkeyable
+    ]}))
+    assert set(_prior_speeches(p)) == {"u1"}
+    assert _prior_speeches(tmp_path / "missing.json") == {}
+
+
+def test_transform_files_recovered_speech_under_neighbours_agenda_item():
+    """End to end: a roster-recovered speech is published in join-number order and
+    shares its neighbours' agenda item (so the loader groups it into that section
+    rather than creating a one-speech stray)."""
+    from parlamonitor.felicitas import _merge_roster
+
+    listing = [_listed(1, "u1", "Általános vita lefolytatása (T/303) Valamiről"),
+               _listed(3, "u3", "Általános vita lefolytatása (T/303) Valamiről")]
+    speeches = _merge_roster(listing, [_roster(1, "u1"), _roster(2, "u2"),
+                                       _roster(3, "u3")])
+    fake = _FakeFelicitasDay(speeches=speeches, texts={"u2": "<p>Köszönöm.</p>"})
+    rec = transform_day(scrape_day(fake, 43, _felicitas_day()))
+
+    assert rec["meta"]["counts"]["speeches"] == 3
+    assert [e["originID"] for e in rec["data"]] == ["43-16-1", "43-16-2", "43-16-3"]
+    items = {e["agendaItem"]["officialTitle"] for e in rec["data"]}
+    assert items == {"Általános vita lefolytatása (T/303) Valamiről"}
+    assert rec["data"][1]["debug"]["agendaItemInferred"] is True
 
 
 # --- bills / irományok -----------------------------------------------------

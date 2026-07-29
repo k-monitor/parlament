@@ -75,8 +75,43 @@ def _is_whole_day_window(offs: tuple[float, float],
             and offs[1] >= day_off2 - _WHOLE_DAY_OFFSET_EPS)
 
 
+# What a speech's own two requests (detail text + video offsets) contribute;
+# everything else on a speech comes from the day listing, which is always fetched
+# fresh. See :func:`_reuse_detail`.
+_DETAIL_FIELDS = ("text_html", "caption", "role", "committee",
+                  "video_off_start", "video_off_end")
+
+
+def _reuse_detail(sp: dict, cached: dict) -> dict:
+    """Graft an already-downloaded speech's detail onto its freshly listed self.
+
+    A published speech's text and video window do not change, so a re-scrape whose
+    point is to pick up speeches the listing previously MISSED (see
+    ``felicitas._merge_roster``) can keep what it already holds and spend its
+    requests on the new speeches only — two requests saved per speech, the
+    difference between hours and days over the whole archive."""
+    out = {**sp, **{k: cached[k] for k in _DETAIL_FIELDS if k in cached}}
+    # Same precedence the live path applies (see scrape_day).
+    out["type"] = sp.get("type") or cached.get("type")
+    out["duration"] = sp.get("duration") or cached.get("duration")
+    if sp.get("from_roster") and cached.get("speaker"):
+        out["speaker"] = cached["speaker"]
+    return out
+
+
+def _prior_speeches(raw_path) -> dict:
+    """An already-downloaded day's speeches with text, keyed by speech UUID —
+    the reuse pool for :func:`_reuse_detail`."""
+    try:
+        raw = json.loads(raw_path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return {s["speech_uuid"]: s for s in (raw.get("speeches") or [])
+            if s.get("speech_uuid") and s.get("text_html")}
+
+
 def scrape_day(felicitas: FelicitasClient, cycle: int, day: dict, *,
-               resolve_offsets: bool = True) -> dict:
+               resolve_offsets: bool = True, prior: dict | None = None) -> dict:
     """Build the raw bundle for one session day.
 
     Always returns a bundle. A day parlament.hu already lists but for which no
@@ -84,7 +119,10 @@ def scrape_day(felicitas: FelicitasClient, cycle: int, day: dict, *,
     recording or transcript is available — yields a placeholder bundle
     (``speeches: []``). The transform marks such a day ``scheduled`` so the site
     can show that a sitting is coming instead of silently dropping it (rather than
-    the old behaviour of returning ``None`` and losing the day)."""
+    the old behaviour of returning ``None`` and losing the day).
+
+    ``prior`` is an optional uuid → already-downloaded-speech map whose text and
+    offsets are reused instead of re-requested (:func:`_reuse_detail`)."""
     day_uuid = day["uuid"]
     speeches = felicitas.day_speeches(day_uuid)
     video = felicitas.day_video(day_uuid)
@@ -94,6 +132,10 @@ def scrape_day(felicitas: FelicitasClient, cycle: int, day: dict, *,
     enriched: list[dict] = []
     for sp in speeches:
         uuid = sp.get("speech_uuid")
+        cached = prior.get(uuid) if (prior and uuid) else None
+        if cached:
+            enriched.append(_reuse_detail(sp, cached))
+            continue
         detail = felicitas.speech_text(uuid) if uuid else None
         if detail:
             # The detail query is authoritative for text + a few fields the
@@ -103,6 +145,12 @@ def scrape_day(felicitas: FelicitasClient, cycle: int, day: dict, *,
                   "caption": detail.get("caption"),
                   "role": detail.get("role"),
                   "committee": detail.get("committee"),
+                  # A speech recovered from the flat day roster (felicitas
+                  # `_merge_roster`) has only the bare speaker name; the detail
+                  # query's carries the faction suffix ("Név (TISZA)") the person
+                  # builder needs, so that speech is not left faction-less.
+                  "speaker": ((detail.get("speaker") or sp.get("speaker"))
+                              if sp.get("from_roster") else sp.get("speaker")),
                   # The detail query gives a clean type string; the listing's is
                   # a nested table we may have failed to resolve.
                   "type": detail.get("type") or sp.get("type"),
@@ -198,12 +246,18 @@ def _awaiting_content(raw_path) -> bool:
 
 def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
                     start: str, end: str, *, force: bool = False,
-                    resolve_offsets: bool = True) -> list[str]:
+                    resolve_offsets: bool = True,
+                    reuse_text: bool = False) -> list[str]:
     """Download every sitting day of ``cycle`` in ``[start, end]`` to raw files.
 
     Returns the list of session keys that were (re)written this run. Days still
     awaiting a recording or transcript are re-scraped even if their file exists, so
-    a late-published transcript is picked up (see :func:`_awaiting_content`)."""
+    a late-published transcript is picked up (see :func:`_awaiting_content`).
+
+    ``reuse_text`` re-lists every day but keeps the speech text/offsets already in
+    its raw file (:func:`_reuse_detail`), so the run only pays for the speeches it
+    did not have. That is the cheap way to backfill an archive after a
+    listing-completeness fix; drop it when the point is to re-download."""
     days = felicitas.session_days(cycle, start, end)
     if not days:
         logger.info("No session days for cycle %s in [%s, %s]", cycle, start, end)
@@ -228,14 +282,17 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
                 and not _awaiting_content(raw_path)):
             continue
 
-        bundle = scrape_day(felicitas, cycle, day, resolve_offsets=resolve_offsets)
+        prior = _prior_speeches(raw_path) if reuse_text else None
+        bundle = scrape_day(felicitas, cycle, day, resolve_offsets=resolve_offsets,
+                            prior=prior)
         _write_json(raw_path, bundle)
         n_text = sum(1 for s in bundle["speeches"] if s.get("text_html"))
         if not bundle["speeches"]:
             logger.info("Saved %s (%s): announced sitting, no speeches yet "
                         "(scheduled placeholder)", session, day.get("date"))
         else:
-            logger.info("Saved %s (%s): %d speeches, %d with text",
-                        session, day.get("date"), len(bundle["speeches"]), n_text)
+            logger.info("Saved %s (%s): %d speeches, %d with text%s",
+                        session, day.get("date"), len(bundle["speeches"]), n_text,
+                        f", {len(prior)} reused" if prior else "")
         written.append(session)
     return written

@@ -204,10 +204,6 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
         <h2 class="footer-h">{{ $t('footer.aboutHeading') }}</h2>
         <router-link :to="{ name: 'about' }">{{ $t('footer.about') }}</router-link>
         <a href="/api/docs" target="_blank" rel="noopener">API</a>
-        <a
-          v-if="store.meta" :href="store.meta.source_attribution.url"
-          target="_blank" rel="noopener"
-        >parlament.hu</a>
       </nav>
 
       <div class="footer-col">

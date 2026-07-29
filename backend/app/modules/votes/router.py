@@ -23,12 +23,42 @@ from ...query_cache import cached_aggregate
 
 router = APIRouter(prefix="/votes", tags=["votes"])
 
+# The upstream per-faction breakdown carries a summary "Összesen (…)" pseudo-row
+# (the whole-house totals) alongside the real factions — exclude it wherever the
+# factions are aggregated, or every tally would be counted twice.
+_FACTION_TOTALS_LIKE = "Összesen%"
+
+# Attendance per vote: the votes cast (igen/nem/tartózkodás) over the seats held
+# at the time. Both sides are summed from the per-faction breakdown — no per-MP
+# scan — and summing the real factions reproduces the upstream "Összesen" row
+# exactly (verified across every vote that has one), while also covering the few
+# votes whose breakdown lacks that pseudo-row. The numerator matches the profile
+# pie's headline metric: "present but did not vote" and "excused absent" both
+# count as non-attendance.
+_ATTENDANCE_AGG = f"""
+    SELECT vote_id, SUM(total) AS seats,
+           SUM(COALESCE(yes, 0) + COALESCE(no, 0) + COALESCE(abstain, 0)) AS present
+    FROM vote_faction_stat
+    WHERE faction_name NOT LIKE '{_FACTION_TOTALS_LIKE}'
+    GROUP BY vote_id
+"""
+_ATTENDANCE_JOIN = f"LEFT JOIN ({_ATTENDANCE_AGG}) att ON att.vote_id = v.id"
+_ATTENDANCE_RATIO = "(att.present * 1.0 / NULLIF(att.seats, 0))"
+
 # Whitelisted orderings. The ORDER BY is spliced from this map only, never from
-# raw request input (cf. the proceedings search sort, SEA-10).
+# raw request input (cf. the proceedings search sort, SEA-10). An attendance sort
+# needs _ATTENDANCE_JOIN spliced in too (see _ATTENDANCE_SORTS): a vote with no
+# per-faction breakdown has no ratio, so it sorts last either way, and the date
+# tiebreak keeps paging stable across the many votes that share a ratio.
 _VOTE_SORTS = {
     "date_desc": "v.vote_datetime DESC",
     "date_asc": "v.vote_datetime ASC",
+    "attendance_desc": (f"{_ATTENDANCE_RATIO} IS NULL, {_ATTENDANCE_RATIO} DESC, "
+                        "v.vote_datetime DESC"),
+    "attendance_asc": (f"{_ATTENDANCE_RATIO} IS NULL, {_ATTENDANCE_RATIO} ASC, "
+                       "v.vote_datetime DESC"),
 }
+_ATTENDANCE_SORTS = ("attendance_desc", "attendance_asc")
 _DEFAULT_SORT = "date_desc"
 
 # Procedural quorum-check votes are excluded from a person-scoped list so its
@@ -36,9 +66,6 @@ _DEFAULT_SORT = "date_desc"
 # _exclude_quorum, kept in sync deliberately).
 _QUORUM_RESULTS = ("Határozatképes", "Határozatképtelen")
 
-# The upstream per-faction breakdown carries a summary "Összesen (…)" pseudo-row
-# (the whole-house totals) alongside the real factions — exclude it from cohesion.
-_FACTION_TOTALS_LIKE = "Összesen%"
 # A group smaller than this (a lone nationality spokesperson, a single independent)
 # has a tautological ~100% self-agreement, so it is dropped from the cohesion view.
 _MIN_FACTION_SIZE = 2
@@ -61,6 +88,26 @@ def _subjects_for(db: sqlite3.Connection, vote_ids: list[str]) -> dict[str, list
             "title": r["title"],
         })
     return out
+
+
+def _attendance_for(db: sqlite3.Connection, vote_ids: list[str]) -> dict[str, dict]:
+    """Attendance (votes cast / seats) for the listed votes, keyed by vote id.
+
+    Fetched for one page only, like the subjects above: the list query itself
+    stays a plain scan of `vote` unless the *ordering* needs the aggregate."""
+    if not vote_ids:
+        return {}
+    ph = ",".join("?" * len(vote_ids))
+    rows = db.execute(
+        f"""SELECT vote_id, SUM(total) AS seats,
+                   SUM(COALESCE(yes, 0) + COALESCE(no, 0) + COALESCE(abstain, 0)) AS present
+            FROM vote_faction_stat
+            WHERE vote_id IN ({ph}) AND faction_name NOT LIKE ?
+            GROUP BY vote_id""", [*vote_ids, _FACTION_TOTALS_LIKE]).fetchall()
+    return {r["vote_id"]: {
+        "present": r["present"], "seats": r["seats"],
+        "attendance": (round(r["present"] / r["seats"], 4) if r["seats"] else None),
+    } for r in rows}
 
 
 def _vote_brief(r: sqlite3.Row) -> dict:
@@ -122,12 +169,18 @@ def list_votes(
     value: Optional[str] = None,            # with `person`: participation segment
                                             # (voted|novote|absent|not_present|missed)
                                             # or a raw value_code
-    sort: str = "date_desc",
+    sort: str = Query(
+        "date_desc",
+        description="date_desc | date_asc | attendance_desc | attendance_asc"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: sqlite3.Connection = Depends(get_db),
 ):
     """Browsable, filterable vote list. Filters combine.
+
+    Every listed vote carries its attendance — the votes cast over the seats held
+    (`present` / `seats` / `attendance`) — and `sort` can order the list by it,
+    so the thinnest and the fullest divisions are both one click away.
 
     `person` scopes the list to one MP's roll-call participation (the votes they
     took part in), reciprocating the profile's participation pie (EXT-2): quorum
@@ -169,14 +222,19 @@ def list_votes(
                          f"WHERE vr.vote_id=v.id AND {cond})")
     where_sql = " AND ".join(where)
 
-    order = _VOTE_SORTS.get(sort, _VOTE_SORTS[_DEFAULT_SORT])
+    sort = sort if sort in _VOTE_SORTS else _DEFAULT_SORT
+    # The attendance aggregate is at most one row per vote, so joining it never
+    # changes the count — only the row query pays for it, and only when ordering
+    # by attendance.
+    join = _ATTENDANCE_JOIN if sort in _ATTENDANCE_SORTS else ""
     total = db.execute(f"SELECT COUNT(*) AS c FROM vote v WHERE {where_sql}",
                        params).fetchone()["c"]
     rows = db.execute(
-        f"""SELECT * FROM vote v WHERE {where_sql}
-            ORDER BY {order} LIMIT :limit OFFSET :offset""",
+        f"""SELECT v.* FROM vote v {join} WHERE {where_sql}
+            ORDER BY {_VOTE_SORTS[sort]} LIMIT :limit OFFSET :offset""",
         {**params, "limit": limit, "offset": offset}).fetchall()
     subjects = _subjects_for(db, [r["id"] for r in rows])
+    attendance = _attendance_for(db, [r["id"] for r in rows])
 
     # When scoped to an MP, resolve their name (for the list's header) and their
     # own cast value per listed vote (for a chip beside each) in one pass — a
@@ -195,8 +253,11 @@ def list_votes(
                     WHERE person_id=? AND vote_id IN ({ph})""",
                 [person, *ids]).fetchall()}
 
+    _NO_ATTENDANCE = {"present": None, "seats": None, "attendance": None}
+
     def _vote_out(r: sqlite3.Row) -> dict:
-        out = {**_vote_brief(r), "subjects": subjects.get(r["id"], [])}
+        out = {**_vote_brief(r), "subjects": subjects.get(r["id"], []),
+               **attendance.get(r["id"], _NO_ATTENDANCE)}
         if person:
             pv = person_vals.get(r["id"])
             out["person_value"] = pv["value"] if pv else None
@@ -205,7 +266,7 @@ def list_votes(
 
     return {
         "total": total, "limit": limit, "offset": offset,
-        "sort": sort if sort in _VOTE_SORTS else _DEFAULT_SORT,
+        "sort": sort,
         "person": person_meta,
         "votes": [_vote_out(r) for r in rows],
     }

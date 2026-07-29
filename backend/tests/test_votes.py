@@ -129,6 +129,32 @@ def test_list_votes_sort_order(client):
     assert bogus["sort"] == "date_desc" and bogus["votes"][0]["id"] == "v-2"
 
 
+def test_list_votes_attendance(client):
+    """Each listed vote carries its attendance: the votes cast over the seats
+    held, summed from the per-faction breakdown (v-1: 2 cast of 5 seats). A vote
+    with no breakdown (v-2, a list vote) has none rather than a zero."""
+    d = client.get("/api/v1/votes").json()
+    by_id = {v["id"]: v for v in d["votes"]}
+    assert by_id["v-1"]["present"] == 2 and by_id["v-1"]["seats"] == 5
+    assert by_id["v-1"]["attendance"] == 0.4
+    assert by_id["v-2"]["attendance"] is None and by_id["v-2"]["seats"] is None
+
+
+def test_list_votes_sort_by_attendance(client):
+    """Attendance orderings flip the list, and a vote with no attendance ratio
+    (v-2) sorts last in *both* directions rather than leading the ascending one."""
+    desc = client.get("/api/v1/votes", params={"sort": "attendance_desc"}).json()
+    assert desc["sort"] == "attendance_desc"
+    assert [v["id"] for v in desc["votes"]] == ["v-1", "v-2"]
+    asc = client.get("/api/v1/votes", params={"sort": "attendance_asc"}).json()
+    assert asc["sort"] == "attendance_asc"
+    assert [v["id"] for v in asc["votes"]] == ["v-1", "v-2"]
+    # Paging/filtering still apply on top of the aggregate join.
+    one = client.get("/api/v1/votes", params={"sort": "attendance_desc",
+                                             "limit": 1}).json()
+    assert one["total"] == 2 and [v["id"] for v in one["votes"]] == ["v-1"]
+
+
 def test_vote_facets(client):
     d = client.get("/api/v1/votes/facets").json()
     assert "Elfogadva" in d["results"] and "Elutasítva" in d["results"]

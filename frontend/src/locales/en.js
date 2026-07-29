@@ -347,6 +347,11 @@ export default {
     sort: 'Sort',
     sortNewest: 'Newest first',
     sortOldest: 'Oldest first',
+    sortAttendanceDesc: 'Highest attendance first',
+    sortAttendanceAsc: 'Lowest attendance first',
+    attendance: 'Attendance',
+    attendanceTitle: 'Attendance: {present} votes cast out of {seats} seats. ' +
+      '“Present, did not vote” and “excused absent” do not count as attendance.',
     clearFilters: 'Clear filters',
     remark: 'Remark',
     accepted: 'Elfogadva',

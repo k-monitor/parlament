@@ -14,7 +14,7 @@ const route = useRoute()
 const router = useRouter()
 
 const PAGE = 50
-const SORTS = ['date_desc', 'date_asc']
+const SORTS = ['date_desc', 'date_asc', 'attendance_desc', 'attendance_asc']
 
 const data = ref(null)
 const loading = ref(false)
@@ -105,6 +105,13 @@ function gotoPage(p) {
 // Chip colour for an MP's own cast value (matches the roll-call palette); a
 // "nem volt jelen" vote has no record, so it falls through to the neutral class.
 const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote', absent: 'absent' }
+
+// Attendance (votes cast / seats held) as served by the API — shown on every card
+// so the attendance orderings are readable, and null on a vote with no
+// per-faction breakdown (a list or show-of-hands vote).
+function attendancePct(v) {
+  return v.attendance == null ? '' : Math.round(v.attendance * 100) + '%'
+}
 
 function voteParts(v) {
   const yes = v.yes || 0, no = v.no || 0, abstain = v.abstain || 0
@@ -237,6 +244,8 @@ onUnmounted(() => clearTimeout(searchTimer))
           <select v-model="sort" @change="changeSort">
             <option value="date_desc">{{ $t('votes.sortNewest') }}</option>
             <option value="date_asc">{{ $t('votes.sortOldest') }}</option>
+            <option value="attendance_desc">{{ $t('votes.sortAttendanceDesc') }}</option>
+            <option value="attendance_asc">{{ $t('votes.sortAttendanceAsc') }}</option>
           </select>
         </label>
       </div>
@@ -271,6 +280,10 @@ onUnmounted(() => clearTimeout(searchTimer))
             <span class="c yes"><b>{{ v.yes ?? 0 }}</b> {{ $t('votes.yes') }}</span>
             <span class="c no"><b>{{ v.no ?? 0 }}</b> {{ $t('votes.no') }}</span>
             <span class="c abstain"><b>{{ v.abstain ?? 0 }}</b> {{ $t('votes.abstain') }}</span>
+            <span v-if="v.attendance != null" class="c att"
+                  :title="$t('votes.attendanceTitle', { present: v.present, seats: v.seats })">
+              {{ $t('votes.attendance') }} <b>{{ attendancePct(v) }}</b>
+            </span>
           </div>
         </li>
       </ul>
@@ -308,4 +321,6 @@ onUnmounted(() => clearTimeout(searchTimer))
 .vcounts .c.yes { color: #2e7d32; }
 .vcounts .c.no { color: #c62828; }
 .vcounts .c.abstain { color: var(--ink-faint); }
+/* attendance sits apart from the yes/no/abstain triplet — it is a ratio, not a tally */
+.vcounts .c.att { color: var(--ink-faint); margin-left: auto; cursor: help; }
 </style>

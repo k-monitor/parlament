@@ -455,6 +455,11 @@ export default {
     sort: 'Rendezés',
     sortNewest: 'Legújabb elöl',
     sortOldest: 'Legrégebbi elöl',
+    sortAttendanceDesc: 'Legnagyobb részvétel elöl',
+    sortAttendanceAsc: 'Legkisebb részvétel elöl',
+    attendance: 'Részvétel',
+    attendanceTitle: 'Részvétel: {present} leadott szavazat a {seats} képviselői helyből. ' +
+      'A „jelen, nem szavazott” és az „igazoltan távol” nem számít részvételnek.',
     clearFilters: 'Szűrők törlése',
     remark: 'Megjegyzés',
     accepted: 'Elfogadva',

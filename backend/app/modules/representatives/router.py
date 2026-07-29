@@ -851,17 +851,22 @@ def _current_office(db: sqlite3.Connection, person_id: str,
         return None
     start, end = _office_term(offices or [], row["title"], row["last_date"])
     cycles = sorted(int(c) for c in (row["cycles"] or "").split(",") if c.strip())
+    # An upstream term is reported as-is, end included — and its end stays **null**
+    # when the post is still held (upstream leaves it open), because substituting
+    # any date there would announce a departure that never happened: the last
+    # sitting day is not the day the prime minister stopped being prime minister.
+    # Only with no upstream term at all do the speeches supply both dates, and then
+    # they bound the office from below ("held at least between"), which the UI says.
     return {
         "title": row["title"],
-        # The term itself when upstream reports it, else the speeches that carry
-        # the title — a narrower, but never wrong, "held at least between".
         "start": start or row["first_date"],
-        "end": end or row["last_date"],
-        # 'term' dates are the appointment/dismissal boundaries; 'speeches' dates
-        # only bound the title from below, which the UI says differently.
+        "end": end if start else row["last_date"],
+        # 'term' dates are the appointment/dismissal boundaries (with a null end
+        # meaning "still in office"); 'speeches' dates only bound the title from
+        # below, which the UI words differently.
         "dates_from": "term" if start else "speeches",
         # The cycles **in scope** in which the person spoke holding this title — the
-        # cycles of the speech span above, which a longer upstream term can outrun.
+        # cycles of the speech span, which a longer upstream term can outrun.
         "cycles": cycles,
     }
 

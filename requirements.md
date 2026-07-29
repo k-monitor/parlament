@@ -729,9 +729,11 @@ snippet — a site-wide capability, not a per-module feature.
   secretary promoted since, a former minister now on the back benches), and undated
   it reads as if it were. The dates are the upstream **appointment/dismissal
   boundaries** where the person's office list reports them (consecutive spells of one
-  post, which upstream splits at every cycle boundary, read as a single term);
-  otherwise they are the span of the speeches carrying the title, which bounds the
-  office only **from below** and is labelled as such (*„legalább …”*).
+  post, which upstream splits at every cycle boundary, read as a single term); an
+  office **still held** has no end date — it reads *„… – jelenleg”*, never the last
+  sitting day, which would announce a departure that never happened. Where upstream
+  reports no term, the dates are the span of the speeches carrying the title, which
+  bounds the office only **from below** and is labelled as such (*„legalább …”*).
 - **REP-3 (MUST).** Per-representative **statistics**, computed over the
   **statistics-eligible speeches only** (procedural/chairing speeches excluded
   per STAT-1), including at least:

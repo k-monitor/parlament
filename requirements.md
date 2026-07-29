@@ -720,6 +720,18 @@ snippet — a site-wide capability, not a per-module feature.
   reverse-chronological **list of their speeches** (each linking into the viewer),
   and — when the Bills module (§6A) is enabled — a **list of the bills they
   submitted**, each linking to the bill (the reciprocal of BILL-3's sponsor links).
+  A speaker who holds (or held) a **government office** — *tisztség*, e.g.
+  *„igazságügyi miniszter”* — is identified by it too: it is the primary identity of
+  a **non-MP speaker** (a minister or state secretary with no mandate, hence no
+  faction and no constituency). The office is derived from their speeches, and it
+  MUST be shown **dated** — with the term it refers to — never as a bare title: the
+  most recent office in scope is often *not* the person's current post (a state
+  secretary promoted since, a former minister now on the back benches), and undated
+  it reads as if it were. The dates are the upstream **appointment/dismissal
+  boundaries** where the person's office list reports them (consecutive spells of one
+  post, which upstream splits at every cycle boundary, read as a single term);
+  otherwise they are the span of the speeches carrying the title, which bounds the
+  office only **from below** and is labelled as such (*„legalább …”*).
 - **REP-3 (MUST).** Per-representative **statistics**, computed over the
   **statistics-eligible speeches only** (procedural/chairing speeches excluded
   per STAT-1), including at least:

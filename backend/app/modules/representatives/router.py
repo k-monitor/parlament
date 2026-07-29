@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -303,7 +304,8 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
                      "label": h.get("label"), "color": colors.get(h.get("label"))}
                     if h.get("label") else None}
         for h in _loads(p["faction_history_json"])]
-    office = _current_office(db, person_id, period)
+    offices = _loads(p["offices_json"])
+    office = _current_office(db, person_id, period, offices)
     return {
         "person_id": p["person_id"], "label": p["label"],
         "label_full": p["label_full"], "firstname": p["firstname"],
@@ -325,7 +327,11 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         # non-MP speaker — someone who spoke in the House but holds no mandate, so
         # has no faction or constituency — by their post (REP-2). Derived from their
         # speeches (see `_current_office`), scoped to the selected cycle (§4A).
-        "office": office,
+        "office": office["title"] if office else None,
+        # When that office applies (REP-2): {start, end, cycles, dates_from} — the
+        # title alone reads as the person's current post even when it is one they
+        # held cycles ago, so it is always shown dated.
+        "office_term": {k: v for k, v in office.items() if k != "title"} if office else None,
         "current_faction": {"id": current["faction_id"], "label": current["faction_label"],
                             "color": current["faction_color"]} if current and current["faction_label"] else None,
         "faction_history": faction_history,
@@ -757,27 +763,107 @@ def get_votes(person_id: str, period: Optional[List[int]] = Query(
     }
 
 
+# Two spells of the same office separated by no more than this many days are one
+# term: upstream splits a continuously held post at every electoral-cycle boundary
+# (and at re-appointment after an election), so "államtitkár" held 2014→2022 arrives
+# as 2014-06-14→2018-05-17 plus 2018-05-21→2022-05-24. Bridging those gaps reports
+# the term a reader would recognise, while a real interruption (out of office for a
+# cycle, back later) stays two separate terms.
+_OFFICE_TERM_GAP_DAYS = 62
+
+
+def _office_term(offices: list, title: str,
+                 last_date: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """The upstream term boundaries (start, end) for the office named ``title``.
+
+    ``offices`` is the person's upstream office list (``person.offices_json``:
+    ``{title, start, end}`` entries, newest first) — the authoritative dates, which
+    begin at the appointment rather than at the first speech. Back-to-back spells of
+    the same title are merged (see ``_OFFICE_TERM_GAP_DAYS``); of the resulting
+    terms we return the one covering ``last_date`` (the latest speech carrying the
+    title), else the most recent one. ``(None, None)`` when the list names no such
+    office, leaving the caller on its speech-derived span."""
+    key = (title or "").strip().casefold()
+    spells = sorted(
+        ((o.get("start"), o.get("end")) for o in offices or []
+         if isinstance(o, dict) and (o.get("title") or "").strip().casefold() == key
+         and o.get("start")),
+        key=lambda s: s[0])
+    if not spells:
+        return (None, None)
+    terms: list[list] = []
+    for start, end in spells:
+        gap = _day_gap(terms[-1][1], start) if terms else None
+        if gap is not None and gap <= _OFFICE_TERM_GAP_DAYS:
+            # Same post, continued: keep the earlier start, take the later end.
+            if not terms[-1][1] or (end or "") > terms[-1][1]:
+                terms[-1][1] = end
+            continue
+        terms.append([start, end])
+    if last_date:
+        for start, end in terms:
+            if start[:10] <= last_date and (not end or last_date <= end[:10]):
+                return (start, end)
+    return tuple(terms[-1])
+
+
+def _day_gap(end: Optional[str], start: Optional[str]) -> Optional[int]:
+    """Days between an office spell's ``end`` and the next spell's ``start``, or
+    None when either timestamp is missing/unparseable (so no merge happens)."""
+    if not end or not start:
+        return None
+    try:
+        return (date.fromisoformat(start[:10]) - date.fromisoformat(end[:10])).days
+    except ValueError:
+        return None
+
+
 def _current_office(db: sqlite3.Connection, person_id: str,
-                    period: Optional[List[int]]) -> Optional[str]:
-    """The speaker's most recent government office (tisztség) in scope, or None.
+                    period: Optional[List[int]],
+                    offices: Optional[list] = None) -> Optional[dict]:
+    """The speaker's most recent government office (tisztség) in scope **with the
+    time it refers to**, or None.
 
     A speaker's office is recorded per speech (``speech.speaker_office``, from the
     upstream *tisztség* — see the loader). Most office-holders keep one office, but
-    a promotion mid-cycle would leave two, so we take the **most recent** one (latest
-    sitting date, then latest speech within the day). Scoped to the selected cycle
-    (§4A) when ``period`` is set, matching the rest of the profile. Returns None for
-    a speaker who never held one (every ordinary MP), so the UI shows it only for the
-    ministers / state secretaries who do."""
+    a promotion mid-cycle (or a post held cycles ago and never held since) leaves
+    several, so we take the **most recent** one (latest sitting date, then latest
+    speech within the day). An undated title reads as the person's *current* post,
+    which it often is not, so we also report **when it applies** (REP-2): the term
+    from the upstream office list when it names the same post, else the span of the
+    speeches carrying it, plus the cycles those speeches fall in. Scoped to the
+    selected cycle (§4A) when ``period`` is set, matching the rest of the profile.
+    Returns None for a speaker who never held one (every ordinary MP), so the UI
+    shows it only for the ministers / state secretaries who do."""
     extra = period_and(period, "sp.period_number")
     params: dict = {"pid": person_id}
     row = db.execute(
-        f"""SELECT sp.speaker_office
+        f"""SELECT sp.speaker_office AS title,
+                   MIN(ss.date) AS first_date, MAX(ss.date) AS last_date,
+                   GROUP_CONCAT(DISTINCT sp.period_number) AS cycles
             FROM speech sp JOIN session ss ON ss.id = sp.session_id
             WHERE sp.person_id = :pid
               AND sp.speaker_office IS NOT NULL AND sp.speaker_office <> ''{extra}
-            ORDER BY ss.date DESC, sp.speech_index DESC
+            GROUP BY sp.speaker_office
+            ORDER BY MAX(ss.date || '#' || printf('%08d', sp.speech_index)) DESC
             LIMIT 1""", params).fetchone()
-    return row["speaker_office"] if row else None
+    if not row:
+        return None
+    start, end = _office_term(offices or [], row["title"], row["last_date"])
+    cycles = sorted(int(c) for c in (row["cycles"] or "").split(",") if c.strip())
+    return {
+        "title": row["title"],
+        # The term itself when upstream reports it, else the speeches that carry
+        # the title — a narrower, but never wrong, "held at least between".
+        "start": start or row["first_date"],
+        "end": end or row["last_date"],
+        # 'term' dates are the appointment/dismissal boundaries; 'speeches' dates
+        # only bound the title from below, which the UI says differently.
+        "dates_from": "term" if start else "speeches",
+        # The cycles **in scope** in which the person spoke holding this title — the
+        # cycles of the speech span above, which a longer upstream term can outrun.
+        "cycles": cycles,
+    }
 
 
 def _own_bills_for_cycles(by_cycle: list, periods: list[int]) -> Optional[int]:

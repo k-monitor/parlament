@@ -5,7 +5,7 @@
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
-import { store, loadMeta } from '../../store.js'
+import { store, loadMeta, cycleLabel } from '../../store.js'
 import { formatDate, formatDateLocal, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -110,6 +110,31 @@ function termRange(c) {
   if (!start && !end) return ''
   return `${start || '?'} – ${end || t('profile.present')}`
 }
+
+// When the shown office (tisztség) applies — "2022-05-24 – 2026-05-12" plus the
+// cycle(s) it falls in. The title on its own reads as the person's *current* post
+// even when it is one they held cycles ago (a state secretary promoted since, or a
+// former minister who is now a back-bench MP), so it is never shown undated (REP-2).
+// `dates_from = 'term'` means upstream reported the appointment/dismissal dates;
+// otherwise they are the span of the speeches carrying the title, which only bounds
+// the office from below — hence the "legalább" ("at least") wording there.
+const officeTerm = computed(() => {
+  const term = profile.value && profile.value.office_term
+  if (!term) return null
+  const start = formatDateLocal(term.start)
+  const end = formatDateLocal(term.end)
+  if (!start && !end) return null
+  const range = `${start || '?'} – ${end || t('profile.present')}`
+  const exact = term.dates_from === 'term'
+  // The cycle labels only describe the speech span, which an upstream term can
+  // outrun — so they annotate the approximate case, never the exact one.
+  const cycles = exact ? '' : (term.cycles || []).map(cycleLabel).join(', ')
+  return {
+    label: exact ? range : t('profile.officeTermApprox', { range }),
+    note: t(exact ? 'profile.officeTermNote' : 'profile.officeTermSpeechesNote')
+      + (cycles ? ` · ${cycles}` : ''),
+  }
+})
 
 const PLACEHOLDER =
   'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -271,6 +296,8 @@ watch(() => store.cycles.join(','), load)
               <div v-if="profile.office" class="office">
                 <span class="office-label">{{ $t('profile.office') }}</span>
                 <span class="office-val">{{ profile.office }}</span>
+                <!-- Always dated: which term the office refers to (see `officeTerm`). -->
+                <span v-if="officeTerm" class="office-when" :title="officeTerm.note">{{ officeTerm.label }}</span>
               </div>
               <!-- Nationality advocate (nemzetiségi szószóló): holds no mandate,
                    so there is no faction or constituency to show — the nationality
@@ -532,6 +559,10 @@ watch(() => store.cycles.join(','), load)
 .office-label { display: block; font-size: .72rem; font-weight: 600; letter-spacing: .02em;
   text-transform: uppercase; color: var(--ink-faint); }
 .office-val { font-size: 1.02rem; font-weight: 700; color: var(--ink); }
+/* …and, on its own line under the office name, when it was held — the office is
+   never shown undated (REP-2). Muted and small: it qualifies the title, not
+   competing with it. */
+.office-when { display: block; font-size: .8rem; color: var(--ink-soft); }
 /* Brand marks in the header links row (Wikipedia serif "W", K-Monitor logo) —
    small "logo chips" matching the inline transcript entity badges. */
 .link-badge { display: inline-flex; align-items: center; justify-content: center;

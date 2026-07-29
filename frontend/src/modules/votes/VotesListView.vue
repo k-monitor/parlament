@@ -360,8 +360,9 @@ onUnmounted(() => clearTimeout(searchTimer))
 /* cross-voting always follows attendance (a vote only has one if it has the
    other), so it rides that item's margin-left:auto to the right edge */
 .vcounts .c.cross { color: var(--ink-faint); cursor: help; }
-/* the factions behind the cross-voting number */
-.vcross { display: flex; flex-wrap: wrap; gap: .15rem .8rem; }
+/* the factions behind the cross-voting number — right-aligned so they sit under
+   it rather than under the yes/no/abstain tallies */
+.vcross { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .15rem .8rem; }
 .vcross .xf { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
 .vcross .dot { width: .5rem; height: .5rem; border-radius: 50%; flex: none; display: inline-block; }
 </style>

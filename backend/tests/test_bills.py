@@ -245,6 +245,32 @@ def test_bill_detail_sections(client):
     assert d["motion_summary"][0]["total"] == 1
 
 
+def test_bill_votes_carry_attendance_and_crossvoting(client, db_path):
+    """A bill's vote tallies carry the same derived figures the Votes list shows
+    on its cards — attendance and cross-voting, from the shared per-faction
+    aggregation — so the two views can never disagree. Only votes the Votes module
+    has ingested have them; a tally with no such vote keeps the null shape."""
+    v = client.get("/api/v1/bills/bill-uuid-1").json()["votes"][0]
+    assert v["vote_ref"] == "v-1"
+    assert (v["present"], v["seats"], v["attendance"]) == (2, 5, 0.4)
+    # the fixture's factions all held the line ("0 fő"): a real zero, not a null
+    assert v["defectors"] == 0 and v["defector_factions"] == []
+
+    # A bill vote whose szavazasId the Votes module never ingested: no numbers
+    # rather than zeros, and still no crash.
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("INSERT INTO bill_vote (bill_id, ord, vote_date, subject, yes, no, "
+              "abstain, result, vote_id) VALUES ('bill-uuid-1', 9, "
+              "'2026-05-28T10:00:00Z', 'zárószavazás', 180, 0, 8, 'Elfogadva', "
+              "'v-missing')")
+    c.commit(); c.close()
+    last = client.get("/api/v1/bills/bill-uuid-1").json()["votes"][-1]
+    assert last["vote_ref"] is None
+    assert last["attendance"] is None and last["defectors"] is None
+    assert last["defector_factions"] == []
+
+
 def test_bill_non_self_standing_motions(client):
     """The individual non-self-standing motions round-trip with their PDF and an
     MP-linked submitter (EXT-2); a committee/Speaker submitter stays label-only."""

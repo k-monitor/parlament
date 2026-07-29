@@ -339,6 +339,14 @@ export default {
     votes: 'Szavazások',
     viewRollCall: 'Név szerinti eredmény',
     yes: 'Igen', no: 'Nem', abstain: 'Tartózkodás', voteTag: 'szavazás',
+    // A szavazások listájának kártyáin szereplő származtatott adatok — ugyanaz a
+    // szám, ugyanaz a megfogalmazás (ld. votes.attendance / votes.crossVoting).
+    attendance: 'Részvétel',
+    attendanceTitle: 'Részvétel: {present} leadott szavazat a {seats} képviselői helyből. ' +
+      'A „jelen, nem szavazott” és az „igazoltan távol” nem számít részvételnek.',
+    crossVoting: 'frakciótól eltérő',
+    crossVotingTitle: '{n} képviselő szavazott a saját frakciója álláspontjától eltérően — ' +
+      'a leadott szavazatok {pct}-a. Az Országgyűlés hivatalos „frakcióval szemben” adata.',
     events: 'Iromány eseményei',
     speechNumber: 'Felszólalás száma',
     viewSpeech: 'Felszólalás megtekintése',

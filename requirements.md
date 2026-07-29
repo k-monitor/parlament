@@ -1037,7 +1037,10 @@ header).
   (`bill_vote.vote_id`, BILL-7) already carries — so each vote on a bill's detail
   sheet links **into this site's own vote page** (the full roll call), with no
   new join key. A bill vote whose szavazás has not been ingested keeps the plain
-  tally with no link (graceful degradation, SCR-5).
+  tally with no link (graceful degradation, SCR-5). Each ingested vote on that
+  sheet also carries the **same derived figures the vote list shows** —
+  attendance and cross-voting with its per-faction breakdown (VOTE-9) — computed
+  from one shared aggregation, so the two views can never disagree.
 - **VOTE-7 (MUST).** The module is a self-contained vertical slice per EXT-1..6:
   its own scraper stage (`votes-<cycle>.json`), loader, `vote` / `vote_subject` /
   `vote_record` / `vote_faction_stat` tables, `/api/v1/votes` routes, and

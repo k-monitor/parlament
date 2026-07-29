@@ -236,6 +236,14 @@ export default {
     votes: 'Votes',
     viewRollCall: 'Roll-call result',
     yes: 'Yes', no: 'No', abstain: 'Abstain', voteTag: 'vote',
+    // The derived figures the vote cards in the Votes list carry — same numbers,
+    // same wording (cf. votes.attendance / votes.crossVoting).
+    attendance: 'Attendance',
+    attendanceTitle: 'Attendance: {present} votes cast out of {seats} seats. ' +
+      '“Present, did not vote” and “excused absent” do not count as attendance.',
+    crossVoting: 'against faction line',
+    crossVotingTitle: '{n} representatives voted against their own faction’s position — ' +
+      '{pct} of the votes cast. The Assembly’s own “frakcióval szemben” figure.',
     events: 'Bill events',
     speechNumber: 'Speech no.',
     viewSpeech: 'View this speech',

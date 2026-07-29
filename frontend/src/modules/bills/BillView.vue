@@ -69,6 +69,27 @@ function voteParts(v) {
   }
 }
 
+// Attendance and cross-voting per vote, exactly as the Votes list shows them on
+// its cards (same API figures, same formatting) — null on a vote the Votes module
+// hasn't ingested, on one with no per-faction breakdown (list/show-of-hands), and
+// for cross-voting also on a presence check, so the chips simply don't appear.
+function attendancePct(v) {
+  return v.attendance == null ? '' : Math.round(v.attendance * 100) + '%'
+}
+function crossPct(v) {
+  if (v.defector_share == null) return ''
+  return (100 * v.defector_share).toLocaleString('hu-HU',
+    { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'
+}
+// How many defecting factions a tally names before collapsing the rest into "+N".
+const CROSS_FACTIONS_SHOWN = 4
+function crossFactions(v) {
+  return (v.defector_factions || []).slice(0, CROSS_FACTIONS_SHOWN)
+}
+function crossFactionsMore(v) {
+  return Math.max(0, (v.defector_factions || []).length - CROSS_FACTIONS_SHOWN)
+}
+
 // A document is shown by both the bills page (törvényjavaslat) and the other
 // irományok page; the back link returns to whichever list it belongs to.
 const isBill = computed(() => bill.value?.main_type === 'T')
@@ -196,6 +217,23 @@ watch(() => props.id, load)
               <span class="c yes"><b>{{ v.yes ?? 0 }}</b> {{ $t('bills.yes') }}</span>
               <span class="c no"><b>{{ v.no ?? 0 }}</b> {{ $t('bills.no') }}</span>
               <span class="c abstain"><b>{{ v.abstain ?? 0 }}</b> {{ $t('bills.abstain') }}</span>
+              <span v-if="v.attendance != null" class="c att"
+                    :title="$t('bills.attendanceTitle', { present: v.present, seats: v.seats })">
+                {{ $t('bills.attendance') }} <b>{{ attendancePct(v) }}</b>
+              </span>
+              <span v-if="v.defectors" class="c cross"
+                    :title="$t('bills.crossVotingTitle', { n: v.defectors, pct: crossPct(v) })">
+                <b>{{ v.defectors }}</b> {{ $t('bills.crossVoting') }} ({{ crossPct(v) }})
+              </span>
+            </div>
+            <!-- Which factions actually split — the cross-voting number broken
+                 down, as on the vote cards in the Votes list. -->
+            <div v-if="v.defectors" class="vcross small muted">
+              <span v-for="fx in crossFactions(v)" :key="fx.name" class="xf">
+                <span class="dot" :style="{ background: fx.color || '#bbb' }" aria-hidden="true"></span>
+                {{ fx.name }} <b>{{ fx.defectors }}</b>
+              </span>
+              <span v-if="crossFactionsMore(v)" class="xf">+{{ crossFactionsMore(v) }}</span>
             </div>
           </li>
         </ul>
@@ -499,11 +537,21 @@ watch(() => props.id, load)
 .vbar .seg.yes { background: #2e7d32; }
 .vbar .seg.no { background: #c62828; }
 .vbar .seg.abstain { background: #b9b6ad; }
-.vcounts { display: flex; gap: 1.2rem; }
+.vcounts { display: flex; gap: 1.2rem; flex-wrap: wrap; }
 .vcounts .c b { font-variant-numeric: tabular-nums; }
 .vcounts .c.yes { color: #2e7d32; }
 .vcounts .c.no { color: #c62828; }
 .vcounts .c.abstain { color: var(--ink-faint); }
+/* attendance and cross-voting sit apart from the yes/no/abstain triplet — they
+   are derived measures, not tallies. Cross-voting always follows attendance (a
+   vote only has one if it has the other), so it rides that item's
+   margin-left:auto to the right edge. */
+.vcounts .c.att { color: var(--ink-faint); margin-left: auto; cursor: help; }
+.vcounts .c.cross { color: var(--ink-faint); cursor: help; }
+/* the factions behind the cross-voting number, right-aligned under it */
+.vcross { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .15rem .8rem; margin-top: .2rem; }
+.vcross .xf { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
+.vcross .dot { width: .5rem; height: .5rem; border-radius: 50%; flex: none; display: inline-block; }
 
 /* Event history — a vertical rail with a dot per event (red dot = a vote). */
 .etimeline { list-style: none; margin: 0; padding: 0; }

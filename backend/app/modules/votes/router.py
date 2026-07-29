@@ -20,55 +20,34 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ...db import get_db, like_contains, period_key, period_sql
 from ...parlament_links import vote_page_url
 from ...query_cache import cached_aggregate
+from ...vote_stats import (CAST_SUM, CROSSVOTING_SCOPE, DEFECTORS_SUM,
+                           FACTION_TOTALS_LIKE, NO_ATTENDANCE, NO_CROSSVOTING,
+                           attendance_for, crossvoting_for)
 
 router = APIRouter(prefix="/votes", tags=["votes"])
 
-# The upstream per-faction breakdown carries a summary "Összesen (…)" pseudo-row
-# (the whole-house totals) alongside the real factions — exclude it wherever the
-# factions are aggregated, or every tally would be counted twice.
-_FACTION_TOTALS_LIKE = "Összesen%"
-
 # Attendance per vote: the votes cast (igen/nem/tartózkodás) over the seats held
-# at the time. Both sides are summed from the per-faction breakdown — no per-MP
-# scan — and summing the real factions reproduces the upstream "Összesen" row
-# exactly (verified across every vote that has one), while also covering the few
-# votes whose breakdown lacks that pseudo-row. The numerator matches the profile
-# pie's headline metric: "present but did not vote" and "excused absent" both
-# count as non-attendance.
+# at the time — the per-page fetch and the reasoning behind it live in
+# app/vote_stats.py (shared with the bill page); what stays here is the SQL that
+# lets the *list* order by it.
 _ATTENDANCE_AGG = f"""
     SELECT vote_id, SUM(total) AS seats,
            SUM(COALESCE(yes, 0) + COALESCE(no, 0) + COALESCE(abstain, 0)) AS present
     FROM vote_faction_stat
-    WHERE faction_name NOT LIKE '{_FACTION_TOTALS_LIKE}'
+    WHERE faction_name NOT LIKE '{FACTION_TOTALS_LIKE}'
     GROUP BY vote_id
 """
 _ATTENDANCE_JOIN = f"LEFT JOIN ({_ATTENDANCE_AGG}) att ON att.vote_id = v.id"
 _ATTENDANCE_RATIO = "(att.present * 1.0 / NULLIF(att.seats, 0))"
 
-# Cross-voting per vote: how many MPs broke their own faction's line. The number
-# is the upstream per-faction "frakcióval szemben" figure ("3 fő") summed over the
-# real factions — the Assembly's own count, never a reconstruction. Deriving it
-# from the tallies instead (minority against the faction's majority position)
-# reproduces it for only ~82% of the non-zero faction rows, because the line a
-# faction is measured against is its *declared* position, not its arithmetic
-# majority — so nothing here ever names an individual MP as having crossed.
-# CAST parses the leading integer of "3 fő"; a row whose figure is missing reads
-# as 0, and no real faction row is missing one (verified across the corpus).
-_DEFECTORS_SUM = "SUM(CAST(COALESCE(fs.against_faction, '') AS INTEGER))"
-_CAST_SUM = "SUM(COALESCE(fs.yes, 0) + COALESCE(fs.no, 0) + COALESCE(fs.abstain, 0))"
-
-# A presence check puts no question to the House, so "voting against your faction"
-# there marks arriving late, not dissent — and its raw figures are large enough to
-# swamp every real division. Such votes carry no cross-voting number at all
-# (rather than a misleading one), which also sorts them out of the ranking.
-_PRESENCE_CHECK_MODE = "Jelenlét megállapítás"
-_CROSSVOTING_SCOPE = (f"fs.faction_name NOT LIKE '{_FACTION_TOTALS_LIKE}' "
-                      f"AND COALESCE(cv_v.voting_mode, '') <> '{_PRESENCE_CHECK_MODE}'")
+# Cross-voting per vote: how many MPs broke their own faction's line (again, the
+# figure itself and its caveats live in app/vote_stats.py) — this is only the
+# aggregate the list can order by.
 _CROSSVOTING_AGG = f"""
-    SELECT fs.vote_id, {_DEFECTORS_SUM} AS defectors, {_CAST_SUM} AS cast_votes
+    SELECT fs.vote_id, {DEFECTORS_SUM} AS defectors, {CAST_SUM} AS cast_votes
     FROM vote_faction_stat fs
     JOIN vote cv_v ON cv_v.id = fs.vote_id
-    WHERE {_CROSSVOTING_SCOPE}
+    WHERE {CROSSVOTING_SCOPE}
     GROUP BY fs.vote_id
 """
 _CROSSVOTING_JOIN = f"LEFT JOIN ({_CROSSVOTING_AGG}) cv ON cv.vote_id = v.id"
@@ -126,63 +105,6 @@ def _subjects_for(db: sqlite3.Connection, vote_ids: list[str]) -> dict[str, list
             "title": r["title"],
         })
     return out
-
-
-def _attendance_for(db: sqlite3.Connection, vote_ids: list[str]) -> dict[str, dict]:
-    """Attendance (votes cast / seats) for the listed votes, keyed by vote id.
-
-    Fetched for one page only, like the subjects above: the list query itself
-    stays a plain scan of `vote` unless the *ordering* needs the aggregate."""
-    if not vote_ids:
-        return {}
-    ph = ",".join("?" * len(vote_ids))
-    rows = db.execute(
-        f"""SELECT vote_id, SUM(total) AS seats,
-                   SUM(COALESCE(yes, 0) + COALESCE(no, 0) + COALESCE(abstain, 0)) AS present
-            FROM vote_faction_stat
-            WHERE vote_id IN ({ph}) AND faction_name NOT LIKE ?
-            GROUP BY vote_id""", [*vote_ids, _FACTION_TOTALS_LIKE]).fetchall()
-    return {r["vote_id"]: {
-        "present": r["present"], "seats": r["seats"],
-        "attendance": (round(r["present"] / r["seats"], 4) if r["seats"] else None),
-    } for r in rows}
-
-
-def _crossvoting_for(db: sqlite3.Connection, vote_ids: list[str]) -> dict[str, dict]:
-    """Cross-voting (MPs who broke their faction's line) for the listed votes.
-
-    Fetched per page like the subjects and the attendance above. Each entry
-    carries the house-wide count, its share of the votes cast, and the factions
-    that actually broke — so a card can name *which* groups split without a
-    per-MP scan (and without claiming which members did, see _DEFECTORS_SUM)."""
-    if not vote_ids:
-        return {}
-    ph = ",".join("?" * len(vote_ids))
-    rows = db.execute(
-        f"""SELECT fs.vote_id, fs.faction_id, fs.faction_name, f.color AS faction_color,
-                   CAST(COALESCE(fs.against_faction, '') AS INTEGER) AS defectors,
-                   COALESCE(fs.yes, 0) + COALESCE(fs.no, 0) + COALESCE(fs.abstain, 0) AS cast_votes
-            FROM vote_faction_stat fs
-            JOIN vote cv_v ON cv_v.id = fs.vote_id
-            LEFT JOIN faction f ON f.id = fs.faction_id
-            WHERE fs.vote_id IN ({ph}) AND {_CROSSVOTING_SCOPE}
-            ORDER BY fs.ord""", vote_ids).fetchall()
-    out: dict[str, dict] = {}
-    for r in rows:
-        e = out.setdefault(r["vote_id"], {"defectors": 0, "cast": 0, "factions": []})
-        e["defectors"] += r["defectors"]
-        e["cast"] += r["cast_votes"]
-        if r["defectors"]:
-            e["factions"].append({
-                "faction_id": r["faction_id"], "name": r["faction_name"],
-                "color": r["faction_color"], "defectors": r["defectors"],
-            })
-    return {vid: {
-        "defectors": e["defectors"],
-        "defector_share": (round(e["defectors"] / e["cast"], 4) if e["cast"] else None),
-        # Largest breach first, so a card truncating the list keeps the headline.
-        "defector_factions": sorted(e["factions"], key=lambda x: -x["defectors"]),
-    } for vid, e in out.items()}
 
 
 def _vote_brief(r: sqlite3.Row) -> dict:
@@ -312,8 +234,8 @@ def list_votes(
             ORDER BY {_VOTE_SORTS[sort]} LIMIT :limit OFFSET :offset""",
         {**params, "limit": limit, "offset": offset}).fetchall()
     subjects = _subjects_for(db, [r["id"] for r in rows])
-    attendance = _attendance_for(db, [r["id"] for r in rows])
-    crossvoting = _crossvoting_for(db, [r["id"] for r in rows])
+    attendance = attendance_for(db, [r["id"] for r in rows])
+    crossvoting = crossvoting_for(db, [r["id"] for r in rows])
 
     # When scoped to an MP, resolve their name (for the list's header) and their
     # own cast value per listed vote (for a chip beside each) in one pass — a
@@ -332,14 +254,10 @@ def list_votes(
                     WHERE person_id=? AND vote_id IN ({ph})""",
                 [person, *ids]).fetchall()}
 
-    _NO_ATTENDANCE = {"present": None, "seats": None, "attendance": None}
-    _NO_CROSSVOTING = {"defectors": None, "defector_share": None,
-                       "defector_factions": []}
-
     def _vote_out(r: sqlite3.Row) -> dict:
         out = {**_vote_brief(r), "subjects": subjects.get(r["id"], []),
-               **attendance.get(r["id"], _NO_ATTENDANCE),
-               **crossvoting.get(r["id"], _NO_CROSSVOTING)}
+               **attendance.get(r["id"], NO_ATTENDANCE),
+               **crossvoting.get(r["id"], NO_CROSSVOTING)}
         if person:
             pv = person_vals.get(r["id"])
             out["person_value"] = pv["value"] if pv else None
@@ -425,7 +343,7 @@ def vote_cohesion(
     where.append(f"v.result NOT IN ({qvals})")
     # Drop the upstream whole-house "Összesen (…)" summary pseudo-row.
     where.append("fs.faction_name NOT LIKE :totals")
-    params["totals"] = _FACTION_TOTALS_LIKE
+    params["totals"] = FACTION_TOTALS_LIKE
     where_sql = " AND ".join(where)
 
     rows = db.execute(
@@ -529,9 +447,6 @@ def get_vote(vote_id: str, db: sqlite3.Connection = Depends(get_db)):
     for r in records:
         tally[r["value_code"]] = tally.get(r["value_code"], 0) + 1
 
-    _NO_CROSSVOTING = {"defectors": None, "defector_share": None,
-                       "defector_factions": []}
-
     return {
         **_vote_brief(v), "total_votes": v["total_votes"], "remark": v["remark"],
         "source_url": vote_page_url(v["id"]),      # deep link to the parlament.hu adatlap
@@ -540,7 +455,7 @@ def get_vote(vote_id: str, db: sqlite3.Connection = Depends(get_db)):
         # The same cross-voting summary the list ranks by, so a vote reached from
         # that ranking shows the number it was ranked on (the per-faction figure
         # it is summed from is in faction_stats.against_faction).
-        **_crossvoting_for(db, [vote_id]).get(vote_id, _NO_CROSSVOTING),
+        **crossvoting_for(db, [vote_id]).get(vote_id, NO_CROSSVOTING),
         "records": records,
         "tally": tally,
     }

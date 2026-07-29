@@ -18,6 +18,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ...db import get_db, like_contains, period_key, period_list, period_sql
 from ...media import per_speech_clip
 from ...query_cache import cached_aggregate
+from ...vote_stats import (NO_ATTENDANCE, NO_CROSSVOTING, attendance_for,
+                           crossvoting_for)
 
 router = APIRouter(prefix="/bills", tags=["bills"])
 
@@ -743,7 +745,12 @@ def _video_answer(db: sqlite3.Connection, bill_id: str) -> Optional[dict]:
 @router.get("/{bill_id}")
 def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     """A single bill with its full sponsor list and detail sections (events,
-    votes, committees, deadlines, documents, non-self-standing motions)."""
+    votes, committees, deadlines, documents, non-self-standing motions).
+
+    Each vote carries the same derived figures the Votes list shows on its cards:
+    attendance (`present` / `seats` / `attendance`) and cross-voting (`defectors`,
+    `defector_share`, `defector_factions`), for the votes the Votes module has
+    ingested (`vote_ref`)."""
     b = db.execute("SELECT * FROM bill WHERE id = ?", (bill_id,)).fetchone()
     if not b:
         raise HTTPException(404, "Bill not found")
@@ -778,6 +785,15 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
             """SELECT bv.vote_date, bv.subject, bv.yes, bv.no, bv.abstain,
                       bv.result, bv.vote_id, NULL AS vote_ref
                FROM bill_vote bv WHERE bv.bill_id = ? ORDER BY bv.ord""", bill_id)
+    # Attendance and cross-voting for the votes the Votes module has ingested, so
+    # a bill's tallies read like the cards in that list (same numbers, same
+    # source). A vote we hold no per-faction breakdown for keeps the null shape.
+    _ingested = [v["vote_ref"] for v in votes if v["vote_ref"]]
+    _attendance = attendance_for(db, _ingested)
+    _crossvoting = crossvoting_for(db, _ingested)
+    for v in votes:
+        v.update(_attendance.get(v["vote_ref"], NO_ATTENDANCE))
+        v.update(_crossvoting.get(v["vote_ref"], NO_CROSSVOTING))
     deadlines = _rows(db,
         "SELECT name, deadline, reference, remark FROM bill_deadline "
         "WHERE bill_id = ? ORDER BY ord", bill_id)

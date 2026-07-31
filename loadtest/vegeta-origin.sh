@@ -4,7 +4,7 @@
 # and hits the origin; run it at a fixed rate to see whether the box holds that
 # rate with a flat latency profile (good) or starts queuing (p99 climbs → knee).
 #
-#   ./loadtest/vegeta-origin.sh https://parlamonitor.hu 100 60s
+#   ./loadtest/vegeta-origin.sh https://parlamonitor.k-monitor.hu 100 60s
 #     arg1 BASE_URL   (required — no prod default, on purpose)
 #     arg2 RATE       requests/sec           (default 50)
 #     arg3 DURATION   e.g. 30s, 2m           (default 30s)

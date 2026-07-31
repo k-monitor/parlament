@@ -22,15 +22,15 @@ Install: `brew install k6` / `sudo apt install k6` / https://k6.io/docs/get-star
 k6 run loadtest/k6-loadtest.js
 
 # size the origin: all requests miss the edge; ramp to 300 actions/s, hold 8m
-BASE_URL=https://parlamonitor.hu MODE=origin PEAK_RPS=300 DURATION=8m \
+BASE_URL=https://parlamonitor.k-monitor.hu MODE=origin PEAK_RPS=300 DURATION=8m \
   k6 run loadtest/k6-loadtest.js
 
 # realistic path (lets the CDN cache the hot set) — model steady-state prod
-BASE_URL=https://parlamonitor.hu MODE=mixed PEAK_RPS=150 \
+BASE_URL=https://parlamonitor.k-monitor.hu MODE=mixed PEAK_RPS=150 \
   k6 run loadtest/k6-loadtest.js
 
 # price the multi-cycle scope: every action spans 2–3 cycles
-BASE_URL=https://parlamonitor.hu MODE=origin SCOPE=multi PEAK_RPS=100 \
+BASE_URL=https://parlamonitor.k-monitor.hu MODE=origin SCOPE=multi PEAK_RPS=100 \
   k6 run loadtest/k6-loadtest.js
 ```
 
@@ -89,10 +89,10 @@ Two things to keep in mind:
 Install: https://github.com/tsenart/vegeta
 
 ```bash
-./loadtest/vegeta-origin.sh https://parlamonitor.hu 100 60s
+./loadtest/vegeta-origin.sh https://parlamonitor.k-monitor.hu 100 60s
 
 # same, but every request spans the two newest cycles
-SCOPE=multi ./loadtest/vegeta-origin.sh https://parlamonitor.hu 100 60s
+SCOPE=multi ./loadtest/vegeta-origin.sh https://parlamonitor.k-monitor.hu 100 60s
 ```
 
 Constant 100 req/s of cache-busted search+trend for 60s. Flat latency histogram =

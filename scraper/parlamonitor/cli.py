@@ -162,7 +162,8 @@ def cmd_proceedings(args) -> None:
                     downloaded = download_period(
                         felicitas, paths, args.cycle, start, end,
                         force=args.force, resolve_offsets=not args.no_offsets,
-                        reuse_text=args.reuse_text)
+                        reuse_text=args.reuse_text,
+                        allow_renumber=args.allow_renumber)
                 except Exception as e:
                     logger.exception("Download failed")
                     errors.append(f"download: {e}")
@@ -476,6 +477,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="re-download and rebuild even if cached")
     sp.add_argument("--no-offsets", action="store_true",
                     help="skip per-speech video-offset resolution (faster)")
+    sp.add_argument("--allow-renumber", action="store_true",
+                    help="let a sitting overwrite a session key currently held by "
+                         "a different date. Refused by default: a source-side "
+                         "renumbering silently destroys the day the key meant. "
+                         "Use (with --force) only to repair a mis-numbered cycle")
     sp.add_argument("--reuse-text", action="store_true",
                     help="with --force: re-list every day but keep the speech "
                          "text/offsets already downloaded, fetching only speeches "

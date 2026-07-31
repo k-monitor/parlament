@@ -35,11 +35,11 @@
 //   k6 run loadtest/k6-loadtest.js
 //
 //   # size the origin: ramp arrival rate until p95 crosses the threshold
-//   BASE_URL=https://parlamonitor.hu MODE=origin PEAK_RPS=300 DURATION=8m \
+//   BASE_URL=https://parlamonitor.k-monitor.hu MODE=origin PEAK_RPS=300 DURATION=8m \
 //     k6 run loadtest/k6-loadtest.js
 //
 //   # what does a multi-cycle scope cost? force every action to span cycles
-//   BASE_URL=https://parlamonitor.hu MODE=origin SCOPE=multi PEAK_RPS=100 \
+//   BASE_URL=https://parlamonitor.k-monitor.hu MODE=origin SCOPE=multi PEAK_RPS=100 \
 //     k6 run loadtest/k6-loadtest.js
 //
 // ENV KNOBS:

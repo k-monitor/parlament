@@ -56,7 +56,8 @@ from .config import Paths, session_id, timing_backend as _default_timing_backend
 from .config import whisper_language, whisper_model
 from .felicitas import FelicitasClient
 from .officeholders.scrape import fetch_office_holders, save_office_holders
-from .proceedings.scrape import _write_json, scrape_day, sitting_number
+from .proceedings.scrape import (_write_json, cycle_days, renumbered, scrape_day,
+                                 sitting_number)
 from .proceedings.transform import transform_day
 from .representatives.scrape import (fetch_missing_photos, fetch_representatives,
                                      save_representatives)
@@ -200,7 +201,7 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
     Changed days are batch-transcribed with Whisper (forced-alignment timing, TIM-1)
     before transform; a day with no transcription degrades to positional timing."""
     start, end = _cycle_range(felicitas, cycle)
-    days = felicitas.session_days(cycle, start, end)
+    days = cycle_days(felicitas, cycle, start, end)
     if not days:
         logger.info("No sitting days for cycle %s in [%s, %s]", cycle, start, end)
         return []
@@ -208,11 +209,21 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
     proc = state.setdefault("proceedings", {})
     changed: list[tuple[str, dict]] = []      # (session, bundle) to (re)build
 
-    for day in sorted(days, key=lambda d: d.get("date") or ""):
+    for day in days:
         sitting = sitting_number(day)
         if not sitting:
             continue
         session = session_id(cycle, sitting)
+        # A session key that already holds a different date means the source has
+        # renumbered the cycle under us; scraping on would overwrite that day with
+        # this one (the 2026-07 outage). Leave it alone and shout — repairing a
+        # real renumbering is a deliberate `proceedings --allow-renumber` run.
+        held = renumbered(paths.raw_day(session), day.get("date"))
+        if held:
+            logger.error("Refusing to renumber %s: it holds %s but the source now "
+                         "numbers %s as ülésnap %d — skipping this day.",
+                         session, held, day.get("date"), sitting)
+            continue
         prev = proc.get(session) or {}
         raw_exists = paths.raw_day(session).exists()
         # Backfill the has_text signal for a pre-text-lag sync-state from the raw

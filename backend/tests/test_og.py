@@ -38,7 +38,7 @@ def og_client(tmp_path, db_path, monkeypatch):
     # app.config.settings to a NEW object, so patching that import here could
     # miss the one og reads — patch og.settings directly.
     monkeypatch.setattr(og.settings, "frontend_dist", str(dist))
-    monkeypatch.setattr(og.settings, "site_url", "https://parlamonitor.hu")
+    monkeypatch.setattr(og.settings, "site_url", "https://parlamonitor.k-monitor.hu")
     monkeypatch.setattr(db_module.settings, "db_path", str(db_path))
     monkeypatch.setattr(og, "_shell_cache", None)  # force a re-read of our shell
 
@@ -85,7 +85,7 @@ def test_render_escapes_and_deduplicates(og_client):
     # shell title/description must be dropped (not duplicated).
     from starlette.requests import Request
     scope = {"type": "http", "headers": [], "method": "GET", "scheme": "https",
-             "server": ("parlamonitor.hu", 443), "path": "/"}
+             "server": ("parlamonitor.k-monitor.hu", 443), "path": "/"}
     resp = og.render(Request(scope), title='A "híres" mondat',
                      description='Ő azt mondta: "igen".')
     html = resp.body.decode()
@@ -105,7 +105,7 @@ def test_share_specific_sentence_shows_quote_and_speaker(og_client):
     assert "Fidesz" in m["og:title"]
     assert "ágazati fejlesztés".lower() in m["og:description"].lower()
     assert m["og:type"] == "article"
-    assert m["og:url"] == "https://parlamonitor.hu/proceedings/43001-1?s=1"
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/proceedings/43001-1?s=1"
     assert m["og:site_name"] == "Parlamonitor"
 
 
@@ -114,7 +114,7 @@ def test_share_whole_speech_uses_opening_and_strips_label(og_client):
     m = _meta(r.text)
     # First sentence has no caps label here, so both opening sentences appear.
     assert "költségvetés" in m["og:description"].lower()
-    assert m["og:url"] == "https://parlamonitor.hu/proceedings/43001-1"
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/proceedings/43001-1"
 
 
 def test_share_video_only_speech_has_no_quote_but_still_a_card(og_client):
@@ -144,7 +144,7 @@ def test_share_profile_card(og_client):
     m = _meta(r.text)
     assert "Kovács Béla" in m["og:title"]
     assert m["og:type"] == "profile"
-    assert m["og:url"] == "https://parlamonitor.hu/representatives/k001"
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/representatives/k001"
     # k001 has no photo in the fixture -> default OG image + large card.
     assert m["og:image"].endswith("/og-image.png")
 
@@ -158,14 +158,14 @@ def test_share_representatives_index_is_not_hijacked(og_client):
     assert m["og:type"] == "website"  # the default card, not "profile"
     assert m["og:title"] == "Parlamonitor"
     assert m["og:image"].endswith("/og-image.png")
-    assert m["og:url"] == "https://parlamonitor.hu/representatives/factions"
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/representatives/factions"
 
 
 def test_share_session_card(og_client):
     r = og_client.get("/sessions/43001")
     m = _meta(r.text)
     assert "ülésnap" in m["og:title"].lower()
-    assert m["og:url"] == "https://parlamonitor.hu/sessions/43001"
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/sessions/43001"
 
 
 def test_share_bill_card(og_client):
@@ -180,7 +180,7 @@ def test_share_bill_card(og_client):
     assert "tárgysorozatban" in m["og:description"]
     assert "2026. május 10." in m["og:description"]
     assert m["og:type"] == "article"
-    assert m["og:url"] == "https://parlamonitor.hu/bills/bill-uuid-1"
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/bills/bill-uuid-1"
 
 
 def test_share_document_card_uses_its_own_path(og_client):
@@ -190,7 +190,7 @@ def test_share_document_card_uses_its_own_path(og_client):
     assert "I/5" in m["og:title"]
     assert "közlekedésről" in m["og:title"]
     # The card's canonical URL matches the path the link was shared on.
-    assert m["og:url"] == "https://parlamonitor.hu/documents/doc-uuid-3"
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/documents/doc-uuid-3"
 
 
 def test_share_unknown_bill_falls_back_to_default_card(og_client):
@@ -215,7 +215,7 @@ def test_home_and_list_routes_get_default_card(tmp_path, db_path, monkeypatch):
     (dist / "index.html").write_text(SHELL, encoding="utf-8")
 
     monkeypatch.setattr(og.settings, "frontend_dist", str(dist))
-    monkeypatch.setattr(og.settings, "site_url", "https://parlamonitor.hu")
+    monkeypatch.setattr(og.settings, "site_url", "https://parlamonitor.k-monitor.hu")
     monkeypatch.setattr(db_module.settings, "db_path", str(db_path))
     monkeypatch.setattr(og, "_shell_cache", None)  # force a re-read of our shell
 
@@ -230,8 +230,8 @@ def test_home_and_list_routes_get_default_card(tmp_path, db_path, monkeypatch):
     m = _meta(client.get("/").text)
     assert m["og:title"] == "Parlamonitor"
     assert m["og:type"] == "website"
-    assert m["og:image"] == "https://parlamonitor.hu/og-image.png"
-    assert m["og:url"] == "https://parlamonitor.hu/"
+    assert m["og:image"] == "https://parlamonitor.k-monitor.hu/og-image.png"
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/"
     assert m["twitter:card"] == "summary_large_image"
 
     # A list route with no card of its own (the representatives index) resolves
@@ -239,7 +239,7 @@ def test_home_and_list_routes_get_default_card(tmp_path, db_path, monkeypatch):
     m2 = _meta(client.get("/representatives").text)
     assert m2["og:title"] == "Parlamonitor"
     assert m2["og:image"].endswith("/og-image.png")
-    assert m2["og:url"] == "https://parlamonitor.hu/representatives"
+    assert m2["og:url"] == "https://parlamonitor.k-monitor.hu/representatives"
 
     # A real asset miss still 404s (never the shell) so the edge can't cache
     # HTML under a hashed-asset URL.

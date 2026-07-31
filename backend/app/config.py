@@ -149,7 +149,7 @@ class Settings:
     enabled_modules: list[str] = field(default_factory=lambda: _enabled_modules())
     frontend_dist: str | None = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_FRONTEND_DIST") or None)
-    # Canonical public base URL (e.g. "https://parlamonitor.hu"), used to build
+    # Canonical public base URL (e.g. "https://parlamonitor.k-monitor.hu"), used to build
     # the absolute og:url / og:image links in the server-rendered share cards
     # (og.py). Behind a reverse proxy the request's own scheme/host is often wrong
     # (http, internal hostname), so this env pins the outward-facing origin; when

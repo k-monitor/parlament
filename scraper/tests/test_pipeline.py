@@ -5,6 +5,7 @@ the JSON→record transform, sentence↔time mapping, and the helper logic — a
 offline, no network. Run with ``pytest`` from the ``scraper/`` directory.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -16,7 +17,8 @@ from parlamonitor.names import build_person, split_name, split_speaker
 from parlamonitor.segment import html_to_text, split_sentences
 from parlamonitor.timing import apply_timing, smil_span_seconds
 from parlamonitor.proceedings.transform import transform_day
-from parlamonitor.proceedings.scrape import (_awaiting_content, scrape_day,
+from parlamonitor.proceedings.scrape import (_awaiting_content, cycle_days,
+                                             number_days, renumbered, scrape_day,
                                              sitting_number)
 
 
@@ -649,6 +651,111 @@ def test_awaiting_content(tmp_path):
 
 def test_sitting_number_from_felirat():
     assert sitting_number({"datum_felirat": "2026.06.23.(11)"}) == 11
+
+
+# --- cycle-wide ülésnap numbering (session-key stability) -------------------
+
+def _cycle43_days():
+    """The shape parlament.hu returns for cycle 43: two ülésszaks, and per-day
+    ordinals (``day_in_session``/``day_in_ules``) that restart with each of them."""
+    spring = ["2026-05-09", "2026-05-12", "2026-05-26", "2026-05-27",
+              "2026-06-01", "2026-06-08", "2026-06-09", "2026-06-15"]
+    summer = ["2026-06-16", "2026-06-22", "2026-06-23", "2026-06-29", "2026-06-30"]
+    days = []
+    for name, dates in (("2026. tavaszi", spring), ("2026. nyári", summer)):
+        for i, date in enumerate(dates, 1):
+            days.append({"uuid": f"u-{date}", "date": date, "datum_felirat": None,
+                         "ulesszak": name, "day_in_session": i, "day_in_ules": 1})
+    return days
+
+
+def test_number_days_is_cycle_wide_when_the_source_ordinal_is_missing():
+    # The 2026-07 outage: datumFelirat came back empty and day_in_session (which
+    # restarts at 1 each ülésszak) was used as the cycle key, so the summer days
+    # were renumbered 1..N and overwrote the spring ones.
+    numbered = number_days(_cycle43_days())
+    assert [d["sitting"] for d in numbered] == list(range(1, 14))
+    by_date = {d["date"]: d["sitting"] for d in numbered}
+    assert by_date["2026-06-16"] == 9      # NOT 1, its day_in_session
+    assert by_date["2026-06-30"] == 13     # NOT 5
+
+
+def test_number_days_prefers_the_published_ordinal():
+    days = [{"uuid": "b", "date": "2026-05-12", "datum_felirat": "2026.05.12.(2)"},
+            {"uuid": "a", "date": "2026-05-09", "datum_felirat": "2026.05.09.(1)"}]
+    assert [d["sitting"] for d in number_days(days)] == [1, 2]
+
+
+def test_number_days_ignores_a_partial_published_ordinal():
+    # Half a numbering is worse than none: mixing the two sources can hand two
+    # days the same ordinal. Date order wins for the whole list instead.
+    days = [{"uuid": "a", "date": "2026-05-09", "datum_felirat": "2026.05.09.(1)"},
+            {"uuid": "b", "date": "2026-05-12", "datum_felirat": None},
+            {"uuid": "c", "date": "2026-05-26", "datum_felirat": None}]
+    assert [d["sitting"] for d in number_days(days)] == [1, 2, 3]
+
+
+class _DaysStub:
+    """Felicitas stub exposing only what :func:`cycle_days` needs."""
+
+    def __init__(self, days, start="2026-05-01", end=None):
+        self.days = days
+        self.ranges = {43: {"start": start, "end": end}}
+        self.asked = None
+
+    def cycle_ranges(self):
+        return self.ranges
+
+    def session_days(self, cycle, date_from, date_to):
+        self.asked = (date_from, date_to)
+        return [d for d in self.days if date_from <= d["date"] <= date_to]
+
+
+def test_cycle_days_numbers_over_the_whole_cycle_not_the_window():
+    """Scraping a narrow window must not renumber it from 1 — the ordinals are
+    positions in the cycle, so the query widens to the cycle before numbering."""
+    stub = _DaysStub(_cycle43_days())
+    days = cycle_days(stub, 43, "2026-06-16", "2026-06-30")
+    assert stub.asked == ("2026-05-01", "2026-06-30")
+    assert [(d["date"], d["sitting"]) for d in days] == [
+        ("2026-06-16", 9), ("2026-06-22", 10), ("2026-06-23", 11),
+        ("2026-06-29", 12), ("2026-06-30", 13)]
+
+
+def test_download_period_refuses_to_renumber_over_an_existing_day(tmp_path,
+                                                                  monkeypatch):
+    """The archive is never silently overwritten: if the cycle's day list has
+    shifted (here the earlier days vanished from it, so 2026-06-16 is numbered 1),
+    the day whose key is already taken is skipped until --allow-renumber."""
+    from parlamonitor import config as pm_config
+    from parlamonitor.proceedings import scrape as pm_scrape
+
+    monkeypatch.setattr(pm_scrape, "scrape_day",
+                        lambda felicitas, cycle, day, **kw: {
+                            "date": day["date"], "speeches": [{"text_html": "x"}],
+                            "video": {}})
+    paths = pm_config.Paths(tmp_path)
+    paths.ensure()
+    paths.raw_day("43001").write_text(
+        json.dumps({"date": "2026-05-09", "speeches": [{"text_html": "spring"}]}))
+
+    stub = _DaysStub([{"uuid": "u", "date": "2026-06-16", "datum_felirat": None}],
+                     start="2026-06-16")
+    assert pm_scrape.download_period(stub, paths, 43, "2026-06-16", "2026-06-16",
+                                     force=True) == []
+    assert json.loads(paths.raw_day("43001").read_text())["date"] == "2026-05-09"
+
+    assert pm_scrape.download_period(stub, paths, 43, "2026-06-16", "2026-06-16",
+                                     force=True, allow_renumber=True) == ["43001"]
+    assert json.loads(paths.raw_day("43001").read_text())["date"] == "2026-06-16"
+
+
+def test_renumbered_flags_a_key_held_by_another_date(tmp_path):
+    raw = tmp_path / "raw-43001-day.json"
+    raw.write_text(json.dumps({"date": "2026-05-09", "speeches": []}))
+    assert renumbered(raw, "2026-06-16") == "2026-05-09"
+    assert renumbered(raw, "2026-05-09") is None
+    assert renumbered(tmp_path / "missing.json", "2026-05-09") is None
 
 
 # --- complete day speech listing (agenda listing + flat roster) -------------

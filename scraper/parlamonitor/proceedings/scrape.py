@@ -37,16 +37,101 @@ from ..felicitas import FelicitasClient
 
 logger = logging.getLogger(__name__)
 
-# The cycle-wide ülésnap ordinal is the parenthesised number in datumFelirat,
-# e.g. "2026.06.09.(7)" → sitting 7 (matches the speech caption "7. ülésnap").
+# The cycle-wide ülésnap ordinal is what the session key is built from, so it must
+# be STABLE for the life of a cycle: change a day's number and it silently becomes a
+# different session (new id, and the id it took over gets overwritten).
+#
+# parlament.hu publishes that ordinal as the parenthesised number in datumFelirat,
+# e.g. "2026.06.09.(7)" → sitting 7 (matches the speech caption "7. ülésnap"). That
+# field can come back empty (it did for the whole of cycle 43 in 2026-07), so the
+# ordinal is otherwise derived from the day's position in the cycle's date-ordered
+# day list — which is exactly what the published numbering counts.
+#
+# NEVER fall back to the per-day fields ``sorszamUlesszakonBelul`` /
+# ``sorszamUlesenBelul``: both restart at 1 with each ülésszak (spring/summer/…),
+# so using one as a cycle-wide key renumbers the cycle mid-flight. That is the
+# 2026-07 outage: the summer session's days were renumbered 1..16, overwrote the
+# spring session's 43001..43016, and left the old 43017..43024 behind as duplicates.
 _FELIRAT_NUM_RE = re.compile(r"\((\d+)\)\s*$")
 
 
-def sitting_number(day: dict) -> int | None:
+def _felirat_number(day: dict) -> int | None:
     m = _FELIRAT_NUM_RE.search(day.get("datum_felirat") or "")
-    if m:
-        return int(m.group(1))
-    return day.get("day_in_session")
+    return int(m.group(1)) if m else None
+
+
+def _day_order_key(day: dict) -> tuple:
+    return (day.get("date") or "", day.get("day_in_ules") or 0,
+            day.get("uuid") or "")
+
+
+def number_days(days: list[dict]) -> list[dict]:
+    """Stamp every day of a **whole cycle** with its cycle-wide ülésnap ordinal
+    (``day["sitting"]``), date-ordered, and return the list in that order.
+
+    Must be given the cycle's complete day list — an ordinal is a position in it,
+    so numbering a sub-range would produce ids that collide with the real ones.
+    Use :func:`cycle_days` rather than calling this on a hand-picked window.
+
+    The source's own ordinal (datumFelirat) wins when it is present for every day
+    and unambiguous, so a cycle keeps the exact numbering it was first built with.
+    """
+    ordered = sorted(days, key=_day_order_key)
+    published = [_felirat_number(d) for d in ordered]
+    if all(published) and len(set(published)) == len(published):
+        numbers = published
+    else:
+        if any(published):
+            logger.warning("datumFelirat carries an ülésnap ordinal for only "
+                           "%d/%d days; numbering the cycle by date order instead",
+                           sum(1 for n in published if n), len(published))
+        numbers = list(range(1, len(ordered) + 1))
+    for day, n in zip(ordered, numbers):
+        day["sitting"] = n
+    return ordered
+
+
+def cycle_days(felicitas: FelicitasClient, cycle: int, start: str,
+               end: str) -> list[dict]:
+    """The cycle's sitting days in ``[start, end]``, each numbered (``"sitting"``).
+
+    Numbering always spans the whole cycle — a narrowed window is applied only
+    *after* the ordinals are assigned — so scraping a sub-range can never shift
+    them (see :func:`number_days`)."""
+    rng = felicitas.cycle_ranges().get(cycle) or {}
+    num_start = min(start, rng.get("start") or start)
+    num_end = max(end, rng.get("end") or end)
+    days = number_days(felicitas.session_days(cycle, num_start, num_end))
+    return [d for d in days if start <= (d.get("date") or "") <= end]
+
+
+def sitting_number(day: dict) -> int | None:
+    """The cycle-wide ülésnap ordinal of a day numbered by :func:`number_days`,
+    falling back to the source's own ordinal for a day that was never numbered."""
+    n = day.get("sitting")
+    if isinstance(n, int) and n > 0:
+        return n
+    return _felirat_number(day)
+
+
+def held_date(raw_path) -> str | None:
+    """The sitting date the raw file at ``raw_path`` already holds, if any."""
+    try:
+        return (json.loads(raw_path.read_text()) or {}).get("date")
+    except (OSError, ValueError):
+        return None
+
+
+def renumbered(raw_path, date: str | None) -> str | None:
+    """The date ``raw_path`` holds when that is NOT ``date`` — i.e. the source now
+    gives this session key to a *different* sitting day.
+
+    The guard against a repeat of the 2026-07 renumbering outage: writing through
+    such a mismatch destroys the day the key used to mean, so callers refuse and
+    say so instead, and a genuine renumbering has to be waved through explicitly.
+    """
+    held = held_date(raw_path) if raw_path.exists() else None
+    return held if (held and date and held != date) else None
 
 
 def _now_iso() -> str:
@@ -247,7 +332,8 @@ def _awaiting_content(raw_path) -> bool:
 def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
                     start: str, end: str, *, force: bool = False,
                     resolve_offsets: bool = True,
-                    reuse_text: bool = False) -> list[str]:
+                    reuse_text: bool = False,
+                    allow_renumber: bool = False) -> list[str]:
     """Download every sitting day of ``cycle`` in ``[start, end]`` to raw files.
 
     Returns the list of session keys that were (re)written this run. Days still
@@ -257,8 +343,12 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
     ``reuse_text`` re-lists every day but keeps the speech text/offsets already in
     its raw file (:func:`_reuse_detail`), so the run only pays for the speeches it
     did not have. That is the cheap way to backfill an archive after a
-    listing-completeness fix; drop it when the point is to re-download."""
-    days = felicitas.session_days(cycle, start, end)
+    listing-completeness fix; drop it when the point is to re-download.
+
+    ``allow_renumber`` waves through a day whose session key is already held by a
+    *different* date (:func:`renumbered`) — needed to repair a cycle numbered
+    wrongly, refused by default so a source glitch cannot overwrite the archive."""
+    days = cycle_days(felicitas, cycle, start, end)
     if not days:
         logger.info("No session days for cycle %s in [%s, %s]", cycle, start, end)
         return []
@@ -269,7 +359,7 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
     latest_date = max((d.get("date") or "") for d in days)
     latest_is_live = not _past_text_grace(latest_date)
     written: list[str] = []
-    for day in sorted(days, key=lambda d: d.get("date") or ""):
+    for day in days:
         sitting = sitting_number(day)
         if not sitting:
             logger.warning("Skipping day with no resolvable ülésnap number: %s",
@@ -277,6 +367,14 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
             continue
         session = session_id(cycle, sitting)
         raw_path = paths.raw_day(session)
+        if not allow_renumber:
+            held = renumbered(raw_path, day.get("date"))
+            if held:
+                logger.error("Refusing to renumber %s: it holds %s but the source "
+                             "now numbers %s as ülésnap %d. Nothing written — check "
+                             "the numbering, then re-run with --allow-renumber.",
+                             session, held, day.get("date"), sitting)
+                continue
         is_latest = latest_is_live and (day.get("date") == latest_date)
         if (raw_path.exists() and not force and not is_latest
                 and not _awaiting_content(raw_path)):

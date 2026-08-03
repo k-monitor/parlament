@@ -13,6 +13,9 @@ assert *which* sittings get re-scraped on each poll:
 * a day first seen **video-only** (no transcript yet) keeps being cheaply
   re-checked and is re-scraped once its text is published days later — even after
   it is no longer the latest day (the text-lag fix);
+* a day whose video is only **partly segmented** (text complete, but the tail of
+  its speeches untimed) is chased the same way until upstream finishes it, and
+  given up on after ``MEDIA_CHASE_DAYS`` (the media-lag fix);
 * an **announced day with no speeches** is ingested (a scheduled placeholder), not
   dropped.
 """
@@ -20,6 +23,7 @@ assert *which* sittings get re-scraped on each poll:
 from __future__ import annotations
 
 import collections
+from datetime import datetime, timedelta, timezone
 import json
 
 import pytest
@@ -255,6 +259,82 @@ def test_announced_day_with_no_speeches_is_ingested_then_filled(patched):
     s2 = _run(fel, paths)
     assert scraped == ["43002"]
     assert s2["sessions"] == ["43002"]
+
+
+# --- partly-segmented video (media lag) ------------------------------------
+#
+# The mirror image of the text lag: parlament.hu also publishes the PER-SPEECH
+# video timings in instalments. 2026-07-27 arrived with its transcript complete but
+# only the first 110 of 166 speeches timed — and because "done" was judged on text
+# alone, that day was frozen half-timed the moment a newer sitting appeared.
+
+def _recent(days_ago: int) -> str:
+    return (datetime.now(timezone.utc).date() - timedelta(days=days_ago)).isoformat()
+
+
+def _partly_timed_pair(untimed_dur=None, old=False):
+    """A two-day fake where the OLDER day (u1, never the latest) has all its text
+    but an untimed tail, and u2 is complete. ``old`` dates u1 past MEDIA_CHASE_DAYS."""
+    d1 = _recent(sync.MEDIA_CHASE_DAYS + 5) if old else _recent(3)
+    return FakeFelicitas(
+        days=[_day("u1", d1, 1, 3600), _day("u2", _recent(2), 2, 1800)],
+        speeches={"u1": [_sp("a", 10, 1), _sp("a2", untimed_dur, 2)],
+                  "u2": [_sp("b", 20, 1)]})
+
+
+def test_partly_timed_day_is_chased_until_the_rest_is_timed(patched):
+    """A past day whose tail has no per-speech timing keeps being re-listed, and is
+    re-scraped as soon as upstream segments the rest — even though its text (the
+    old completeness signal) has been in all along."""
+    paths, scraped = patched
+    fel = _partly_timed_pair()
+    _run(fel, paths)
+
+    # Idle poll: u1 is still short of its timings, so it is re-listed (one cheap
+    # request) — and NOT text-probed, since its transcript is already in.
+    fel.calls.clear()
+    scraped.clear()
+    assert _run(fel, paths)["sessions"] == []
+    assert scraped == []
+    assert fel.calls["day_speeches"] == 2        # u1 (untimed tail) + u2 (latest)
+    assert fel.calls["speech_text"] == 0
+
+    # Upstream finishes segmenting u1's recording → exactly u1 is re-scraped.
+    fel.speeches["u1"][1]["duration"] = 12
+    scraped.clear()
+    assert _run(fel, paths)["sessions"] == ["43001"]
+    assert scraped == ["43001"]
+
+    # Complete on both counts now: the next poll leaves it alone entirely.
+    fel.calls.clear()
+    scraped.clear()
+    _run(fel, paths)
+    assert scraped == []
+    assert fel.calls["day_speeches"] == 1        # only u2, the latest day
+
+
+def test_fully_timed_day_is_not_re_listed(patched):
+    """The control: when every speech is timed, a past day costs no request at all
+    — the chase must not turn every finished day into a per-poll re-listing."""
+    paths, scraped = patched
+    fel = _partly_timed_pair(untimed_dur=10)
+    _run(fel, paths)
+
+    fel.calls.clear()
+    _run(fel, paths)
+    assert fel.calls["day_speeches"] == 1        # only u2, the latest day
+
+
+def test_long_unfinished_day_stops_being_chased(patched):
+    """A day upstream never finished segmenting is given up on after
+    MEDIA_CHASE_DAYS, so it doesn't cost a request on every poll forever (SCR-4)."""
+    paths, scraped = patched
+    fel = _partly_timed_pair(old=True)
+    _run(fel, paths)
+
+    fel.calls.clear()
+    _run(fel, paths)
+    assert fel.calls["day_speeches"] == 1        # only u2; u1 aged out of the chase
 
 
 # --- office holders (tisztségviselők) --------------------------------------

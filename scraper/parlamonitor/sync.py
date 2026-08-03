@@ -75,6 +75,13 @@ DEFAULT_REPS_MAX_AGE = 12 * 3600
 # and shown as "upcoming" (a day comes onto the schedule before its date).
 UPCOMING_HORIZON_DAYS = 21
 
+# How long after a sitting we keep re-listing it to collect per-speech video
+# timings that upstream published only partly (see _media_complete). Generous
+# next to the observed lag (hours to a few days), but bounded: past it, a day that
+# is still short of 100% is one parlament.hu never finished segmenting, and
+# chasing it forever would cost a request per poll per day for nothing.
+MEDIA_CHASE_DAYS = 30
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -136,17 +143,35 @@ def _bundle_has_text(bundle: dict) -> bool:
     return any(s.get("text_html") for s in (bundle.get("speeches") or []))
 
 
-def _raw_has_text(raw_path) -> bool:
-    """Whether the already-downloaded raw day file holds any transcript text.
+def _media_complete(speeches: list[dict]) -> bool:
+    """Whether EVERY listed speech carries its own slice of the day's recording.
 
-    Used to backfill the ``has_text`` signal for a sync-state written before the
-    text-lag fix, so an existing complete day is recognised as done from local data
-    (no network) rather than needlessly re-scraped on the first poll after upgrade."""
+    parlament.hu segments a day's video per speech in instalments: the sitting of
+    2026-07-27 sat for days with only its first 110 of 166 speeches timed, the rest
+    carrying a bare ``None`` (a finished day is invariably 100% — days 14-19 and 21
+    of cycle 43 all are). A day is therefore not "done" just because its text
+    arrived: the untimed tail has no duration, no clip and no position in the
+    viewer until the rest lands.
+
+    Vacuously true for a day with no speeches yet (an announced sitting has no media
+    to be missing — its day-level ``duration_s`` is what signals it has started)."""
+    return all(s.get("duration") or s.get("video_off_start") is not None
+               for s in speeches)
+
+
+def _raw_completeness(raw_path) -> tuple[bool, bool]:
+    """``(has_text, has_media)`` of the already-downloaded raw day file.
+
+    Used to backfill those signals for a sync-state written before the fix that
+    introduced them, so an existing complete day is recognised as done from local
+    data (no network) rather than needlessly re-scraped — or, worse, re-listed on
+    every poll forever — on the first polls after an upgrade."""
     try:
         raw = json.loads(raw_path.read_text())
     except (OSError, ValueError):
-        return False
-    return any(s.get("text_html") for s in (raw.get("speeches") or []))
+        return False, False
+    speeches = raw.get("speeches") or []
+    return any(s.get("text_html") for s in speeches), _media_complete(speeches)
 
 
 def _text_available(felicitas: FelicitasClient, speeches: list[dict]) -> bool:
@@ -206,6 +231,8 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
         logger.info("No sitting days for cycle %s in [%s, %s]", cycle, start, end)
         return []
     latest_date = max((d.get("date") or "") for d in days)
+    media_cutoff = (datetime.now(timezone.utc).date()
+                    - timedelta(days=MEDIA_CHASE_DAYS)).isoformat()
     proc = state.setdefault("proceedings", {})
     changed: list[tuple[str, dict]] = []      # (session, bundle) to (re)build
 
@@ -226,16 +253,19 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
             continue
         prev = proc.get(session) or {}
         raw_exists = paths.raw_day(session).exists()
-        # Backfill the has_text signal for a pre-text-lag sync-state from the raw
-        # file on disk, so a poll right after upgrade doesn't re-scrape every
-        # already-complete day (it only wants the genuinely text-less ones).
-        if "has_text" not in prev and raw_exists:
-            prev = {**prev, "has_text": _raw_has_text(paths.raw_day(session))}
+        # Backfill the completeness signals for a sync-state written before they
+        # existed, from the raw file on disk, so a poll right after upgrade doesn't
+        # re-scrape (or endlessly re-list) every already-complete day — it only
+        # wants the genuinely unfinished ones.
+        if ("has_text" not in prev or "has_media" not in prev) and raw_exists:
+            raw_text, raw_media = _raw_completeness(paths.raw_day(session))
+            prev = {"has_text": raw_text, "has_media": raw_media, **prev}
         sig = {"date": day.get("date"),
                "duration_s": day.get("duration_s"),
                "debate_s": day.get("debate_s"),
                # completeness signals; carried forward unless we (re)scrape below.
                "has_text": prev.get("has_text", False),
+               "has_media": prev.get("has_media", False),
                "speech_count": prev.get("speech_count", 0)}
         needs = (force or not raw_exists or not prev
                  or prev.get("duration_s") != sig["duration_s"]
@@ -243,14 +273,24 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
 
         is_latest = (day.get("date") == latest_date)
         # A day is re-listed (one cheap request) when it is the still-live latest
-        # sitting OR when we do not yet hold its transcript text. The latter is the
-        # fix for the text-lag bug: parlament.hu publishes the recording (and the
-        # speech listing) days before the jegyzőkönyv text, so a day first seen
-        # video-only must keep being re-checked until its text is in — not be
-        # frozen as "done" the moment the video appeared (which left it stuck
-        # text-less once a newer sitting made it no longer the latest day).
-        incomplete = bool(prev) and not prev.get("has_text")
-        if is_latest or incomplete:
+        # sitting OR when what we hold of it is unfinished. parlament.hu completes a
+        # sitting in instalments and in no fixed order, so BOTH halves have to be
+        # chased or a day freezes half-done the moment it stops being the newest:
+        #   * text — the recording and the speech listing are published days before
+        #     the jegyzőkönyv (the text-lag bug: days stuck video-only forever);
+        #   * media — the video is segmented per speech in batches, so a day can
+        #     arrive with its transcript complete but only the first N speeches
+        #     timed (2026-07-27: 110 of 166), leaving the tail with no duration and
+        #     no clip (see _media_complete).
+        # Missing media, unlike missing text, IS visible in the listing fingerprint,
+        # so no extra probe is needed once we look. Chasing it is bounded to
+        # MEDIA_CHASE_DAYS: an old day still short of 100% is one upstream never
+        # finished, and re-listing it on every poll until the end of the cycle would
+        # be a request per poll per day for nothing (SCR-4 politeness).
+        incomplete_text = bool(prev) and not prev.get("has_text")
+        incomplete_media = (bool(prev) and not prev.get("has_media")
+                            and (day.get("date") or "") >= media_cutoff)
+        if is_latest or incomplete_text or incomplete_media:
             listing = felicitas.day_speeches(day["uuid"])
             fp = _listing_fingerprint(listing)
             sig["aktus_fp"] = fp
@@ -259,7 +299,7 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
             # Speeches are listed but we still have no text: attaching text does not
             # move the listing fingerprint, so probe (one request) whether the
             # transcript has now been published and, if so, re-scrape to pull it in.
-            if (not needs and incomplete and listing
+            if (not needs and incomplete_text and listing
                     and _text_available(felicitas, listing)):
                 needs = True
         elif prev.get("aktus_fp"):
@@ -270,6 +310,7 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
             _write_json(paths.raw_day(session), bundle)
             changed.append((session, bundle))
             sig["has_text"] = _bundle_has_text(bundle)
+            sig["has_media"] = _media_complete(bundle.get("speeches") or [])
             sig["speech_count"] = len(bundle.get("speeches") or [])
             sig["aktus_fp"] = _listing_fingerprint(bundle.get("speeches") or [])
         proc[session] = sig

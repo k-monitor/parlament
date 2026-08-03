@@ -1234,7 +1234,10 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
             "WHERE sp.session_id = ? AND sp.procedural = 0 AND se.text IS NOT NULL",
             (sid,))]
 
+    done: set[str] = set()      # sittings whose rows are in (cached or computed)
+
     def _write(sid, words):
+        done.add(sid)
         if words:
             conn.executemany(
                 "INSERT INTO session_word_count(session_id, word, count, kind) "
@@ -1263,29 +1266,46 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
     # processed one sitting at a time (low memory); Modal misses are collected
     # per model and shipped in batches to that model's deployed app.
     modal_misses: dict[str, list] = {}   # model → [(sid, fp, texts)]
-    for sid in sids:
-        model = models.get(sid, settings.huspacy_model)
-        backend, method = _resolve(model)
-        texts = _fetch(sid)
-        fp = _session_fingerprint(method, texts)
-        entry = cache["sessions"].get(sid)
-        if entry and entry.get("fp") == fp:
-            _write(sid, entry["words"])
-            reused += 1
-        elif backend == "modal":
-            modal_misses.setdefault(model, []).append((sid, fp, texts))
-        elif backend == "huspacy":
-            counts, entity_words = nlp.analyze_counts(texts, model=model)
-            _emit(sid, fp, _words_map(counts, entity_words), model, method)
-        else:
-            # Regex fallback: no HuSpaCy model was used, so record it as such.
-            counts, entity_words = count_words(texts), set()
-            _emit(sid, fp, _words_map(counts, entity_words), "regex", method)
-    conn.commit()
-    for model, misses in modal_misses.items():
-        _backend, method = _resolve(model)
-        for sid, fp, words in nlp_modal.extract(misses, app_name=_modal_app_for(model)):
-            _emit(sid, fp, words, model, method)
+    try:
+        for sid in sids:
+            model = models.get(sid, settings.huspacy_model)
+            backend, method = _resolve(model)
+            texts = _fetch(sid)
+            fp = _session_fingerprint(method, texts)
+            entry = cache["sessions"].get(sid)
+            if entry and entry.get("fp") == fp:
+                _write(sid, entry["words"])
+                reused += 1
+            elif backend == "modal":
+                modal_misses.setdefault(model, []).append((sid, fp, texts))
+            elif backend == "huspacy":
+                counts, entity_words = nlp.analyze_counts(texts, model=model)
+                _emit(sid, fp, _words_map(counts, entity_words), model, method)
+            else:
+                # Regex fallback: no HuSpaCy model was used, so record it as such.
+                counts, entity_words = count_words(texts), set()
+                _emit(sid, fp, _words_map(counts, entity_words), "regex", method)
+        conn.commit()
+        for model, misses in modal_misses.items():
+            _backend, method = _resolve(model)
+            for sid, fp, words in nlp_modal.extract(misses,
+                                                    app_name=_modal_app_for(model)):
+                _emit(sid, fp, words, model, method)
+    except Exception as exc:  # enrichment must never break the build (SCR-5)
+        # The cloud is enrichment; the transcript it was derived from is the
+        # product. An NLP backend that dies mid-pass (Modal workspace disabled,
+        # network down, OOM) used to propagate out of the incremental update,
+        # which discards its whole temp DB — so a dead backend silently froze the
+        # site on stale sittings while the scrape kept succeeding. Keep what was
+        # computed and name what is left without a cloud. Those sittings do NOT
+        # refill by themselves once the backend is back: an update only revisits
+        # sittings whose source file changed, so refilling means touching their
+        # processed JSON (load_state is (mtime, size)) or a full rebuild — the
+        # same gap `--reextract-entities` covers on the entity side.
+        missing = [s for s in sids if s not in done]
+        logger.warning("word-count extraction aborted (%s); keeping what was done "
+                       "— %d sitting(s) left without a word cloud (%s)",
+                       exc, len(missing), ", ".join(missing[:10]) or "none")
 
     conn.commit()
     _flush_cache()

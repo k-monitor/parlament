@@ -687,12 +687,28 @@ def test_number_days_prefers_the_published_ordinal():
 
 
 def test_number_days_ignores_a_partial_published_ordinal():
-    # Half a numbering is worse than none: mixing the two sources can hand two
-    # days the same ordinal. Date order wins for the whole list instead.
-    days = [{"uuid": "a", "date": "2026-05-09", "datum_felirat": "2026.05.09.(1)"},
+    # A day lacking a label sorts BEFORE a labelled one here — a synthesized
+    # number could only slot in above every published ordinal, so 'b' getting
+    # slotted after 'a' but before a lower-numbered later day would go
+    # backwards. Ambiguous; date order wins for the whole list instead.
+    days = [{"uuid": "a", "date": "2026-05-09", "datum_felirat": "2026.05.09.(5)"},
             {"uuid": "b", "date": "2026-05-12", "datum_felirat": None},
-            {"uuid": "c", "date": "2026-05-26", "datum_felirat": None}]
+            {"uuid": "c", "date": "2026-05-26", "datum_felirat": "2026.05.26.(1)"}]
     assert [d["sitting"] for d in number_days(days)] == [1, 2, 3]
+
+
+def test_number_days_fills_an_unlabelled_day_at_the_live_edge():
+    # The 2026-08 recurrence: parlament.hu lists an upcoming/just-held sitting
+    # before assigning its datumFelirat label. That must NOT drag every already
+    # -labelled day's real ordinal down to fill the gap (see the module-level
+    # 2026-07 outage note) — the unlabelled day just gets the next free number.
+    days = [{"uuid": "a", "date": "2026-06-16", "datum_felirat": "2026.06.16.(9)"},
+            {"uuid": "b", "date": "2026-06-22", "datum_felirat": "2026.06.22.(10)"},
+            {"uuid": "c", "date": "2026-06-23", "datum_felirat": "2026.06.23.(11)"},
+            {"uuid": "d", "date": "2026-06-29", "datum_felirat": None}]
+    numbered = number_days(days)
+    assert [d["sitting"] for d in numbered] == [9, 10, 11, 12]
+    assert {d["date"]: d["sitting"] for d in numbered}["2026-06-29"] == 12
 
 
 class _DaysStub:

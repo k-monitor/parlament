@@ -73,18 +73,42 @@ def number_days(days: list[dict]) -> list[dict]:
     so numbering a sub-range would produce ids that collide with the real ones.
     Use :func:`cycle_days` rather than calling this on a hand-picked window.
 
-    The source's own ordinal (datumFelirat) wins when it is present for every day
-    and unambiguous, so a cycle keeps the exact numbering it was first built with.
+    The source's own ordinal (datumFelirat) wins for every day that carries one —
+    a day that doesn't yet (typically the newest announced sitting: parlament.hu
+    assigns the label days after listing the day itself) gets the next free
+    number after the highest published one, rather than dragging every already-
+    labelled day's number down to fill the gap. Mixing sources only when they
+    cannot collide (see the sorted-order check below) keeps a temporary label
+    gap on the live edge from renumbering the whole cycle underneath it — the
+    2026-08 recurrence of the 2026-07 outage: an unlabelled upcoming day (always
+    in the fetch window, see :func:`cycle_days`'s horizon) intermittently threw
+    away every real ordinal and wrote a fresh, wrong session key for every day,
+    each poll it happened, without ever cleaning up the previous wrong batch.
     """
     ordered = sorted(days, key=_day_order_key)
     published = [_felirat_number(d) for d in ordered]
-    if all(published) and len(set(published)) == len(published):
-        numbers = published
-    else:
+    labelled = [n for n in published if n]
+    numbers = None
+    if labelled and len(set(labelled)) == len(labelled):
+        next_n = max(labelled) + 1
+        numbers = []
+        for n in published:
+            if n:
+                numbers.append(n)
+            else:
+                numbers.append(next_n)
+                next_n += 1
+        # A synthesized number must land strictly after every published one in
+        # date order, or an unlabelled day sorts BEFORE a labelled one with a
+        # lower ordinal (a corrupt/ambiguous labelling, not the common gap at
+        # the live edge) — fall through to full positional numbering instead.
+        if numbers != sorted(numbers):
+            numbers = None
+    if numbers is None:
         if any(published):
             logger.warning("datumFelirat carries an ülésnap ordinal for only "
                            "%d/%d days; numbering the cycle by date order instead",
-                           sum(1 for n in published if n), len(published))
+                           len(labelled), len(ordered))
         numbers = list(range(1, len(ordered) + 1))
     for day, n in zip(ordered, numbers):
         day["sitting"] = n

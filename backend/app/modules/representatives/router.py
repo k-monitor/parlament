@@ -8,12 +8,14 @@ straight from `person_stats`/`faction_stats`, never aggregated live (PERF-1).
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import date
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
+from ... import valasztas
 from ...config import settings
 from ...db import (fold_text, get_db, like_contains, period_and, period_list,
                    period_sql)
@@ -306,6 +308,232 @@ def resolve_speakers(
             resolved[n] = {"person_id": r["person_id"], "label": r["label"],
                            "photo_uri": r["photo_uri"]}
     return {"resolved": resolved}
+
+
+# ---------------------------------------------------------------------------
+# "Which constituency am I in, and who represents it?" (REP-10)
+#
+# Declared before ``/{person_id}`` so "constituencies" isn't captured as an MP id.
+# ---------------------------------------------------------------------------
+
+# "Budapest 12. OEVK", "Szabolcs-Szatmár-Bereg 1. OEVK" — how parlament.hu names a
+# single-member constituency in an MP's record. The county name and the number are
+# what identify it; both are needed, since every county numbers from 1.
+_OEVK_RE = re.compile(r"^(?P<county>.+?)\s+(?P<number>\d+)\.\s*OEVK$")
+
+
+def _county_compatible(a: str, b: str) -> bool:
+    """Whether two folded county names refer to the same county.
+
+    Not equality, because the two sources disagree about renames: the election
+    office says *Csongrád-Csanád* (the county's name since 2020) while
+    parlament.hu's constituency labels still say *Csongrád*. One name being a
+    prefix of the other covers that, and every rename of this shape, without a
+    hard-coded alias table — and no two of the twenty county names are prefixes
+    of each other, so it cannot conflate distinct counties.
+    """
+    return a.startswith(b) or b.startswith(a)
+
+
+def _period_start_year(row: sqlite3.Row) -> str | None:
+    return (row["date_start"] or "")[:4] or None
+
+
+def _lookup_period(db: sqlite3.Connection, election_date: str | None) -> dict | None:
+    """The electoral period the constituency map in hand elects.
+
+    The boundaries are **redrawn between elections** — the 2026 map has 16 Budapest
+    constituencies where the 2022 one had 18 — so the answer is only valid for one
+    cycle, and it is this one: the first period that begins on or after the election
+    the data describes. (An election is held weeks before the new House sits, so
+    "the period containing the election date" would name the *outgoing* one.)
+    Falls back to the newest period when the date is missing.
+    """
+    periods = db.execute(
+        "SELECT number, label, date_start, date_end FROM electoral_period "
+        "WHERE date_start IS NOT NULL ORDER BY date_start").fetchall()
+    if not periods:
+        return None
+    chosen = None
+    if election_date:
+        day = election_date[:10]
+        chosen = next((p for p in periods if (p["date_start"] or "") >= day), None)
+    row = chosen or periods[-1]
+    return {"number": row["number"], "date_start": row["date_start"],
+            "date_end": row["date_end"]}
+
+
+def _mps_by_constituency(db: sqlite3.Connection, period_number: int) -> dict:
+    """``{number: [(folded county, mp), …]}`` — who held each single-member
+    constituency in one electoral period.
+
+    The per-cycle source is ``election_history_json``: it records the constituency
+    the MP won **in each cycle**, so an MP who held a seat in 2022 and came in off the
+    national list in 2026 is correctly absent from the seat in 2026. An entry belongs
+    to the period whose start year matches its ``cycle`` span ("2022-2026" → the
+    period beginning in 2022), which is exact and needs no timezone reasoning about
+    the UTC mandate timestamps.
+
+    ``person.constituency`` — a single, latest-cycle-only value — is the fallback for
+    a DB whose roster predates the election history, gated on the MP actually sitting
+    in the period so it can't attribute a seat across cycles.
+    """
+    period = db.execute(
+        "SELECT number, label, date_start, date_end FROM electoral_period "
+        "WHERE number = ?", (period_number,)).fetchone()
+    start_year = _period_start_year(period) if period else None
+
+    index: dict = {}
+
+    def add(number: int, county: str, row: sqlite3.Row) -> None:
+        # `email` is carried so the lookup can offer "write to your MP" directly —
+        # the point of finding out who represents you is usually to contact them.
+        # It is the MP's published parliamentary address (already public on their
+        # profile, REP-2); an MP without one simply has None.
+        mp = {"person_id": row["person_id"], "label": row["label"],
+              "photo_uri": row["photo_uri"], "email": row["email"] or None}
+        bucket = index.setdefault(number, [])
+        if not any(existing["person_id"] == mp["person_id"]
+                   for _, existing in bucket):
+            bucket.append((fold_text(county), mp))
+
+    rows = db.execute(
+        """SELECT person_id, label, photo_uri, email, constituency,
+                  election_history_json
+           FROM person
+           WHERE is_mp = 1
+             AND (constituency LIKE '%OEVK%' OR election_history_json LIKE '%OEVK%')
+        """).fetchall()
+    for r in rows:
+        history = []
+        try:
+            history = json.loads(r["election_history_json"] or "[]")
+        except ValueError:
+            history = []
+        matched = False
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            m = _OEVK_RE.match((entry.get("constituency") or "").strip())
+            if not m:
+                continue
+            cycle = str(entry.get("cycle") or "")
+            if start_year and cycle[:4] == start_year:
+                add(int(m.group("number")), m.group("county"), r)
+                matched = True
+        if matched or history:
+            continue
+        # No election history at all: fall back to the single stored constituency,
+        # but only for an MP who actually sat in this period.
+        m = _OEVK_RE.match((r["constituency"] or "").strip())
+        if not m:
+            continue
+        sits = db.execute(
+            "SELECT 1 FROM membership WHERE person_id = ? AND period_number = ? LIMIT 1",
+            (r["person_id"], period_number)).fetchone()
+        if sits:
+            add(int(m.group("number")), m.group("county"), r)
+    return index
+
+
+def _faction_of(db: sqlite3.Connection, person_id: str, period_number: int) -> dict | None:
+    row = db.execute(
+        """SELECT f.id, f.label, f.color FROM membership m
+           JOIN faction f ON f.id = m.faction_id
+           WHERE m.person_id = ? AND m.period_number = ? LIMIT 1""",
+        (person_id, period_number)).fetchone()
+    return {"id": row["id"], "label": row["label"], "color": row["color"]} if row else None
+
+
+def _require_lookup() -> None:
+    """404 the lookup endpoints while the feature is off (OPS-4), the same way a
+    disabled module's routes vanish (EXT-6) — ``/meta`` advertises the flag so the
+    SPA hides the tab and never calls these at all."""
+    if not settings.evk_lookup:
+        raise HTTPException(404, "The constituency lookup is disabled")
+
+
+@router.get("/constituencies/settlements")
+def search_settlements(
+    q: str = Query(..., min_length=1, max_length=80,
+                   description="Settlement name; matched accent-insensitively"),
+    limit: int = Query(25, ge=1, le=100),
+):
+    """Find a settlement by name, the first step of "who represents me?" (REP-10).
+
+    Matching is accent- and case-insensitive (FOLD-1), and a Budapest district is
+    also found by the spellings people actually use — ``V. kerület``, ``5. kerület``
+    — not only the source's zero-padded ``Budapest 05. kerület``. Each row says how
+    many constituencies the settlement spans: exactly one is already the answer,
+    more than one needs the map (see the settlement endpoint).
+    """
+    _require_lookup()
+    try:
+        settlements, total = valasztas.search_settlements(q, limit)
+    except valasztas.LookupUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"total": total, "limit": limit, "settlements": settlements}
+
+
+@router.get("/constituencies/settlements/{maz}/{taz}")
+def get_settlement_constituencies(
+    maz: str = Path(..., pattern=r"^\d{2}$", description="County code (megye azonosító)"),
+    taz: str = Path(..., pattern=r"^\d{3}$", description="Settlement code (település azonosító)"),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """One settlement's single-member constituency (or constituencies) and the MP
+    who holds each (REP-10).
+
+    Most settlements sit wholly inside one constituency, and the answer is a single
+    MP. The 23 that are split — 15 Budapest districts and 8 large cities — return
+    every constituency they span **plus the boundaries as GeoJSON**, so the reader
+    can pick the part they live in on a map; the constituency polygons partition the
+    settlement, so the choice is unambiguous once seen.
+
+    Deliberately **not** scoped by the global cycle selector (§4A). The constituency
+    map is redrawn between elections, so these boundaries answer for exactly one
+    cycle — the one the election office's data elects — and that cycle is reported
+    in ``period`` rather than taken from the reader's scope. Answering an
+    out-of-scope cycle from a map that didn't exist then would be a wrong answer,
+    not a narrower one.
+    """
+    _require_lookup()
+    try:
+        found = valasztas.settlement(maz, taz)
+    except valasztas.LookupUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    if found is None:
+        raise HTTPException(404, "Settlement not found")
+
+    period = _lookup_period(db, (found["source"] or {}).get("election_date"))
+    if period is not None:
+        # A pure function of the DB (and small), so it is memoized per DB file
+        # rather than re-scanned for every settlement a reader tries.
+        seats = cached_aggregate(
+            "constituency_seats", (period["number"],),
+            lambda: _mps_by_constituency(db, period["number"]))
+        for part in found["constituencies"]:
+            part["representatives"] = [
+                {**mp, "faction": _faction_of(db, mp["person_id"], period["number"])}
+                for county, mp in seats.get(part["number"], [])
+                if _county_compatible(county, fold_text(part["county"]))
+            ]
+    else:  # a DB with no dated electoral periods yet — say so, don't invent MPs
+        for part in found["constituencies"]:
+            part["representatives"] = []
+    found["period"] = period
+    found["methodology"] = _LOOKUP_METHODOLOGY
+    return found
+
+
+_LOOKUP_METHODOLOGY = (
+    "A település–választókerület megfeleltetés és a választókerületi határok a "
+    "Nemzeti Választási Iroda adatai. Az egyéni választókerületek határai "
+    "választásonként változhatnak, ezért a találat arra a ciklusra vonatkozik, "
+    "amelyet ez a választás hozott létre. A képviselő azt a mandátumot jelöli, "
+    "amelyet az adott egyéni választókerületben szerzett; az országos listáról "
+    "bejutott képviselők nem választókerülethez kötődnek."
+)
 
 
 @router.get("/{person_id}")

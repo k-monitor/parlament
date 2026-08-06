@@ -102,7 +102,7 @@ def test_advocate_enriches_the_existing_speaker_stub(tmp_path, data_dir):
         # Both marks survive: the MP roster's and the advocate registry's.
         assert row["is_mp"] == 1 and row["is_advocate"] == 1
         # …and the MP roster's richer fields are not nulled out by the advocate load.
-        assert row["constituency"] == "Pest 4."
+        assert row["constituency"] == "Pest 4. OEVK"
         # The MP's faction membership for the cycle is intact alongside the
         # advocate's factionless row.
         mem = c.execute("SELECT faction_id FROM membership WHERE person_id='n002' "

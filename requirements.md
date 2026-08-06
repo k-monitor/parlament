@@ -828,6 +828,67 @@ snippet — a site-wide capability, not a per-module feature.
     rebuilding the database — the loader's incremental path (ING-5) picks up the
     new files and extends the `person` schema in place.
 
+- **REP-10 (SHOULD).** **"Who represents me?" — a constituency lookup.** The most
+  basic question a citizen has about the House is *which of these people is mine*,
+  and nothing in the corpus answers it: `parlament.hu` records the single-member
+  constituency an MP won (*"Budapest 12. OEVK"*, REP-2) but never says **where** that
+  constituency is, nor how to get from a place to it. The site therefore carries its
+  own **page in the Representatives section's tab bar** (§REP-9's precedent) that
+  takes a **settlement** and returns the constituency it belongs to and the MP who
+  holds it, each linking to their profile (REP-1/REP-2).
+  - The mapping and the boundaries come from the **National Election Office**'s
+    published election data (`valasztas.hu`), the only source that has them: the
+    per-settlement constituency list, the constituency boundary polygons, and each
+    settlement's own outline. This is the **one feature whose data is not from
+    `parlament.hu`**, so it MUST **name its source and method on the page**
+    (TRUST-1) — the MP and their mandate still come from the corpus, and only the
+    geography from the election office.
+  - The **data version is resolved at runtime** from the source's own config file
+    rather than pinned in code, and the base URL is deployment config (OPS-4), so a
+    revision upstream — or the next election's tree — needs no code change.
+  - **Naming the settlement is the whole answer for all but 23 of them.** The
+    exceptions — 15 Budapest districts and 8 large cities — are **split between
+    several constituencies**, and no place name can resolve them. For those the page
+    MUST show the **boundaries on a map** over enough street context for a reader to
+    recognise their own neighbourhood, and let them **pick the part they live in**;
+    the constituency polygons partition the settlement, so the choice is unambiguous
+    once seen. Picking MUST also be possible **without the map** (a list of the
+    candidates).
+  - The map is fitted to the **settlement**, and the constituency regions MUST be
+    **clipped to it**. A constituency is many times larger than the place the reader
+    is looking for — several districts, or half a county — so drawn whole it sprawls
+    across the view and invites choosing a region by a shape that is mostly somewhere
+    else. Clipped, what remains on screen is exactly the question being asked. The
+    settlement's own outline is drawn over the regions dividing it, and the basemap
+    outside stays visible for orientation.
+  - **Region identity MUST NOT be carried by colour.** In Hungarian politics no hue
+    is unclaimed — the factions in this corpus alone carry orange, blue, green, teal,
+    red, brown, purple and grey — and the MP's faction badge sits beside the map, so
+    a per-region palette reads as a claim about each region's politics rather than as
+    a neutral index. Every region therefore shares one neutral wash and is identified
+    by its **number** and the **boundary between neighbours**, repeated as a numbered
+    badge in the list. This also satisfies A11Y-1 outright: nothing is lost in
+    greyscale or to any colour-vision deficiency.
+  - Settlement search is **accent-insensitive** like every other text box (§4B
+    FOLD-1), and MUST also find a Budapest district by the spellings people actually
+    use (*"V. kerület"*, *"5. kerület"*), not only the source's zero-padded form.
+  - **Not scoped by the global cycle selector** (§4A) — the deliberate exception to
+    CYC-2, alongside REP-2's biography panel. Constituency boundaries are **redrawn
+    between elections** (the 2026 map has 16 Budapest constituencies where the 2022
+    one had 18), so a boundary answers for exactly one cycle: the one the election
+    that produced the data seated. The page **states which cycle** it is answering
+    for rather than inferring it from the reader's scope — answering an out-of-scope
+    cycle off a map that did not exist then would be a *wrong* answer, not a
+    narrower one.
+  - Because a citizen is also represented by the **national-list** MPs, who are tied
+    to no constituency, the page says so and links to the full list (REP-1).
+  - The external source is **cached and degrades gracefully**: a copy that is merely
+    stale is preferred to failing (the electoral map is fixed between elections), the
+    boundary geometry is fetched **only when a split settlement is actually opened**,
+    and a total outage surfaces as an honest "unavailable" — never an empty or
+    invented answer (cf. SCR-5). The whole feature is **switchable off** (OPS-4), in
+    which case its tab and endpoints disappear like a disabled module's (EXT-6).
+
 - **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
   representative and faction statistics** (speaking time, speech counts, trends —
   REP-3/REP-4/REP-7), but are **never dropped from storage or from the

@@ -54,6 +54,15 @@ const routes = [
     component: () => import('./modules/representatives/RepListView.vue'),
   },
   {
+    // "Who represents me?" — find your own constituency and its MP (REP-10). Also
+    // declared before `/representatives/:id`. The guard below leaves its `?cycle=`
+    // alone like every other page, but the view ignores the scope: it answers for
+    // the cycle the constituency boundaries belong to (see the view).
+    path: '/representatives/lookup', name: 'lookup',
+    meta: { module: 'representatives' },
+    component: () => import('./modules/representatives/ConstituencyLookupView.vue'),
+  },
+  {
     path: '/representatives/:id', name: 'profile', meta: { module: 'representatives' },
     component: () => import('./modules/representatives/RepProfileView.vue'), props: true,
   },
@@ -144,6 +153,16 @@ router.beforeEach(async (to) => {
       return { name: 'notfound', params: { pathMatch: to.path.substring(1).split('/') }, query: to.query }
     }
     return true
+  }
+  // The constituency lookup (REP-10) sits inside an enabled module but depends on
+  // an external source, so the backend can switch it off on its own — in which case
+  // its endpoints 404 and so must its page, rather than rendering an error state.
+  if (to.name === 'lookup' && store.loaded && !store.featureEnabled('constituency_lookup')) {
+    return {
+      name: 'notfound',
+      params: { pathMatch: to.path.substring(1).split('/') },
+      query: to.query,
+    }
   }
   if (to.meta.module && store.loaded && !store.moduleEnabled(to.meta.module)) {
     // Render the 404 view *at the requested URL* — a named catch-all resolved

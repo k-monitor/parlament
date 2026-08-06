@@ -482,6 +482,16 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_SQLITE_MMAP_SIZE` | `1073741824` (1 GiB) | per-connection SQLite `mmap_size` ceiling in bytes; raise above the DB file's size so the whole DB is memory-mapped instead of read() for its tail |
 | `PARLAMONITOR_QUERY_CACHE_TTL` | `300` | seconds to memoize the expensive read-only aggregates (search trend/breakdown, module `/facets`); `0` disables the in-process cache |
 | `PARLAMONITOR_QUERY_CACHE_SIZE` | `256` | max distinct (query+filters) entries kept per cached aggregate endpoint |
+| **Constituency lookup** (REP-10) | | the "Ki a képviselőm?" page; the only feature reading a source other than `parlament.hu` |
+| `PARLAMONITOR_EVK_LOOKUP` | `1` | `0` hides the page and 404s its endpoints |
+| `PARLAMONITOR_VTR_BASE_URL` | `https://vtr.valasztas.hu/ogy2026/data` | National Election Office data tree; its own `config.json` names the current data version, so only this base changes for the next election |
+| `PARLAMONITOR_VTR_CACHE_TTL` | `604800` (7 days) | how long a downloaded file is trusted; the electoral map is fixed between elections, and a *stale* copy is still served when a re-fetch fails |
+| `PARLAMONITOR_VTR_CACHE_DIR` | _(`vtr-cache/` beside the DB)_ | on the standard deploy this lands on the `/db` volume, so a restart costs no re-fetch |
+| `PARLAMONITOR_VTR_TIMEOUT` | `20` | seconds per upstream request |
+| `PARLAMONITOR_VTR_USER_AGENT` | `Parlamonitor/1.0 (…)` | descriptive UA sent upstream |
+| `PARLAMONITOR_MAP_TILE_URL` | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` | basemap for the constituency picker. **Check the provider's usage policy against your traffic** — point this at your own tile server or a paid provider if OSM's doesn't fit |
+| `PARLAMONITOR_MAP_TILE_ATTRIBUTION` | `© OpenStreetMap` (linked) | attribution rendered on the map; must match whatever `MAP_TILE_URL` serves |
+| `PARLAMONITOR_MAP_MAX_ZOOM` | `18` | maximum zoom offered by the tile layer |
 | **`sync` service** | | |
 | `PARLAMONITOR_SYNC_INTERVAL` | `1800` | seconds between continuous-sync polls |
 | `PARLAMONITOR_SYNC_CYCLE` | _(auto)_ | pin a cycle to watch (default: the latest) |

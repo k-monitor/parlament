@@ -1,3 +1,6 @@
+# Local deployment config (host-specific paths / secrets)
+.env
+
 # Python
 __pycache__/
 *.pyc
@@ -10,9 +13,24 @@ backend/.venv/
 *.db-shm
 *.db.building*
 
+# Host-mounted search analytics store (PRIV-1) — aggregated, but host-local
+analytics/
+
+# Loader-side processing caches (regenerable; live beside the DB)
+backend/wordcloud-cache.json
+backend/entity-cache.json
+backend/wikidata-entity-cache.json
+backend/kmonitor-tags.json
+# Downloaded election-office constituency data (REP-10). Defaults to living beside
+# the DB — a mounted volume in the container, but the repo in a dev checkout.
+backend/vtr-cache/
+
 # Node / Vite
 frontend/node_modules/
 frontend/dist/
+
+# Official Web API probe outputs (raw responses + generated reports)
+official-api/output/
 
 # Scraper data (large; regenerable)
 data/original/
@@ -20,3 +38,5 @@ data/media/
 data/logs/*.log
 captures/
 data/
+# Derived NLP-experimentation exports (regenerable via backend/export_nlp_datasets.py)
+exports/

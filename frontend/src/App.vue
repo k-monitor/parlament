@@ -30,11 +30,12 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 // routes (a profile / a single bill or document) keep their parent tab active.
 const NAV_SECTIONS = {
   reps: {
-    match: ['representatives', 'advocates', 'factions', 'profile'],
+    match: ['representatives', 'lookup', 'advocates', 'factions', 'profile'],
     // `profile` is a detail page of both person tabs — which one is decided at
     // runtime by the profile's mandate (see `tabActive`).
     tabs: [
       { name: 'representatives', key: 'representatives', detail: ['profile'] },
+      { name: 'lookup', key: 'lookup' },
       { name: 'advocates', key: 'advocates', detail: ['profile'] },
       { name: 'factions', key: 'factions' },
     ],
@@ -63,12 +64,16 @@ function sectionActive(id) { return NAV_SECTIONS[id].match.includes(route.name) 
 // cycles in scope; across the whole corpus that comparison is meaningless, so
 // it's hidden while the global scope is "all cycles" (router.js bounces the
 // route to match). It is also hidden outright while COHESION_ENABLED is off
-// (features.js). Either way the Votes section can be left with a single tab, in
-// which case the sub-tab bar is redundant with the top nav and hidden entirely
-// (see the `v-if` below).
+// (features.js). The constituency lookup likewise disappears when the backend
+// reports the feature off (its external source is unconfigured). Either way a
+// section can be left with a single tab, in which case the sub-tab bar is
+// redundant with the top nav and hidden entirely (see the `v-if` below).
 const sectionTabs = computed(() =>
-  (currentSection.value ? currentSection.value.tabs : []).filter(
-    (t) => !(t.name === 'cohesion' && (!COHESION_ENABLED || !store.cycles.length))))
+  (currentSection.value ? currentSection.value.tabs : []).filter((t) => {
+    if (t.name === 'cohesion') return COHESION_ENABLED && store.cycles.length > 0
+    if (t.name === 'lookup') return store.featureEnabled('constituency_lookup')
+    return true
+  }))
 function tabActive(tab) {
   // A person profile is a detail page of two different tabs: an MP's belongs
   // under Képviselők, a nationality advocate's under Nemzetiségi szószólók

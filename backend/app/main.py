@@ -108,6 +108,11 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
         "periods": periods,
         "counts": counts,
         "build": build,
+        # Optional capabilities the SPA gates a nav entry on, beyond the module
+        # manifest above. The constituency lookup (REP-10) depends on an external
+        # source, so it can be turned off without disabling the whole
+        # representatives module — the tab then vanishes rather than erroring.
+        "features": {"constituency_lookup": settings.evk_lookup},
         "timing_disclaimer": (  # VIE-6 / TIM-3
             "A felszólalások videóidőzítése a v1-ben pozícióalapú becslés "
             "(karakterarányos), ezért közelítő pontosságú."),

@@ -22,7 +22,7 @@ export default {
       status: 'Page {page} of {total}',
     },
   },
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', advocates: 'Nationality advocates', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', lookup: 'Find your MP', advocates: 'Nationality advocates', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -176,6 +176,54 @@ export default {
       + 'constituency and no vote.',
     searchAdvocatePlaceholder: 'Search advocates by name…',
     noAdvocateResults: 'No matching advocates.',
+  },
+  // "Find your MP" — settlement → single-member constituency → MP (REP-10).
+  lookup: {
+    title: 'Find your MP',
+    intro: 'Enter your settlement and we will show which single-member constituency '
+      + 'it belongs to, and who represents it. Most settlements have a single '
+      + 'constituency; larger cities and Budapest districts are divided between '
+      + 'several — for those, pick yours on the map.',
+    searchLabel: 'Settlement',
+    searchPlaceholder: 'e.g. Debrecen, Pécs, Budapest 09. kerület…',
+    searchHint: 'Accents don\'t matter, and Budapest districts are also found as '
+      + '"V. kerület" or "5. kerület".',
+    clear: 'Clear',
+    noSettlement: 'No such settlement. Try a shorter part of the name.',
+    splitBadge: '{count} constituencies',
+    singleAnswer: 'All of {name} lies in {constituency}.',
+    splitAnswer: '{name} is divided between {count} single-member constituencies.',
+    splitHelp: 'Pick the part of the settlement you live in on the map — or choose '
+      + 'directly from the list.',
+    pickerLabel: 'The settlement\'s constituencies',
+    pickPrompt: 'Choose a constituency to see its representative.',
+    mapLabel: 'Map of the settlement\'s constituencies',
+    mapAriaFor: 'Map of the constituencies of {name} — click the part where you live',
+    mapFailed: 'The map could not be loaded. You can also pick the constituency from the list below.',
+    noGeometry: 'Constituency boundaries are unavailable right now; please choose from the list.',
+    noMp: 'We found no representative for this constituency in our database.',
+    noConstituency: 'We found no constituency for this settlement.',
+    writeEmail: 'Write an email',
+    copyEmailOf: 'Copy email address: {email}',
+    emailCopied: 'Copied!',
+    emailCopiedOf: '{email} copied to the clipboard.',
+    noEmail: 'No public email address for this representative.',
+    scope: 'This answer applies to the {cycle} term: constituency boundaries may be '
+      + 'redrawn before each election.',
+    listNote: 'Besides the single-member constituency MP, representatives elected '
+      + 'from the national list are also members of the Assembly, but they are not '
+      + 'tied to a constituency.',
+    listNoteLink: 'All representatives',
+    unavailable: 'Constituency data is currently unavailable (the National Election '
+      + 'Office source is not responding). Please try again later.',
+    methodology: 'Methodology & data source',
+    methodologyText: 'The settlement-to-constituency mapping and the constituency '
+      + 'boundaries come from the National Election Office; the representatives and '
+      + 'their mandates come from parlament.hu. Single-member constituency boundaries '
+      + 'may be redrawn for each election, so this answer applies to the term that '
+      + 'election produced — not to the term selected in the header. The '
+      + 'representative shown won their mandate in that constituency.',
+    sourceLine: 'Constituency data source: {name} —',
   },
   profile: {
     speeches: 'Speeches',

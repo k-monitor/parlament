@@ -297,7 +297,7 @@ def test_resolve_speakers_matches_mp_by_name(client):
 def test_representative_profile(client):
     d = client.get("/api/v1/representatives/k001").json()
     assert d["label"] == "Kovács Béla"
-    assert d["constituency"] == "Budapest 1."
+    assert d["constituency"] == "Budapest 1. OEVK"
     assert d["current_faction"]["label"] == "Fidesz"
     assert d["current_faction"]["color"] == "#FF6A13"
     assert d["education"]

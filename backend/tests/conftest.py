@@ -100,17 +100,37 @@ def _registry():
     return {
         "meta": {"cycle": 43, "cycleStart": "2026-05-09", "cycleEnd": None,
                  "source": "felicitas-kepviselo-api", "withDetails": True, "count": 2},
+        # Both MPs hold a single-member seat, spelled the way parlament.hu spells one
+        # ("<county> <n>. OEVK") — that string is what the constituency lookup joins
+        # on (REP-10). Kovács carries an `electionHistory`, which is the per-cycle
+        # source; Nagy deliberately does not, so the lookup's fallback to the single
+        # stored `constituency` (gated on sitting in the period) stays exercised.
         "data": [
             {"personID": "k001", "label": "Kovács Béla", "firstname": "Béla",
              "lastname": "Kovács", "faction": {"label": "Fidesz", "id": 7, "position": "tag"},
              "wikidataId": "Q42", "wikipediaUrl": "https://hu.wikipedia.org/wiki/Kov%C3%A1cs_B%C3%A9la",
-             "constituency": "Budapest 1.", "highestEducation": "egyetem",
+             "constituency": "Budapest 1. OEVK", "highestEducation": "egyetem",
+             # Published parliamentary address; the constituency lookup offers it as
+             # a mailto/copy action (REP-10). Nagy Anna deliberately has none, so the
+             # "no public address" path stays covered too.
+             "email": "kovacs.bela@parlament.hu",
              "factionHistory": [{"cycle": "2026-", "label": "Fidesz", "start": "2026", "end": None}],
+             "electionHistory": [
+                 {"cycle": "2026-", "constituency": "Budapest 1. OEVK",
+                  "electionDate": "2026-04-12",
+                  "mandateStart": "2026-05-08T22:00:00Z", "mandateEnd": None},
+                 # An earlier cycle in a DIFFERENT constituency, so a lookup for the
+                 # current one can't leak a past mandate into the answer.
+                 {"cycle": "2022-2026", "constituency": "Budapest 2. OEVK",
+                  "electionDate": "2022-04-03",
+                  "mandateStart": "2022-05-01T22:00:00Z",
+                  "mandateEnd": "2026-05-08T21:59:59Z"},
+             ],
              "education": [{"degree": "jogász", "institution": "ELTE"}],
              "statistics": {"billsSubmitted": [{"cycle": 43, "ownBills": 3}]}},
             {"personID": "n002", "label": "Nagy Anna", "firstname": "Anna",
              "lastname": "Nagy", "faction": {"label": "TISZA"},
-             "constituency": "Pest 4."},
+             "constituency": "Pest 4. OEVK"},
         ],
     }
 

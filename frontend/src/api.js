@@ -74,6 +74,12 @@ export const api = {
   repVoteDays: (id, period) => get(`/representatives/${id}/vote-days`, { period }),
   repVotes: (id, params) => get(`/representatives/${id}/votes`, params),
   factions: (period) => get('/representatives/factions', { period }),
+  // "Who represents me?" (REP-10). Not period-scoped: constituency boundaries are
+  // redrawn between elections, so the answer belongs to the cycle the boundary data
+  // elects, which the response names.
+  settlementSearch: (q, limit) => get('/representatives/constituencies/settlements', { q, limit }),
+  settlementConstituencies: (maz, taz) =>
+    get(`/representatives/constituencies/settlements/${maz}/${taz}`),
   // bills
   bills: (params) => get('/bills', params),
   bill: (id) => get(`/bills/${id}`),

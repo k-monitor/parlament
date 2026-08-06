@@ -29,6 +29,15 @@ export const store = reactive({
     if (!this.meta) return true // optimistic before load
     return this.meta.modules.some((m) => m.name === name)
   },
+  // Optional capabilities inside an enabled module, advertised by /meta — e.g. the
+  // constituency lookup (REP-10), which depends on an external source and can be
+  // switched off on its own. Optimistic before load, like moduleEnabled; a backend
+  // predating the flag reports nothing, so the feature is treated as on rather than
+  // silently disappearing.
+  featureEnabled(name) {
+    if (!this.meta || !this.meta.features) return true
+    return this.meta.features[name] !== false
+  },
 })
 
 // Parse a persisted/URL scope value into a cycle array: `undefined` = nothing

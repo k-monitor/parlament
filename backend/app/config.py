@@ -288,6 +288,51 @@ class Settings:
     kmonitor_user_agent: str = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_KMONITOR_USER_AGENT",
                        "Parlamonitor/1.0 (+https://github.com/k-monitor; info@k-monitor.hu)").strip())
+    # "Which constituency am I in?" lookup (REP-10, app/valasztas.py). parlament.hu
+    # says which OEVK an MP was elected in but never where it is; the National
+    # Election Office (NVI) publishes the settlement → constituency mapping and the
+    # constituency boundaries as static JSON on its result site. Enabled by default;
+    # set PARLAMONITOR_EVK_LOOKUP=0 to hide the page and 404 its endpoints.
+    evk_lookup: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_EVK_LOOKUP", "1").strip().lower()
+         not in ("0", "false", "no", "")))
+    # Base of the election's data tree. Its `config.json` names the current data
+    # VERSION directory, which every other file hangs off — so the version is
+    # resolved at runtime, never hard-coded. Point this at the next election's tree
+    # (…/ogy2030/data) when the time comes; nothing else changes.
+    vtr_base_url: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_VTR_BASE_URL",
+                       "https://vtr.valasztas.hu/ogy2026/data").strip())
+    # How long a downloaded file is trusted before it is re-fetched. The electoral
+    # map is fixed between elections, so this is deliberately long: a poll costs a
+    # request and would learn nothing. A *stale* cache entry is still used when a
+    # re-fetch fails, so the page keeps working through an upstream outage.
+    vtr_cache_ttl: int = int(os.environ.get("PARLAMONITOR_VTR_CACHE_TTL",
+                                           str(7 * 24 * 3600)))
+    # Where the downloaded files are cached. Unset → `vtr-cache/` next to the DB,
+    # which on the standard deploy is a mounted volume, so the cache survives a
+    # container restart and a cold start costs no fetch.
+    vtr_cache_dir: str | None = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_VTR_CACHE_DIR") or None)
+    vtr_timeout: int = int(os.environ.get("PARLAMONITOR_VTR_TIMEOUT", "20"))
+    vtr_user_agent: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_VTR_USER_AGENT",
+                       "Parlamonitor/1.0 (+https://github.com/k-monitor; info@k-monitor.hu)").strip())
+    # Basemap for the constituency-picker map (REP-10). Street context is what makes
+    # the map answerable — a reader recognises their own neighbourhood, not an
+    # abstract polygon. The tiles come from a third party, so both the URL template
+    # and its **required attribution** are deployment config (OPS-4): point them at
+    # your own tile server (or a paid provider) if OpenStreetMap's usage policy
+    # doesn't fit the site's traffic. The lookup endpoint hands these to the
+    # frontend, so the map needs no build-time configuration of its own.
+    map_tile_url: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_MAP_TILE_URL",
+                       "https://tile.openstreetmap.org/{z}/{x}/{y}.png").strip())
+    map_tile_attribution: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_MAP_TILE_ATTRIBUTION",
+                       '© <a href="https://www.openstreetmap.org/copyright" '
+                       'target="_blank" rel="noopener">OpenStreetMap</a>').strip())
+    map_max_zoom: int = int(os.environ.get("PARLAMONITOR_MAP_MAX_ZOOM", "18"))
 
     def module_enabled(self, name: str) -> bool:
         return name in self.enabled_modules

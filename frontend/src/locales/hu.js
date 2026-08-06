@@ -29,6 +29,7 @@ export default {
     search: 'Keresés',
     sessions: 'Ülésnapok',
     representatives: 'Képviselők',
+    lookup: 'Ki a képviselőm?',
     advocates: 'Nemzetiségi szószólók',
     factions: 'Frakciók',
     bills: 'Törvényjavaslatok',
@@ -241,6 +242,51 @@ export default {
       + 'nyújtanak be –, de nem képviselők: nincs frakciójuk, választókerületük és szavazati joguk.',
     searchAdvocatePlaceholder: 'Szószóló keresése név szerint…',
     noAdvocateResults: 'Nincs a feltételeknek megfelelő szószóló.',
+  },
+  // "Ki a képviselőm?" — település → egyéni választókerület → képviselő (REP-10).
+  lookup: {
+    title: 'Ki a képviselőm?',
+    intro: 'Nem tudod melyik képviselő tartozik hozzád? Add meg a települést, ahol laksz és megmutatjuk!',
+    searchLabel: 'Település',
+    searchPlaceholder: 'Pl. Debrecen, Pécs, Budapest 09. kerület…',
+    searchHint: 'Az ékezetek nem számítanak, és a fővárosi kerületeket „V. kerület” '
+      + 'vagy „5. kerület” formában is megtalálja.',
+    clear: 'Törlés',
+    noSettlement: 'Nincs ilyen település. Próbálja a nevének egy rövidebb részletével.',
+    splitBadge: '{count} választókerület',
+    singleAnswer: '{name} egésze a(z) {constituency} része.',
+    splitAnswer: '{name} területét {count} egyéni választókerület osztja fel.',
+    splitHelp: 'Válassza ki a térképen azt a részt, ahol lakik – vagy válasszon '
+      + 'közvetlenül a lista alapján.',
+    pickerLabel: 'A település választókerületei',
+    pickPrompt: 'Válasszon egy választókerületet a képviselő megjelenítéséhez.',
+    mapLabel: 'A település választókerületeinek térképe',
+    mapAriaFor: '{name} választókerületeinek térképe – kattintson arra a részre, ahol lakik',
+    mapFailed: 'A térkép nem tölthető be. A választókerületet az alábbi listából is kiválaszthatja.',
+    noGeometry: 'A választókerületi határok most nem érhetők el; válasszon a lista alapján.',
+    noMp: 'Ehhez a választókerülethez nem találtunk képviselőt az adatbázisunkban.',
+    noConstituency: 'Ehhez a településhez nem találtunk választókerületet.',
+    writeEmail: 'E-mail írása',
+    copyEmailOf: 'E-mail cím másolása: {email}',
+    emailCopied: 'Másolva!',
+    emailCopiedOf: '{email} a vágólapra másolva.',
+    noEmail: 'Ehhez a képviselőhöz nincs nyilvános e-mail cím.',
+    scope: 'A találat a(z) {cycle} ciklusra vonatkozik: a választókerületi határokat '
+      + 'minden választás előtt újra megállapíthatják.',
+    listNote: 'Az egyéni választókerületi képviselőn kívül az országos listáról '
+      + 'bejutott képviselők is az Országgyűlés tagjai, ők azonban nem '
+      + 'választókerülethez kötődnek.',
+    listNoteLink: 'Az összes képviselő',
+    unavailable: 'A választókerületi adatok jelenleg nem érhetők el (a Nemzeti '
+      + 'Választási Iroda forrása nem válaszol). Kérjük, próbálja meg később.',
+    methodology: 'Módszertan és adatforrás',
+    methodologyText: 'A település–választókerület megfeleltetés és a választókerületi '
+      + 'határok a Nemzeti Választási Iroda adatai; a képviselők és a mandátumaik a '
+      + 'parlament.hu adatai. Az egyéni választókerületek határai választásonként '
+      + 'változhatnak, ezért a találat arra a ciklusra vonatkozik, amelyet ez a '
+      + 'választás hozott létre – nem a fejlécben kiválasztott ciklusra. A megjelenített '
+      + 'képviselő azt a mandátumot szerezte az adott egyéni választókerületben.',
+    sourceLine: 'A választókerületi adatok forrása: {name} –',
   },
   profile: {
     speeches: 'Felszólalások',

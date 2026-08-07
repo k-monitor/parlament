@@ -403,7 +403,7 @@ def test_non_mp_office_dated_from_the_office_holder_registry(client, db_path):
     loader_conn = loader.connect(db_path)
     loader.load_office_holders(loader_conn, {"data": [
         {"personID": "0052", "label": "Törőcsikné Görög Márta", "offices": [
-            {"title": "igazságügyi miniszter",
+            {"title": "igazságügyi miniszter", "category": "minister",
              "start": "2026-05-12T22:00:00Z", "end": None}]}]})
     loader_conn.close()
 
@@ -414,7 +414,7 @@ def test_non_mp_office_dated_from_the_office_holder_registry(client, db_path):
     assert d["office_term"] == {"start": "2026-05-12T22:00:00Z", "end": None,
                                 "dates_from": "term", "ongoing": True,
                                 "cycles": [43]}
-    assert d["offices"] == [{"title": "igazságügyi miniszter",
+    assert d["offices"] == [{"title": "igazságügyi miniszter", "category": "minister",
                              "start": "2026-05-12T22:00:00Z", "end": None}]
 
 

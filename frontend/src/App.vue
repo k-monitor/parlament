@@ -30,13 +30,16 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 // routes (a profile / a single bill or document) keep their parent tab active.
 const NAV_SECTIONS = {
   reps: {
-    match: ['representatives', 'lookup', 'advocates', 'factions', 'profile'],
-    // `profile` is a detail page of both person tabs — which one is decided at
-    // runtime by the profile's mandate (see `tabActive`).
+    match: ['representatives', 'lookup', 'advocates', 'speakers', 'officials',
+            'factions', 'profile'],
+    // `profile` is a detail page of every person tab — which one is decided at
+    // runtime by the kind of person the profile is (see `tabActive`).
     tabs: [
       { name: 'representatives', key: 'representatives', detail: ['profile'] },
       { name: 'lookup', key: 'lookup' },
       { name: 'advocates', key: 'advocates', detail: ['profile'] },
+      { name: 'speakers', key: 'speakers', detail: ['profile'] },
+      { name: 'officials', key: 'officials', detail: ['profile'] },
       { name: 'factions', key: 'factions' },
     ],
   },
@@ -75,12 +78,14 @@ const sectionTabs = computed(() =>
     return true
   }))
 function tabActive(tab) {
-  // A person profile is a detail page of two different tabs: an MP's belongs
+  // A person profile is a detail page of four different tabs: an MP's belongs
   // under Képviselők, a nationality advocate's under Nemzetiségi szószólók
-  // (REP-9). They share one route, so the open profile itself reports which
-  // (store.profileIsAdvocate); until it has loaded, treat it as an MP.
+  // (REP-9), a non-MP minister's under Egyéb felszólalók (REP-12), and an office
+  // holder who never spoke here under Tisztségviselők (REP-11). They share one
+  // route, so the open profile itself reports which (store.profileTab); until it
+  // has loaded, treat it as an MP.
   if (route.name === 'profile') {
-    return tab.name === (store.profileIsAdvocate ? 'advocates' : 'representatives')
+    return tab.name === (store.profileTab || 'representatives')
   }
   return route.name === tab.name || (tab.detail || []).includes(route.name)
 }

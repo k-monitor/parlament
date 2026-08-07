@@ -74,6 +74,8 @@ export const api = {
   repVoteDays: (id, period) => get(`/representatives/${id}/vote-days`, { period }),
   repVotes: (id, params) => get(`/representatives/${id}/votes`, params),
   factions: (period) => get('/representatives/factions', { period }),
+  // Tisztségviselők (REP-11): one row per office term, not per person.
+  officials: (params) => get('/representatives/officials', params),
   // "Who represents me?" (REP-10). Not period-scoped: constituency boundaries are
   // redrawn between elections, so the answer belongs to the cycle the boundary data
   // elects, which the response names.

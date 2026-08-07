@@ -31,6 +31,8 @@ export default {
     representatives: 'Képviselők',
     lookup: 'Ki a képviselőm?',
     advocates: 'Nemzetiségi szószólók',
+    speakers: 'Egyéb felszólalók',
+    officials: 'Tisztségviselők',
     factions: 'Frakciók',
     bills: 'Törvényjavaslatok',
     documents: 'Egyéb irományok',
@@ -242,6 +244,55 @@ export default {
       + 'nyújtanak be –, de nem képviselők: nincs frakciójuk, választókerületük és szavazati joguk.',
     searchAdvocatePlaceholder: 'Szószóló keresése név szerint…',
     noAdvocateResults: 'Nincs a feltételeknek megfelelő szószóló.',
+    // Egyéb felszólalók: mandátum nélkül szólaltak fel a Házban (REP-12).
+    othersUnit: 'felszólaló',
+    otherNote: 'Az Országgyűlés ülésein nemcsak képviselők szólalnak fel: '
+      + 'miniszterek és államtitkárok – akik gyakran nem képviselők –, a '
+      + 'köztársasági elnök, az önálló szervek vezetői és meghívott vendégek is. '
+      + 'Ők itt szerepelnek: nincs frakciójuk, választókerületük és szavazati '
+      + 'joguk, a tisztségük azonosítja őket.',
+    searchOtherPlaceholder: 'Felszólaló keresése név szerint…',
+    noOtherResults: 'Nincs a feltételeknek megfelelő felszólaló.',
+  },
+  // Tisztségviselők (REP-11) — az Országgyűlés hivatalos, 1990-ig visszamenő
+  // nyilvántartása, megbízatásonként egy sor.
+  officials: {
+    title: 'Tisztségviselők',
+    intro: 'Ki milyen kormányzati vagy országgyűlési tisztséget töltött be, és '
+      + 'mikortól meddig – az Országgyűlés hivatalos nyilvántartása szerint, '
+      + '1990-től napjainkig. Egy sor egy megbízatás, így ugyanaz a személy több '
+      + 'tisztségnél is szerepelhet; a listában olyanok is vannak, akik soha nem '
+      + 'szólaltak fel a Házban.',
+    unit: 'megbízatás',
+    searchPlaceholder: 'Keresés név vagy tisztség szerint…',
+    category: 'Tisztség típusa',
+    status: 'Állapot',
+    statusCurrent: 'Jelenleg is betölti',
+    statusPast: 'Korábbi',
+    // A ciklusra szűkített nézet a ciklus *alatt betöltött* megbízatásokat mutatja,
+    // nem csak a benne kezdődőeket – ezért mondja ki a felirat, hogy melyikről van szó.
+    scopeHeld: 'a(z) {cycle} ciklus alatt betöltve',
+    scopeStarted: 'a(z) {cycle} ciklusban kezdődött',
+    startedHint: 'ebből {count} kezdődött ebben a ciklusban',
+    startedShowAll: 'mind a(z) {count} megjelenítése',
+    started: 'Kezdete',
+    startedAll: 'Mind',
+    startedInCycle: 'Ebben a ciklusban kezdődött',
+    inOffice: 'hivatalban',
+    isMp: 'képviselő',
+    sortStart: 'Kezdete szerint',
+    sortOffice: 'Tisztség szerint',
+    noResults: 'Nincs a feltételeknek megfelelő megbízatás.',
+    // A nyilvántartás saját kategóriái (a portál szűrői).
+    categories: {
+      pm: 'Miniszterelnök',
+      minister: 'Miniszter',
+      'state-secretary': 'Államtitkár',
+      parliamentary: 'Országgyűlési tisztségviselő',
+      senior: 'Egyéb vezető tisztség',
+      other: 'Egyéb tisztség',
+      uncategorised: 'Besorolás nélkül',
+    },
   },
   // "Ki a képviselőm?" — település → egyéni választókerület → képviselő (REP-10).
   lookup: {

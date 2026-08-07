@@ -536,14 +536,17 @@ def suggest(q: str = Query(..., min_length=1), limit: int = Query(8, ge=1, le=20
             db: sqlite3.Connection = Depends(get_db)):
     """Search-as-you-type suggestions for speakers and factions (SEA-7)."""
     like = like_contains(q.strip())
-    # Nationality advocates (szószólók, REP-9) speak in plenary too, so they are
-    # suggestible alongside MPs — otherwise filtering the transcript by one of them
-    # would silently find nothing. Guarded on the column so a DB built before the
-    # advocate registry keeps working (MPs only).
-    mandate = ("(p.is_mp = 1 OR p.is_advocate = 1)"
+    # Anyone who actually spoke in plenary is suggestible, not just MPs: nationality
+    # advocates (szószólók, REP-9) speak too, as do non-MP ministers and state
+    # secretaries (REP-12) — leaving them out means filtering the transcript by a
+    # minister silently finds nothing. "Has spoken" is `speeches > 0` below rather
+    # than a mandate flag, which also keeps the office-holder registry's people
+    # (REP-11, most of whom never spoke here) out of the suggestions.
+    spoke = "COALESCE(ps.speech_count, 0) > 0"
+    mandate = (f"(p.is_mp = 1 OR p.is_advocate = 1 OR {spoke})"
                if any(r["name"] == "is_advocate"
                       for r in db.execute("PRAGMA table_info(person)"))
-               else "p.is_mp = 1")
+               else f"(p.is_mp = 1 OR {spoke})")
     # Rank name matches by activity using the precomputed all-periods aggregate
     # (person_stats, period_number IS NULL) instead of a correlated COUNT over
     # `speech` per matched person — this endpoint fires on every keystroke. The

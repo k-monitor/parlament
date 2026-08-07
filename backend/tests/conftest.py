@@ -137,22 +137,27 @@ def _registry():
 
 def _officeholders_registry():
     """The office-holder registry (tisztségviselők): every office term with its real
-    dates. Covers an MP already in the roster (whose own record repeats one of the
-    terms — the loader keeps the two sources apart) and somebody who never spoke in
-    the House, so the loader's skip of people outside the corpus is exercised."""
+    dates and the portal's own office category. Covers an MP already in the roster
+    (whose own record repeats one of the terms — the loader keeps the two sources
+    apart) and somebody who never spoke in the House, who is loaded as an
+    office-history-only person so the all-time listing (REP-11) is complete."""
     return {
         "meta": {"asOf": "2026-07-29", "source": "felicitas-tisztsegviselok-api",
-                 "count": 2, "terms": 3, "rows": 3, "skippedRows": 0},
+                 "count": 2, "terms": 3, "rows": 3, "skippedRows": 0,
+                 "categories": {"parliamentary": 1, "state-secretary": 1, "senior": 1}},
         "data": [
             {"personID": "k001", "label": "Kovács Béla", "labelFull": "Kovács Béla",
+             "firstname": "Béla", "lastname": "Kovács",
              "offices": [
-                 {"title": "az Országgyűlés jegyzője",
+                 {"title": "az Országgyűlés jegyzője", "category": "parliamentary",
                   "start": "2026-05-09T22:00:00Z", "end": None},
                  {"title": "Belügyminisztérium államtitkára",
+                  "category": "state-secretary",
                   "start": "2018-05-21T22:00:00Z", "end": "2022-05-24T12:00:00Z"},
              ]},
-            {"personID": "zzz9", "label": "Sosem Beszélt", "labelFull": None,
-             "offices": [{"title": "köztársasági elnök",
+            {"personID": "zzz9", "label": "Sosem Beszélt", "labelFull": "Dr. Sosem Beszélt",
+             "firstname": "Beszélt", "lastname": "Sosem",
+             "offices": [{"title": "köztársasági elnök", "category": "senior",
                           "start": "2012-05-09T22:00:00Z",
                           "end": "2017-05-09T21:59:59Z"}]},
         ],

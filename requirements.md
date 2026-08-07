@@ -889,6 +889,59 @@ snippet — a site-wide capability, not a per-module feature.
     invented answer (cf. SCR-5). The whole feature is **switchable off** (OPS-4), in
     which case its tab and endpoints disappear like a disabled module's (EXT-6).
 
+- **REP-11 (SHOULD).** **The office holders (*tisztségviselők*) are browsable as a
+  listing of their own.** The office-holder registry already dates each person's
+  offices on their profile (REP-2), but it is only reachable one profile at a time
+  — while the question it answers best is the cross-cutting one: *who holds (or
+  held) this office, and when*. The section therefore carries its **own page in the
+  Representatives tab bar** (§REP-9's precedent), mirroring the parliament's own
+  listing (`/web/guest/tisztsegviselok`).
+  - Listed **one row per term**, not per person: a career runs through several
+    offices, and the (person, office, from–to) term is what the source records.
+    The same person legitimately appears under each office they held.
+  - The page covers the **whole registry, including the people who never spoke in
+    the House** — over half of it: MNB and Közbeszerzési Hatóság members, ministers
+    who only ever appeared in writing. They are loaded as people whose profile is an
+    office history and nothing else, which is exactly what the source says about
+    them. Listing only those who happen to be in the transcript corpus would present
+    a silently halved version of an official register as if it were the register.
+    They hold **no mandate**, so no mandate-scoped view (the MP list, the advocates,
+    the search speaker suggestions) may show them.
+  - Terms are grouped by the registry's **own office categories** (miniszterelnök,
+    miniszter, államtitkár, országgyűlési tisztségviselő, egyéb vezető / egyéb
+    tisztség). The category is **not a field in the data** — it is which of the
+    portal's per-category listings returned the row — so the scraper asks for each
+    category separately and tags the rows, rather than guessing a category from the
+    free-text title (which would misfile *miniszterelnök-helyettes* and every
+    ministry rename).
+  - Cycle scope (§4A) is an **overlap**, since a term is dated rather than numbered
+    by cycle: a cycle shows the terms running during it, not the terms that began in
+    it — otherwise a minister appointed last cycle and still serving would be missing
+    from the one where they actually served. The overlap MUST be computed on
+    **instants**, not on calendar dates: upstream dates a term by the UTC instant of
+    a *local* midnight (9 May 2026 arrives as `2026-05-08T22:00:00Z`), and every
+    House office begins at the first local midnight of a cycle — so comparing date
+    prefixes files a cycle's entire opening cohort under the cycle before it.
+  - An office **still held keeps an open end** and is shown as such (REP-2): no end
+    date is ever invented, and the last day of the data is not a departure.
+
+- **REP-12 (SHOULD).** **The other speakers get a listing too.** Not only
+  representatives speak in the House: ministers and state secretaries (often not
+  MPs), the President of the Republic, the heads of independent bodies and invited
+  guests do — and they are otherwise reachable only by stumbling on a speech.
+  A sibling page of the MP list (REP-1) and the advocates (REP-9) lists them, with
+  the same filters, sorting, statistics and cycle scope.
+  - Membership is defined by **having spoken**, in the cycles in scope — never by
+    "not an MP". `person` also holds the office-holder registry's people (REP-11),
+    most of whom never spoke here; listing them as speakers would be false.
+  - They have no faction and no constituency, so the **office they spoke in
+    identifies them** and takes that slot on the card (REP-2), cycle-scoped like
+    everything else — someone promoted mid-career is shown in the post they held
+    then, not the one they hold now.
+  - Because they speak in plenary, they MUST also be **offered by the transcript's
+    speaker filter** (search-as-you-type): filtering the record by a minister that
+    silently finds nothing is worse than not offering the filter.
+
 - **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
   representative and faction statistics** (speaking time, speech counts, trends —
   REP-3/REP-4/REP-7), but are **never dropped from storage or from the

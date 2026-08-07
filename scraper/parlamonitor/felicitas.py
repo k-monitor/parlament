@@ -106,6 +106,20 @@ TISZTSEGVISELO_PROVIDER = (f"{BASE}/felicitas/api/query/select/"
 OFFICE_EPOCH = "1990-05-02"
 # ~1 800 terms all-time, so the whole registry is 5 requests instead of 73.
 _OFFICE_PAGE_SIZE = 400
+# The registry's office categories — the tick-boxes on the portal's own
+# Tisztségviselők page — as ``slug -> query parameter``. Insertion order is the
+# priority used to file a term returned under several categories (a prime minister
+# also comes back as a minister), most specific first, and the display order of the
+# category filter downstream. Slugs are stable ids, not labels: the UI translates
+# them, so renaming one is a data migration.
+OFFICE_CATEGORIES = {
+    "pm": "pMiniszterelnok",              # miniszterelnök
+    "minister": "pMiniszter",             # miniszter
+    "state-secretary": "pAllamtitkar",    # államtitkár
+    "parliamentary": "pParlamenti",       # az Országgyűlés tisztségviselői
+    "senior": "pEgyebVezetoTisztseg",     # egyéb vezető tisztség (pl. köztársasági elnök)
+    "other": "pEgyebTisztseg",            # egyéb tisztség (pl. MNB, Közbeszerzési Hatóság)
+}
 PHOTO_RESOURCE = (f"{BASE}/web/guest/felicitas/api/query/resource/"
                  "kepviseloexportok/kepviselo-exported-queries-provider/"
                  "kepviselo-kepek")
@@ -439,19 +453,32 @@ class FelicitasClient:
         silently dropping e.g. an MNB or Közbeszerzési Hatóság seat. ``pTisztsegIg``
         bounds the listing at ``as_of`` (a date, ``YYYY-MM-DD``); ``pTisztsegTol`` is
         deliberately NOT sent — passing it drops the terms that began before it,
-        including some that are still running."""
-        body = {
-            "pLegkorabbiDatumValue": earliest,
-            "pTisztsegIg": as_of,
-            "pMiniszterelnok": True,
-            "pMiniszter": True,
-            "pAllamtitkar": True,
-            "pParlamenti": True,
-            "pEgyebVezetoTisztseg": True,
-            "pEgyebTisztseg": True,
-        }
-        return self.select_all(TISZTSEGVISELO_PROVIDER, "tisztsegviselo", body,
-                               size=_OFFICE_PAGE_SIZE)
+        including some that are still running.
+
+        The categories are asked for **one at a time** rather than all at once, and
+        each returned row is tagged with the ``category`` it came back under. The
+        rows themselves carry no category field — only the free-text ``tisztseg`` —
+        so this is the only way to get the portal's own grouping (a "miniszterelnök"
+        vs "miniszter" vs "államtitkár" classification guessed from the title text
+        would misfile e.g. "miniszterelnök-helyettes"). Costs six paged listings
+        instead of one, which for ~1 800 rows is still a handful of requests.
+
+        A term can be returned under more than one category (a prime minister is
+        also a minister); the first category in ``OFFICE_CATEGORIES`` order wins, so
+        each row appears once, under its most specific category."""
+        body = {"pLegkorabbiDatumValue": earliest, "pTisztsegIg": as_of}
+        rows: dict[str, dict] = {}
+        for category, param in OFFICE_CATEGORIES.items():
+            flags = {p: (p == param) for p in OFFICE_CATEGORIES.values()}
+            chunk = self.select_all(TISZTSEGVISELO_PROVIDER, "tisztsegviselo",
+                                    {**body, **flags}, size=_OFFICE_PAGE_SIZE)
+            for row in chunk:
+                # Keyed by the registry's own row id (one row = one person-term), so
+                # a term seen under an earlier category is not overwritten by a
+                # broader one. A row with no id can't be deduped — keep it as its own.
+                key = row.get("id") or f"{row.get('kepvId')}|{row.get('tisztseg')}|{row.get('tol')}"
+                rows.setdefault(key, {**row, "category": category})
+        return list(rows.values())
 
     def photo(self, person_id: str) -> bytes | None:
         """Fetch an MP's portrait image bytes, or ``None`` if absent."""

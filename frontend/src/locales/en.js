@@ -22,7 +22,7 @@ export default {
       status: 'Page {page} of {total}',
     },
   },
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', lookup: 'Find your MP', advocates: 'Nationality advocates', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', lookup: 'Find your MP', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -176,6 +176,54 @@ export default {
       + 'constituency and no vote.',
     searchAdvocatePlaceholder: 'Search advocates by name…',
     noAdvocateResults: 'No matching advocates.',
+    // Other speakers: they spoke in the House holding no mandate (REP-12).
+    othersUnit: 'speakers',
+    otherNote: 'Not only representatives speak in the National Assembly: so do '
+      + 'ministers and state secretaries — who are often not MPs — the President '
+      + 'of the Republic, the heads of independent bodies and invited guests. '
+      + 'They are listed here: they have no faction, no constituency and no vote, '
+      + 'and it is their office that identifies them.',
+    searchOtherPlaceholder: 'Search speakers by name…',
+    noOtherResults: 'No matching speakers.',
+  },
+  // Office holders (REP-11) — the Assembly's official registry back to 1990, one
+  // row per term of office.
+  officials: {
+    title: 'Office holders',
+    intro: 'Who held which government or parliamentary office, and from when to '
+      + 'when — according to the National Assembly\'s official registry, from '
+      + '1990 to today. One row is one term, so the same person can appear under '
+      + 'several offices; the list also includes people who never spoke in the House.',
+    unit: 'terms of office',
+    searchPlaceholder: 'Search by name or office…',
+    category: 'Type of office',
+    status: 'Status',
+    statusCurrent: 'Still in office',
+    statusPast: 'Former',
+    // A cycle shows the terms *held during* it, not only those that began in it —
+    // so the label says which, rather than the generic "{cycle} data".
+    scopeHeld: 'held during {cycle}',
+    scopeStarted: 'began in {cycle}',
+    startedHint: '{count} of them began in this cycle',
+    startedShowAll: 'show all {count}',
+    started: 'Start',
+    startedAll: 'All',
+    startedInCycle: 'Began in this cycle',
+    inOffice: 'in office',
+    isMp: 'representative',
+    sortStart: 'By start date',
+    sortOffice: 'By office',
+    noResults: 'No matching terms of office.',
+    // The registry's own categories (the portal's own filters).
+    categories: {
+      pm: 'Prime Minister',
+      minister: 'Minister',
+      'state-secretary': 'State secretary',
+      parliamentary: 'Parliamentary office holder',
+      senior: 'Other senior office',
+      other: 'Other office',
+      uncategorised: 'Uncategorised',
+    },
   },
   // "Find your MP" — settlement → single-member constituency → MP (REP-10).
   lookup: {

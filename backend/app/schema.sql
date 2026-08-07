@@ -81,15 +81,22 @@ CREATE INDEX idx_membership_person ON membership(person_id);
 --                source for a non-MP minister/state secretary, who is in no roster;
 --   'roster'   — the per-MP office list that comes with the MP/advocate registry.
 -- They report the same upstream rows, so reads dedupe on (title, date_start).
+-- `category` is the registry's own office grouping ('pm', 'minister',
+-- 'state-secretary', 'parliamentary', 'senior', 'other') — the scraper gets it from
+-- WHICH per-category listing returned the row, since the row itself carries only a
+-- free-text title. Only registry rows have one, which is why the office listing
+-- (REP-11) reads that source alone.
 CREATE TABLE person_office (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     person_id     TEXT NOT NULL REFERENCES person(person_id),
     title         TEXT NOT NULL,
+    category      TEXT,
     date_start    TEXT,
     date_end      TEXT,
     source        TEXT NOT NULL DEFAULT 'registry'
 );
 CREATE INDEX idx_person_office_person ON person_office(person_id);
+CREATE INDEX idx_person_office_listing ON person_office(source, category, date_start);
 
 -- ---------------------------------------------------------------------------
 -- Proceedings module

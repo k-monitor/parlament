@@ -10,8 +10,9 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
@@ -57,9 +58,10 @@ def _person_offices(db: sqlite3.Connection, person_id: str,
     before it existed), so no profile loses its office list waiting for a reload."""
     try:
         rows = db.execute(
-            """SELECT title, date_start, date_end FROM person_office
-               WHERE person_id = ?
-               ORDER BY source = 'registry' DESC, date_start DESC""",
+            f"""SELECT title, {_category_col(db)} AS category, date_start, date_end
+                FROM person_office
+                WHERE person_id = ?
+                ORDER BY source = 'registry' DESC, date_start DESC""",
             (person_id,)).fetchall()
     except sqlite3.OperationalError:      # no person_office yet
         rows = None
@@ -72,11 +74,75 @@ def _person_offices(db: sqlite3.Connection, person_id: str,
         if key in seen:
             continue
         seen.add(key)
-        out.append({"title": r["title"], "start": r["date_start"],
-                    "end": r["date_end"]})
+        out.append({"title": r["title"], "category": r["category"],
+                    "start": r["date_start"], "end": r["date_end"]})
     # `source` decided which duplicate won, so sort by date for display order.
     out.sort(key=lambda o: o["start"] or "", reverse=True)
     return out
+
+
+def _category_col(db: sqlite3.Connection) -> str:
+    """``person_office.category``, or a NULL stand-in on a DB loaded before the
+    column existed — so the office pages degrade to "uncategorised" rather than
+    erroring until the next registry load."""
+    try:
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(person_office)")}
+    except sqlite3.OperationalError:
+        cols = set()
+    return "category" if "category" in cols else "NULL"
+
+
+# Office terms are stored as the **UTC instants** upstream reports (a term
+# beginning on 9 May 2026 arrives as "2026-05-08T22:00:00Z" — local midnight in
+# CEST), while an electoral cycle is bounded by plain **local dates**. Comparing
+# the two by date prefix is off by a day for exactly the timestamps this data is
+# full of: every House office begins at the first local midnight of a cycle, so a
+# prefix comparison files that whole opening cohort under the *previous* cycle.
+# The bounds are therefore converted to instants and compared as instants — ISO-8601
+# UTC strings in one fixed format sort as the instants they denote.
+_HU_TZ = "Europe/Budapest"
+
+
+def _local_instant(day: str, *, end_of_day: bool = False) -> str:
+    """A local calendar date as the UTC instant of its first (or last) second,
+    formatted like the stored timestamps: ``2026-05-09`` → ``2026-05-08T22:00:00Z``.
+
+    Falls back to CEST (UTC+2) if the platform has no tz database — every Hungarian
+    electoral cycle has begun in May, so that is the right offset for every boundary
+    this actually compares, and it is only ever a fallback."""
+    try:
+        tz = ZoneInfo(_HU_TZ)
+    except Exception:                     # no tzdata on this platform
+        tz = timezone(timedelta(hours=2))
+    t = time(23, 59, 59) if end_of_day else time(0, 0, 0)
+    local = datetime.combine(date.fromisoformat(day), t, tzinfo=tz)
+    return local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _period_bounds(db: sqlite3.Connection,
+                   periods: list[int]) -> Optional[tuple[Optional[str], Optional[str]]]:
+    """The ``(first instant, last instant)`` spanned by ``periods``, in UTC.
+
+    Office terms are dated, not numbered by cycle, so scoping them to the global
+    cycle selection (§4A) means overlapping them with the cycles' span. A still-
+    running cycle has no end date — returned as ``None``, i.e. open at that end;
+    with no ``periods`` at all ("all cycles") both ends are open.
+
+    Returns ``None`` — distinct from an open-ended range — when the requested
+    cycles are ones this DB cannot date. Nothing can be said to overlap them, and
+    the caller must answer empty rather than fall back to listing everything."""
+    if not periods:
+        return None, None
+    rows = db.execute(
+        "SELECT date_start, date_end FROM electoral_period "
+        f"WHERE {period_sql(periods, 'number')}").fetchall()
+    starts = [r["date_start"] for r in rows if r["date_start"]]
+    if not rows or not starts:
+        return None
+    # An open-ended cycle in scope leaves the whole range open-ended.
+    ends = [r["date_end"] for r in rows]
+    return (_local_instant(min(starts)),
+            (_local_instant(max(ends), end_of_day=True) if all(ends) else None))
 
 
 def _has_advocate_columns(db: sqlite3.Connection) -> bool:
@@ -94,8 +160,9 @@ def list_representatives(
     period: Optional[List[int]] = Query(
         None, description="Electoral period number(s); repeat to scope to several cycles"),
     constituency: Optional[str] = None,
-    role: str = Query("mp", pattern="^(mp|advocate|all)$",
-                      description="mp (default) | advocate (nemzetiségi szószólók) | all"),
+    role: str = Query("mp", pattern="^(mp|advocate|other|all)$",
+                      description="mp (default) | advocate (nemzetiségi szószólók) "
+                                  "| other (non-MP speakers) | all"),
     nationality: Optional[str] = None,
     sort: str = Query("name", pattern="^(name|speeches|speaking_time)$"),
     limit: int = Query(60, ge=1, le=300),
@@ -106,11 +173,25 @@ def list_representatives(
 
     ``role`` picks which mandate the list covers: MPs (the default, so an existing
     caller sees exactly what it did before), the **nationality advocates**
-    (szószólók — they sit and speak but hold no mandate, REP-9), or both. On a DB
-    predating the advocate registry the parameter degrades to MPs only."""
+    (szószólók — they sit and speak but hold no mandate, REP-9), the **other
+    speakers** (REP-12), or all three. On a DB predating the advocate registry the
+    parameter degrades to MPs only.
+
+    ``other`` is everyone who has actually spoken in the House holding neither
+    mandate: ministers and state secretaries who are not MPs, the President of the
+    Republic, invited guests. It is defined by *having spoken* rather than by "not
+    an MP", because `person` also holds office-holders who never spoke a word here
+    (the tisztségviselők registry, REP-11) — listing those as speakers would be a
+    lie. Under a cycle scope it means having spoken in those cycles."""
     advocates_known = _has_advocate_columns(db)
     where = []
     params: dict = {}
+    # Speakers are counted from `person_stats`, the same precomputed aggregate the
+    # list already reads for its speech counts — so "has spoken" and "N speeches"
+    # can never disagree (both exclude procedural/chairing speeches, STAT-1).
+    spoke_scope = period_sql(period, "ps.period_number") or "ps.period_number IS NULL"
+    spoke = ("EXISTS (SELECT 1 FROM person_stats ps WHERE ps.person_id = p.person_id "
+             f"AND {spoke_scope} AND ps.speech_count > 0)")
     if not advocates_known:
         # A DB predating the advocate registry knows only MPs, so an advocate-only
         # request comes back honestly empty instead of quietly listing MPs.
@@ -119,8 +200,11 @@ def list_representatives(
         where.append("p.is_mp = 1")
     elif role == "advocate":
         where.append("p.is_advocate = 1")
+    elif role == "other":
+        where.append("COALESCE(p.is_mp, 0) = 0 AND COALESCE(p.is_advocate, 0) = 0")
+        where.append(spoke)
     else:
-        where.append("(p.is_mp = 1 OR p.is_advocate = 1)")
+        where.append(f"(p.is_mp = 1 OR p.is_advocate = 1 OR {spoke})")
     if q:
         where.append("fold(p.label) LIKE fold(:q) ESCAPE '\\'")
         params["q"] = like_contains(q.strip())
@@ -139,13 +223,22 @@ def list_representatives(
                      f"WHERE m.person_id=p.person_id AND {cond})")
         params["fid"] = faction_id
     elif mem_sql:
-        where.append("EXISTS (SELECT 1 FROM membership m "
-                     f"WHERE m.person_id=p.person_id AND {mem_sql})")
+        # A mandate is held *for a cycle*, so a membership row in scope is what puts
+        # an MP or an advocate in it. The other speakers hold no mandate and have no
+        # membership row — they are scoped by the cycles they actually spoke in (the
+        # `spoke` clause above), and demanding a membership too would empty the list.
+        mem_exists = ("EXISTS (SELECT 1 FROM membership m "
+                      f"WHERE m.person_id=p.person_id AND {mem_sql})")
+        if role == "all":
+            where.append(f"({mem_exists} OR {spoke})")
+        elif role != "other":
+            where.append(mem_exists)
     where_sql = " AND ".join(where)
 
     # fold() the name sort: BINARY collation puts accented Hungarian surnames
-    # (Ágh, Árvay) after Z.
-    order = {"name": "fold(p.lastname), fold(p.label)",
+    # (Ágh, Árvay) after Z. The other speakers and the office holders come from
+    # sources that may not split a name, so fall back to the label.
+    order = {"name": "fold(COALESCE(p.lastname, p.label)), fold(p.label)",
              "speeches": "stat.speech_count DESC",
              "speaking_time": "stat.speaking_seconds DESC"}[sort]
 
@@ -169,9 +262,39 @@ def list_representatives(
     # affiliation the card shows in its place.
     mandate_cols = ("p.is_advocate, p.nationality," if advocates_known
                     else "0 AS is_advocate, NULL AS nationality,")
+    # ...and an "other" speaker has neither: what identifies a non-MP minister or
+    # state secretary is the office they spoke in (REP-2/REP-12), so that goes in
+    # the same slot on their card. Their most recently *begun* office in scope wins
+    # (someone promoted mid-cycle is shown in the post they moved to), and an office
+    # the registry dates wins over one their speeches merely carry — which is all
+    # there is for a speaker the registry never lists: a guest, a commissioner.
+    # Only computed for that list, so the MP list's query is untouched.
+    office_col = "NULL AS office,"
+    if role == "other":
+        # Scoped like everything else (§4A): the office they held *in these cycles*,
+        # not the one they hold now — a state secretary in the cycle you are looking
+        # at may since have moved on. Office terms are dated, not cycle-numbered, so
+        # the scope is an overlap of instants (see `_period_bounds`).
+        ostart, oend = _period_bounds(db, period_list(period)) or (None, None)
+        overlap = ""
+        if ostart:
+            overlap += " AND (po.date_end IS NULL OR po.date_end >= :ostart)"
+            params["ostart"] = ostart
+        if oend:
+            overlap += " AND po.date_start <= :oend"
+            params["oend"] = oend
+        office_col = f"""(SELECT COALESCE(
+              (SELECT po.title FROM person_office po
+                WHERE po.person_id = p.person_id{overlap}
+                ORDER BY po.date_start DESC, po.date_end IS NULL DESC LIMIT 1),
+              (SELECT s.speaker_office FROM speech s
+                WHERE s.person_id = p.person_id AND s.speaker_office IS NOT NULL
+                  {period_and(period, "s.period_number")}
+                ORDER BY s.session_id DESC, s.speech_index DESC LIMIT 1)
+           )) AS office,"""
     rows = db.execute(
         f"""SELECT p.person_id, p.label, p.firstname, p.lastname, p.photo_uri,
-                   p.constituency, {mandate_cols}
+                   p.constituency, {mandate_cols} {office_col}
                    COALESCE(stat.speech_count, 0) AS speech_count,
                    COALESCE(stat.speaking_seconds, 0) AS speaking_seconds,
                    f.id AS faction_id, f.label AS faction_label, f.color AS faction_color
@@ -191,6 +314,7 @@ def list_representatives(
                 "photo_uri": r["photo_uri"], "constituency": r["constituency"],
                 "is_advocate": bool(r["is_advocate"]),
                 "nationality": r["nationality"],
+                "office": r["office"],
                 "speech_count": r["speech_count"],
                 "speaking_seconds": r["speaking_seconds"],
                 "faction": {"id": r["faction_id"], "label": r["faction_label"],
@@ -271,6 +395,188 @@ def _factions_across_cycles(db: sqlite3.Connection, nums: list[int]) -> list[dic
     return [_faction_out(r) for r in rows]
 
 
+# ---------------------------------------------------------------------------
+# Office holders (tisztségviselők, REP-11)
+#
+# The parliament's own all-time listing of who held which government / House
+# office and when (parlament.hu/web/guest/tisztsegviselok), served term by term:
+# one row per (person, office, term), because a person holds several offices over
+# a career and the term is the thing being listed.
+#
+# Declared before ``/{person_id}`` so "officials" isn't captured as a person id.
+# ---------------------------------------------------------------------------
+
+# The registry's office categories, in the order the portal groups them (most
+# specific first). The keys are the slugs the scraper tags each term with — see
+# `OFFICE_CATEGORIES` in the scraper's felicitas client; the UI holds the labels.
+_OFFICE_CATEGORIES = ("pm", "minister", "state-secretary", "parliamentary",
+                      "senior", "other")
+
+_OFFICE_METHODOLOGY = (
+    "A tisztségviselők listája az Országgyűlés hivatalos nyilvántartásából "
+    "származik (parlament.hu, „Tisztségviselők”), és minden nyilvántartott "
+    "megbízatást tartalmaz 1990-től – kormányzati és országgyűlési tisztségeket "
+    "egyaránt, akkor is, ha a tisztségviselő nem volt országgyűlési képviselő. "
+    "Egy sor egy megbízatás: a kinevezés és a felmentés napja a nyilvántartás "
+    "szerinti dátum, a nyitott vég azt jelenti, hogy a tisztséget a lekérdezés "
+    "időpontjában is betöltötte. Ugyanaz a személy több sorban is szerepelhet. "
+    "A ciklusra szűkített nézet azokat a megbízatásokat mutatja, amelyek a "
+    "ciklus idejébe belenyúlnak – nem azokat, amelyek benne kezdődtek."
+)
+
+
+@router.get("/officials")
+def list_officials(
+    q: Optional[str] = None,
+    category: Optional[str] = Query(
+        None, description="Office category slug: " + " | ".join(_OFFICE_CATEGORIES)),
+    status: str = Query("all", pattern="^(all|current|past)$",
+                        description="all (default) | current (still in office) | past"),
+    started: str = Query("all", pattern="^(all|in-cycle)$",
+                         description="all (default) | in-cycle (term began within the "
+                                     "selected cycles; no-op without `period`)"),
+    period: Optional[List[int]] = Query(
+        None, description="Electoral period number(s); scopes to terms overlapping them"),
+    sort: str = Query("start", pattern="^(start|name|office)$"),
+    limit: int = Query(60, ge=1, le=300),
+    offset: int = Query(0, ge=0),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """The office-holder listing (tisztségviselők, REP-11), one row per term.
+
+    Reads the **registry** rows of ``person_office`` only. The per-MP roster
+    reports the same terms but without a category, so mixing both sources in would
+    duplicate rows and leave half of them unfilterable; the registry is the
+    all-time source and covers every roster term (that is what makes it the one
+    that can date a non-MP minister's office at all, REP-2).
+
+    ``q`` matches the person's name **or** the office title — one box, because
+    "Rétvári" and "államtitkár" are equally natural things to look for here.
+
+    ``period`` scopes to terms that **overlap** those cycles rather than to terms
+    that *began* in them: a minister appointed last cycle and still serving, and the
+    outgoing government that governed into the new cycle's first days, both belong
+    to the cycle a reader is asking about. That is also the surprising half — most
+    of a cycle's rows can predate it — so the answer carries ``starts``: how many of
+    the terms in scope began within it (``in_cycle``) against the total, and
+    ``started=in-cycle`` narrows to those. Without a ``period`` there is no cycle to
+    have begun in, and the parameter does nothing.
+
+    ``categories`` counts the same filtered set with the category filter itself
+    lifted, so the filter's own options never read zero for a choice that would
+    return rows."""
+    cat_col = _category_col(db)
+    where = ["po.source = 'registry'"]
+    params: dict = {}
+    if q:
+        where.append("(fold(p.label) LIKE fold(:q) ESCAPE '\\' "
+                     "OR fold(po.title) LIKE fold(:q) ESCAPE '\\')")
+        params["q"] = like_contains(q.strip())
+    if status == "current":
+        where.append("po.date_end IS NULL")
+    elif status == "past":
+        where.append("po.date_end IS NOT NULL")
+    # Cycle scope (§4A): the term must **overlap** the cycles' span — start no later
+    # than they end, and not have ended before they began. Both sides are instants
+    # (see `_period_bounds`): a term running from the first midnight of a cycle
+    # belongs to that cycle, not to the one that ended the moment before it.
+    bounds = _period_bounds(db, period_list(period))
+    if bounds is None:
+        where.append("0")            # cycles this DB cannot date — nothing overlaps
+    else:
+        start_bound, end_bound = bounds
+        if start_bound:
+            where.append("(po.date_end IS NULL OR po.date_end >= :pstart)")
+            params["pstart"] = start_bound
+        if end_bound:
+            where.append("po.date_start <= :pend")
+            params["pend"] = end_bound
+
+    # "Began within the selected cycles" — only meaningful with a cycle in scope,
+    # and expressible only when that cycle could be dated.
+    in_cycle_sql = (params.get("pstart") and "po.date_start >= :pstart") or None
+
+    def _sql(extra_where: list) -> str:
+        return (" FROM person_office po JOIN person p ON p.person_id = po.person_id "
+                "WHERE " + " AND ".join(where + extra_where))
+
+    cat_where = []
+    if category:
+        if category == "uncategorised":
+            cat_where.append(f"{cat_col} IS NULL")
+        else:
+            cat_where.append(f"{cat_col} = :cat")
+            params["cat"] = category
+    started_where = [in_cycle_sql] if (started == "in-cycle" and in_cycle_sql) else []
+
+    try:
+        total = db.execute("SELECT COUNT(*) AS c" + _sql(cat_where + started_where),
+                           params).fetchone()["c"]
+    except sqlite3.OperationalError:
+        # No person_office yet (a DB built before the registry stage) — an empty
+        # listing is the honest answer, not a 500.
+        return {"total": 0, "limit": limit, "offset": offset, "officials": [],
+                "categories": [], "starts": {"all": 0, "in_cycle": None},
+                "methodology": _OFFICE_METHODOLOGY}
+
+    # Each filter's own options are counted with **that** filter lifted (the others
+    # applied), so neither can offer a choice that would land on an empty page.
+    facet = {r["category"]: r["c"] for r in db.execute(
+        f"SELECT {cat_col} AS category, COUNT(*) AS c" + _sql(started_where)
+        + f" GROUP BY {cat_col}", params).fetchall()}
+    categories = [{"key": k, "count": facet.get(k, 0)} for k in _OFFICE_CATEGORIES
+                  if facet.get(k)]
+    if facet.get(None):
+        # Terms from a DB loaded before the categories existed; named rather than
+        # dropped, so the counts on the page always add up to the total.
+        categories.append({"key": "uncategorised", "count": facet[None]})
+
+    # How much of the cycle's listing actually began in it. This is the number that
+    # explains the page: most of a cycle's office terms can predate it and still be
+    # held during it, which reads as a broken filter unless it is stated. `in_cycle`
+    # is null when there is no cycle in scope — then there is nothing to have begun in.
+    starts = {
+        "all": db.execute("SELECT COUNT(*) AS c" + _sql(cat_where),
+                          params).fetchone()["c"],
+        "in_cycle": (db.execute(
+            "SELECT COUNT(*) AS c" + _sql(cat_where + [in_cycle_sql]),
+            params).fetchone()["c"] if in_cycle_sql else None),
+    }
+
+    # fold() the name sort: BINARY collation puts Ágh/Árvay after Z. Falling back
+    # to the label covers the registry-only people whose name never came through a
+    # roster (it is split in the scraper, but a single-token name has no surname).
+    order = {
+        "start": "po.date_start DESC, fold(COALESCE(p.lastname, p.label))",
+        "name": "fold(COALESCE(p.lastname, p.label)), fold(p.label), po.date_start DESC",
+        "office": "fold(po.title), po.date_start DESC",
+    }[sort]
+    rows = db.execute(
+        f"""SELECT po.id, po.person_id, po.title, {cat_col} AS category,
+                   po.date_start, po.date_end,
+                   p.label, p.photo_uri, p.is_mp"""
+        + _sql(cat_where + started_where)
+        + f" ORDER BY {order} LIMIT :limit OFFSET :offset",
+        {**params, "limit": limit, "offset": offset}).fetchall()
+    return {
+        "total": total, "limit": limit, "offset": offset,
+        "officials": [
+            {
+                "id": r["id"], "person_id": r["person_id"], "label": r["label"],
+                "photo_uri": r["photo_uri"], "is_mp": bool(r["is_mp"]),
+                "title": r["title"], "category": r["category"],
+                "start": r["date_start"], "end": r["date_end"],
+                # Nothing downstream has to compare dates to know whether this is
+                # someone's current post: an open end IS still in office (REP-2).
+                "current": r["date_end"] is None,
+            } for r in rows
+        ],
+        "categories": categories,
+        "starts": starts,
+        "methodology": _OFFICE_METHODOLOGY,
+    }
+
+
 @router.get("/resolve")
 def resolve_speakers(
     name: List[str] = Query(default=[]),
@@ -282,27 +588,38 @@ def resolve_speakers(
     ``Vitályos Eszter: Végrehajtod vagy nem?`` out of a speech; the caller passes
     the leading names here to attach a face + profile link. Matching is accent-
     and case-insensitive on the exact ``person.label`` (surname + given). Only a
-    name mapping to a SINGLE person (MPs preferred on a tie) is returned — an
-    ambiguous or unknown name is omitted, and the caller renders it as plain
-    text. Keyed in the response by the requested spelling.
+    name mapping to a SINGLE person is returned — an ambiguous or unknown name is
+    omitted, and the caller renders it as plain text. Keyed in the response by the
+    requested spelling.
+
+    Ties are broken by how likely the person is to be the one heckling in a
+    chamber: an MP first, then anyone who has spoken here, then the rest — the
+    last tier being the office-holder registry's people, most of whom never set
+    foot in the House (REP-11) and must not make a name that used to resolve
+    ambiguous.
 
     Declared before ``/{person_id}`` so "resolve" isn't captured as an MP id."""
     names = [n.strip() for n in name if n and n.strip()][:40]
     resolved: dict = {}
     if not names:
         return {"resolved": resolved}
-    # The person table is small (~450 rows); fold every label once and group so
+    # The person table is small (~1 500 rows); fold every label once and group so
     # a duplicate name (two people, same folded label) is detected as ambiguous.
     groups: dict = {}
     for r in db.execute(
-            "SELECT person_id, label, photo_uri, is_mp FROM person").fetchall():
+            """SELECT p.person_id, p.label, p.photo_uri, p.is_mp,
+                      EXISTS (SELECT 1 FROM person_stats ps
+                              WHERE ps.person_id = p.person_id
+                                AND ps.period_number IS NULL) AS spoke
+               FROM person p""").fetchall():
         groups.setdefault(fold_text(r["label"]), []).append(r)
     for n in names:
         rows = groups.get(fold_text(n))
         if not rows:
             continue
-        mps = [r for r in rows if r["is_mp"]]
-        cand = mps or rows
+        cand = ([r for r in rows if r["is_mp"]]
+                or [r for r in rows if r["spoke"]]
+                or rows)
         if len(cand) == 1:
             r = cand[0]
             resolved[n] = {"person_id": r["person_id"], "label": r["label"],
@@ -585,6 +902,14 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         # identifying affiliation, shown where an MP's faction badge goes.
         "is_advocate": bool(_col(p, "is_advocate")),
         "nationality": _col(p, "nationality"),
+        # Whether this person ever spoke in the House — deliberately NOT cycle-
+        # scoped, unlike the statistics. It answers "which kind of person is this",
+        # which does not change with the scope: an office holder from the registry
+        # who never spoke (REP-11) has a profile that is an office history and
+        # nothing else, and the page must not present them as a silent speaker.
+        "has_speeches": bool(db.execute(
+            "SELECT 1 FROM person_stats WHERE person_id=? AND period_number IS NULL "
+            "AND speech_count > 0", (person_id,)).fetchone()),
         # The speaker's government office (tisztség), e.g. "igazságügyi miniszter".
         # Present for office-holders (ministers/state secretaries); it identifies a
         # non-MP speaker — someone who spoke in the House but holds no mandate, so
@@ -1115,7 +1440,25 @@ def _current_office(db: sqlite3.Connection, person_id: str,
             ORDER BY MAX(ss.date || '#' || printf('%08d', sp.speech_index)) DESC
             LIMIT 1""", params).fetchone()
     if not row:
-        return None
+        # Nothing they said carries an office. For anyone who has spoken here that
+        # settles it — they hold none, as every ordinary MP does, and an office they
+        # held years ago must not be hoisted into the header as if it were current.
+        # But the office-holder registry adds ~570 people who never spoke here at
+        # all (REP-11): for them there is no speech to read an office off, and the
+        # registry's newest term IS the identity this line exists to show. Upstream
+        # dates it, so it is reported exactly like a matched term.
+        if db.execute("SELECT 1 FROM speech WHERE person_id = :pid LIMIT 1",
+                      {"pid": person_id}).fetchone():
+            return None
+        newest = next((o for o in (offices or [])
+                       if isinstance(o, dict) and o.get("title")), None)
+        if not newest:
+            return None
+        return {"title": newest["title"], "start": newest.get("start"),
+                "end": newest.get("end"), "dates_from": "term",
+                # Not cycle-scoped: there are no speeches to scope by, and the term
+                # is always shown with its own dates.
+                "ongoing": newest.get("end") is None, "cycles": []}
     start, end = _office_term(offices or [], row["title"], row["last_date"])
     cycles = sorted(int(c) for c in (row["cycles"] or "").split(",") if c.strip())
     # An upstream term is reported as-is, end included — and its end stays **null**

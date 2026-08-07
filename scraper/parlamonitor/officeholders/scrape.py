@@ -35,6 +35,7 @@ from datetime import date, datetime, timezone
 
 from ..config import Paths
 from ..felicitas import FelicitasClient
+from ..names import split_name
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +46,18 @@ def _now_iso() -> str:
 
 def _term(row: dict) -> dict:
     """One office term from a registry row, in the same ``{title, start, end}``
-    shape the MP roster's ``offices`` uses — so the loader has one code path."""
+    shape the MP roster's ``offices`` uses — so the loader has one code path.
+
+    ``category`` is the portal's own office grouping, which the client tags each
+    row with (the row itself carries only the free-text title); absent on a row
+    from an older cache, in which case the term is simply uncategorised."""
     return {
         "title": (row.get("tisztseg") or "").strip() or None,
         "start": row.get("tol"),
         # Null while the office is still held; kept null rather than filled in, so
         # nothing downstream invents a departure date.
         "end": row.get("ig"),
+        "category": row.get("category"),
     }
 
 
@@ -64,20 +70,29 @@ def group_by_person(rows: list[dict]) -> list[dict]:
     """Group registry rows into one record per person, newest office first.
 
     A person is identified by ``kepvId``; a row without one is dropped (it could
-    not be joined to a speaker anyway) and counted by the caller."""
+    not be joined to a speaker anyway) and counted by the caller.
+
+    The split first/last name is carried too: most of this registry never appears
+    in an MP roster, so for an office-holder who is not (and never was) an MP this
+    file is the only place their name is broken up for name-ordered listings."""
     people: dict[str, dict] = {}
     for row in rows:
         pid = (row.get("kepvId") or "").strip()
         term = _term(row)
         if not pid or not term["title"]:
             continue
-        rec = people.setdefault(pid, {
-            "personID": pid,
-            "label": (row.get("nevElonevNelkul") or row.get("nev") or "").strip(),
-            "labelFull": (row.get("nev") or "").strip() or None,
-            "offices": [],
-        })
-        rec["offices"].append(term)
+        if pid not in people:
+            label = (row.get("nevElonevNelkul") or row.get("nev") or "").strip()
+            firstname, lastname = split_name(label)
+            people[pid] = {
+                "personID": pid,
+                "label": label,
+                "labelFull": (row.get("nev") or "").strip() or None,
+                "firstname": firstname or None,
+                "lastname": lastname or None,
+                "offices": [],
+            }
+        people[pid]["offices"].append(term)
     for rec in people.values():
         rec["offices"].sort(key=_sort_key, reverse=True)
     return [people[pid] for pid in sorted(people)]
@@ -100,8 +115,17 @@ def fetch_office_holders(felicitas: FelicitasClient, *,
     if dropped:
         logger.info("Office holders: skipped %d row(s) with no person id or title",
                     dropped)
-    logger.info("Office holders: %d term(s) over %d people (as of %s)",
-                terms, len(records), as_of)
+    # Per-category term counts: the categories come from *which listing* a row was
+    # returned by (see the client), so a category silently going empty is a change
+    # upstream rather than in the data — worth having in the file to compare runs.
+    by_category: dict[str, int] = {}
+    for rec in records:
+        for office in rec["offices"]:
+            key = office.get("category") or "uncategorised"
+            by_category[key] = by_category.get(key, 0) + 1
+    logger.info("Office holders: %d term(s) over %d people (as of %s) — %s",
+                terms, len(records), as_of,
+                ", ".join(f"{k}: {v}" for k, v in sorted(by_category.items())))
     return {
         "meta": {
             "scrapedAt": _now_iso(),
@@ -111,6 +135,7 @@ def fetch_office_holders(felicitas: FelicitasClient, *,
             "terms": terms,
             "rows": len(rows),
             "skippedRows": dropped,
+            "categories": by_category,
         },
         "data": records,
     }

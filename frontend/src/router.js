@@ -54,6 +54,23 @@ const routes = [
     component: () => import('./modules/representatives/RepListView.vue'),
   },
   {
+    // Other speakers (REP-12) — everyone who spoke in the House holding neither an
+    // MP's mandate nor an advocacy: non-MP ministers and state secretaries, the
+    // President of the Republic, invited guests. Same list component again, keyed
+    // off the route name. Declared before `/representatives/:id`.
+    path: '/representatives/speakers', name: 'speakers',
+    meta: { module: 'representatives' },
+    component: () => import('./modules/representatives/RepListView.vue'),
+  },
+  {
+    // Tisztségviselők (REP-11) — the parliament's own all-time office-holder
+    // registry, listed term by term rather than person by person (a career runs
+    // through several offices). Declared before `/representatives/:id`.
+    path: '/representatives/officials', name: 'officials',
+    meta: { module: 'representatives' },
+    component: () => import('./modules/representatives/OfficialsView.vue'),
+  },
+  {
     // "Who represents me?" — find your own constituency and its MP (REP-10). Also
     // declared before `/representatives/:id`. The guard below leaves its `?cycle=`
     // alone like every other page, but the view ignores the scope: it answers for

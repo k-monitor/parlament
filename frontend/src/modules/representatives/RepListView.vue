@@ -30,16 +30,43 @@ const loading = ref(false)
 const error = ref(false)
 const factions = ref([])
 
-// This one component serves two sibling pages of the Representatives section (its
-// sub-nav tabs): the MP list and the nationality advocates (szószólók, REP-9).
-// Which one is decided by the route, so each is its own URL — no query state.
+// This one component serves three sibling pages of the Representatives section
+// (its sub-nav tabs): the MP list, the nationality advocates (szószólók, REP-9)
+// and the other speakers (REP-12) — everyone who spoke in the House holding
+// neither mandate: non-MP ministers and state secretaries, the President of the
+// Republic, invited guests. Which one is decided by the route, so each is its own
+// URL — no query state. They differ only in the mandate they cover, which is
+// exactly what the list endpoint's `role` selects.
 const isAdvocates = computed(() => route.name === 'advocates')
-const role = computed(() => (isAdvocates.value ? 'advocate' : 'mp'))
+const isOthers = computed(() => route.name === 'speakers')
+const role = computed(() =>
+  (isAdvocates.value ? 'advocate' : isOthers.value ? 'other' : 'mp'))
 
-// The unit the result count is counted in, so the advocates tab doesn't report
-// "N képviselő" for people who are not representatives.
-const countUnit = computed(() =>
-  isAdvocates.value ? t('reps.advocatesUnit') : t('home.stats.representatives'))
+// The unit the result count is counted in, so neither tab reports "N képviselő"
+// for people who are not representatives.
+const countUnit = computed(() => (
+  isAdvocates.value ? t('reps.advocatesUnit')
+  : isOthers.value ? t('reps.othersUnit')
+  : t('home.stats.representatives')))
+
+// Per-page wording, so each tab says what it is about rather than sharing one
+// generic phrasing.
+const pageTitle = computed(() => (
+  isAdvocates.value ? t('nav.advocates')
+  : isOthers.value ? t('nav.speakers')
+  : t('reps.title')))
+const searchPlaceholder = computed(() => (
+  isAdvocates.value ? t('reps.searchAdvocatePlaceholder')
+  : isOthers.value ? t('reps.searchOtherPlaceholder')
+  : t('reps.searchPlaceholder')))
+const emptyText = computed(() => (
+  isAdvocates.value ? t('reps.noAdvocateResults')
+  : isOthers.value ? t('reps.noOtherResults')
+  : t('reps.noResults')))
+const note = computed(() => (
+  isAdvocates.value ? t('reps.advocateNote')
+  : isOthers.value ? t('reps.otherNote')
+  : ''))
 
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
@@ -57,6 +84,10 @@ function clearFilters() {
   f.faction_id = ''
   apply()
 }
+
+// Faction is the only filter here, and neither an advocate nor a non-MP speaker
+// has one — so the panel is offered on the MP tab alone.
+const hasFilters = computed(() => !isAdvocates.value && !isOthers.value)
 
 function apply() {
   const query = {}
@@ -122,31 +153,29 @@ onUnmounted(() => clearTimeout(searchTimer))
 </script>
 
 <template>
-  <h1>{{ isAdvocates ? $t('nav.advocates') : $t('reps.title') }}</h1>
+  <h1>{{ pageTitle }}</h1>
 
-  <!-- What a szószóló is, since they are easily mistaken for MPs: they sit and
-       speak but hold no mandate (REP-9 / TRUST-1). -->
-  <p v-if="isAdvocates" class="muted small advocate-note">{{ $t('reps.advocateNote') }}</p>
+  <!-- What a szószóló / a non-MP speaker is, since both are easily mistaken for
+       representatives: they speak in the House but hold no mandate
+       (REP-9 / REP-12 / TRUST-1). -->
+  <p v-if="note" class="muted small advocate-note">{{ note }}</p>
 
   <form class="card pad searchform" role="search" @submit.prevent="apply">
     <div class="row" style="gap:.5rem;">
       <input
         id="r-q" type="search" v-model="f.q"
-        :placeholder="isAdvocates ? $t('reps.searchAdvocatePlaceholder') : $t('reps.searchPlaceholder')"
-        :aria-label="isAdvocates ? $t('reps.searchAdvocatePlaceholder') : $t('reps.searchPlaceholder')"
+        :placeholder="searchPlaceholder" :aria-label="searchPlaceholder"
         @input="onSearchInput" style="flex:1;min-width:200px;"
       />
-      <!-- The only filter here is by faction, which an advocate cannot have, so
-           the panel is offered on the MP tab only. -->
       <button
-        v-if="!isAdvocates" class="btn secondary" type="button"
+        v-if="hasFilters" class="btn secondary" type="button"
         :aria-expanded="showFilters" @click="showFilters = !showFilters"
       >
         {{ $t('search.filters') }}
       </button>
     </div>
 
-    <fieldset v-show="showFilters && !isAdvocates" class="filters">
+    <fieldset v-show="showFilters && hasFilters" class="filters">
       <legend class="visually-hidden">{{ $t('search.filters') }}</legend>
       <div class="filter-grid">
         <div>
@@ -166,7 +195,7 @@ onUnmounted(() => clearTimeout(searchTimer))
   <StateBlock
     :loading="loading" :error="error"
     :empty="!!data && data.representatives.length === 0"
-    :empty-text="isAdvocates ? $t('reps.noAdvocateResults') : $t('reps.noResults')"
+    :empty-text="emptyText"
     @retry="load"
   >
     <div v-if="data">
@@ -194,6 +223,10 @@ onUnmounted(() => clearTimeout(searchTimer))
               v-if="r.is_advocate && r.nationality" class="chip"
               :aria-label="$t('reps.advocateFor', { nationality: r.nationality })"
             >{{ r.nationality }}</span>
+            <!-- A non-MP speaker has neither faction nor constituency either: the
+                 office they spoke in is what identifies them (REP-2/REP-12), so it
+                 takes the same slot. Scoped to the selected cycle by the API. -->
+            <span v-if="r.office" class="chip office">{{ r.office }}</span>
             <span v-if="r.constituency" class="muted small">📍 {{ r.constituency }}</span>
           </div>
           <div class="repstats small muted">
@@ -214,5 +247,8 @@ onUnmounted(() => clearTimeout(searchTimer))
 .replist { list-style: none; padding: 0; margin: 0; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
 .repcard { display: flex; flex-direction: column; gap: .5rem; }
 .repmeta { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
+/* Office titles are long ("Külgazdasági és Külügyminisztérium államtitkára") and
+   the cards are narrow, so this chip wraps instead of stretching the grid. */
+.chip.office { font-weight: 600; line-height: 1.25; }
 .repstats { display: flex; gap: .4rem; }
 </style>

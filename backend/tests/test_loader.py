@@ -150,22 +150,37 @@ def test_non_mp_speaker_office_stored(db_path):
     c.close()
 
 
-def test_office_holder_registry_loaded_for_people_in_the_corpus(conn):
-    """REP-2: the office-holder registry lands as dated ``person_office`` terms —
-    but only for people the corpus knows. Somebody who never spoke is skipped, not
-    inserted as an otherwise-empty profile."""
+def test_office_holder_registry_loaded_with_dates_and_categories(conn):
+    """REP-2: the office-holder registry lands as dated ``person_office`` terms,
+    each carrying the portal's own office category."""
     rows = conn.execute(
-        "SELECT title, date_start, date_end, source FROM person_office "
+        "SELECT title, category, date_start, date_end, source FROM person_office "
         "WHERE person_id='k001' AND source='registry' ORDER BY date_start DESC"
     ).fetchall()
-    assert [(r["title"], r["date_end"]) for r in rows] == [
-        ("az Országgyűlés jegyzője", None),          # still held: open end
-        ("Belügyminisztérium államtitkára", "2022-05-24T12:00:00Z")]
+    assert [(r["title"], r["category"], r["date_end"]) for r in rows] == [
+        ("az Országgyűlés jegyzője", "parliamentary", None),   # still held: open end
+        ("Belügyminisztérium államtitkára", "state-secretary", "2022-05-24T12:00:00Z")]
     assert rows[0]["date_start"] == "2026-05-09T22:00:00Z"
-    # 'zzz9' is in the registry but has no speech, hence no person row.
-    assert conn.execute("SELECT COUNT(*) FROM person WHERE person_id='zzz9'"
-                        ).fetchone()[0] == 0
-    assert conn.execute("SELECT COUNT(*) FROM person_office WHERE person_id='zzz9'"
+    # The MP's own roster copy of a term has no category — the roster doesn't
+    # report one — which is why the listing reads the registry rows (REP-11).
+    assert conn.execute("SELECT COUNT(*) FROM person_office WHERE source='roster' "
+                        "AND category IS NOT NULL").fetchone()[0] == 0
+
+
+def test_office_holder_outside_the_corpus_is_loaded_as_a_stub(conn):
+    """REP-11: over half the registry never spoke in the House, so an office holder
+    the corpus doesn't know is inserted as a person with a name and an office
+    history — and no mandate. Leaving them out would halve the all-time listing;
+    marking them as anything else would invent a mandate the source doesn't give."""
+    p = conn.execute("SELECT * FROM person WHERE person_id='zzz9'").fetchone()
+    assert p is not None
+    assert (p["label"], p["label_full"]) == ("Sosem Beszélt", "Dr. Sosem Beszélt")
+    assert (p["lastname"], p["firstname"]) == ("Sosem", "Beszélt")
+    assert (p["is_mp"] or 0, p["is_advocate"] or 0) == (0, 0)
+    assert conn.execute("SELECT title FROM person_office WHERE person_id='zzz9'"
+                        ).fetchone()["title"] == "köztársasági elnök"
+    # They never spoke, so nothing may count them as a speaker.
+    assert conn.execute("SELECT COUNT(*) FROM person_stats WHERE person_id='zzz9'"
                         ).fetchone()[0] == 0
 
 

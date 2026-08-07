@@ -145,22 +145,35 @@ def _ensure_person_office(conn: sqlite3.Connection) -> None:
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             person_id     TEXT NOT NULL REFERENCES person(person_id),
             title         TEXT NOT NULL,
+            category      TEXT,
             date_start    TEXT,
             date_end      TEXT,
             source        TEXT NOT NULL DEFAULT 'registry'
         )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_person_office_person "
                  "ON person_office(person_id)")
+    # `category` post-dates the table, so an already-built DB gets it added here
+    # (the next registry load fills it in) rather than needing a rebuild.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(person_office)")}
+    if "category" not in cols:
+        conn.execute("ALTER TABLE person_office ADD COLUMN category TEXT")
+    # The office listing pages by start date within a category (REP-11).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_person_office_listing "
+                 "ON person_office(source, category, date_start)")
 
 
 def _load_person_offices(conn: sqlite3.Connection, person_id: str,
                          offices, source: str) -> int:
     """Replace ``person_id``'s office terms **from this source** (REP-2).
 
-    ``offices`` is a list of ``{title, start, end}`` — the shape both the MP
-    roster's ``offices`` and the office-holder registry use. The delete is
+    ``offices`` is a list of ``{title, category, start, end}`` — the shape both the
+    MP roster's ``offices`` and the office-holder registry use. The delete is
     source-scoped, so reloading one source never drops what the other supplied;
-    a term with no title is skipped (there would be nothing to show)."""
+    a term with no title is skipped (there would be nothing to show).
+
+    ``category`` is the registry's own office grouping (miniszter / államtitkár /
+    parlamenti / …); the MP roster does not report it, so a roster-sourced term
+    has none — which is why the office listing reads the registry rows (REP-11)."""
     conn.execute("DELETE FROM person_office WHERE person_id = ? AND source = ?",
                  (person_id, source))
     n = 0
@@ -170,9 +183,10 @@ def _load_person_offices(conn: sqlite3.Connection, person_id: str,
         title = (o.get("title") or "").strip()
         if not title:
             continue
-        conn.execute("INSERT INTO person_office(person_id, title, date_start, "
-                     "date_end, source) VALUES (?,?,?,?,?)",
-                     (person_id, title, o.get("start"), o.get("end"), source))
+        conn.execute("INSERT INTO person_office(person_id, title, category, "
+                     "date_start, date_end, source) VALUES (?,?,?,?,?,?)",
+                     (person_id, title, o.get("category"), o.get("start"),
+                      o.get("end"), source))
         n += 1
     return n
 
@@ -484,29 +498,39 @@ def load_office_holders(conn: sqlite3.Connection, registry: dict) -> int:
     the speeches carrying it — never saying when it really began, nor that they
     still hold it.
 
-    Only people **already in** ``person`` get rows: everyone in this registry who
-    never spoke in the House is outside our corpus (they'd be a profile with nothing
-    on it), so they are counted and skipped, not inserted. Safe to re-run — it
-    replaces the registry-sourced terms of every person it names (ING-4), leaving
-    the roster-sourced ones alone."""
+    A registry entry for someone **not yet** in ``person`` is inserted as a stub
+    (name + the split name, no mandate): over half of this registry never spoke in
+    the House — MNB and Közbeszerzési Hatóság members, ministers who only ever
+    appeared in writing — and the office listing (REP-11) is the parliament's own
+    all-time listing, so leaving them out would silently halve it. Their profile is
+    an office history and nothing else, which is what the source says about them.
+
+    Safe to re-run — it replaces the registry-sourced terms of every person it names
+    (ING-4), leaving the roster-sourced ones alone."""
     _ensure_person_office(conn)
     data = registry.get("data", [])
     known = {r[0] for r in conn.execute("SELECT person_id FROM person")}
-    people = terms = skipped = 0
+    people = terms = added = 0
     for rec in data:
         pid = rec.get("personID")
         if not pid:
             continue
         if pid not in known:
-            skipped += 1
-            continue
+            _ensure_person(conn, pid, rec.get("label") or rec.get("labelFull"),
+                           firstname=rec.get("firstname"),
+                           lastname=rec.get("lastname"))
+            # The registry is the only source of a non-MP's full (honorific) name.
+            conn.execute("UPDATE person SET label_full = COALESCE(label_full, ?) "
+                         "WHERE person_id = ?", (rec.get("labelFull"), pid))
+            known.add(pid)
+            added += 1
         n = _load_person_offices(conn, pid, rec.get("offices"), "registry")
         if n:
             people += 1
             terms += n
     conn.commit()
-    logger.info("Loaded %d office term(s) for %d people (%d not in the corpus, "
-                "skipped)", terms, people, skipped)
+    logger.info("Loaded %d office term(s) for %d people (%d new to the corpus)",
+                terms, people, added)
     return terms
 
 

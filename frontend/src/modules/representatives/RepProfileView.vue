@@ -102,6 +102,20 @@ function toggleVoteDay(day) {
       .then((r) => r.votes))
 }
 
+// Which of the section's person lists this profile came from, as that tab's route
+// name. Four kinds of person share this one route: an MP, a nationality advocate
+// (REP-9), one of the other speakers (REP-12), and — for the ~570 people the
+// office-holder registry adds who never spoke here (REP-11) — an office holder,
+// whose profile is an office history and nothing else. Drives both the "back to
+// the list" link and the app shell's sub-tab highlight.
+function profileTabFor(p) {
+  if (p.is_advocate) return 'advocates'
+  if (p.is_mp) return 'representatives'
+  return p.has_speeches === false ? 'officials' : 'speakers'
+}
+const backTab = computed(() =>
+  (profile.value ? profileTabFor(profile.value) : 'representatives'))
+
 // "2022-05-02 – 2022-11-30" for a committee membership; an open-ended term (no
 // upstream end date) reads as "… – jelenleg". Empty when neither date is known.
 function termRange(c) {
@@ -221,7 +235,7 @@ async function load() {
   loading.value = true; error.value = false
   // Reset the shell's tab hint too: the previous profile's mandate must not keep
   // the wrong sub-tab lit while the next person loads.
-  store.profileIsAdvocate = null
+  store.profileTab = null
   profile.value = stats.value = activity.value = speechDays.value = voteDays.value = null
   questions.value = lawBills.value = otherDocs.value = null
   for (const m of [dayCache, openDays, voteDayCache, openVoteDays])
@@ -263,9 +277,9 @@ async function load() {
     speechDays.value = days; voteDays.value = v
     questions.value = qd; lawBills.value = lb; otherDocs.value = od
     // Tell the app shell which person tab this profile belongs under: only the
-    // profile response knows whether this is an MP or a nationality advocate
-    // (one route serves both), and the sub-tab highlight follows it (REP-9).
-    store.profileIsAdvocate = !!p.is_advocate
+    // profile response knows which of the four kinds of person this is (one route
+    // serves them all), and the sub-tab highlight follows it.
+    store.profileTab = profileTabFor(p)
   } catch {
     if (seq === loadSeq) error.value = true
   } finally {
@@ -277,7 +291,7 @@ async function load() {
 onMounted(async () => { await loadMeta().catch(() => {}); load() })
 // Leaving the profile clears the shell's tab hint, so a list page is never
 // highlighted on account of a person who is no longer open.
-onUnmounted(() => { store.profileIsAdvocate = null })
+onUnmounted(() => { store.profileTab = null })
 watch(() => props.id, load)
 // Re-fetch when the user switches the global cycle.
 watch(() => store.cycles.join(','), load)
@@ -287,10 +301,12 @@ watch(() => store.cycles.join(','), load)
   <StateBlock :loading="loading" :error="error" @retry="load">
     <div v-if="profile" class="profile">
       <!-- Back to the list this person belongs to: an advocate came from the
-           Nemzetiségi szószólók page, not the MP list. -->
-      <router-link
-        :to="{ name: profile.is_advocate ? 'advocates' : 'representatives' }" class="small"
-      >‹ {{ profile.is_advocate ? $t('nav.advocates') : $t('reps.title') }}</router-link>
+           Nemzetiségi szószólók page, a non-MP minister from Egyéb felszólalók
+           and an office holder who never spoke from Tisztségviselők — not the
+           MP list (see `profileTabFor`). -->
+      <router-link :to="{ name: backTab }" class="small">
+        ‹ {{ backTab === 'representatives' ? $t('reps.title') : $t('nav.' + backTab) }}
+      </router-link>
 
       <header class="phead card pad">
         <div class="pmain">
@@ -365,7 +381,11 @@ watch(() => store.cycles.join(','), load)
                    submitter) — not to the Törvényjavaslatok page, which is
                    main_type=T only and would read "0 találat" for an MP whose
                    motions are határozati javaslatok, kérdések, etc. -->
-              <div v-if="stats.totals.bills_available">
+              <!-- `bills_submitted` is null (not 0) for anyone upstream reports no
+                   own-motion statistics for — every non-MP speaker, and the office
+                   holders who never sat in the House at all — so the tile is left
+                   out rather than shown with a blank number. A real 0 still shows. -->
+              <div v-if="stats.totals.bills_available && stats.totals.bills_submitted !== null">
                 <router-link :to="{ name: 'documents', query: { sponsor: id } }" class="num biglink">{{ stats.totals.bills_submitted }}</router-link>
                 <span class="lbl">{{ $t('profile.billsSubmitted') }}</span>
               </div>

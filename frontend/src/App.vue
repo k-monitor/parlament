@@ -152,10 +152,10 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
             <rect x="11" y="10.5" width="2" height="6.5" rx="1" fill="currentColor" />
           </svg>
         </router-link>
-        <CycleSelect />
         <button class="lang" @click="toggleLang" :aria-label="'Language: ' + locale">
           {{ locale === 'hu' ? 'EN' : 'HU' }}
         </button>
+        <CycleSelect />
       </div>
     </div>
   </header>

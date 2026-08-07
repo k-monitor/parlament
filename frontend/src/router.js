@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { loadMeta, parseCycles, serializeCycles, setCycles, store } from './store.js'
 import { COHESION_ENABLED } from './features.js'
+import { keepInPlace, rememberScroll, scrollTarget, whenReachable } from './lib/scrollMemory.js'
 
 // The global electoral-cycle scope is carried in a `?cycle=` query param so that
 // a shared link reproduces the exact scope the sharer was viewing: one or more
@@ -147,10 +148,32 @@ const routes = [
 export const router = createRouter({
   history: createWebHistory(),
   routes,
+  // Coming back to a page puts the reader back where they left it (§4D) — both
+  // on a browser Back and on the "‹ back to the sitting day" / "‹ Ülésnapok"
+  // links, which are ordinary pushes with no saved position of their own. The
+  // offset can't be applied straight away: the destination fetches its rows
+  // after mounting, so at this point it is one spinner tall and any offset would
+  // clamp to 0. Hence the promise — see lib/scrollMemory.js.
   scrollBehavior(to, from, saved) {
+    // Advanced even for a hash target, so the trail stays a faithful record of
+    // the pages the reader has walked through.
+    const target = scrollTarget(to, saved)
     if (to.hash) return false // viewer manages its own scroll to a sentence
-    return saved || { top: 0 }
+    if (!target || !target.top) return { top: 0 }
+    const stale = () => router.currentRoute.value.fullPath !== to.fullPath
+    return whenReachable(target.top, stale).then((ready) => {
+      if (!ready) return false // reader moved on, or the content never came
+      keepInPlace(target.top, stale)
+      return target
+    })
   },
+})
+
+// Note where the reader is *before* the incoming view replaces the DOM, so the
+// offset recorded still belongs to the page being left (§4D).
+router.beforeEach((to, from) => {
+  rememberScroll(from)
+  return true
 })
 
 // Block routes whose module is disabled in the backend manifest (EXT-6).

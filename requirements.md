@@ -434,6 +434,41 @@ snippet — a site-wide capability, not a per-module feature.
 
 ---
 
+## 4D. Cross-cutting: Returning to Where You Were
+
+Every browsing flow on this site is *list → detail → back to the list*: a sitting
+day's speeches, search results, the sittings list, a representative's speeches.
+The lists are long — a single sitting day runs to hundreds of speeches — so
+losing one's place on the way back means scrolling it all again by hand, and that
+is where a browsing session ends. Restoring the reading position is therefore a
+site-wide behaviour, not a per-view nicety.
+
+- **BACK-1 (SHOULD).** Coming **back to a page the reader has already scrolled**
+  returns them to **the position they left it at**, not to the top. This holds for
+  the browser's own Back **and** for the site's in-page "back" affordances (the
+  viewer's "‹ back to the sitting day", a day's "‹ Ülésnapok"), which are ordinary
+  forward navigations and so carry no saved position of their own. Going back up
+  **several levels** (speech → sitting day → sittings list) restores each level.
+- **BACK-2 (MUST).** The offset is applied **only once the destination has
+  rendered the content it was measured against**. Every list view loads its rows
+  after mounting, so restoring immediately would clamp to the top of an empty
+  page; and a sitting day's word cloud, new-words and speaker-toplist cards
+  (WCLOUD-1, NEW-1, TOPSPK-1) each arrive in **their own request** and insert
+  themselves **above** the transcript, so the position is **held** while the page
+  is still growing. Nothing is stored server-side and nothing is measured per
+  speech — this is a few offsets kept in the tab's memory.
+- **BACK-3.** Restoration **never fights the reader**: if they scroll, touch or
+  key the page themselves, or navigate on while the destination is still loading,
+  the pending restore is **abandoned** rather than applied late as a surprise
+  jump. Content that never loads likewise leaves them at the top.
+- **BACK-4.** Only a **return** restores. Arriving at a page by a route the reader
+  did not descend from — a fresh navigation from the main nav, a changed
+  electoral-cycle scope (§4A), a new filter or query — starts at the **top**, as
+  does any first visit. Landing mid-list out of nowhere is worse than landing at
+  the top.
+
+---
+
 ## 5. Functional Requirements — Module: Proceedings Search & Viewer
 
 ### 5.1 Search

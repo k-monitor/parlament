@@ -63,7 +63,7 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 // Long lists (bills, votes, speeches) are collapsed to a preview so the profile
 // stays scannable; a per-section toggle reveals the rest of what's loaded.
 const COLLAPSE_LIMIT = 8
-const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false, declarations: false })
+const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false, declarations: false, overtime: false })
 function shown(list, key) {
   return expanded[key] ? list : list.slice(0, COLLAPSE_LIMIT)
 }
@@ -180,6 +180,14 @@ const overTimeItems = computed(() => {
   }))
 })
 
+// An MP with a long career speaks on hundreds of sitting days, and one bar each
+// makes the card taller than the rest of the page put together. Collapsed, the
+// chart keeps its chronological (oldest → newest) reading but starts at the last
+// COLLAPSE_LIMIT days, so the preview is the recent activity — the same
+// newest-first bias as the lists below.
+const shownOverTimeItems = computed(() =>
+  expanded.overtime ? overTimeItems.value : overTimeItems.value.slice(-COLLAPSE_LIMIT))
+
 // Vote-value chip colour by normalized code, matching the Votes module palette.
 const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote', absent: 'absent' }
 
@@ -244,7 +252,7 @@ async function load() {
   for (const m of [dayCache, openDays, voteDayCache, openVoteDays])
     for (const k of Object.keys(m)) delete m[k]
   expanded.questions = expanded.lawbills = expanded.other = expanded.votes
-    = expanded.days = expanded.declarations = false
+    = expanded.days = expanded.declarations = expanded.overtime = false
   try {
     // Everything on the profile is scoped to the global cycle scope
     // (store.cycles; empty = all cycles), so the page never mixes in an
@@ -432,10 +440,14 @@ watch(() => store.cycles.join(','), load)
 
             <div v-if="overTimeItems.length" style="margin-top:1rem;">
               <BarChart
-                :items="overTimeItems"
+                :items="shownOverTimeItems"
                 :caption="$t('profile.speechesOverTime')"
                 :unit="$t('reps.speeches')"
               />
+              <button v-if="overTimeItems.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+                :aria-expanded="expanded.overtime" @click="expanded.overtime = !expanded.overtime">
+                {{ expanded.overtime ? $t('profile.showLess') : $t('profile.showMore') }}
+              </button>
             </div>
           </section>
 

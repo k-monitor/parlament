@@ -126,14 +126,16 @@ onUnmounted(() => {
 .cyclesel { position: relative; display: inline-flex; min-width: 0; }
 
 /* The trigger matches the other header controls' box model (see App.vue) so the
-   whole right-hand cluster lines up on one baseline. */
+   whole right-hand cluster lines up on one baseline — but unlike them it is
+   filled solid white: the cycle scope silently changes what every view shows, so
+   it has to stand out from the translucent icon buttons around it. */
 .cyclebtn {
   box-sizing: border-box; height: 34px; display: inline-flex; align-items: center; gap: .4rem;
   max-width: min(11rem, 100%); padding: 0 .7rem; cursor: pointer;
-  border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.15);
-  border-radius: 8px; color: #fff; font-family: inherit; font-weight: 700; font-size: .8rem;
+  border: 1px solid #fff; background: #fff;
+  border-radius: 8px; color: var(--accent); font-family: inherit; font-weight: 700; font-size: .8rem;
 }
-.cyclebtn:hover, .cyclebtn.open { background: rgba(255,255,255,.28); }
+.cyclebtn:hover, .cyclebtn.open { background: var(--accent-soft); }
 .cyclebtn-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 760px) {
   /* On a phone the chooser is the one header control allowed to give way (the

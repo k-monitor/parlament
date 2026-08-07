@@ -25,6 +25,16 @@
 #                    widening it for that one run, e.g.
 #                      podman-compose run --rm -e PARLAMONITOR_MODAL_CYCLES=42 \
 #                        init reextract-entities --period 42
+#   remeasure-speeches  re-run the readability / lexical-diversity measurement
+#                    (§5.7) over the EXISTING DB and swap it in. Same escape hatch
+#                    as reextract-entities, for the changes --update cannot see: a
+#                    saphes upgrade, a different PARLAMONITOR_LIX_THRESHOLD /
+#                    _MATTR_WINDOW, or a lemmatizer becoming reachable. Scope with
+#                    --period, e.g.
+#                      podman-compose run --rm init remeasure-speeches --period 43
+#                    Needs NO model for the readability half (LIX/RIX always land);
+#                    the diversity half (TTR/MATTR) needs the same Modal/HuSpaCy
+#                    setup as the entity pass above.
 #   officeholders    scrape the office-holder registry (tisztségviselők) — every
 #                    office term with its real dates, MPs and non-MPs alike — into
 #                    /data; the one-off backfill for a corpus scraped before the
@@ -98,6 +108,13 @@ case "${1:-serve}" in
         shift
         echo "[entrypoint] re-extracting entity mentions + links in: $DB"
         exec python -m app.loader --reextract-entities "$DATA_DIR" "$DB" -v "$@"
+        ;;
+    remeasure-speeches)
+        # Operates on the DB in the volume, NOT on /data — no scrape, no reload.
+        # Takes the loader's writer lock, so it is safe while the sync sidecar runs.
+        shift
+        echo "[entrypoint] re-measuring speech readability + diversity in: $DB"
+        exec python -m app.loader --remeasure-speeches "$DATA_DIR" "$DB" -v "$@"
         ;;
     migrate-procedural)
         # Operates on the DB in the volume, NOT on /data — no scrape, no rebuild.

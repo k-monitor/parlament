@@ -39,7 +39,7 @@ try:                                    # POSIX only; the writer lock degrades t
 except ImportError:                     # pragma: no cover - non-POSIX
     fcntl = None
 
-from . import kmonitor, nlp, nlp_modal, wikidata
+from . import kmonitor, nlp, nlp_modal, readability, wikidata
 from .config import settings
 from .parlament_links import bill_page_url
 from .wordfreq import count_words
@@ -1792,6 +1792,342 @@ def rebuild_word_first_seen(conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-speech readability + lexical diversity (READ-1..7)
+# ---------------------------------------------------------------------------
+
+# Column order of a cached metrics row. Stored positionally (a list per speech)
+# rather than as a dict: the cache holds one entry per measurable speech in the
+# corpus, and eleven repeated key names per row would dominate the file.
+_METRIC_FIELDS = ("lix", "rix", "words", "sentences", "long_words",
+                  "avg_sentence", "long_share", "ttr", "mattr", "types", "tokens")
+
+
+def _speech_metrics_cache_path(cache_dir: Path) -> Path:
+    return Path(cache_dir) / "speech-metrics-cache.json"
+
+
+def _ensure_speech_metrics_tables(conn: sqlite3.Connection) -> None:
+    """Create the metrics tables in place if they are missing, so the feature also
+    lands on an existing DB through the incremental ``--update`` path rather than
+    only on a full rebuild (cf. ``_ensure_entity_tables``)."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS speech_metrics (
+            speech_id    TEXT PRIMARY KEY REFERENCES speech(uid),
+            session_id   TEXT NOT NULL REFERENCES session(id),
+            lix          REAL,
+            rix          REAL,
+            words        INTEGER,
+            sentences    INTEGER,
+            long_words   INTEGER,
+            avg_sentence REAL,
+            long_share   REAL,
+            ttr          REAL,
+            mattr        REAL,
+            types        INTEGER,
+            tokens       INTEGER,
+            lemma_model  TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_speech_metrics_session
+            ON speech_metrics(session_id);
+        CREATE TABLE IF NOT EXISTS metric_distribution (
+            metric TEXT NOT NULL,
+            q      INTEGER NOT NULL,
+            value  REAL NOT NULL,
+            n      INTEGER,
+            PRIMARY KEY (metric, q)
+        ) WITHOUT ROWID;
+    """)
+
+
+def _lemma_backend(model: str, *, modal_ok: bool) -> str | None:
+    """How this model's lemmas can be produced: ``"modal"``, ``"local"`` or
+    ``None`` (no lemmatizer reachable → readability only, READ-4). Same precedence
+    as the other NLP passes: an explicit Modal backend beats a locally installed
+    model, and a cycle outside the Modal budget scope may not use Modal at all."""
+    if _nlp_backend(model, modal_ok=modal_ok) == "modal":
+        return "modal"
+    return "local" if nlp.available(model) else None
+
+
+def _metrics_row(read: dict, lemmas: list[str] | None) -> list:
+    """One speech's cached metrics row, from its already-computed readability dict
+    and (optionally) its lemma stream.
+
+    The two halves come from deliberately different inputs — LIX from the
+    transcript's surface text, diversity from the lemma stream — because saphes'
+    contract is that feeding one stream to both silently corrupts one of them (see
+    ``app/readability.py``)."""
+    div = readability.diversity(lemmas) if lemmas else None
+    merged = {**read, **(div or {})}
+    return [merged.get(f) for f in _METRIC_FIELDS]
+
+
+def rebuild_speech_metrics(conn: sqlite3.Connection,
+                           cache_dir: str | Path | None = None,
+                           only_sessions: set[str] | None = None,
+                           lemmas: bool = True) -> None:
+    """Precompute per-speech readability + lexical diversity into ``speech_metrics``
+    (READ-1..7), then refresh the corpus-relative band cut points.
+
+    Two metrics from **saphes**, over the *substantive* speeches only (procedural
+    chairing speeches are excluded exactly as they are from the statistics and the
+    word cloud — STAT-1):
+
+    * **LIX/RIX** needs no model. It is computed from the transcript's own
+      sentences, with the speaker attribution and the stenographer's stage
+      directions stripped (``readability.spoken_sentences``), so it always lands —
+      even on a bare host with no HuSpaCy at all.
+    * **TTR/MATTR** needs *lemmas*, which needs the model. Sittings whose
+      lemmatizer is unreachable get their readability row anyway, with the
+      diversity columns left NULL and ``lemma_model`` NULL to say so; they are
+      **never** approximated from surface forms, which in Hungarian would measure
+      morphology instead of vocabulary.
+
+    Cached on disk (``speech-metrics-cache.json`` in ``cache_dir``) exactly like
+    the word cloud and the entity pass: per sitting, keyed by a fingerprint of its
+    text *and* the method (saphes version, threshold, length policy, MATTR window,
+    lemma model), so a rebuild only re-measures sittings whose transcript actually
+    changed — and a readability-only entry is not mistaken for a complete one once
+    a lemmatizer becomes available. A complete cached entry is likewise never
+    downgraded to a readability-only one when the model goes away
+    (``_richer_metrics_hit``).
+
+    ``only_sessions`` scopes the pass to those ids (the ``--update`` path); the
+    distribution is always recomputed over the whole table, since one new sitting
+    still shifts the corpus it is banded against. ``lemmas=False`` forces the
+    readability-only path (what ``--skip-wordcloud`` asks for: no neural pass, but
+    the cheap half still lands), without downgrading sittings that already have
+    complete measurements.
+    """
+    if not settings.speech_metrics:
+        return
+    _ensure_speech_metrics_tables(conn)
+    plan = _session_plan(conn)
+    # (model, modal_ok) → (lemma mode | None, method tag)
+    resolved: dict[tuple[str, bool], tuple[str | None, str]] = {}
+
+    def _resolve(model: str, modal_ok: bool) -> tuple[str | None, str]:
+        if (model, modal_ok) not in resolved:
+            mode = _lemma_backend(model, modal_ok=modal_ok) if lemmas else None
+            if mode is None:
+                logger.info("speech metrics: no lemmatizer for model %s%s — "
+                            "readability only, no lexical diversity", model,
+                            "" if modal_ok else " (cycle outside the Modal scope)")
+            method = readability.method_tag(model if mode else None)
+            resolved[(model, modal_ok)] = (mode, method)
+        return resolved[(model, modal_ok)]
+
+    cache_path = _speech_metrics_cache_path(cache_dir) if cache_dir else None
+    cache: dict = {"sessions": {}}
+    if cache_path and cache_path.exists():
+        try:
+            loaded = json.loads(cache_path.read_text())
+            if isinstance(loaded.get("sessions"), dict):
+                cache["sessions"] = loaded["sessions"]
+        except (OSError, ValueError):
+            logger.warning("Could not read speech-metrics cache %s; recomputing",
+                           cache_path)
+
+    def _flush():
+        if cache_path:
+            try:
+                cache_path.write_text(json.dumps(cache, ensure_ascii=False))
+            except OSError as exc:
+                logger.warning("Could not write speech-metrics cache %s (%s)",
+                               cache_path, exc)
+
+    sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id DESC")]
+    if only_sessions is not None:
+        sids = [sid for sid in sids if sid in only_sessions]
+
+    def _fetch(sid) -> list[tuple[str, list[str]]]:
+        """The sitting's substantive speeches as ``(uid, [sentence, …])``, in a
+        deterministic order so a cached fingerprint keeps matching."""
+        rows = conn.execute(
+            "SELECT sp.uid, se.text FROM sentence se "
+            "JOIN speech sp ON sp.uid = se.speech_id "
+            "WHERE sp.session_id = ? AND sp.procedural = 0 AND se.text IS NOT NULL "
+            "ORDER BY sp.speech_index, se.id", (sid,)).fetchall()
+        speeches: list[tuple[str, list[str]]] = []
+        for uid, text in rows:
+            if not speeches or speeches[-1][0] != uid:
+                speeches.append((uid, []))
+            speeches[-1][1].append(text)
+        return speeches
+
+    def _flat(speeches) -> list[str]:
+        """Every sentence of the sitting, in order — what the fingerprint covers,
+        so a change anywhere in the day's text invalidates its entry."""
+        return [t for (_uid, texts) in speeches for t in texts]
+
+    def _measurable(speeches) -> list[tuple[str, list[str], dict]]:
+        """The speeches that clear the length floor, with their readability already
+        computed: ``(uid, [sentence, …], readability)``.
+
+        Filtering here — before the lemma pass rather than after it — is what keeps
+        the neural half honest about its cost. Roughly half of a sitting's
+        substantive speeches are one- or two-sentence contributions that will never
+        be scored, and lemmatizing them would burn model time (and, on Modal,
+        metered credit) to produce a row that is then discarded."""
+        out = []
+        for uid, texts in speeches:
+            read = readability.readability(texts)
+            if read is not None:
+                out.append((uid, texts, read))
+        return out
+
+    def _lemma_texts(measurable) -> list[str]:
+        return [t for (_uid, texts, _read) in measurable for t in texts]
+
+    def _richer_metrics_hit(entry, model: str, speeches) -> bool:
+        """Whether ``entry`` already holds a *complete* (lemma-backed) measurement
+        of this exact, unchanged text — which the lemma-less run we are about to do
+        could only make worse. Mirrors ``_richer_cache_hit`` on the word-cloud side:
+        a sitting that temporarily loses its model must keep the diversity numbers
+        it has instead of having them nulled out on the next rebuild."""
+        if not entry or not entry.get("model") or entry.get("model") == "none":
+            return False
+        method = entry.get("method") or readability.method_tag(model)
+        return entry.get("fp") == _session_fingerprint(method, _flat(speeches))
+
+    def _write(sid, metrics: dict, lemma_model: str | None):
+        if not metrics:
+            return
+        conn.executemany(
+            "INSERT OR REPLACE INTO speech_metrics(speech_id, session_id, "
+            + ", ".join(_METRIC_FIELDS) + ", lemma_model) VALUES (?, ?, "
+            + ", ".join("?" * len(_METRIC_FIELDS)) + ", ?)",
+            [(uid, sid, *row, lemma_model) for uid, row in metrics.items()])
+
+    # Classify first, write second — so a sitting we end up not recomputing keeps
+    # the rows it already has rather than being cleared and left empty.
+    reuse: list[str] = []
+    # (model, modal_ok) → [(sid, fp, measurable speeches)]
+    misses_by: dict[tuple[str, bool], list] = {}
+    for sid in sids:
+        model, modal_ok = plan.get(sid, (settings.huspacy_model, True))
+        mode, method = _resolve(model, modal_ok)
+        speeches = _fetch(sid)
+        fp = _session_fingerprint(method, _flat(speeches))
+        entry = cache["sessions"].get(sid)
+        if entry and entry.get("fp") == fp:
+            reuse.append(sid)
+        elif mode is None and _richer_metrics_hit(entry, model, speeches):
+            reuse.append(sid)
+        else:
+            misses_by.setdefault((model, modal_ok), []).append(
+                (sid, fp, _measurable(speeches)))
+
+    if only_sessions is None:
+        conn.execute("DELETE FROM speech_metrics")
+    else:
+        conn.executemany("DELETE FROM speech_metrics WHERE session_id = ?",
+                         [(s,) for s in sids])
+
+    processed = 0
+    measured = 0
+    diverse = 0                              # sittings that also got TTR/MATTR
+
+    for sid in reuse:
+        entry = cache["sessions"][sid]
+        model = entry.get("model")
+        model = None if model in (None, "none") else model
+        _write(sid, entry.get("metrics") or {}, model)
+        measured += len(entry.get("metrics") or {})
+        if model:
+            diverse += 1
+
+    def _emit(sid, fp, metrics, lemma_model, method):
+        nonlocal processed, measured, diverse
+        cache["sessions"][sid] = {"fp": fp, "metrics": metrics,
+                                  "model": lemma_model or "none", "method": method}
+        _write(sid, metrics, lemma_model)
+        processed += 1
+        measured += len(metrics)
+        if lemma_model:
+            diverse += 1
+        if processed % 25 == 0:
+            conn.commit()
+            _flush()
+            logger.info("speech metrics progress: %d sittings measured", processed)
+
+    def _measure(measurable, per_sentence_lemmas) -> dict:
+        """``{uid: row}`` for one sitting. ``per_sentence_lemmas`` is one lemma list
+        per sentence of ``_lemma_texts(measurable)`` (or ``None`` on the
+        readability-only path); it is re-grouped here into the per-speech streams
+        MATTR slides its window over."""
+        out, at = {}, 0
+        for uid, texts, read in measurable:
+            lemmas = None
+            if per_sentence_lemmas is not None:
+                lemmas = [lem for per_sent in per_sentence_lemmas[at:at + len(texts)]
+                          for lem in per_sent]
+            at += len(texts)
+            out[uid] = _metrics_row(read, lemmas)
+        return out
+
+    try:
+        for (model, modal_ok), misses in misses_by.items():
+            mode, method = _resolve(model, modal_ok)
+            # A sitting with nothing measurable (all procedural, or every speech
+            # under the floor) still gets a cache entry — so it is not reclassified
+            # as a miss on every future run — but never a model call: dispatching an
+            # empty batch to Modal would pay the round trip for no rows.
+            empty = [m for m in misses if not m[2]]
+            misses = [m for m in misses if m[2]]
+            for (sid, fp, _meas) in empty:
+                _emit(sid, fp, {}, None, method)
+            if mode == "modal":
+                packed = [(sid, fp, _lemma_texts(meas)) for (sid, fp, meas) in misses]
+                by_sid = {sid: meas for (sid, _fp, meas) in misses}
+                for sid, fp, lemmas in nlp_modal.extract_lemmas(
+                        packed, app_name=_modal_app_for(model)):
+                    _emit(sid, fp, _measure(by_sid[sid], lemmas), model, method)
+            elif mode == "local":
+                for (sid, fp, meas) in misses:
+                    lemmas = list(nlp.lemma_streams(_lemma_texts(meas), model=model))
+                    _emit(sid, fp, _measure(meas, lemmas), model, method)
+            else:
+                for (sid, fp, meas) in misses:
+                    _emit(sid, fp, _measure(meas, None), None, method)
+    except Exception as exc:  # enrichment must never break the build (SCR-5)
+        # Same contract as the word cloud and the entity pass: the transcript is
+        # the product, the metrics are enrichment. A backend dying mid-pass keeps
+        # what was measured instead of failing the whole load.
+        logger.warning("speech metrics aborted (%s); keeping what was measured", exc)
+
+    conn.commit()
+    _flush()
+    rebuild_metric_distribution(conn)
+    logger.info("speech metrics: %d sittings (%d measured, %d cached), %d speeches "
+                "scored, %d sittings with lexical diversity",
+                len(sids), processed, len(reuse), measured, diverse)
+
+
+def rebuild_metric_distribution(conn: sqlite3.Connection) -> None:
+    """Refresh the corpus-relative cut points the UI bands a speech against (READ-6).
+
+    Björnsson's absolute difficulty labels do not survive the Hungarian long-word
+    threshold (saphes returns ``band = None`` off threshold 6 rather than mislabel
+    the number), so a speech is placed against the distribution of every measured
+    speech instead. Computed over the WHOLE table — one new sitting still shifts
+    the corpus its neighbours are compared to — but that is a single ordered scan
+    of a column, so it stays cheap on an incremental update.
+    """
+    conn.execute("DELETE FROM metric_distribution")
+    for metric in ("lix", "mattr"):
+        values = [v for (v,) in conn.execute(
+            f"SELECT {metric} FROM speech_metrics WHERE {metric} IS NOT NULL")]
+        cuts = readability.quantiles(values)
+        if not cuts:
+            continue
+        conn.executemany(
+            "INSERT INTO metric_distribution(metric, q, value, n) VALUES (?,?,?,?)",
+            [(metric, q, v, len(values)) for q, v in sorted(cuts.items())])
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -1945,6 +2281,10 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         if not skip_wordcloud:
             rebuild_entity_mentions(conn, db_path.parent)
             resolve_entity_links(conn, db_path.parent)
+        # Per-speech readability + lexical diversity (READ-1..7). Cached on disk
+        # like the passes above; the readability half needs no model, so it lands
+        # even under --skip-wordcloud (which only drops the lemma pass).
+        rebuild_speech_metrics(conn, db_path.parent, lemmas=not skip_wordcloud)
         rebuild_aggregates(conn)
         wire_nonmp_photos(conn, Path(data_dir) / "media" / "photos")
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
@@ -1966,8 +2306,7 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         conn.close()
 
     # Atomic swap (DB-4): rename the freshly built file over the live one.
-    os.replace(tmp_path, db_path)
-    _remove_db_side_files(tmp_path)
+    _swap_in(tmp_path, db_path)
     logger.info("Built database at %s", db_path)
 
 
@@ -2032,6 +2371,33 @@ def _remove_db_side_files(base: Path) -> None:
         side = base.with_suffix(base.suffix + suffix)
         if side.exists():
             side.unlink()
+
+
+def _swap_in(tmp_path: Path, db_path: Path) -> None:
+    """Atomically move the freshly built ``tmp_path`` over the live ``db_path``
+    (DB-4), leaving neither file's WAL side-files behind.
+
+    ``os.replace`` swaps the *main* file only. Any ``<db>-wal`` / ``<db>-shm`` next
+    to the destination belongs to the file we just replaced — an orphan left by an
+    earlier crashed or killed writer — and SQLite will happily try to recover it
+    over the new database, whose pages it knows nothing about. The result is a DB
+    that passes ``integrity_check`` when opened ``immutable=1`` and fails every
+    ordinary open with "malformed database schema … invalid rootpage". Observed
+    for real: a WAL orphaned hours earlier survived a swap and made the whole DB
+    unreadable, while the file underneath was perfectly intact.
+
+    Nothing is lost by deleting them: the temp DB was checkpointed
+    (``wal_checkpoint(TRUNCATE)``) before it was closed, so it needs no WAL of its
+    own, and the snapshot it was built from was read *through* the old WAL, so
+    whatever that WAL held is already inside the file now being swapped in.
+
+    The unlink happens immediately **after** the replace, not before: until the new
+    file is in place the old WAL is still the truth for anyone reading the old one,
+    and readers that already hold it open keep their descriptors regardless.
+    """
+    os.replace(tmp_path, db_path)
+    _remove_db_side_files(db_path)
+    _remove_db_side_files(tmp_path)
 
 
 def _remove_db_files(base: Path) -> None:
@@ -2146,6 +2512,9 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
                                             only_sessions=set(loaded_sessions))
                 rebuild_entity_mentions(conn, db_path.parent,
                                         only_sessions=set(loaded_sessions))
+            rebuild_speech_metrics(conn, db_path.parent,
+                                   only_sessions=set(loaded_sessions),
+                                   lemmas=not skip_wordcloud)
             rebuild_aggregates(conn)
         # Wire any non-MP speaker portraits the scraper has downloaded since the
         # last load (global, cheap — see wire_nonmp_photos). Also runs for an
@@ -2181,8 +2550,7 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
         if not ok:
             _remove_db_files(tmp_path)
 
-    os.replace(tmp_path, db_path)
-    _remove_db_side_files(tmp_path)
+    _swap_in(tmp_path, db_path)
     logger.info("Updated database at %s (%d sittings, %d rep/bill/vote file(s))",
                 db_path, len(loaded_sessions), n_changed - len(loaded_sessions))
     return True
@@ -2255,10 +2623,73 @@ def _reextract_entities(db_path: str | Path, *, period: int | None = None) -> bo
         if not ok:
             _remove_db_files(tmp_path)
 
-    os.replace(tmp_path, db_path)
-    _remove_db_side_files(tmp_path)
+    _swap_in(tmp_path, db_path)
     logger.info("Re-extracted entities into %s (%d mentions, %d distinct names)",
                 db_path, n_ment, n_names)
+    return True
+
+
+def remeasure_speeches(db_path: str | Path, *, period: int | None = None) -> bool:
+    """Re-run the readability / lexical-diversity pass over an EXISTING DB, in place
+    (READ-1..7). The metrics counterpart of :func:`reextract_entities`, and it
+    exists for the same reason: ``--update`` only revisits sittings whose *source
+    file* changed, so anything that changes on the measurement side alone — a
+    saphes upgrade, a different long-word threshold or MATTR window, a lemmatizer
+    finally becoming reachable — is a no-op for an update even though every stored
+    row is now stale (or missing its diversity half).
+
+    ``period`` scopes it to one electoral cycle; ``None`` covers every sitting.
+    Sittings whose cache entry still fingerprint-matches are reused, so re-running
+    it is cheap. Snapshot-and-swap like :func:`update_database`, under the same
+    writer lock.
+
+    Returns ``True`` when the DB was replaced, ``False`` when there was nothing to do.
+    """
+    with _writer_lock(Path(db_path)):
+        return _remeasure_speeches(db_path, period=period)
+
+
+def _remeasure_speeches(db_path: str | Path, *, period: int | None = None) -> bool:
+    db_path = Path(db_path)
+    if not db_path.exists():
+        logger.error("No DB at %s — build it first", db_path)
+        return False
+
+    tmp_path = db_path.with_suffix(db_path.suffix + ".building")
+    _remove_db_files(tmp_path)
+    src = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    conn = connect(tmp_path)
+    try:
+        src.backup(conn)
+    finally:
+        src.close()
+
+    ok = False
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        only: set[str] | None = None
+        if period is not None:
+            only = {r[0] for r in conn.execute(
+                "SELECT id FROM session WHERE period_number = ?", (period,))}
+            if not only:
+                logger.warning("No sittings in period %s — nothing to measure", period)
+                return False
+            logger.info("Re-measuring %d sitting(s) in period %s", len(only), period)
+        rebuild_speech_metrics(conn, db_path.parent, only_sessions=only)
+        n_rows, n_div = conn.execute(
+            "SELECT COUNT(*), COUNT(mattr) FROM speech_metrics").fetchone()
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.commit()
+        ok = True
+    finally:
+        conn.close()
+        if not ok:
+            _remove_db_files(tmp_path)
+
+    _swap_in(tmp_path, db_path)
+    logger.info("Re-measured speeches into %s (%d scored, %d with MATTR)",
+                db_path, n_rows, n_div)
     return True
 
 
@@ -2354,9 +2785,16 @@ def main(argv=None) -> int:
                          "use with --period to scope it to one electoral cycle. The "
                          "way to pick up a model-side change, which --update — scoped "
                          "to changed source files — never revisits")
+    ap.add_argument("--remeasure-speeches", action="store_true",
+                    help="re-run the readability / lexical-diversity measurement "
+                         "over the EXISTING DB in place and swap it in; use with "
+                         "--period to scope it to one cycle. Same escape hatch as "
+                         "--reextract-entities, for a saphes upgrade, a changed "
+                         "threshold/window, or a lemmatizer becoming reachable")
     ap.add_argument("--period", type=int,
-                    help="electoral cycle number to scope --reextract-entities to "
-                         "(e.g. 43); omit to cover every sitting")
+                    help="electoral cycle number to scope --reextract-entities / "
+                         "--remeasure-speeches to (e.g. 43); omit to cover every "
+                         "sitting")
     ap.add_argument("--skip-wordcloud", action="store_true",
                     help="skip per-sitting word-cloud/new-words term extraction "
                          "(faster dev rebuild; those views come up empty)")
@@ -2365,15 +2803,20 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("parlamonitor.loader").setLevel(logging.INFO)
-    if args.period is not None and not args.reextract_entities:
-        ap.error("--period is only valid with --reextract-entities")
-    if args.reextract_entities:
+    in_place = args.reextract_entities or args.remeasure_speeches
+    if args.period is not None and not in_place:
+        ap.error("--period is only valid with --reextract-entities or "
+                 "--remeasure-speeches")
+    if in_place:
         if args.update or args.session:
-            ap.error("--reextract-entities operates on the existing DB; it cannot be "
-                     "combined with --update or --session")
+            ap.error("--reextract-entities / --remeasure-speeches operate on the "
+                     "existing DB; they cannot be combined with --update or --session")
         # data_dir is unused here (nothing is reloaded) but stays a required
         # positional so every loader invocation has the same shape.
-        reextract_entities(args.db_path, period=args.period)
+        if args.reextract_entities:
+            reextract_entities(args.db_path, period=args.period)
+        if args.remeasure_speeches:
+            remeasure_speeches(args.db_path, period=args.period)
     elif args.update:
         if args.session:
             ap.error("--session is only valid for a full build, not --update")

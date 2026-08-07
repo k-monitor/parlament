@@ -312,6 +312,10 @@ Primary use cases:
 - Precomputed aggregates per representative and per faction (speaking time,
   speech counts, etc.) so profile/statistics pages are fast. Rebuilt by the
   loader. (See §6.)
+- Precomputed **per-speech language metrics** (readability, lexical diversity —
+  §5.7) plus the **corpus cut points** they are banded against, so the request
+  path only reads them. A speech that is not measurable simply has no row: the
+  absence means "not measurable", never zero.
 
 ---
 
@@ -706,6 +710,79 @@ snippet — a site-wide capability, not a per-module feature.
   clear "recording and transcript coming soon" state, not an empty transcript;
   once the sitting is held and ingested it becomes an ordinary `published` day.
   The list is scoped by the global cycle selector (§4A) like every other view.
+
+### 5.7 Speech readability & lexical diversity
+
+- **READ-1 (SHOULD).** Each **speech** carries two measured language annotations —
+  how **hard it is to read** and how **varied its vocabulary** is — shown wherever
+  a speech appears as an item the reader can act on: the sitting-day speech list
+  (§5.5) and the viewer (§5.2). They give a citizen a sense of *how* something was
+  said, next to the *what* the transcript already carries: whether a contribution
+  is plain speech or dense officialese, and whether it draws on a wide vocabulary
+  or circles a handful of words.
+- **READ-2.** The metrics are **LIX** (readability: mean sentence length plus the
+  share of long words, with **RIX** — long words per sentence — alongside) and
+  **TTR/MATTR** (lexical diversity: the share of distinct word stems). They come
+  from a **published, auditable implementation** rather than a local re-derivation
+  — implementations of LIX disagree about how they count words, sentences and long
+  words, so the counts *A*, *B*, *C* behind the score travel with it and are shown
+  to the reader.
+  > **✅ realized** with [`saphes`](https://github.com/crow-intelligence/saphes)
+  > (`backend/app/readability.py`), which exposes the parameters other
+  > implementations hardcode and records every one of them on its results.
+- **READ-3.** The two metrics take **opposite token streams**, and the distinction
+  is load-bearing rather than pedantic. **LIX must see surface forms**: word length
+  *is* its signal, and Hungarian *házakban* is 8 characters where its lemma *ház*
+  is 3. **Diversity must see lemmas**: *ház / házak / házban / házakat* is one word
+  inflected four ways, and counting it as four types reports **morphology as
+  vocabulary** — inflating exactly the languages this matters for. Feeding one
+  stream to both raises no error and produces no NaN, just a plausible wrong
+  number, so the two paths never share an input. Lemmas come from the **same
+  HuSpaCy pipeline, model routing and Modal cycle scope** as the word cloud
+  (WCLOUD-6), so the language stack stays single-sourced.
+- **READ-4 (degradation).** The **readability half needs no model** and must
+  therefore land on any install, including a bare host with no HuSpaCy at all. The
+  **diversity half needs lemmas**; when no lemmatizer is reachable it is **omitted
+  entirely and never approximated from surface forms**, and the UI shows the
+  readability chip alone rather than a diversity number that means something else.
+  A build that loses its lemmatizer must **not overwrite** complete measurements it
+  can no longer reproduce (cf. the word cloud's equivalent guard).
+- **READ-5 (what is measured).** Only the **speaker's own words** count: the
+  transcript's leading speaker attribution ("TUZSON BENCE (Fidesz):") and the
+  stenographer's parenthetical **stage directions** ("(Taps a kormánypárti
+  oldalon.)", heckles) are stripped first — they are not speech, and they would
+  otherwise both inflate the token count and invent sentences. The same segments
+  the reader sees lifted out of the flowing transcript (SITREAD-2) are the ones
+  excluded here. **Procedural/chairing speeches (STAT-1) are excluded**, as they
+  are from the statistics and the word cloud, and a speech **below a minimum
+  length** is **not scored at all** — a LIX built from two sentences is noise
+  wearing a number's clothes, and the UI must show nothing rather than a figure
+  that looks like a finding.
+- **READ-6 (interpretation).** The LIX long-word threshold is **calibrated for
+  Hungarian, not inherited from Swedish**. At Björnsson's default (6) roughly 42 %
+  of running tokens in this corpus count as "long" against a Germanic norm near
+  25 %, so the index saturates and stops discriminating; at the calibrated
+  threshold the corpus lands on the same share the original selects in Swedish. It
+  follows that **Björnsson's difficulty labels do not apply** — they were fitted to
+  Swedish prose at threshold 6 — so a speech is banded **relative to the corpus
+  itself** (the quintiles of every measured speech), which is both honest and the
+  comparison a reader actually wants: *"harder to read than 80 % of what is said in
+  this House"*. Absolute labels borrowed from another language's calibration MUST
+  NOT be shown. The band, the number and the tint each carry the value
+  independently (A11Y-1).
+- **READ-7 (cost & provenance).** The measurement runs **at load time, never per
+  request**, and its per-sitting output is **cached on disk** keyed by a
+  fingerprint of the transcript *and* the method (package version, threshold,
+  length policy, window, lemma model), exactly like the word cloud and the entity
+  pass — so a rebuild re-measures only what actually changed, and a
+  readability-only entry is never mistaken for a complete one once a lemmatizer
+  appears. Only speeches that will actually be scored are sent to the model, since
+  that half is metered work. A change on the **method** side alone (a package
+  upgrade, a different threshold, a lemmatizer becoming reachable) is invisible to
+  the incremental update, which only revisits sittings whose *source file* changed,
+  so an **in-place re-measure** command exists for it. The parameters are
+  **configurable, not hard-coded** (OPS-4) and are **published in the site
+  manifest** so every annotation can state how it was produced (TRUST-1 / REP-5).
 
 ---
 

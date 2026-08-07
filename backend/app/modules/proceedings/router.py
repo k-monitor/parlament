@@ -19,6 +19,7 @@ from ...config import settings
 from ...db import get_db, like_contains, period_key, period_list, period_sql
 from ...media import per_speech_clip
 from ...query_cache import cached_aggregate
+from ... import readability
 from ...search import build_match
 from ...wordfreq import count_words, tfidf_scores
 
@@ -610,6 +611,94 @@ def _has_session_status(db: sqlite3.Connection) -> bool:
                for r in db.execute("PRAGMA table_info(session)"))
 
 
+# ---------------------------------------------------------------------------
+# Per-speech readability + lexical diversity (READ-1..7)
+# ---------------------------------------------------------------------------
+
+# The stored columns, in the order the serializer reads them.
+_METRIC_COLUMNS = ("lix", "rix", "words", "sentences", "long_words",
+                   "avg_sentence", "long_share", "ttr", "mattr", "types",
+                   "tokens", "lemma_model")
+
+
+def _metric_cuts(db: sqlite3.Connection) -> dict:
+    """The corpus quantile cut points each score is banded against (READ-6),
+    as ``{"lix": {20: …, 40: …}, "mattr": {…}}``.
+
+    Eighteen rows, read once per request and handed to the serializer, so banding
+    hundreds of speeches on a sitting-day page costs one extra query. Empty on a DB
+    built before the metrics pass existed — the serializer then omits the band
+    rather than inventing one."""
+    try:
+        rows = db.execute("SELECT metric, q, value FROM metric_distribution").fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    cuts: dict = {}
+    for r in rows:
+        cuts.setdefault(r["metric"], {})[int(r["q"])] = r["value"]
+    return cuts
+
+
+def _metrics_dict(row, cuts: dict) -> dict | None:
+    """The ``metrics`` object hung off a speech, or ``None`` when it has none.
+
+    A speech has no metrics when it is procedural, has no transcript, or is below
+    the minimum length — the score would be noise — so the absence is meaningful
+    and the UI shows nothing rather than a zero. ``lix_band`` / ``mattr_band`` place
+    the speech in its corpus quintile: Björnsson's absolute difficulty labels are
+    calibrated for Swedish at long-word threshold 6 and do not survive the
+    Hungarian threshold, so the honest comparison is against the House's own
+    speeches (see ``app/readability.py``). ``mattr`` is ``None`` for a speech
+    shorter than the sliding window, and the whole diversity half is ``None`` when
+    the build had no lemmatizer — never faked from surface forms."""
+    if row is None or all(row[c] is None for c in _METRIC_COLUMNS):
+        return None
+    out = {c: row[c] for c in _METRIC_COLUMNS}
+    out["lix_band"] = readability.band_for(row["lix"], cuts.get("lix", {}),
+                                           readability.LIX_BANDS)
+    out["mattr_band"] = readability.band_for(row["mattr"], cuts.get("mattr", {}),
+                                             readability.MATTR_BANDS)
+    return out
+
+
+_METRICS_SELECT = ", ".join(f"m.{c} AS metric_{c}" for c in _METRIC_COLUMNS)
+
+
+class _MetricView:
+    """Adapts a joined query row (``metric_lix``, …) to the plain column names
+    :func:`_metrics_dict` reads, so one serializer works for both the joined
+    sitting-day query and a standalone ``speech_metrics`` lookup."""
+
+    __slots__ = ("_row",)
+
+    def __init__(self, row):
+        self._row = row
+
+    def __getitem__(self, key):
+        return self._row[f"metric_{key}"]
+
+
+def _has_speech_metrics(db: sqlite3.Connection) -> bool:
+    """Whether the (regenerable) DB carries the metrics table — false only on a DB
+    built before this feature, so the viewer keeps working unannotated until the
+    next loader run adds it."""
+    return bool(db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='speech_metrics'"
+    ).fetchone())
+
+
+def _speech_metrics(db: sqlite3.Connection, uid: str) -> dict | None:
+    """One speech's metrics object, banded against the corpus. Degrades to ``None``
+    on a DB without the table."""
+    try:
+        row = db.execute(
+            "SELECT " + ", ".join(_METRIC_COLUMNS)
+            + " FROM speech_metrics WHERE speech_id = ?", (uid,)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return _metrics_dict(row, _metric_cuts(db)) if row else None
+
+
 @router.get("/sessions/{session_id}")
 def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
     """A sitting day: agenda items in order, each with its speeches (use case 2)."""
@@ -619,21 +708,29 @@ def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
     agenda = db.execute(
         "SELECT * FROM agenda_item WHERE session_id = ? ORDER BY ord", (session_id,)
     ).fetchall()
+    # Readability / lexical diversity travel with the speech list rather than as a
+    # second request: they are eleven precomputed numbers joined on the primary
+    # key, so annotating the day costs one join, not a round trip per speech.
+    metrics = _has_speech_metrics(db)
     speeches = db.execute(
-        """SELECT sp.uid, sp.origin_id, sp.agenda_item_id, sp.speech_index,
+        f"""SELECT sp.uid, sp.origin_id, sp.agenda_item_id, sp.speech_index,
                   sp.speaker_label, sp.person_id, sp.speaker_status,
                   sp.felszolalas_tipus, sp.procedural, sp.time_start,
                   sp.time_end, sp.duration, sp.has_text, sp.confidence,
                   sp.align_method, p.label AS person_label, p.photo_uri,
                   f.label AS faction_label, f.color AS faction_color
+                  {(', ' + _METRICS_SELECT) if metrics else ''}
            FROM speech sp
            LEFT JOIN person p ON p.person_id = sp.person_id
            LEFT JOIN faction f ON f.id = sp.faction_id
+           {'LEFT JOIN speech_metrics m ON m.speech_id = sp.uid' if metrics else ''}
            WHERE sp.session_id = ? ORDER BY sp.speech_index""",
         (session_id,)).fetchall()
+    cuts = _metric_cuts(db) if metrics else {}
     by_agenda: dict = {a["id"]: [] for a in agenda}
     for sp in speeches:
-        by_agenda.setdefault(sp["agenda_item_id"], []).append(_speech_brief(sp))
+        by_agenda.setdefault(sp["agenda_item_id"], []).append(
+            _speech_brief(sp, _metrics_dict(_MetricView(sp), cuts) if metrics else None))
     return {
         "session": _session_dict(s),
         "neighbours": _session_neighbours(db, s),
@@ -913,7 +1010,7 @@ def get_speech(uid: str, db: sqlite3.Connection = Depends(get_db)):
         "SELECT id, ord, text, time_start, time_end FROM sentence "
         "WHERE speech_id = ? ORDER BY ord", (uid,)).fetchall()
     nb = _speech_neighbours(db, sp["session_id"], sp["speech_index"])
-    speech = _speech_full(sp)
+    speech = _speech_full(sp, _speech_metrics(db, uid))
     # Source the player on a clip of just this speech (VIE-9), derived from the
     # day stream + the speech's real offsets; falls back to the whole-day stream.
     clip = per_speech_clip(session["video_uri"], session["video_playseq"],
@@ -1087,7 +1184,7 @@ def _agenda_dict(a) -> dict:
             "native_type": a["native_type"]}
 
 
-def _speech_brief(sp) -> dict:
+def _speech_brief(sp, metrics: dict | None = None) -> dict:
     return {
         "uid": sp["uid"], "origin_id": sp["origin_id"],
         "speech_index": sp["speech_index"],
@@ -1102,10 +1199,13 @@ def _speech_brief(sp) -> dict:
         "duration": sp["duration"], "has_text": bool(sp["has_text"]),
         "timing": {"confidence": sp["confidence"], "align_method": sp["align_method"],
                    "estimated": _is_estimated(sp["align_method"])},
+        # Readability + lexical diversity (READ-1..7); None when the speech is not
+        # measurable (procedural, no transcript, or below the length floor).
+        "metrics": metrics,
     }
 
 
-def _speech_full(sp) -> dict:
+def _speech_full(sp, metrics: dict | None = None) -> dict:
     return {
         "uid": sp["uid"], "origin_id": sp["origin_id"],
         "session_id": sp["session_id"], "period": sp["period_number"],
@@ -1125,4 +1225,6 @@ def _speech_full(sp) -> dict:
         "source_uri": sp["source_uri"], "source_page": sp["source_page"],
         "timing": {"confidence": sp["confidence"], "align_method": sp["align_method"],
                    "estimated": _is_estimated(sp["align_method"])},
+        # Readability + lexical diversity (READ-1..7); None when not measurable.
+        "metrics": metrics,
     }

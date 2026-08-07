@@ -10,6 +10,7 @@ app/
   loader.py           JSON session/representative records -> SQLite (ING-1..4, DB-3/DB-4, REP-7)
   db.py               read-only per-request connection (ING-2, NFR-2)
   search.py           Hungarian FTS5 query builder (SEA-1/SEA-2)
+  readability.py      per-speech LIX/RIX + TTR/MATTR via `saphes` (§5.7, READ-1..7)
   config.py           env-driven settings + enabled-module set (OPS-4, EXT-6)
   main.py             app factory, /api/v1, OpenAPI docs, /meta manifest (EXT-3/EXT-4, NFR-3)
   modules/
@@ -38,6 +39,20 @@ changed and a model becoming available changes no file:
 ```bash
 python -m app.loader --reextract-entities --period 43 ../data parlamonitor.db
 ```
+
+The same escape hatch exists for the per-speech readability / lexical-diversity
+measurement (§5.7), and for the same reason — a `saphes` upgrade, a changed
+threshold or a lemmatizer becoming reachable changes no source file:
+
+```bash
+python -m app.loader --remeasure-speeches --period 43 ../data parlamonitor.db
+```
+
+The readability half (LIX/RIX) needs no model, so it lands on any install; the
+diversity half (TTR/MATTR) needs lemmas and is **omitted rather than approximated**
+from surface forms when none are reachable — see `app/readability.py` for why the
+two metrics must never share a token stream. Both are cached per sitting in
+`speech-metrics-cache.json` next to the DB.
 
 Sittings whose cached spans still fingerprint-match are reused, so this is cheap
 to re-run; omit `--period` to cover every sitting. The current cycle's default
@@ -75,6 +90,11 @@ uvicorn app.main:app --reload                      # http://localhost:8000
 | `PARLAMONITOR_FRONTEND_DIST` | — | if set, serves the built SPA from one process (OPS-1) |
 | `PARLAMONITOR_MAX_SEARCH_TOTAL` | 5000 | cap on reported search totals |
 | `PARLAMONITOR_MODAL_CYCLES` | `latest` | which electoral cycles may be processed on Modal (`latest`/`all`/`43,42`) — the metered-spend guard; out-of-scope sittings use a local model, else the regex tokenizer (and no entity mentions) |
+| `PARLAMONITOR_SPEECH_METRICS` | `1` | measure + serve per-speech readability & lexical diversity (§5.7); `0` skips the pass and hides the annotations |
+| `PARLAMONITOR_LIX_THRESHOLD` | `8` | LIX long-word threshold — a long word is *longer than* this. Defaults to `saphes`' calibration for Hungarian; Björnsson's Swedish `6` saturates here (42% of tokens "long" vs a ~25% norm) |
+| `PARLAMONITOR_LIX_LENGTH_POLICY` | `nfc` | how a word's letters are counted: `nfc` / `graphemes` / `codepoints` / `hu-letters` (collapses the Hungarian digraphs — a sensitivity check, and it shifts the calibrated share) |
+| `PARLAMONITOR_MATTR_WINDOW` | `100` | MATTR sliding window, in lemmas. A speech shorter than this reports no MATTR (plain TTR is not comparable across lengths) |
+| `PARLAMONITOR_READABILITY_MIN_WORDS` | `50` | speeches shorter than this are not scored at all |
 
 ## Tests
 

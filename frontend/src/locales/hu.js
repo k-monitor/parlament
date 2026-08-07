@@ -138,6 +138,36 @@ export default {
     backToSession: 'Vissza az ülésnaphoz',
     speechType: 'Felszólalás típusa',
   },
+  // Felszólalás-annotáció: olvashatóság (LIX) és szókincsgazdagság (MATTR).
+  // A sávok a teljes korpuszhoz viszonyítanak: a klasszikus (svéd) LIX-címkék a
+  // 6-os hosszúszó-küszöbre vannak kalibrálva, a magyar küszöb 8, ott azok a
+  // címkék értelmüket vesztik — ezért „az itt elhangzottak x%-ánál nehezebb”.
+  metrics: {
+    lixName: 'Olvashatóság (LIX)',
+    lixTip: 'A hosszú szavak aránya és a mondathossz alapján. A sáv a Ház összes '
+      + 'felszólalásához viszonyít, nem abszolút skálához.',
+    lixCounts: '{words} szó · {sentences} mondat · {perSentence} szó/mondat · '
+      + '{longShare}% hosszú szó (8 betűnél hosszabb)',
+    lixBand: {
+      'very-easy': 'nagyon könnyű',
+      easy: 'könnyű',
+      average: 'átlagos',
+      hard: 'nehéz',
+      'very-hard': 'nagyon nehéz',
+    },
+    mattrName: 'Szókincsgazdagság (MATTR)',
+    mattrTip: 'Hány százalékban különbözőek a szótövek egy {window} szavas ablakon '
+      + 'belül. A szóalakokat szótőre visszavezetve mérjük, hogy a magyar ragozás '
+      + 'ne látszódjon gazdagabb szókincsnek.',
+    mattrCounts: '{types} különböző szótő · {tokens} szó',
+    mattrBand: {
+      'very-low': 'nagyon alacsony',
+      low: 'alacsony',
+      average: 'átlagos',
+      high: 'magas',
+      'very-high': 'nagyon magas',
+    },
+  },
   clipExport: {
     button: 'Videó letöltése',
     segmentButton: 'Ez a mondat letöltése videórészletként',

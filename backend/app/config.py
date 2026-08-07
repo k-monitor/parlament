@@ -266,6 +266,20 @@ class Settings:
     # (scraper/parlamonitor/config.py), so one setting scopes all Modal spend.
     modal_cycles: str = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_MODAL_CYCLES", "latest").strip().lower())
+    # Per-speech readability + lexical diversity (READ-1..7, app/readability.py).
+    # When enabled the loader measures every substantive speech with `saphes`:
+    # LIX/RIX from the transcript's surface text (no model needed) and TTR/MATTR
+    # from the HuSpaCy lemma stream (shares the word cloud's backend/model/cycle
+    # scope; omitted, never faked from surface forms, when no lemmatizer is
+    # reachable). Set PARLAMONITOR_SPEECH_METRICS=0 to skip the pass and hide the
+    # annotations. The metric parameters themselves — the LIX long-word threshold,
+    # the word-length policy, the MATTR window and the minimum speech length — are
+    # read in app/readability.py (PARLAMONITOR_LIX_THRESHOLD,
+    # PARLAMONITOR_LIX_LENGTH_POLICY, PARLAMONITOR_MATTR_WINDOW,
+    # PARLAMONITOR_READABILITY_MIN_WORDS).
+    speech_metrics: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_SPEECH_METRICS", "1").strip().lower()
+         not in ("0", "false", "no", "")))
     # Person-entity linking (NEL, §10). When enabled the loader extracts PERSON
     # mentions from transcript sentences (HuSpaCy NER — shares the wordcloud
     # backend/model) into the `entity` table and resolves each distinct name to a

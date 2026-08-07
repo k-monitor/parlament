@@ -174,6 +174,18 @@ class NlpService:
         return out
 
     @modal.method()
+    def analyze_sessions_lemmas(self, sessions: list[list[str]]) -> list[list[list[str]]]:
+        """Lemmatize a batch of sittings for the lexical-diversity metric (READ-3).
+        ``sessions`` is a list of per-sitting sentence lists; returns, per sitting,
+        one ordered lemma list per sentence — exactly what
+        ``app.nlp.lemma_streams`` yields."""
+        from app import nlp
+        out = []
+        for texts in sessions:
+            out.append(list(nlp.lemma_streams(texts, batch_size=256)))
+        return out
+
+    @modal.method()
     def method_tag(self) -> str:
         from app import nlp
         return nlp.method_tag()

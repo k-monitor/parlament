@@ -219,6 +219,45 @@ def person_spans(texts, *, batch_size: int = 128, n_process: int = 1):
         yield [(s, a, b, k) for (s, a, b, k, kind) in spans if kind == "PER"]
 
 
+def _diversity_lemma(tok) -> str | None:
+    """The lexical-diversity token for one spaCy token, or ``None`` to drop it.
+
+    Deliberately **not** the word cloud's filter: diversity asks "how much of the
+    vocabulary is distinct", so it counts the running text — function words
+    included — and only drops what is not vocabulary at all (punctuation,
+    whitespace, bare numerals, and anything with no letter in it). Case folding is
+    left to saphes, which records that it happened."""
+    if tok.is_punct or tok.is_space or tok.like_num:
+        return None
+    lemma = tok.lemma_.strip()
+    if not lemma or not any(ch.isalpha() for ch in lemma):
+        return None
+    return lemma
+
+
+def lemma_streams(texts, *, batch_size: int = 128, n_process: int = 1,
+                  model: str | None = None):
+    """Per-text **ordered lemma streams**, the input lexical diversity requires.
+
+    Yields, for each input text in order, the list of its lemmas (see
+    ``_diversity_lemma`` for what is kept). Order matters — MATTR slides a window
+    over the sequence — so unlike :func:`analyze_counts` nothing is aggregated
+    here; the caller (``app.readability.diversity``) groups sentences into speeches
+    and measures each one.
+
+    Surface forms would be the wrong stream: in Hungarian *ház / házak / házban /
+    házakat* is one word inflected four ways, and counting them as four types
+    reports morphology as vocabulary (see ``app/readability.py``). That is why this
+    needs the model at all, and why the diversity half is omitted rather than
+    approximated when no model is reachable."""
+    nlp = get_nlp(model)
+    if nlp is None:
+        raise RuntimeError("HuSpaCy model not available")
+    for doc in nlp.pipe([t or "" for t in texts], batch_size=batch_size,
+                        n_process=n_process):
+        yield [lemma for lemma in (_diversity_lemma(t) for t in doc) if lemma]
+
+
 def analyze_counts(texts, *, batch_size: int = 128, n_process: int = 1,
                    model: str | None = None):
     """Lemmatized + entity-aware term frequencies for ``texts``.

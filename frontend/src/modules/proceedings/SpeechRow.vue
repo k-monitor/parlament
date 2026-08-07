@@ -16,6 +16,7 @@ import EntityText from '../../components/EntityText.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
+import SpeechMetricsBadge from '../../components/SpeechMetricsBadge.vue'
 import ShareButton from '../../components/ShareButton.vue'
 
 // `playable` is false for a not-yet-processed sitting day: there is no per-speech
@@ -93,6 +94,11 @@ function paraText(p) {
            speaker so the long "video only" note never squeezes the name. -->
       <div class="speech-meta">
         <span class="muted small" v-if="playable && !speech.has_text">📼 {{ $t('viewer.videoOnly') }}</span>
+        <!-- Readability / lexical diversity (READ-5). Compact here: the number
+             and the tint on the row, the full wording in the tooltip, so a
+             400-speech day stays scannable. Absent for a speech that is not
+             measurable, which is most procedural rows. -->
+        <SpeechMetricsBadge :metrics="speech.metrics" compact />
         <TimingBadge :timing="speech.timing" />
         <span class="muted small nowrap" v-if="speech.duration">⏱ {{ formatDuration(speech.duration) }}</span>
       </div>

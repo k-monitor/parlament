@@ -616,3 +616,51 @@ CREATE TABLE word_first_seen (
     kind       TEXT NOT NULL DEFAULT 'term'
 ) WITHOUT ROWID;
 CREATE INDEX idx_word_first_seen_session ON word_first_seen(session_id);
+
+-- Per-speech readability + lexical diversity (READ-1..7), precomputed at load
+-- time (app/readability.py, saphes) so nothing is measured at request time.
+-- One row per *measurable* speech: procedural/chairing speeches (STAT-1) are
+-- excluded, as is anything under the minimum-length floor, so a missing row means
+-- "not measurable", never "zero".
+--
+-- The readability half (LIX/RIX and its A/B/C counts) needs no model — it is
+-- computed from the transcript's own sentences, with the speaker attribution and
+-- the stenographer's stage directions stripped. The diversity half (TTR/MATTR)
+-- needs LEMMAS, so it is filled only when a HuSpaCy lemmatizer was reachable;
+-- `lemma_model` records which one (NULL = readability only). `mattr` is NULL for
+-- a speech shorter than the sliding window, because plain TTR is not comparable
+-- across lengths and must not masquerade as MATTR.
+CREATE TABLE speech_metrics (
+    speech_id    TEXT PRIMARY KEY REFERENCES speech(uid),
+    session_id   TEXT NOT NULL REFERENCES session(id),
+    -- readability (surface forms — word length is the signal)
+    lix          REAL,      -- A/B + 100*C/A
+    rix          REAL,      -- C/B
+    words        INTEGER,   -- A
+    sentences    INTEGER,   -- B
+    long_words   INTEGER,   -- C (longer than the calibrated threshold)
+    avg_sentence REAL,      -- A/B, words per sentence
+    long_share   REAL,      -- C/A, the share of long words
+    -- lexical diversity (lemmas — surface variation is morphology, not vocabulary)
+    ttr          REAL,
+    mattr        REAL,      -- NULL when the speech is shorter than the window
+    types        INTEGER,
+    tokens       INTEGER,
+    lemma_model  TEXT       -- HuSpaCy model behind ttr/mattr; NULL = none reachable
+);
+CREATE INDEX idx_speech_metrics_session ON speech_metrics(session_id);
+
+-- Corpus-relative cut points for the metrics above (READ-6). Björnsson's LIX
+-- difficulty labels are calibrated for Swedish prose at long-word threshold 6 and
+-- are meaningless at the Hungarian threshold, so a speech is banded against the
+-- distribution of every measured speech instead: "nehéz" means harder to read
+-- than 80% of what is said in this House. Storing the cut points (rather than a
+-- per-speech percentile) keeps an incremental update cheap — nothing has to be
+-- re-ranked to answer a request, and the API derives the band on read.
+CREATE TABLE metric_distribution (
+    metric TEXT NOT NULL,      -- 'lix' | 'mattr'
+    q      INTEGER NOT NULL,   -- percentile (10, 20, … 90)
+    value  REAL NOT NULL,      -- the score at that percentile
+    n      INTEGER,            -- speeches behind the distribution
+    PRIMARY KEY (metric, q)
+) WITHOUT ROWID;

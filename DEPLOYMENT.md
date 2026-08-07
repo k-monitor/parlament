@@ -166,6 +166,14 @@ modal deploy modal_app.py       # builds the image (bakes in the model) + deploy
 modal run modal_app.py          # optional: smoke-test the deployed service
 ```
 
+> **Re-deploy after changing `modal_app.py` or anything under `backend/app/` that
+> the service calls.** The deployed image bundles the `app` package, so a new
+> service method (e.g. `analyze_sessions_lemmas`, which the readability /
+> lexical-diversity pass of §5.7 calls) only exists once you re-run
+> `modal deploy modal_app.py` — for **both** apps, if you run the archive one
+> below. Until then that pass falls back to readability only: LIX/RIX still land
+> (they need no model), TTR/MATTR stay empty.
+
 **Enable it** in `.env`, then `up` (the `init` build, and every `sync`, now use
 Modal):
 
@@ -325,6 +333,21 @@ cached spans still fingerprint-match are reused, so re-runs are free), re-resolv
 as every other loader run, no scrape and no JSON reload. Omit `--period` to cover
 every sitting. Directly: `python -m app.loader --reextract-entities --period 43
 <data> <db>`.
+
+#### Re-measuring speech readability / diversity (`remeasure-speeches`)
+
+The same escape hatch for the per-speech language metrics (§5.7), needed for the
+same reason — a `saphes` upgrade, a changed `PARLAMONITOR_LIX_THRESHOLD` or
+`PARLAMONITOR_MATTR_WINDOW`, or a lemmatizer finally becoming reachable all change
+what every stored score means while touching **no source file**:
+
+```bash
+podman-compose run --rm init remeasure-speeches --period 43
+```
+
+Snapshot-and-swap like the above, cached per sitting, and the **readability half
+needs no model at all** — so this works on a host with no HuSpaCy and no Modal, it
+just leaves TTR/MATTR empty.
 
 #### Backfilling the nationality advocates (`advocates`)
 
@@ -551,6 +574,19 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_MODAL_APP_ARCHIVE` | `parlamonitor-nlp-md` | deployed Modal app for the archive model (only reachable when the scope is widened) |
 | `PARLAMONITOR_MODAL_BATCH_SENTENCES` | `5000` | sentences per Modal batch (host side) |
 | `PARLAMONITOR_MODAL_CYCLES` | `latest` | which cycles may use Modal at all — `latest`/`all`/`43,42`; applies to the NLP **and** Whisper offloads ([details](#which-cycles-may-spend-modal-credit-parlamonitor_modal_cycles)) |
+| **Speech language metrics** | | (§5.7; used by `init` + `sync`) |
+| `PARLAMONITOR_SPEECH_METRICS` | `1` | measure + serve per-speech readability & lexical diversity; `0` skips the pass and the SPA hides the annotations |
+| `PARLAMONITOR_LIX_THRESHOLD` | `8` | LIX long-word threshold (calibrated for Hungarian; Björnsson's `6` saturates here). Changing it changes what every stored score means — follow with `--remeasure-speeches` |
+| `PARLAMONITOR_LIX_LENGTH_POLICY` | `nfc` | `nfc`/`graphemes`/`codepoints`/`hu-letters` word-length counting |
+| `PARLAMONITOR_MATTR_WINDOW` | `100` | MATTR sliding window in lemmas; shorter speeches report no MATTR |
+| `PARLAMONITOR_READABILITY_MIN_WORDS` | `50` | speeches shorter than this are not scored at all |
+
+The diversity half rides the **same Modal deployment, model routing and cycle
+scope** as the word cloud, so it needs no separate credit budget — but it does
+need the [re-deploy](#offloading-the-word-cloud-nlp-to-modal-gpucpu) noted above,
+since it calls a service method that older images don't carry. Its results land in
+`speech-metrics-cache.json` next to the DB (the mounted volume), alongside the
+word-cloud and entity caches.
 
 ## Search analytics (privacy-friendly)
 

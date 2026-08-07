@@ -23,6 +23,7 @@ import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
+import SpeechMetricsBadge from '../../components/SpeechMetricsBadge.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import ExportDialog from '../../components/ExportDialog.vue'
 
@@ -431,6 +432,9 @@ onBeforeUnmount(() => {
           <span class="muted" v-if="session">{{ formatDate(session.date) }} · {{ session.sitting }}. {{ $t('viewer.sittingDay') }}</span>
           <span class="badge" v-if="speech.agenda && speech.agenda.type">{{ speech.agenda.title || agendaLabel(speech.agenda.type) }}</span>
           <span class="badge subtle" v-if="speech.speech_type">{{ $t('viewer.speechType') }}: {{ speech.speech_type }}</span>
+          <!-- Readability / lexical diversity (READ-5). Full form here — there is
+               room for the worded band next to the number on a single speech. -->
+          <SpeechMetricsBadge :metrics="speech.metrics" />
           <TimingBadge :timing="speech.timing" />
         </div>
       </div>

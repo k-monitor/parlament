@@ -338,3 +338,45 @@ def test_procedural_type_list_covers_the_chairing_families():
               "napirend előtti felszólalás", "kétperces felszólalás", "Expozé",
               "ügyrendi kérdés", "ügyrendi javaslat", "jegyzői ismertetés", None):
         assert not settings.is_procedural_type(t), t
+
+
+def test_swap_clears_the_destinations_orphaned_wal(tmp_path, data_dir, db_path):
+    """A stale `<db>-wal` next to the LIVE file must not survive an atomic swap.
+
+    `os.replace` moves the main file only, so a WAL orphaned by an earlier crashed
+    or killed writer stays behind — and SQLite then tries to recover it over a
+    database whose pages it knows nothing about. The failure mode is nasty because
+    it looks like corruption while the file underneath is perfectly intact: opened
+    `immutable=1` (which ignores side-files) the DB passes `integrity_check`, but
+    every ordinary open dies with "malformed database schema … invalid rootpage".
+    Hit for real on a dev DB whose WAL had been orphaned hours earlier.
+
+    Pinned as an invariant — *no side-files next to the destination after a swap* —
+    rather than by reproducing the corruption, since whether SQLite rejects a
+    foreign WAL outright or tries to replay it depends on its salt matching.
+    """
+    import sqlite3
+
+    def _touch_a_source():
+        """Make `--update` actually reload something, so it reaches its swap — with
+        nothing stale it returns early and (rightly) leaves the file alone."""
+        p = data_dir / "processed" / "43001-session.json"
+        p.write_text(p.read_text())
+
+    for entry_point in (
+        lambda: loader.build_database(data_dir, db_path),
+        lambda: (_touch_a_source(), loader.update_database(data_dir, db_path)),
+        lambda: loader.remeasure_speeches(db_path),
+    ):
+        # An orphan of each kind, as a killed writer would leave them.
+        for suffix in ("-wal", "-shm"):
+            db_path.with_suffix(db_path.suffix + suffix).write_bytes(b"\x00" * 64)
+        entry_point()
+        for suffix in ("-wal", "-shm"):
+            side = db_path.with_suffix(db_path.suffix + suffix)
+            assert not side.exists(), f"{side.name} survived the swap"
+        # And the swapped-in DB opens normally, not just under immutable=1.
+        conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert conn.execute("SELECT COUNT(*) FROM speech").fetchone()[0] == 2
+        conn.close()

@@ -125,6 +125,30 @@ def extract(misses, *, batch_sentences: int | None = None,
             yield sid, fp, _words(result)
 
 
+def extract_lemmas(misses, *, batch_sentences: int | None = None,
+                   app_name: str | None = None):
+    """Yield ``(sid, fp, per_sentence_lemmas)`` for each miss (a ``(sid, fp, texts)``
+    triple), running HuSpaCy lemmatization on Modal for the lexical-diversity
+    metric (READ-3). ``per_sentence_lemmas`` is a list — one ordered lemma list per
+    input sentence, in order — exactly what ``app.nlp.lemma_streams`` yields.
+    Batched + ``.map``-dispatched like :func:`extract`; ``app_name`` picks the
+    deployed service."""
+    batch_sentences = batch_sentences or settings.modal_batch_sentences
+    svc = _service(app_name)
+    chunks = list(_chunks(misses, batch_sentences))
+    if not chunks:
+        return
+    payloads = [[texts for (_sid, _fp, texts) in chunk] for chunk in chunks]
+    logger.info("Modal NLP lemmas (%s): %d sitting(s) in %d batch(es)",
+                app_name or settings.modal_app_name,
+                sum(len(c) for c in chunks), len(chunks))
+    # Drive the loop off the .map() generator so it drains to StopIteration and
+    # closes in-task — see the note in extract().
+    for i, lemma_batch in enumerate(svc.analyze_sessions_lemmas.map(payloads)):
+        for (sid, fp, _texts), lemmas in zip(chunks[i], lemma_batch):
+            yield sid, fp, lemmas
+
+
 def extract_spans(misses, *, batch_sentences: int | None = None,
                   app_name: str | None = None):
     """Yield ``(sid, fp, per_sentence_spans)`` for each miss (a ``(sid, fp, texts)``

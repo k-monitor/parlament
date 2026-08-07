@@ -84,6 +84,36 @@ export default {
     copyLink: 'Copy link', linkCopied: 'Link copied to clipboard', sittingDay: 'sitting', backToSession: 'Back to sitting',
     speechType: 'Speech type',
   },
+  // Speech annotation: readability (LIX) and lexical diversity (MATTR). Bands are
+  // relative to the whole corpus — the classic (Swedish) LIX labels are calibrated
+  // for a long-word threshold of 6 and mean nothing at the Hungarian threshold of
+  // 8, so a speech is placed against what is actually said in this House.
+  metrics: {
+    lixName: 'Readability (LIX)',
+    lixTip: 'From the share of long words and the sentence length. The band '
+      + 'compares this speech to every speech in the House, not to an absolute scale.',
+    lixCounts: '{words} words · {sentences} sentences · {perSentence} words/sentence · '
+      + '{longShare}% long words (over 8 letters)',
+    lixBand: {
+      'very-easy': 'very easy',
+      easy: 'easy',
+      average: 'average',
+      hard: 'hard',
+      'very-hard': 'very hard',
+    },
+    mattrName: 'Lexical diversity (MATTR)',
+    mattrTip: 'What share of the word stems are distinct within any {window}-word '
+      + 'window. Measured on lemmas, so Hungarian inflection does not masquerade as '
+      + 'a richer vocabulary.',
+    mattrCounts: '{types} distinct stems · {tokens} words',
+    mattrBand: {
+      'very-low': 'very low',
+      low: 'low',
+      average: 'average',
+      high: 'high',
+      'very-high': 'very high',
+    },
+  },
   clipExport: {
     button: 'Download video',
     segmentButton: 'Download this sentence as a video clip',

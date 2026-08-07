@@ -18,6 +18,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import readability
 from .analytics import search_analytics
 from .caching import CacheControlMiddleware
 from .config import settings
@@ -74,6 +75,22 @@ for spec in _MODULES:
     app.include_router(spec.router, prefix=API_PREFIX)
 
 
+def _metric_totals(db: sqlite3.Connection) -> dict:
+    """How much of the corpus actually carries readability / diversity numbers.
+
+    ``scored`` also gates the feature flag: the pass is skippable and its
+    diversity half needs a lemmatizer, so "is this DB annotated at all" is a fact
+    about the data, not about the config — and the SPA must hide the annotations
+    rather than render a page of blanks. ``with_diversity`` says how much of it
+    got the lemma-backed half."""
+    try:
+        scored, diverse = db.execute(
+            "SELECT COUNT(*), COUNT(mattr) FROM speech_metrics").fetchone()
+    except sqlite3.OperationalError:      # DB built before the metrics pass
+        return {"scored": 0, "with_diversity": 0}
+    return {"scored": scored, "with_diversity": diverse}
+
+
 @app.get(f"{API_PREFIX}/meta", tags=["core"])
 def meta(db: sqlite3.Connection = Depends(get_db)):
     """Site metadata + the live module manifest the SPA registers against (EXT-4)."""
@@ -95,6 +112,7 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
     }
     build = {r["key"]: r["value"] for r in db.execute(
         "SELECT key, value FROM build_meta")}
+    metric_coverage = _metric_totals(db)
     return {
         "name": "Parlamonitor",
         "source_attribution": {  # LEGAL-1 / TRUST-1
@@ -112,7 +130,15 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
         # manifest above. The constituency lookup (REP-10) depends on an external
         # source, so it can be turned off without disabling the whole
         # representatives module — the tab then vanishes rather than erroring.
-        "features": {"constituency_lookup": settings.evk_lookup},
+        "features": {"constituency_lookup": settings.evk_lookup,
+                     "speech_metrics": (settings.speech_metrics
+                                        and bool(metric_coverage["scored"]))},
+        # How the per-speech readability / lexical-diversity annotations were
+        # measured (READ-7). Every derived number on the site has to be able to
+        # say what produced it (TRUST-1 / REP-5), and these two carry parameters
+        # (the Hungarian long-word threshold, the MATTR window) that a reader
+        # cannot guess and that change what the score means.
+        "speech_metrics": {**readability.methodology(), **metric_coverage},
         "timing_disclaimer": (  # VIE-6 / TIM-3
             "A felszólalások videóidőzítése a v1-ben pozícióalapú becslés "
             "(karakterarányos), ezért közelítő pontosságú."),

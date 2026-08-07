@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 # Every module the backend knows how to mount. A module absent from
@@ -248,6 +249,23 @@ class Settings:
         os.environ.get("PARLAMONITOR_MODAL_APP_ARCHIVE", "parlamonitor-nlp-md").strip())
     modal_batch_sentences: int = int(
         os.environ.get("PARLAMONITOR_MODAL_BATCH_SENTENCES", "5000"))
+    # Which electoral cycles may be processed ON MODAL at all (budget guard).
+    # Modal time is metered, so a backfill of the archive — thousands of frozen
+    # sitting days nobody is watching — can burn a month's credit in one run and
+    # then leave the CURRENT cycle, the one the site actually shows, unprocessed.
+    # So the offload is scoped:
+    #   "latest" (default) — only the newest electoral period is ever dispatched
+    #   "all"              — every cycle (the pre-guard behaviour)
+    #   "43" / "42,43"     — exactly these cycle numbers
+    # An out-of-scope sitting is NOT sent to Modal; it falls back to whatever runs
+    # locally — the HuSpaCy model if one is installed, else the regex tokenizer for
+    # the word cloud (entity extraction, which needs a model, is skipped). Cached
+    # results are always reused first, so an archive sitting processed back when it
+    # was in scope keeps exactly what it had.
+    # The scraper honours the same variable for the Whisper offload
+    # (scraper/parlamonitor/config.py), so one setting scopes all Modal spend.
+    modal_cycles: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_MODAL_CYCLES", "latest").strip().lower())
     # Person-entity linking (NEL, §10). When enabled the loader extracts PERSON
     # mentions from transcript sentences (HuSpaCy NER — shares the wordcloud
     # backend/model) into the `entity` table and resolves each distinct name to a
@@ -341,6 +359,37 @@ class Settings:
         """Whether a per-speech type is a statistics-excluded chairing type
         (STAT-1). Case/whitespace-insensitive."""
         return bool(speech_type) and speech_type.strip().casefold() in self.procedural_speech_types
+
+    def modal_cycle_allowed(self, period: int | None,
+                            latest: int | None = None) -> bool:
+        """Whether sittings of electoral ``period`` may be dispatched to Modal,
+        given the corpus' ``latest`` period (see ``modal_cycles``).
+
+        A sitting with no period recorded counts as current — those are always the
+        newest days — and an unknown ``latest`` allows everything, since there is
+        then nothing to be newer than."""
+        spec = parse_modal_cycles(self.modal_cycles)
+        if spec == "all":
+            return True
+        if isinstance(spec, frozenset):
+            return period in spec
+        return period is None or latest is None or period == latest
+
+
+@lru_cache(maxsize=8)
+def parse_modal_cycles(raw: str) -> str | frozenset:
+    """Parse a ``PARLAMONITOR_MODAL_CYCLES`` value into ``"all"``, ``"latest"`` or
+    the frozenset of cycle numbers it names. An unparsable value falls back to
+    ``"latest"`` — the conservative reading, since the setting exists to *limit*
+    spend, so a typo must never open the offload up to the whole archive."""
+    raw = (raw or "").strip().lower()
+    if raw in ("all", "*"):
+        return "all"
+    if raw in ("", "latest", "current"):
+        return "latest"
+    cycles = {int(p) for p in raw.replace(";", ",").split(",")
+              if p.strip().lstrip("-").isdigit()}
+    return frozenset(cycles) if cycles else "latest"
 
 
 def _procedural_speech_types() -> frozenset:

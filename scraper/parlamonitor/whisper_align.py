@@ -39,6 +39,8 @@ import subprocess
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from . import config
+
 logger = logging.getLogger(__name__)
 
 WHISPER_METHOD = "whisper-forced-alignment"
@@ -424,9 +426,45 @@ def resolve_backend(name: str) -> str:
     return "character"
 
 
+def _latest_local_cycle(paths) -> int | None:
+    """The newest electoral cycle present in the data directory, read off the
+    scraped file names. Used to scope the Modal offload when the caller doesn't
+    know the upstream latest cycle: a backfill runs against a corpus that already
+    holds the live cycle, so "newest on disk" is the same cycle "latest" means —
+    and it costs no request."""
+    sessions = [p.name[len("raw-"):-len("-day.json")]
+                for p in paths.raw_plenary.glob("raw-*-day.json")]
+    sessions += [p.name[:-len("-session.json")]
+                 for p in paths.processed.glob("*-session.json")]
+    cycles = [c for c in (config.session_cycle(s) for s in sessions) if c is not None]
+    return max(cycles) if cycles else None
+
+
+def in_modal_scope(paths, sessions, latest_cycle: int | None = None) -> set[str]:
+    """The subset of ``sessions`` whose electoral cycle may be transcribed on Modal
+    (``PARLAMONITOR_MODAL_CYCLES``, default: the newest cycle only).
+
+    ``latest_cycle`` is the authoritative upstream cycle number when the caller
+    knows it (the sync does); otherwise the newest cycle on disk stands in. A
+    session id that names no cycle stays in scope — it can only be a live day."""
+    spec = config.modal_cycles()
+    if spec == "all":
+        return set(sessions)
+    if isinstance(spec, frozenset):
+        allowed = spec
+    else:
+        latest = latest_cycle if latest_cycle is not None else _latest_local_cycle(paths)
+        if latest is None:
+            return set(sessions)
+        allowed = frozenset({latest})
+    return {s for s in sessions
+            if config.session_cycle(s) is None or config.session_cycle(s) in allowed}
+
+
 def ensure_words(paths, days: list[tuple[str, str | None, str | None]], *,
                  backend: str, model: str, language: str,
-                 force: bool = False) -> dict[str, list]:
+                 force: bool = False,
+                 latest_cycle: int | None = None) -> dict[str, list]:
     """Return ``{session: words}`` for every day whose recording could be
     transcribed, populating the on-disk cache as a side effect.
 
@@ -435,7 +473,15 @@ def ensure_words(paths, days: list[tuple[str, str | None, str | None]], *,
     parallel on Modal — and their results cached. A day that fails (no recording,
     ASR error) is simply omitted, so the timing stage falls back to the positional
     estimate for it (SCR-5). Returns ``{}`` immediately when the backend resolves to
-    ``character``."""
+    ``character``.
+
+    Transcribing on **Modal** costs metered GPU time, so it is scoped to the cycles
+    ``PARLAMONITOR_MODAL_CYCLES`` allows (default: the newest one — see
+    :func:`config.modal_cycles`). Out-of-scope days are never dispatched and fall
+    back to the positional estimate; their *cached* words are still returned, since
+    reading the cache costs nothing. ``latest_cycle`` lets a caller that already
+    knows the upstream latest cycle pin the scope instead of inferring it from the
+    data directory."""
     resolved = resolve_backend(backend)
     if resolved == "character":
         return {}
@@ -452,6 +498,18 @@ def ensure_words(paths, days: list[tuple[str, str | None, str | None]], *,
                 out[session] = cached
                 continue
         misses.append((session, m3u8, playseq))
+
+    if misses and resolved == "whisper-modal":
+        scope = in_modal_scope(paths, [s for (s, _m, _p) in misses], latest_cycle)
+        skipped = [s for (s, _m, _p) in misses if s not in scope]
+        if skipped:
+            logger.info("Skipping Whisper on Modal for %d sitting(s) outside the "
+                        "Modal cycle scope (%s): %s%s — their sentence timing uses "
+                        "the positional estimate",
+                        len(skipped), config.modal_cycles(),
+                        ", ".join(sorted(skipped)[:10]),
+                        "…" if len(skipped) > 10 else "")
+        misses = [m for m in misses if m[0] in scope]
 
     if not misses:
         return out

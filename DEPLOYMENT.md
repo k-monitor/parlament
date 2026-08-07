@@ -243,6 +243,43 @@ PARLAMONITOR_HUSPACY_MODEL=hu_core_news_md modal deploy modal_app.py
 **Without Docker** (host scrapes/loads directly): the same three env vars +
 `python -m app.loader --update <data> <db>` (or `build`) offload to Modal.
 
+#### Which cycles may spend Modal credit (`PARLAMONITOR_MODAL_CYCLES`)
+
+Modal time is metered, and the one thing that can drain a month's credit in a
+single run is a **backfill of the archive**: hundreds of frozen sitting days that
+all miss the cache at once — and, on the Whisper side, hundreds of whole-day
+recordings on a GPU — for cycles nobody is watching, leaving the *live* cycle
+unprocessed when the budget runs out. So the offload is scoped by electoral cycle:
+
+| Value | Meaning |
+| --- | --- |
+| `latest` (default) | only the newest electoral cycle is ever sent to Modal |
+| `all` | every cycle (the old behaviour) |
+| `43` / `42,43` | exactly these cycle numbers |
+
+One variable covers **both** offloads — the backend's word-cloud/NER
+(`backend/app/config.py`) and the scraper's Whisper transcription
+(`scraper/parlamonitor/config.py`) — so there is a single place to cap Modal spend.
+What an out-of-scope sitting gets instead:
+
+- **word cloud** — the local HuSpaCy model if one is installed, else the regex
+  tokenizer. A sitting that already has a **cached** HuSpaCy cloud for unchanged
+  text keeps it: the fallback never overwrites a better result it can't reproduce.
+- **entity mentions** — skipped (there is no non-neural fallback), so those
+  transcripts render without inline links until a local model is installed or the
+  scope is widened. Already-cached spans are still reused, and the skip is
+  non-destructive.
+- **sentence timing** — the positional character estimate (TIM-3), the same
+  degradation as a host with no Whisper backend at all. Cached transcriptions are
+  still used, so archive days already transcribed keep their word-accurate timing.
+
+Backfilling one old cycle *on purpose* — e.g. to give cycle 42 real entity links —
+is a one-off widening, not a permanent setting:
+
+```bash
+PARLAMONITOR_MODAL_CYCLES=42 podman-compose run --rm init reextract-entities --period 42
+```
+
 > **The current cycle's model must actually be reachable.** `hu_core_news_trf`
 > installs nowhere but the Modal image — it is *not* in the container — so with
 > `PARLAMONITOR_WORDCLOUD_BACKEND` left at `auto` (which never selects Modal) or
@@ -511,8 +548,9 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_HUSPACY_MODEL_ARCHIVE` | `hu_core_news_md` | model for frozen earlier cycles — must match the archive Modal image |
 | `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` | — | Modal auth (required when backend=`modal`) |
 | `PARLAMONITOR_MODAL_APP` | `parlamonitor-nlp` | deployed Modal app for the newest cycle's model |
-| `PARLAMONITOR_MODAL_APP_ARCHIVE` | `parlamonitor-nlp-md` | deployed Modal app for the archive model |
+| `PARLAMONITOR_MODAL_APP_ARCHIVE` | `parlamonitor-nlp-md` | deployed Modal app for the archive model (only reachable when the scope is widened) |
 | `PARLAMONITOR_MODAL_BATCH_SENTENCES` | `5000` | sentences per Modal batch (host side) |
+| `PARLAMONITOR_MODAL_CYCLES` | `latest` | which cycles may use Modal at all — `latest`/`all`/`43,42`; applies to the NLP **and** Whisper offloads ([details](#which-cycles-may-spend-modal-credit-parlamonitor_modal_cycles)) |
 
 ## Search analytics (privacy-friendly)
 

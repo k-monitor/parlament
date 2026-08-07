@@ -169,6 +169,9 @@ def playseq_offsets(playseq: str | None) -> tuple[float, float] | None:
 class FelicitasClient:
     def __init__(self, http: HttpClient):
         self.http = http
+        # The cycle list is static for the lifetime of a run and several stages ask
+        # for it (date ranges, "which cycle is the latest"), so it is fetched once.
+        self._cycle_ranges: dict[int, dict] | None = None
 
     def close(self) -> None:
         """Release transport resources (HTTP session, SSH tunnel if any)."""
@@ -385,7 +388,11 @@ class FelicitasClient:
 
     def cycle_ranges(self) -> dict[int, dict]:
         """Map every electoral cycle number → ``{"start": iso, "end": iso|None}``
-        from the list query's parameter-rebind endpoint."""
+        from the list query's parameter-rebind endpoint. Memoized per client: the
+        answer cannot change mid-run, and every stage that needs a date range (or
+        the newest cycle number) would otherwise re-request it."""
+        if self._cycle_ranges is not None:
+            return self._cycle_ranges
         data = self.http.get_json(f"{KEPVISELO_REBIND}/p-ciklus", headers=_REFERER)
         out: dict[int, dict] = {}
         for item in data.get("idAndRebinding", []):
@@ -397,6 +404,10 @@ class FelicitasClient:
                 "start": (props.get("hCiklusElejeLimit") or {}).get("value"),
                 "end": (props.get("hCiklusVegeLimit") or {}).get("value"),
             }
+        # Only a non-empty answer is memoized, so a transient empty response
+        # doesn't pin "no cycles known" for the rest of the run.
+        if out:
+            self._cycle_ranges = out
         return out
 
     def representative_list(self, cycle: int, start: str, end: str) -> list[dict]:

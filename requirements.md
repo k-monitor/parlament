@@ -1404,6 +1404,10 @@ rework of existing features.
   uses the **same offload pattern** on a separate GPU app: only cache-miss sittings
   are sent, batched and run in parallel across a capped, scale-to-zero pool, and it
   degrades to a local model then to the positional estimate when unconfigured.
+  Both offloads are additionally **scoped by electoral cycle**
+  (`PARLAMONITOR_MODAL_CYCLES`, default: the newest one), so backfilling the
+  archive — the one operation that can miss the cache thousands of times at once —
+  degrades locally instead of spending the budget the live cycle depends on.
 
 ---
 

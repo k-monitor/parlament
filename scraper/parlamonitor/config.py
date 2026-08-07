@@ -53,6 +53,40 @@ def whisper_modal_app() -> str:
             or "parlamonitor-whisper").strip()
 
 
+# --- Modal budget scope ----------------------------------------------------
+# Modal GPU time is metered, and transcribing the archive is by far the biggest
+# bill the pipeline can run up: a backfill of an old cycle is hundreds of
+# whole-day recordings, all of them days nobody is waiting for, and it can drain
+# the credit the LIVE cycle needs to stay timed. So Modal is scoped to the newest
+# cycle by default; out-of-scope days simply keep the positional character
+# estimate for their sentence timing (TIM-3), which is what the pipeline already
+# degrades to when no transcription backend exists at all (SCR-6).
+#
+# The backend (backend/app/config.py) reads the SAME variable for the word-cloud /
+# NER offload, so one setting scopes every Modal cost the project can incur.
+
+def modal_cycles() -> str | frozenset:
+    """``PARLAMONITOR_MODAL_CYCLES`` parsed: ``"all"``, ``"latest"`` (default) or
+    the set of cycle numbers allowed to use Modal. An unparsable value reads as
+    ``"latest"`` — the setting exists to *limit* spend, so a typo must never open
+    the offload up to the whole archive."""
+    raw = (os.environ.get("PARLAMONITOR_MODAL_CYCLES") or "latest").strip().lower()
+    if raw in ("all", "*"):
+        return "all"
+    if raw in ("", "latest", "current"):
+        return "latest"
+    cycles = {int(p) for p in raw.replace(";", ",").split(",")
+              if p.strip().lstrip("-").isdigit()}
+    return frozenset(cycles) if cycles else "latest"
+
+
+def session_cycle(session: str) -> int | None:
+    """The electoral cycle a session id belongs to (``"43007"`` → ``43``), or
+    ``None`` if it doesn't look like one — the inverse of :func:`session_id`."""
+    s = str(session or "").strip()
+    return int(s[:-3]) if len(s) > 3 and s.isdigit() else None
+
+
 def session_id(cycle: int, sitting: int) -> str:
     """Canonical session key ``<cycle><sitting:03d>`` (e.g. 43, day 7 -> ``43007``).
 

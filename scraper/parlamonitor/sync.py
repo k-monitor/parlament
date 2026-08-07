@@ -226,6 +226,10 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
     Changed days are batch-transcribed with Whisper (forced-alignment timing, TIM-1)
     before transform; a day with no transcription degrades to positional timing."""
     start, end = _cycle_range(felicitas, cycle)
+    # Which cycle is the newest scopes the (metered) Whisper offload — see
+    # ensure_words. The client memoizes the cycle list, so this costs no request.
+    ranges = felicitas.cycle_ranges()
+    newest = max(ranges) if ranges else None
     days = cycle_days(felicitas, cycle, start, end)
     if not days:
         logger.info("No sitting days for cycle %s in [%s, %s]", cycle, start, end)
@@ -330,7 +334,7 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
                      for s, b in changed if (b.get("video") or {}).get("m3u8")]
         words_by_session = whisper_align.ensure_words(
             paths, days_info, backend=timing_backend, model=whisper_model(),
-            language=whisper_language(), force=force)
+            language=whisper_language(), force=force, latest_cycle=newest)
     except Exception:
         logger.exception("Whisper alignment failed; using positional timing")
 

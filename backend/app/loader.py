@@ -1131,7 +1131,7 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
     logger.info("Rebuilt aggregate tables")
 
 
-def _nlp_backend(model: str) -> str:
+def _nlp_backend(model: str, *, modal_ok: bool = True) -> str:
     """Resolve the configured word-cloud backend for ``model`` to a concrete one
     ("modal", "huspacy" or "regex").
 
@@ -1141,15 +1141,24 @@ def _nlp_backend(model: str) -> str:
     auto-selects Modal). An explicit backend that can't be used is logged and
     degrades so a build on a bare host still succeeds (OPS-4). Resolution is
     per model because the current and archive cycles may use different models
-    with different local availability (the trf only ever loads on Modal)."""
+    with different local availability (the trf only ever loads on Modal).
+
+    ``modal_ok=False`` means this sitting's electoral cycle is outside the Modal
+    budget scope (``settings.modal_cycles``, default: the newest cycle only), so
+    Modal is skipped even when configured and available — the same local
+    HuSpaCy → regex degradation applies."""
     want = settings.wordcloud_backend or "auto"
     if want == "regex":
         return "regex"
     if want == "modal":
-        if nlp_modal.available():
+        if not modal_ok:
+            logger.info("model %s is outside the Modal cycle scope (%s); using a "
+                        "local backend for its sittings", model, settings.modal_cycles)
+        elif nlp_modal.available():
             return "modal"
-        logger.warning("wordcloud_backend=modal unavailable; trying local HuSpaCy, "
-                       "then the regex tokenizer")
+        else:
+            logger.warning("wordcloud_backend=modal unavailable; trying local "
+                           "HuSpaCy, then the regex tokenizer")
     if nlp.available(model):
         return "huspacy"
     if want == "huspacy":
@@ -1158,18 +1167,27 @@ def _nlp_backend(model: str) -> str:
     return "regex"
 
 
-def _session_models(conn: sqlite3.Connection) -> dict[str, str]:
-    """Each session id → the HuSpaCy model that should process it: the newest
-    electoral period gets ``settings.huspacy_model`` (the expensive transformer),
-    every earlier — frozen — period the cheaper ``settings.huspacy_model_archive``.
-    The method/model name is hashed into each sitting's cache fingerprint, so
-    archive sittings keep reusing whatever the archive model produced and never
-    hit the expensive path. A session with no period recorded is treated as
-    current (quality-safe; at most a handful of sittings)."""
+def _session_plan(conn: sqlite3.Connection) -> dict[str, tuple[str, bool]]:
+    """Each session id → ``(model, modal_ok)``: which HuSpaCy model should process
+    it, and whether it may be dispatched to Modal at all.
+
+    The newest electoral period gets ``settings.huspacy_model`` (the expensive
+    transformer), every earlier — frozen — period the cheaper
+    ``settings.huspacy_model_archive``. The method/model name is hashed into each
+    sitting's cache fingerprint, so archive sittings keep reusing whatever the
+    archive model produced and never hit the expensive path. A session with no
+    period recorded is treated as current (quality-safe; at most a handful of
+    sittings).
+
+    ``modal_ok`` is the metered-spend guard (``settings.modal_cycles``, default
+    ``latest``): only the newest cycle is dispatched to Modal, so backfilling the
+    archive — which is exactly when thousands of sittings miss the cache at once —
+    cannot exhaust the Modal budget the live cycle depends on."""
     rows = conn.execute("SELECT id, period_number FROM session").fetchall()
     latest = max((p for _sid, p in rows if p is not None), default=None)
-    return {sid: settings.huspacy_model if (p is None or p == latest)
-            else settings.huspacy_model_archive
+    return {sid: (settings.huspacy_model if (p is None or p == latest)
+                  else settings.huspacy_model_archive,
+                  settings.modal_cycle_allowed(p, latest))
             for sid, p in rows}
 
 
@@ -1201,6 +1219,27 @@ def _session_fingerprint(method: str, texts: list[str]) -> str:
     return h.hexdigest()
 
 
+def _richer_cache_hit(entry: dict | None, model: str, texts: list[str]) -> bool:
+    """Whether ``entry`` already holds a HuSpaCy-quality cloud for this exact
+    (unchanged) text, which the backend we are about to use could only make worse.
+
+    The word-cloud method tag names the *backend* as well as the model, so a
+    sitting that loses its model — an archive cycle once processed on Modal, now
+    outside the Modal budget scope on a host with no local model — misses its cache
+    entry under the regex method and would have its lemmatized cloud silently
+    overwritten by a regex one on the next full rebuild. Re-checking the
+    fingerprint under the method that *produced* the entry tells us the transcript
+    is unchanged, so those cached words are still exactly right and are kept.
+    Entries written before the cache became self-describing carry no ``method``;
+    for those the sitting's assigned HuSpaCy model is the only candidate."""
+    if not entry or entry.get("model") == "regex":
+        return False
+    method = entry.get("method") or nlp.method_tag(model)
+    if method.startswith("regex"):
+        return False
+    return entry.get("fp") == _session_fingerprint(method, texts)
+
+
 def rebuild_session_word_counts(conn: sqlite3.Connection,
                                 cache_dir: str | Path | None = None,
                                 only_sessions: set[str] | None = None) -> None:
@@ -1228,24 +1267,33 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
 
     The model is chosen **per sitting**: the newest electoral period uses
     ``settings.huspacy_model``, frozen earlier periods the cheaper
-    ``settings.huspacy_model_archive`` (see ``_session_models``). Each model
+    ``settings.huspacy_model_archive`` (see ``_session_plan``). Each model
     resolves its own backend/method; since the method is hashed into the cache
     fingerprint, entries from different models coexist in one cache file and a
     model switch only ever recomputes the sittings whose assigned model changed.
     Each cache entry also records the ``model`` name (``"regex"`` for the
     fallback tokenizer) and its exact ``method`` tag, so which model produced a
     sitting's cloud is directly inspectable without recomputing fingerprints.
-    """
-    models = _session_models(conn)
-    resolved: dict[str, tuple[str, str]] = {}   # model → (backend, method)
 
-    def _resolve(model: str) -> tuple[str, str]:
-        if model not in resolved:
-            backend = _nlp_backend(model)
+    Whether a sitting may use Modal *at all* is also decided per sitting
+    (``settings.modal_cycles``, default: the newest cycle only) so that
+    backfilling the archive never spends the live cycle's Modal budget. A sitting
+    that is out of scope uses a local model when one is installed and the regex
+    tokenizer otherwise — except that a cached HuSpaCy result for unchanged text
+    is kept rather than overwritten with a poorer one (``_richer_cache_hit``).
+    """
+    plan = _session_plan(conn)
+    # (model, modal_ok) → (backend, method)
+    resolved: dict[tuple[str, bool], tuple[str, str]] = {}
+
+    def _resolve(model: str, modal_ok: bool) -> tuple[str, str]:
+        if (model, modal_ok) not in resolved:
+            backend = _nlp_backend(model, modal_ok=modal_ok)
             method = "regex:v1" if backend == "regex" else nlp.method_tag(model)
-            logger.info("Word-cloud extraction: model=%s backend=%s", model, backend)
-            resolved[model] = (backend, method)
-        return resolved[model]
+            logger.info("Word-cloud extraction: model=%s backend=%s%s", model, backend,
+                        "" if modal_ok else " (outside the Modal cycle scope)")
+            resolved[(model, modal_ok)] = (backend, method)
+        return resolved[(model, modal_ok)]
 
     cache_path = _wordcloud_cache_path(cache_dir) if cache_dir else None
     cache: dict = {"sessions": {}}
@@ -1296,7 +1344,7 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
                 "VALUES (?, ?, ?, ?)",
                 [(sid, w, c, k) for w, (c, k) in words.items()])
 
-    reused = recomputed = 0
+    reused = recomputed = kept = 0
 
     def _emit(sid, fp, words, model, method):
         # Store a freshly-computed sitting: cache it, write its rows, and commit +
@@ -1320,14 +1368,20 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
     modal_misses: dict[str, list] = {}   # model → [(sid, fp, texts)]
     try:
         for sid in sids:
-            model = models.get(sid, settings.huspacy_model)
-            backend, method = _resolve(model)
+            model, modal_ok = plan.get(sid, (settings.huspacy_model, True))
+            backend, method = _resolve(model, modal_ok)
             texts = _fetch(sid)
             fp = _session_fingerprint(method, texts)
             entry = cache["sessions"].get(sid)
             if entry and entry.get("fp") == fp:
                 _write(sid, entry["words"])
                 reused += 1
+            elif backend == "regex" and _richer_cache_hit(entry, model, texts):
+                # Nothing better is reachable for this sitting right now; keep the
+                # HuSpaCy cloud it already has instead of downgrading it to regex.
+                _write(sid, entry["words"])
+                reused += 1
+                kept += 1
             elif backend == "modal":
                 modal_misses.setdefault(model, []).append((sid, fp, texts))
             elif backend == "huspacy":
@@ -1339,7 +1393,7 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
                 _emit(sid, fp, _words_map(counts, entity_words), "regex", method)
         conn.commit()
         for model, misses in modal_misses.items():
-            _backend, method = _resolve(model)
+            _backend, method = _resolve(model, True)
             for sid, fp, words in nlp_modal.extract(misses,
                                                     app_name=_modal_app_for(model)):
                 _emit(sid, fp, words, model, method)
@@ -1361,8 +1415,9 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
 
     conn.commit()
     _flush_cache()
-    logger.info("session_word_count: %d sittings (%d processed, %d cached)",
-                len(sids), recomputed, reused)
+    logger.info("session_word_count: %d sittings (%d processed, %d cached%s)",
+                len(sids), recomputed, reused,
+                f", {kept} of them kept from a now-unreachable model" if kept else "")
 
 
 # Bump when the entity-span extraction logic changes in a way that should
@@ -1438,8 +1493,9 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
     ``entity`` table (NEL, §10) so the transcript can link names inline.
 
     Uses the same HuSpaCy backend and per-cycle model routing as the word cloud
-    (Modal when configured, else the local model; current cycle vs archive —
-    see ``_session_models``); when a model is available neither way its
+    (Modal when configured *and* the cycle is within the Modal budget scope, else
+    the local model; current cycle vs archive — see ``_session_plan``); when a
+    model is available neither way its
     sittings are skipped, so a bare-host build still succeeds (OPS-4). A skip is
     **non-destructive** — the sitting keeps whatever mentions it already had rather
     than being cleared and left empty — and is logged as a warning when it hits the
@@ -1460,17 +1516,22 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
     _ensure_entity_tables(conn)
     # Person spans need the neural NER; the regex tokenizer can't produce them.
     # The model is chosen per sitting (current cycle vs archive — see
-    # ``_session_models``); per model, an explicit Modal backend wins over a
+    # ``_session_plan``); per model, an explicit Modal backend wins over a
     # locally-installed model (same precedence as ``_nlp_backend``) — the host
     # offloads, never grinds through the transformer itself. A model available
     # neither locally nor via Modal skips its sittings (cached spans are still
-    # reused), so a bare-host build still succeeds.
-    models = _session_models(conn)
-    resolved: dict[str, tuple[str | None, str]] = {}  # model → (mode|None, method)
+    # reused), so a bare-host build still succeeds. A sitting whose cycle is
+    # outside the Modal budget scope (``settings.modal_cycles``) never counts
+    # Modal as available: unlike the word cloud there is no regex fallback here,
+    # so an archive backfill simply leaves those days without inline links until a
+    # local model is installed (or the scope is widened for a one-off re-extract).
+    plan = _session_plan(conn)
+    # (model, modal_ok) → (mode|None, method)
+    resolved: dict[tuple[str, bool], tuple[str | None, str]] = {}
 
-    def _resolve(model: str) -> tuple[str | None, str]:
-        if model not in resolved:
-            if _nlp_backend(model) == "modal":
+    def _resolve(model: str, modal_ok: bool = True) -> tuple[str | None, str]:
+        if (model, modal_ok) not in resolved:
+            if _nlp_backend(model, modal_ok=modal_ok) == "modal":
                 mode = "modal"
             elif nlp.available(model):
                 mode = "local"
@@ -1480,11 +1541,12 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
                 # produces NO mentions for the live cycle — see the per-sitting
                 # summary below.
                 logger.warning("entity extraction unavailable for model %s "
-                               "(not installed locally, no Modal backend)", model)
+                               "(not installed locally, no Modal backend%s)", model,
+                               "" if modal_ok else ", cycle outside the Modal scope")
                 mode = None
             method = nlp.method_tag(model) + ":" + _ENTITY_LOGIC
-            resolved[model] = (mode, method)
-        return resolved[model]
+            resolved[(model, modal_ok)] = (mode, method)
+        return resolved[(model, modal_ok)]
 
     cache_path = _entity_cache_path(cache_dir) if cache_dir else None
     cache: dict = {"sessions": {}}
@@ -1540,11 +1602,12 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
     # become unavailable was wiped and then left empty, so its transcript silently
     # lost every inline link. Only the sittings we are about to (re)write are cleared.
     reuse: list[str] = []                     # cache hits — sids only, see below
-    misses_by: dict[str, list] = {}           # model → [(sid, fp, sent_rows)]
+    # (model, modal_ok) → [(sid, fp, sent_rows)]
+    misses_by: dict[tuple[str, bool], list] = {}
     skipped_sids: list[str] = []
     for sid in sids:
-        model = models.get(sid, settings.huspacy_model)
-        mode, method = _resolve(model)
+        model, modal_ok = plan.get(sid, (settings.huspacy_model, True))
+        mode, method = _resolve(model, modal_ok)
         sent_rows = _fetch(sid)
         fp = _session_fingerprint(method, [t for (_i, t) in sent_rows])
         entry = cache["sessions"].get(sid)
@@ -1553,7 +1616,7 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
         elif mode is None:
             skipped_sids.append(sid)
         else:
-            misses_by.setdefault(model, []).append((sid, fp, sent_rows))
+            misses_by.setdefault((model, modal_ok), []).append((sid, fp, sent_rows))
 
     if skipped_sids:
         # Skipping the CURRENT cycle is the loud case: those are the days the site
@@ -1561,7 +1624,8 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
         # sittings normally never reach here (their cached spans match), so a skip
         # there is worth a line too, just not an alarm.
         current = [s for s in skipped_sids
-                   if models.get(s, settings.huspacy_model) == settings.huspacy_model]
+                   if plan.get(s, (settings.huspacy_model, True))[0]
+                   == settings.huspacy_model]
         (logger.warning if current else logger.info)(
             "entity extraction skipped for %d sitting(s) with no usable model — "
             "%d of them in the CURRENT cycle (%s): their transcripts render with NO "
@@ -1602,8 +1666,8 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
             logger.info("entity mentions progress: %d sittings processed", processed)
 
     try:
-        for model, misses in misses_by.items():
-            mode, method = _resolve(model)
+        for (model, modal_ok), misses in misses_by.items():
+            mode, method = _resolve(model, modal_ok)
             if mode == "modal":
                 packed = [(sid, fp, [t for (_i, t) in rows]) for (sid, fp, rows) in misses]
                 by_sid = {sid: rows for (sid, _fp, rows) in misses}

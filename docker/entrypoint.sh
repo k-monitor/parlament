@@ -20,6 +20,11 @@
 #                      podman-compose run --rm init reextract-entities --period 43
 #                    Needs a reachable model: the current cycle's is Modal-only, so
 #                    PARLAMONITOR_WORDCLOUD_BACKEND=modal + MODAL_TOKEN_ID/SECRET.
+#                    Modal only serves the cycles PARLAMONITOR_MODAL_CYCLES allows
+#                    (default: the newest), so re-extracting an OLDER cycle means
+#                    widening it for that one run, e.g.
+#                      podman-compose run --rm -e PARLAMONITOR_MODAL_CYCLES=42 \
+#                        init reextract-entities --period 42
 #   officeholders    scrape the office-holder registry (tisztségviselők) — every
 #                    office term with its real dates, MPs and non-MPs alike — into
 #                    /data; the one-off backfill for a corpus scraped before the

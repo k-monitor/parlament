@@ -118,6 +118,8 @@ tracks processed files individually, and adds the two `person` columns in place)
 | `--ssh-key` | `PARLAMONITOR_SSH_KEY` | — | path to the SSH private key |
 | `--ssh-known-hosts` | `PARLAMONITOR_SSH_KNOWN_HOSTS` | — | `known_hosts` file (else trust-on-first-use) |
 | — | `PARLAMONITOR_SSH_KEY_PASSPHRASE` | — | passphrase for an encrypted key |
+| `--timing-backend` | `PARLAMONITOR_TIMING_BACKEND` | `auto` | sentence timing: `auto`/`whisper-modal`/`whisper-local`/`character` (TIM-1) |
+| — | `PARLAMONITOR_MODAL_CYCLES` | `latest` | which cycles may be transcribed on **Modal** (`latest`/`all`/`43,42`) — the metered-GPU guard; out-of-scope days keep their cached words, or fall back to the positional estimate |
 
 #### SSH tunnel proxy
 

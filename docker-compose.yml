@@ -53,6 +53,14 @@ x-nlp-env: &nlp-env
   PARLAMONITOR_MODAL_APP_ARCHIVE: ${PARLAMONITOR_MODAL_APP_ARCHIVE:-parlamonitor-nlp-md}
   MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
   MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
+  # Which electoral cycles may be processed ON MODAL at all — the budget guard.
+  # `latest` (default) keeps the metered work on the cycle the site actually
+  # shows, so backfilling the archive can't drain the credit the live cycle needs;
+  # `all` restores the old behaviour, or name cycles explicitly ("43" / "42,43").
+  # Scopes BOTH offloads: the word cloud/NER here and the Whisper transcription
+  # below. Out-of-scope sittings degrade locally (regex cloud, no inline entity
+  # links, positional sentence timing) and keep whatever is already cached.
+  PARLAMONITOR_MODAL_CYCLES: ${PARLAMONITOR_MODAL_CYCLES:-latest}
   # Person-entity linking (NEL, §10): extract PERSON mentions (same HuSpaCy
   # backend as the word cloud — set _WORDCLOUD_BACKEND=modal to offload) and
   # resolve each name to Wikidata/Wikipedia. Set to 0 to disable.
@@ -62,7 +70,8 @@ x-nlp-env: &nlp-env
 # PARLAMONITOR_TIMING_BACKEND=auto uses Whisper on Modal when the MODAL_TOKEN_* above
 # is set (deploy scraper/whisper_modal_app.py first), else degrades to the positional
 # estimate (TIM-1/TIM-5). Reuses the same Modal token as the word-cloud offload; only
-# the deployed app name differs.
+# the deployed app name differs — and the same PARLAMONITOR_MODAL_CYCLES scope, so a
+# backfill of an old cycle is timed positionally instead of on a GPU.
 x-timing-env: &timing-env
   PARLAMONITOR_TIMING_BACKEND: ${PARLAMONITOR_TIMING_BACKEND:-auto}
   PARLAMONITOR_WHISPER_MODAL_APP: ${PARLAMONITOR_WHISPER_MODAL_APP:-parlamonitor-whisper}

@@ -76,6 +76,19 @@ def _resolve_range(felicitas: FelicitasClient, cycle: int, args) -> tuple[str, s
     return start, end
 
 
+def _latest_cycle_or_none(felicitas: FelicitasClient) -> int | None:
+    """The newest cycle upstream, or ``None`` when it can't be resolved. Only used
+    to scope the Modal offload (``PARLAMONITOR_MODAL_CYCLES``), which then falls
+    back to the newest cycle on disk — so a failure here must never abort the run.
+    The client memoizes the underlying fetch, so in a normal scrape this is free."""
+    try:
+        return latest_cycle(felicitas)
+    except Exception as e:
+        logger.debug("Could not resolve the latest cycle (%s); the Modal scope "
+                     "falls back to the newest cycle on disk", e)
+        return None
+
+
 def _write_log(paths: Paths, payload: dict) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     (paths.logs / f"ingest-{ts}.json").write_text(
@@ -102,11 +115,16 @@ def _pending_builds(paths: Paths, *, force: bool,
     return pending
 
 
-def align_all(paths: Paths, sessions: list[str], *, backend: str, force: bool
-              ) -> dict[str, list]:
+def align_all(paths: Paths, sessions: list[str], *, backend: str, force: bool,
+              latest_cycle: int | None = None) -> dict[str, list]:
     """Ensure a Whisper transcription is cached for each session's recording,
     returning ``{session: words}`` for those that have one (TIM-1). A no-op returning
-    ``{}`` when the backend resolves to ``character`` or nothing needs building."""
+    ``{}`` when the backend resolves to ``character`` or nothing needs building.
+
+    ``latest_cycle`` scopes the (metered) Modal offload — see
+    :func:`whisper_align.ensure_words`; without it the newest cycle on disk stands
+    in, so backfilling an old cycle into an existing corpus is still recognised as
+    out of scope."""
     days: list[tuple[str, str | None, str | None]] = []
     for session in sessions:
         try:
@@ -119,7 +137,7 @@ def align_all(paths: Paths, sessions: list[str], *, backend: str, force: bool
         return {}
     return whisper_align.ensure_words(
         paths, days, backend=backend, model=whisper_model(),
-        language=whisper_language(), force=force)
+        language=whisper_language(), force=force, latest_cycle=latest_cycle)
 
 
 def transform_all(paths: Paths, sessions: list[str], *,
@@ -175,8 +193,14 @@ def cmd_proceedings(args) -> None:
                 if pending and not args.no_align:
                     try:
                         backend = args.timing_backend or timing_backend()
+                        # Only the (metered) Modal path needs to know which cycle is
+                        # the newest, so nothing else pays for the lookup.
+                        latest = (_latest_cycle_or_none(felicitas)
+                                  if whisper_align.resolve_backend(backend)
+                                  == "whisper-modal" else None)
                         words_by_session = align_all(
-                            paths, pending, backend=backend, force=args.force)
+                            paths, pending, backend=backend, force=args.force,
+                            latest_cycle=latest)
                     except Exception as e:
                         logger.exception("Whisper alignment failed; falling back "
                                          "to positional timing")

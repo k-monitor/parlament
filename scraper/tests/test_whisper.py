@@ -345,3 +345,100 @@ def test_modal_transcribe_skips_failed_days(monkeypatch):
     misses = [("43001", "m1", None), ("43002", "m2", None)]
     out = list(whisper_modal.transcribe(misses, model="large-v3-turbo", language="hu"))
     assert out == [("43002", [[3.0, 3.5, "ok"]])]
+
+
+# --- Modal cycle scope (budget guard) --------------------------------------
+# Modal GPU time is metered, so only the cycles PARLAMONITOR_MODAL_CYCLES allows
+# (default: the newest one) may be transcribed there. Out-of-scope days keep the
+# positional character estimate instead — never a Modal call.
+
+def _fake_modal(monkeypatch, dispatched):
+    def fake_backend(resolved, misses, *, model, language):
+        assert resolved == "whisper-modal"
+        for session, _m3u8, _playseq in misses:
+            dispatched.append(session)
+            yield session, [[1.0, 1.5, "szó"]]
+    monkeypatch.setattr(whisper_align, "_run_backend", fake_backend)
+    monkeypatch.setattr(whisper_align, "resolve_backend", lambda name: "whisper-modal")
+
+
+def test_modal_skips_cycles_older_than_the_latest(tmp_path, monkeypatch):
+    paths = Paths(tmp_path)
+    paths.ensure()
+    dispatched = []
+    _fake_modal(monkeypatch, dispatched)
+    monkeypatch.delenv("PARLAMONITOR_MODAL_CYCLES", raising=False)
+
+    out = whisper_align.ensure_words(
+        paths, [("43005", "https://x/new.m3u8", None),
+                ("41007", "https://x/old.m3u8", None)],
+        backend="auto", model="large-v3-turbo", language="hu", latest_cycle=43)
+
+    assert dispatched == ["43005"]
+    assert set(out) == {"43005"}                       # the old day gets no words…
+    assert not paths.whisper_cache("41007").exists()   # …and nothing is cached for it
+
+
+def test_modal_scope_falls_back_to_the_newest_cycle_on_disk(tmp_path, monkeypatch):
+    """Without an explicit latest cycle, the data directory answers it — so a
+    backfill into an existing corpus is still recognised as out of scope."""
+    paths = Paths(tmp_path)
+    paths.ensure()
+    (paths.raw_plenary / "raw-43012-day.json").write_text("{}")
+    dispatched = []
+    _fake_modal(monkeypatch, dispatched)
+    monkeypatch.delenv("PARLAMONITOR_MODAL_CYCLES", raising=False)
+
+    whisper_align.ensure_words(
+        paths, [("41007", "https://x/old.m3u8", None)],
+        backend="auto", model="large-v3-turbo", language="hu")
+
+    assert dispatched == []
+
+
+def test_modal_scope_can_be_widened_or_pinned(tmp_path, monkeypatch):
+    paths = Paths(tmp_path)
+    paths.ensure()
+    dispatched = []
+    _fake_modal(monkeypatch, dispatched)
+
+    days = [("43005", "https://x/new.m3u8", None), ("41007", "https://x/old.m3u8", None)]
+    monkeypatch.setenv("PARLAMONITOR_MODAL_CYCLES", "all")
+    whisper_align.ensure_words(paths, days, backend="auto", model="large-v3-turbo",
+                               language="hu", latest_cycle=43)
+    assert sorted(dispatched) == ["41007", "43005"]
+
+    # An explicit list pins the scope — the escape hatch for backfilling one cycle.
+    dispatched.clear()
+    monkeypatch.setenv("PARLAMONITOR_MODAL_CYCLES", "41")
+    whisper_align.ensure_words(paths, days, backend="auto", model="large-v3-turbo",
+                               language="hu", force=True, latest_cycle=43)
+    assert dispatched == ["41007"]
+
+
+def test_out_of_scope_day_still_returns_its_cached_words(tmp_path, monkeypatch):
+    """Reading the cache costs nothing, so an archive day transcribed back when it
+    was in scope keeps its word-accurate timing."""
+    paths = Paths(tmp_path)
+    paths.ensure()
+    m3u8 = "https://x/old.m3u8"
+    whisper_align.save_words_cache(paths.whisper_cache("41007"), m3u8=m3u8,
+                                   model_tag=whisper_align.method_tag("large-v3-turbo"),
+                                   words=[[2.0, 2.5, "régi"]])
+    dispatched = []
+    _fake_modal(monkeypatch, dispatched)
+    monkeypatch.delenv("PARLAMONITOR_MODAL_CYCLES", raising=False)
+
+    out = whisper_align.ensure_words(
+        paths, [("41007", m3u8, None)], backend="auto", model="large-v3-turbo",
+        language="hu", latest_cycle=43)
+
+    assert out == {"41007": [[2.0, 2.5, "régi"]]}
+    assert dispatched == []
+
+
+def test_session_cycle_parses_the_session_key():
+    from parlamonitor import config as cfg
+    assert cfg.session_cycle("43007") == 43
+    assert cfg.session_cycle("41007") == 41
+    assert cfg.session_cycle("x") is None

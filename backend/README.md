@@ -47,6 +47,12 @@ model via `PARLAMONITOR_HUSPACY_MODEL`. Without either, the current cycle's
 sittings are skipped and their transcripts show no inline entity links — the
 loader warns and names them.
 
+Modal is scoped to the **newest cycle** by default (`PARLAMONITOR_MODAL_CYCLES`),
+so backfilling the archive can't drain the credit the live cycle needs. To
+re-extract an older cycle deliberately, widen it for that run:
+`PARLAMONITOR_MODAL_CYCLES=42 python -m app.loader --reextract-entities --period 42
+../data parlamonitor.db`.
+
 ## Run the API
 
 ```bash
@@ -68,6 +74,7 @@ uvicorn app.main:app --reload                      # http://localhost:8000
 | `PARLAMONITOR_PHOTOS_DIR` | `../data/media/photos` | MP portrait directory |
 | `PARLAMONITOR_FRONTEND_DIST` | — | if set, serves the built SPA from one process (OPS-1) |
 | `PARLAMONITOR_MAX_SEARCH_TOTAL` | 5000 | cap on reported search totals |
+| `PARLAMONITOR_MODAL_CYCLES` | `latest` | which electoral cycles may be processed on Modal (`latest`/`all`/`43,42`) — the metered-spend guard; out-of-scope sittings use a local model, else the regex tokenizer (and no entity mentions) |
 
 ## Tests
 

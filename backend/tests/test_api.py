@@ -308,6 +308,26 @@ def test_representative_profile(client):
     assert client.get("/api/v1/representatives/n002").json()["wikipedia_url"] is None
 
 
+def test_profile_lists_asset_declarations_and_cv(client):
+    """REP-13: every asset declaration on record, newest first, each linking to its
+    PDF on parlament.hu — plus the CV the MP had published. A declaration that was
+    due but never published keeps its (unlinked) row, since that absence is the
+    fact a reader is looking for."""
+    d = client.get("/api/v1/representatives/k001").json()
+    decls = d["asset_declarations"]
+    assert [x["assetDate"] for x in decls] == ["2026-05-09", "2025-12-31"]
+    assert decls[0]["url"].endswith("/vagynyil/2026/k001_j0260509k.pdf")
+    assert decls[1]["url"] is None and decls[1]["deadline"] == "2026-01-31"
+    assert d["cv_url"] == "https://www.parlament.hu/kepv/eletrajz/hu/k001.pdf"
+    # The declarations are biography, not statistics: selecting a cycle must not
+    # trim the series (§4A applies to the stats, not to this).
+    scoped = client.get("/api/v1/representatives/k001?period=43").json()
+    assert scoped["asset_declarations"] == decls
+    # An MP with neither is served an empty list and a null link, never an error.
+    other = client.get("/api/v1/representatives/n002").json()
+    assert other["asset_declarations"] == [] and other["cv_url"] is None
+
+
 def _load_minister_speech(db_path, session="43015", sitting=15, date="2026-06-30",
                           office="igazságügyi miniszter", conn=None):
     """Load one sitting day whose speaker is a non-MP minister, so their profile is

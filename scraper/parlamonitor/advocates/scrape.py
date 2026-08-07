@@ -36,7 +36,8 @@ from .. import wikidata
 from ..config import Paths
 from ..felicitas import PHOTO_RESOURCE, FelicitasClient
 from ..names import split_name
-from ..representatives.scrape import DETAIL_QUERIES, apply_details, save_photo
+from ..representatives.scrape import (DETAIL_QUERIES, apply_cv, apply_details,
+                                      save_photo)
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +136,7 @@ def fetch_advocates(felicitas: FelicitasClient, cycle: int, *,
                     logger.warning("detail %s failed for %s: %s", q, pid, e)
                     fetched[q] = []
             apply_details(rec, fetched)
+            apply_cv(felicitas, rec)
         _apply_roster_counts(rec, row, cycle)
         if photos_dir is not None and pid:
             save_photo(felicitas, photos_dir, pid, rec)

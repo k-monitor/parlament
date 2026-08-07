@@ -127,6 +127,19 @@ def _registry():
                   "mandateEnd": "2026-05-08T21:59:59Z"},
              ],
              "education": [{"degree": "jogász", "institution": "ELTE"}],
+             # Asset declarations + the published CV (REP-13). Newest first, as
+             # the scraper writes them. The middle one was due but never
+             # published — it has no URL and stays in the list all the same.
+             "cvUrl": "https://www.parlament.hu/kepv/eletrajz/hu/k001.pdf",
+             "assetDeclarations": [
+                 {"title": "Vagyonnyilatkozat 2026", "assetDate": "2026-05-09",
+                  "url": "https://www.parlament.hu/vagynyil/2026/k001_j0260509k.pdf",
+                  "deadline": "2026-06-08", "submitted": "Igen",
+                  "submittedAt": "2026-06-01T10:00:00Z", "note": None},
+                 {"title": "Vagyonnyilatkozat 2025", "assetDate": "2025-12-31",
+                  "url": None, "deadline": "2026-01-31", "submitted": "Nem",
+                  "submittedAt": None, "note": None},
+             ],
              "statistics": {"billsSubmitted": [{"cycle": 43, "ownBills": 3}]}},
             {"personID": "n002", "label": "Nagy Anna", "firstname": "Anna",
              "lastname": "Nagy", "faction": {"label": "TISZA"},

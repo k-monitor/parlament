@@ -114,6 +114,14 @@ class HttpClient:
             return None
         return r.content
 
+    def exists(self, url: str, **kw) -> bool:
+        """Does this resource exist? A HEAD, so nothing is downloaded to find out.
+
+        For static documents we only want to *link* to (an MP's CV PDF): the link
+        must not be published unless it resolves (TRUST-1), and a 404 here is an
+        answer, not a failure — unlike a 5xx, which ``_request`` still retries."""
+        return self._request("HEAD", url, **kw).ok
+
     def polite_sleep(self) -> None:
         if self.config.sleep:
             time.sleep(self.config.sleep)

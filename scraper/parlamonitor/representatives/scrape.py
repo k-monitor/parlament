@@ -6,7 +6,8 @@ Wikidata round-trip required:
 
 * the per-cycle MP roster (``kepviselo-lista-idopontban``), and
 * per-MP detail: bio + contact, faction-membership history, committee
-  memberships, constituency / election history, education, offices, and the
+  memberships, constituency / election history, education, offices, the
+  **asset declarations** (*vagyonnyilatkozatok*) and CV of REP-13, and the
   per-cycle **speech counts** and **bills-submitted counts** that REP-3's
   statistics are built from.
 
@@ -33,6 +34,14 @@ from ..names import split_name
 
 logger = logging.getLogger(__name__)
 
+# The three per-MP asset-declaration (vagyonnyilatkozat) queries — see the note
+# in DETAIL_QUERIES for why upstream has three.
+ASSET_DECLARATION_QUERIES = (
+    "kepviselo-vagyon-nyilatkozata-query",
+    "kepviselo-vagyon-nyilatkozata2022query",
+    "kepviselo-vagyon-nyilatkozata2023query",
+)
+
 # Per-MP detail queries, keyed on {"pId": kepviseloId}. Mapped into the curated
 # record by the builders below; add a query here and a mapping to surface more.
 DETAIL_QUERIES = (
@@ -45,6 +54,12 @@ DETAIL_QUERIES = (
     "kepviselo-felszolalasok-szama-query",
     "kepviselo-benyujtott-iromanyok-szama-query",
     "kepviselo-aktivitas-query",
+    # Asset declarations (REP-13). Upstream splits them across three queries by
+    # the disclosure regime in force, NOT by date range: the legacy one, the
+    # one-off "eredeti" declaration filed on taking the seat under the rules from
+    # 2022-08-01, and the yearly ones under the rules from 2023-01-01. They are
+    # disjoint in practice; `_asset_declarations` still merges + dedupes them.
+    *ASSET_DECLARATION_QUERIES,
 )
 
 
@@ -57,6 +72,55 @@ def _committees_from_list(nested) -> list[str]:
     if not isinstance(nested, dict):
         return []
     return [r[0] for r in nested.get("rows", []) if r]
+
+
+def _declaration_url(row: dict) -> str | None:
+    """The declaration PDF's absolute URL, as parlament.hu's own adatlap builds it:
+    the row's public-server field + ``/vagynyil`` + the row's file path. Upstream
+    still names the server over plain ``http``; we link the ``https`` original
+    rather than send a reader to an insecure URL.
+
+    ``None`` when the row carries no file — a declaration that was **due but
+    never published** is still a row (and still shown, see REP-13), just not a
+    link."""
+    server = (row.get("vagyonnyilatkozatNyilvanosSzerver") or "").strip()
+    path = (row.get("vagyonnyilatkozatFileNev") or "").strip()
+    if not server or not path:
+        return None
+    if server.startswith("http://"):
+        server = "https://" + server[len("http://"):]
+    return f"{server.rstrip('/')}/vagynyil{path}"
+
+
+def _asset_declarations(details: dict[str, list[dict]]) -> list[dict]:
+    """The person's asset declarations (REP-13), merged from the three upstream
+    queries into one list, newest first.
+
+    Keyed on the declaration's own PDF path so a row reported by two of the
+    queries is kept once; a row with no file (nothing published) can't be keyed
+    that way and is kept as its own entry. The date the list is sorted on is
+    ``vagyoniAllapot`` — *when the declared assets were held*, which is what the
+    declaration is about — not the filing timestamp."""
+    out: dict[object, dict] = {}
+    for q in ASSET_DECLARATION_QUERIES:
+        for i, row in enumerate(details.get(q) or []):
+            url = _declaration_url(row)
+            rec = {
+                "title": row.get("vagyonnyilatkozatFileNevSzoveg"),
+                "url": url,
+                # "A vagyoni állapot időpontja" — the reference date of the
+                # declared assets (two declarations can share a year: one on
+                # taking the seat, one for the year's end).
+                "assetDate": row.get("vagyoniAllapot"),
+                "deadline": row.get("beadasiHatarido"),
+                "submitted": row.get("beadva"),
+                "submittedAt": row.get("benyujtasDatuma"),
+                "note": row.get("vagyonmegjegyzes"),
+            }
+            out.setdefault(url or (q, i), rec)
+    return sorted(out.values(),
+                  key=lambda d: (d.get("assetDate") or "", d.get("submittedAt") or ""),
+                  reverse=True)
 
 
 def _base_record(row: dict) -> dict:
@@ -140,6 +204,8 @@ def apply_details(rec: dict, details: dict[str, list[dict]]) -> None:
         "end": r.get("vege"),
     } for r in details.get("kepviselo-tisztseg-query", [])]
 
+    rec["assetDeclarations"] = _asset_declarations(details)
+
     rec.setdefault("statistics", {})
     rec["statistics"]["speeches"] = [{
         "cycle": r.get("ciklusId"),
@@ -158,6 +224,26 @@ def apply_details(rec: dict, details: dict[str, list[dict]]) -> None:
         "count": r.get("szamossag"),
         "order": r.get("sorrend"),
     } for r in details.get("kepviselo-aktivitas-query", [])]
+
+
+def apply_cv(felicitas: FelicitasClient, rec: dict) -> None:
+    """Note the person's published CV PDF on ``rec``, when they have one (REP-13).
+
+    Costs one HEAD, and only for someone upstream still marks active: publishing
+    the CV is the MP's own choice and the file is taken down when they leave, so
+    for everyone else there is nothing to find and we spend no request looking.
+    Shared with the advocate stage, whose people live in the same id space. A
+    failure leaves the record without a CV — a link we can't verify isn't shown."""
+    pid = rec.get("personID")
+    if not pid or not rec.get("active"):
+        return
+    try:
+        url = felicitas.cv_url(pid)
+    except Exception as e:
+        logger.debug("CV probe failed for %s: %s", pid, e)
+        return
+    if url:
+        rec["cvUrl"] = url
 
 
 def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
@@ -204,6 +290,7 @@ def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
                     logger.warning("detail %s failed for %s: %s", q, pid, e)
                     fetched[q] = []
             apply_details(rec, fetched)
+            apply_cv(felicitas, rec)
         if photos_dir is not None and pid:
             save_photo(felicitas, photos_dir, pid, rec)
         records.append(rec)

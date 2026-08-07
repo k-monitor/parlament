@@ -63,10 +63,13 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 // Long lists (bills, votes, speeches) are collapsed to a preview so the profile
 // stays scannable; a per-section toggle reveals the rest of what's loaded.
 const COLLAPSE_LIMIT = 8
-const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false })
+const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false, declarations: false })
 function shown(list, key) {
   return expanded[key] ? list : list.slice(0, COLLAPSE_LIMIT)
 }
+
+// Asset declarations (REP-13) come with the profile, already newest first.
+const declarations = computed(() => profile.value?.asset_declarations || [])
 
 // The submitted-irományok sections, in display order, dropping any the MP has
 // none of in the current scope (so a section never shows an empty "(0)").
@@ -240,7 +243,8 @@ async function load() {
   questions.value = lawBills.value = otherDocs.value = null
   for (const m of [dayCache, openDays, voteDayCache, openVoteDays])
     for (const k of Object.keys(m)) delete m[k]
-  expanded.questions = expanded.lawbills = expanded.other = expanded.votes = expanded.days = false
+  expanded.questions = expanded.lawbills = expanded.other = expanded.votes
+    = expanded.days = expanded.declarations = false
   try {
     // Everything on the profile is scoped to the global cycle scope
     // (store.cycles; empty = all cycles), so the page never mixes in an
@@ -341,9 +345,12 @@ watch(() => store.cycles.join(','), load)
                 <a v-if="profile.website" :href="profile.website" target="_blank" rel="noopener">🌐 {{ $t('profile.website') }}</a>
                 <a v-if="profile.email" :href="'mailto:' + profile.email">✉ {{ profile.email }}</a>
               </div>
-              <div class="row small links" style="gap:1rem;margin-top:.35rem;" v-if="profile.wikipedia_url || profile.kmonitor_url">
+              <div class="row small links" style="gap:1rem;margin-top:.35rem;" v-if="profile.wikipedia_url || profile.kmonitor_url || profile.cv_url">
                 <a v-if="profile.wikipedia_url" :href="profile.wikipedia_url" target="_blank" rel="noopener"><span class="link-badge link-badge--w" aria-hidden="true">W</span> {{ $t('profile.wikipedia') }}</a>
                 <a v-if="profile.kmonitor_url" :href="profile.kmonitor_url" target="_blank" rel="noopener"><span class="link-badge" aria-hidden="true"><img src="/kmonitor-badge.png" alt="" /></span> {{ $t('profile.kmonitor') }}</a>
+                <!-- The CV the MP had the House publish (REP-13) — a parlament.hu
+                     PDF, so it sits with the other outbound identity links. -->
+                <a v-if="profile.cv_url" :href="profile.cv_url" target="_blank" rel="noopener">📄 {{ $t('profile.cv') }} (PDF)</a>
               </div>
             </div>
           </div>
@@ -473,6 +480,39 @@ watch(() => store.cycles.join(','), load)
                 {{ e.degree }} <span class="muted" v-if="e.institution">— {{ e.institution }}</span>
               </li>
             </ul>
+          </section>
+
+          <!-- Asset declarations (vagyonnyilatkozatok, REP-13), newest first, each
+               linking to its PDF on parlament.hu. Biography, not statistics: the
+               whole series is shown whatever cycle is selected. A declaration that
+               was due but never published stays in the list as a dated, unlinked
+               row — dropping it would hide the very fact worth seeing. -->
+          <section class="card pad" v-if="declarations.length">
+            <div class="sechead">
+              <h2>{{ $t('profile.assetDeclarations') }} <span class="muted small">({{ declarations.length }})</span></h2>
+              <HelpTip :label="$t('profile.assetDeclarations')">
+                <p>{{ $t('profile.assetDeclarationsNote') }}</p>
+              </HelpTip>
+            </div>
+            <ul class="plain">
+              <li v-for="(d, i) in shown(declarations, 'declarations')" :key="i" class="small">
+                <a v-if="d.url" :href="d.url" target="_blank" rel="noopener">
+                  📄 {{ d.title || $t('profile.assetDeclarations') }} (PDF)
+                </a>
+                <span v-else>
+                  {{ d.title || $t('profile.assetDeclarations') }}
+                  <span class="muted">— {{ $t('profile.assetDeclarationMissing') }}</span>
+                </span>
+                <span class="muted term" v-if="d.assetDate || d.deadline">
+                  <template v-if="d.assetDate">{{ $t('profile.assetDeclarationDate', { date: formatDateLocal(d.assetDate) }) }}</template>
+                  <template v-if="!d.url && d.deadline"><template v-if="d.assetDate"> · </template>{{ $t('profile.assetDeclarationDeadline', { date: formatDateLocal(d.deadline) }) }}</template>
+                </span>
+              </li>
+            </ul>
+            <button v-if="declarations.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+              :aria-expanded="expanded.declarations" @click="expanded.declarations = !expanded.declarations">
+              {{ expanded.declarations ? $t('profile.showLess') : $t('profile.showMore') }}
+            </button>
           </section>
         </div>
 

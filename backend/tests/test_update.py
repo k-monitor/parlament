@@ -100,6 +100,38 @@ def test_update_reloads_changed_bills_only(data_dir, db_path):
                            "WHERE title='Módosított cím a frissítés tesztjéhez'") == 1
 
 
+def test_update_adds_the_declaration_columns_to_a_pre_feature_db(data_dir, db_path):
+    """REP-13: a DB built before the asset-declaration/CV columns existed gains them
+    in place on the next --update, so the feature lands on a live deployment by
+    re-loading the registry alone — no (multi-minute) full rebuild."""
+    c = sqlite3.connect(db_path)
+    try:
+        c.execute("ALTER TABLE person DROP COLUMN cv_url")
+        c.execute("ALTER TABLE person DROP COLUMN asset_declarations_json")
+        c.commit()
+        assert "cv_url" not in {r[1] for r in c.execute("PRAGMA table_info(person)")}
+    finally:
+        c.close()
+
+    # Touch the registry so the incremental update reloads that one file.
+    reg_file = data_dir / "processed" / "representatives-43.json"
+    reg = json.loads(reg_file.read_text())
+    reg["meta"]["scrapedAt"] = "2026-08-07T00:00:00+00:00"
+    reg_file.write_text(json.dumps(reg, ensure_ascii=False))
+    assert loader.update_database(data_dir, db_path) is True
+
+    c = sqlite3.connect(db_path)
+    try:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(person)")}
+        assert {"cv_url", "asset_declarations_json"} <= cols
+        row = c.execute("SELECT cv_url, asset_declarations_json FROM person "
+                        "WHERE person_id='k001'").fetchone()
+        assert row[0].endswith("/kepv/eletrajz/hu/k001.pdf")
+        assert len(json.loads(row[1])) == 2
+    finally:
+        c.close()
+
+
 def test_update_builds_when_db_missing(data_dir, tmp_path):
     target = tmp_path / "fresh.db"
     assert not target.exists()

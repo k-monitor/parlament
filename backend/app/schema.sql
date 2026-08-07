@@ -38,6 +38,7 @@ CREATE TABLE person (
     wikidata_id       TEXT,              -- Wikidata QID, joined via P4966 (EXT-2)
     wikipedia_url     TEXT,              -- preferred (hu, else en) Wikipedia article
     kmonitor_url      TEXT,              -- K-Monitor adatbázis tag page (matched by name)
+    cv_url            TEXT,              -- the CV PDF they had published (REP-13)
     photo_uri         TEXT,
     photo_file        TEXT,
     constituency      TEXT,
@@ -58,7 +59,10 @@ CREATE TABLE person (
     offices_json          TEXT,
     faction_history_json  TEXT,
     election_history_json TEXT,
-    external_stats_json   TEXT           -- upstream per-cycle counts (bills, etc.)
+    external_stats_json   TEXT,          -- upstream per-cycle counts (bills, etc.)
+    -- Asset declarations (vagyonnyilatkozatok, REP-13): one entry per filing,
+    -- newest first, each linking to its PDF on parlament.hu (never mirrored).
+    asset_declarations_json TEXT
 );
 
 -- person <-> faction <-> period: factions change over time (membership table).

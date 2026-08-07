@@ -123,6 +123,12 @@ OFFICE_CATEGORIES = {
 PHOTO_RESOURCE = (f"{BASE}/web/guest/felicitas/api/query/resource/"
                  "kepviseloexportok/kepviselo-exported-queries-provider/"
                  "kepviselo-kepek")
+# The MP's own CV (*„a képviselő által leadott és kérésére közzétett életrajz”*):
+# a static PDF keyed by person id, NOT a Felicitas query — the adatlap links it
+# straight from this path. Publication is opt-in and only offered while the MP
+# sits (parlament.hu hides the link for anyone else), so its existence is always
+# checked rather than assumed (see `cv_url`).
+CV_RESOURCE = f"{BASE}/kepv/eletrajz/hu"
 
 _REFERER = {"Referer": f"{BASE}/web/guest/orszaggyulesi-naplo-elozo-ciklusbeli-adatai"}
 
@@ -484,6 +490,17 @@ class FelicitasClient:
         """Fetch an MP's portrait image bytes, or ``None`` if absent."""
         self.http.polite_sleep()
         return self.http.get_bytes(f"{PHOTO_RESOURCE}/{person_id}", headers=_REFERER)
+
+    def cv_url(self, person_id: str) -> str | None:
+        """The person's published CV PDF on parlament.hu, or ``None`` if there is
+        none. Publication is the MP's own choice, so the URL is only returned when
+        a HEAD confirms the file is there — we never publish a link we haven't
+        seen resolve. Nothing is downloaded: the PDF is linked, not mirrored."""
+        if not person_id:
+            return None
+        url = f"{CV_RESOURCE}/{person_id}.pdf"
+        self.http.polite_sleep()
+        return url if self.http.exists(url, headers=_REFERER) else None
 
     # ---- bills (irományok) ----------------------------------------------
 

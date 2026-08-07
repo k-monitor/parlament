@@ -892,6 +892,15 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         "lastname": p["lastname"], "photo_uri": p["photo_uri"],
         "wikidata_id": p["wikidata_id"], "wikipedia_url": p["wikipedia_url"],
         "kmonitor_url": p["kmonitor_url"],
+        # The CV PDF they had published on parlament.hu, when there is one — only
+        # while they sit, since the House takes it down when the mandate ends
+        # (REP-13). Absent on a DB built before the column existed (`_col`).
+        "cv_url": _col(p, "cv_url"),
+        # Every asset declaration (vagyonnyilatkozat) on record, newest first,
+        # each linking to its PDF on parlament.hu (REP-13). Biography, like the
+        # office and committee history — deliberately NOT cycle-scoped, so the
+        # series stays whole no matter which cycle is selected.
+        "asset_declarations": _loads(_col(p, "asset_declarations_json")),
         "constituency": p["constituency"],
         "seat": p["seat"], "email": p["email"], "website": p["website"],
         "highest_education": p["highest_education"], "active": p["active"],

@@ -191,10 +191,28 @@ def _load_person_offices(conn: sqlite3.Connection, person_id: str,
     return n
 
 
+def _ensure_person_document_columns(conn: sqlite3.Connection) -> None:
+    """Add ``person.cv_url`` / ``person.asset_declarations_json`` to a pre-existing
+    DB (REP-13).
+
+    Same reasoning as ``_ensure_advocate_columns``: the incremental ``--update``
+    path snapshots the live DB instead of re-running ``schema.sql``, so the
+    declarations land on an already-built deployment by re-loading the registry
+    alone — no full rebuild. A no-op on a freshly-built DB."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(person)")]
+    if not cols:
+        return
+    if "cv_url" not in cols:
+        conn.execute("ALTER TABLE person ADD COLUMN cv_url TEXT")
+    if "asset_declarations_json" not in cols:
+        conn.execute("ALTER TABLE person ADD COLUMN asset_declarations_json TEXT")
+
+
 def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
     """Upsert the MP registry. Adds bio/enrichment to person rows and faction
     membership history; safe to re-run (replaces each MP's derived rows)."""
     _ensure_person_office(conn)
+    _ensure_person_document_columns(conn)
     meta = registry.get("meta", {})
     period = meta.get("cycle")
     data = registry.get("data", [])
@@ -220,15 +238,16 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
             INSERT INTO person(person_id, label, label_full, firstname, lastname,
                                wikidata_id, wikipedia_url,
                                photo_uri, photo_file, constituency, seat, email,
-                               website, highest_education, active, is_mp,
+                               website, highest_education, active, is_mp, cv_url,
                                education_json, committees_json, offices_json,
                                faction_history_json, election_history_json,
-                               external_stats_json)
+                               external_stats_json, asset_declarations_json)
             VALUES (:pid, :label, :label_full, :firstname, :lastname,
                     :wikidata_id, :wikipedia_url, :photo_uri,
                     :photo_file, :constituency, :seat, :email, :website,
-                    :highest_education, :active, 1, :education, :committees,
-                    :offices, :faction_history, :election_history, :external_stats)
+                    :highest_education, :active, 1, :cv_url, :education, :committees,
+                    :offices, :faction_history, :election_history, :external_stats,
+                    :asset_declarations)
             ON CONFLICT(person_id) DO UPDATE SET
                 label=excluded.label, label_full=excluded.label_full,
                 firstname=excluded.firstname, lastname=excluded.lastname,
@@ -237,13 +256,14 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
                 constituency=excluded.constituency, seat=excluded.seat,
                 email=excluded.email, website=excluded.website,
                 highest_education=excluded.highest_education,
-                active=excluded.active, is_mp=1,
+                active=excluded.active, is_mp=1, cv_url=excluded.cv_url,
                 education_json=excluded.education_json,
                 committees_json=excluded.committees_json,
                 offices_json=excluded.offices_json,
                 faction_history_json=excluded.faction_history_json,
                 election_history_json=excluded.election_history_json,
-                external_stats_json=excluded.external_stats_json
+                external_stats_json=excluded.external_stats_json,
+                asset_declarations_json=excluded.asset_declarations_json
             """,
             {
                 "pid": pid,
@@ -261,6 +281,7 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
                 "website": rec.get("website"),
                 "highest_education": rec.get("highestEducation"),
                 "active": _as_bool(rec.get("active")),
+                "cv_url": rec.get("cvUrl"),
                 "education": _json_or_none(rec.get("education")),
                 "committees": _json_or_none(rec.get("committeeMemberships")
                                             or rec.get("committees")),
@@ -268,6 +289,7 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
                 "faction_history": _json_or_none(rec.get("factionHistory")),
                 "election_history": _json_or_none(rec.get("electionHistory")),
                 "external_stats": _json_or_none(ext_stats),
+                "asset_declarations": _json_or_none(rec.get("assetDeclarations")),
             },
         )
 
@@ -373,6 +395,7 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
     Safe to re-run: it replaces only this cycle's advocate rows (ING-4)."""
     _ensure_advocate_columns(conn)
     _ensure_person_office(conn)
+    _ensure_person_document_columns(conn)
     meta = registry.get("meta", {})
     period = meta.get("cycle")
     data = registry.get("data", [])
@@ -403,14 +426,14 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
             INSERT INTO person(person_id, label, label_full, firstname, lastname,
                                wikidata_id, wikipedia_url, photo_uri, photo_file,
                                seat, email, website, highest_education, active,
-                               is_advocate, nationality,
+                               is_advocate, nationality, cv_url,
                                education_json, committees_json, offices_json,
-                               external_stats_json)
+                               external_stats_json, asset_declarations_json)
             VALUES (:pid, :label, :label_full, :firstname, :lastname,
                     :wikidata_id, :wikipedia_url, :photo_uri, :photo_file,
                     :seat, :email, :website, :highest_education, :active,
-                    1, :nationality, :education, :committees, :offices,
-                    :external_stats)
+                    1, :nationality, :cv_url, :education, :committees, :offices,
+                    :external_stats, :asset_declarations)
             ON CONFLICT(person_id) DO UPDATE SET
                 label=excluded.label,
                 label_full=COALESCE(excluded.label_full, person.label_full),
@@ -428,10 +451,13 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
                 active=COALESCE(excluded.active, person.active),
                 is_advocate=1,
                 nationality=COALESCE(excluded.nationality, person.nationality),
+                cv_url=COALESCE(excluded.cv_url, person.cv_url),
                 education_json=COALESCE(excluded.education_json, person.education_json),
                 committees_json=COALESCE(excluded.committees_json, person.committees_json),
                 offices_json=COALESCE(excluded.offices_json, person.offices_json),
-                external_stats_json=excluded.external_stats_json
+                external_stats_json=excluded.external_stats_json,
+                asset_declarations_json=COALESCE(excluded.asset_declarations_json,
+                                                 person.asset_declarations_json)
             """,
             {
                 "pid": pid,
@@ -449,11 +475,13 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
                 "highest_education": rec.get("highestEducation"),
                 "active": _as_bool(rec.get("active")),
                 "nationality": rec.get("nationality"),
+                "cv_url": rec.get("cvUrl"),
                 "education": _json_or_none(rec.get("education")),
                 "committees": _json_or_none(rec.get("committeeMemberships")
                                             or rec.get("committees")),
                 "offices": _json_or_none(rec.get("offices")),
                 "external_stats": _json_or_none(stats),
+                "asset_declarations": _json_or_none(rec.get("assetDeclarations")),
             },
         )
 

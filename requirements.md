@@ -942,6 +942,31 @@ snippet — a site-wide capability, not a per-module feature.
     speaker filter** (search-as-you-type): filtering the record by a minister that
     silently finds nothing is worse than not offering the filter.
 
+- **REP-13 (SHOULD).** **Asset declarations (*vagyonnyilatkozatok*) and the CV on
+  the profile.** Every MP files an asset declaration on taking their seat and once
+  a year after; the House publishes each as a PDF. It is the single most-asked-for
+  document about a representative and today costs a reader several clicks through
+  parlament.hu's own adatlap, so the profile (REP-2) carries it in **its own
+  panel**: every declaration on record, **newest first**, each linking to the
+  original PDF on parlament.hu — **linked, never mirrored** (TRUST-1), so a
+  correction or withdrawal upstream is never masked by a stale copy of ours.
+  - Each entry is shown with the **date of the declared assets** (*a vagyoni
+    állapot időpontja*) — the point in time the declaration is about, and the only
+    thing that tells two same-titled filings of one year apart (one on taking the
+    seat, one for the year's end).
+  - Like the office and committee history this is **biography, not statistics**:
+    it is **not cycle-scoped** (§4A), so the series stays whole whichever cycle is
+    selected — a declaration's value is largely in the comparison with the ones
+    before it.
+  - A declaration that was **due but never published** stays in the list as a
+    dated, unlinked row. Silently dropping it would hide exactly the fact a reader
+    is looking for.
+  - The profile also links the **CV** (*önéletrajz*) the representative had the
+    House publish, when there is one. Publication is the MP's own choice and the
+    file is taken down when the mandate ends, so the link MUST only be published
+    once its target is **known to resolve** — never derived from the person id and
+    hoped for.
+
 - **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
   representative and faction statistics** (speaking time, speech counts, trends —
   REP-3/REP-4/REP-7), but are **never dropped from storage or from the

@@ -403,6 +403,85 @@ office dates on every profile are read straight from these terms — there is no
 per-profile migration to run. Add `--skip-officeholders` to
 `PARLAMONITOR_SYNC_ARGS` to opt the sidecar out.
 
+#### Reusing a Whisper cache copied from another machine
+
+Sentence timing is **Whisper forced alignment** (TIM-1) wherever a transcription
+exists and the positional character estimate everywhere else. Those transcriptions
+are expensive to make but trivially **portable**: each is a plain
+`data/original/plenary/whisper-<session>.json` holding the day's word timings. So a
+machine that already has them — a dev box, or a run made while the Modal app was
+reachable — can hand them to a deployment that cannot transcribe at all, and that
+deployment gets word-accurate timing for those sittings.
+
+Copying the files in is *not enough on its own*, for two reasons, both silent:
+
+- **A host with no Whisper backend never even reads the cache.** With
+  `PARLAMONITOR_TIMING_BACKEND=auto` (the default) and neither `MODAL_TOKEN_*` nor
+  a local `faster-whisper`, the backend resolves to `character` and `ensure_words()`
+  returns *before* it looks at any cache. An **explicit** backend name is honoured
+  as-is, so `whisper-local` is what makes the copied words load — and nothing needs
+  installing, because every sitting is a cache hit and no day reaches the backend
+  (a miss is logged per-day and falls back to the estimate, never fatally).
+- **Only sittings whose raw bundle is newer than their session JSON are rebuilt**,
+  and copying a cache changes neither. Touch the day bundles you have words for.
+
+```bash
+cd ~/parlament
+
+# 1. which copied caches will actually be used? (runs on the host, no deps)
+#    A cache is keyed by the recording URL + model, so a day re-cut upstream since
+#    it was transcribed, or a different PARLAMONITOR_WHISPER_MODEL, reports STALE.
+python scraper/check_whisper_cache.py data
+
+# 2. mark exactly those days for rebuild
+cd data/original/plenary
+for f in whisper-*.json; do s=${f#whisper-}; touch "raw-${s%.json}-day.json"; done
+cd ~/parlament
+
+# 3. re-transform (needs read-write /data; --cycle is required by argparse but
+#    unused here — the transform sweeps every pending day, all cycles at once)
+podman stop parlament_sync_1            # the sidecar doesn't share the scraper's lock
+podman run --rm \
+  -v "$PWD/data:/data" \
+  -e PARLAMONITOR_DATA_DIR=/data \
+  -e PARLAMONITOR_TIMING_BACKEND=whisper-local \
+  parlamonitor:latest \
+  sh -c 'cd /app/scraper && python -m parlamonitor proceedings --cycle 43 --transform-only /data'
+
+# 4. reload the rewritten sittings into the DB, then resume the sidecar
+podman run --rm --env-file .env \
+  -v "$PWD/data:/data:ro" -v parlamonitor_dbdata:/db \
+  -e PARLAMONITOR_DB=/db/parlamonitor.db -e PARLAMONITOR_DATA_DIR=/data \
+  parlamonitor:latest update
+podman start parlament_sync_1
+```
+
+Step 3 logs `Built 43015: 287 speeches (whisper-forced-alignment)` per rebuilt day.
+**Do not add `--force`**: it is threaded straight into `ensure_words(force=True)`,
+which bypasses the cache and tries to *re-transcribe* — on a host with no backend
+that means falling right back to positional timing, i.e. the exact opposite of the
+point. Step 4 is the ordinary incremental update; the alignment changes only each
+sentence's `timeStart`/`timeEnd` and not its text, so the word-cloud/entity caches
+in the `dbdata` volume are keyed on unchanged fingerprints and hit — no NLP is
+recomputed and no Modal credit is spent. (`--env-file .env` is only insurance for
+the case one of them misses; drop it if you have no `.env`.)
+
+These use plain `podman run` rather than `podman-compose run --rm sync …` because
+podman-compose 1.0.6 cannot run one-off commands on the `sync` service at all —
+see [the gotcha below](#notes--gotchas). Verify afterwards:
+
+```bash
+podman run --rm -v parlamonitor_dbdata:/db parlamonitor:latest \
+  sqlite3 /db/parlamonitor.db 'SELECT timing_method, count(*) FROM session GROUP BY 1'
+```
+
+The sittings you copied words for read `whisper-forced-alignment`; the rest stay
+`felicitas-speech-offset`. To keep it working for caches copied in *later*, set
+`PARLAMONITOR_TIMING_BACKEND=whisper-local` in `.env` permanently: it costs nothing
+(the sidecar's genuinely new sittings just log one `Local transcription failed`
+warning and time positionally, exactly as they do under `auto`), but it means a
+future `whisper-*.json` is picked up on the next sync instead of being ignored.
+
 ## Continuous sync (keeping in step with parlament.hu)
 
 The bundled **`sync`** service keeps the deployment current without a full
@@ -911,5 +990,28 @@ long way once the cache hit rate is high. If `docker stats` still shows the
   gracefully.
 - **Backups:** the DB is fully regenerable from `data/processed/`, so back up
   `data/` (or the scraper) rather than the `dbdata` volume.
+- **`podman-compose run` cannot touch the `sync` service** (podman-compose 1.0.6).
+  It insists on "recreating" the `depends_on` target first, and `podman rm
+  parlament_init_1` then fails with *"has dependent containers which must be
+  removed before it"* — podman-compose implements `depends_on` as `--requires`, so
+  `sync` pins `init` in place; it finally crashes in its own `down` path with
+  `AttributeError: 'Namespace' object has no attribute 'remove_orphans'`. Nothing is
+  damaged (it only stops `init`, a one-shot that had already exited; `caddy`, `sync`
+  and the serving colors are untouched). Run one-offs with **plain `podman run`**
+  instead — the same image with the mounts `deploy.sh` uses:
+
+  ```bash
+  podman run --rm -v "$PWD/data:/data" -e PARLAMONITOR_DATA_DIR=/data \
+    parlamonitor:latest <entrypoint-command-or-sh -c '…'>          # scrape side, rw data
+  podman run --rm -v "$PWD/data:/data:ro" -v parlamonitor_dbdata:/db \
+    -e PARLAMONITOR_DB=/db/parlamonitor.db -e PARLAMONITOR_DATA_DIR=/data \
+    parlamonitor:latest update                                      # DB side
+  ```
+
+  The image's entrypoint execs any unrecognised argument verbatim, but its WORKDIR
+  is `/app/backend` — a scraper command therefore needs `sh -c 'cd /app/scraper && …'`.
+  To get `podman-compose run` working again, `podman rm -f --depend
+  parlament_init_1` unties the knot, but it removes `parlament_sync_1` with it, so
+  follow up with `podman-compose up -d sync`.
 - The image pins **Node 18** for the SPA build and **Python 3.12** for the
   runtime.

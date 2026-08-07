@@ -53,9 +53,15 @@ for them unchanged.
 The reference's CGI (token) and PAIR-proxy (HTML) backends remain documented in
 `OpenParliamentTV-Tools` as fallbacks (SRC-2) but are not needed for v1.
 
-## Sentence ↔ video timing (v1)
+## Sentence ↔ video timing
 
-v1 timing is a **positional/character estimate** (requirements TIM-1): the
+Timing is **Whisper forced alignment** (`whisper_align.py`, TIM-1) wherever a
+transcription of the day's recording is available, and the positional estimate
+below wherever one is not — per speech, so a day degrades gracefully rather than
+all-or-nothing. See [Reusing a cached transcription](#reusing-a-cached-transcription)
+for how the (expensive, cached) transcriptions move between machines.
+
+The fallback is a **positional/character estimate** (requirements TIM-3): the
 whole-day stream duration is distributed across the day's transcript in
 proportion to character position, so a sentence's share of the timeline equals
 its share of the day's characters. Offsets are **day-absolute** seconds into the
@@ -63,10 +69,40 @@ HLS stream, so clicking a sentence seeks into it (TIM-2). Every timed sentence i
 stamped `align-method = "estimated-day-offset"` with reduced `confidence` so the
 UI can disclose the imprecision (TIM-3 / VIE-6).
 
-Timing is a **distinct, swappable stage** (`parlamonitor/timing.py`, TIM-4): the
-real per-speech offsets the scraper already captures into
-`media.videoStart`/`videoEnd`, or forced alignment, can replace it later without
-touching the fetch/parse/segment stages or the data shape (requirements §10).
+Timing is a **distinct, swappable stage** (`parlamonitor/timing.py`, TIM-4): it
+consumes the alignment where there is one and the per-speech offsets the scraper
+captures into `media.videoStart`/`videoEnd` where there is not, so which method ran
+is invisible to the fetch/parse/segment stages and to the data shape
+(requirements §10) — only the per-sentence `align-method`/`confidence` records it.
+
+### Reusing a cached transcription
+
+Transcription is the expensive half and is cached per sitting as a plain
+`data/original/plenary/whisper-<session>.json` (words + a fingerprint of the
+recording URL and model). That file is **portable**: copy it to another machine and
+that machine gets word-accurate timing for the sitting without a GPU, a Modal
+token, or `faster-whisper`. Two things make the difference between a cache that is
+used and one that is silently ignored:
+
+```bash
+# Which copied caches will actually be used? A day re-cut upstream since it was
+# transcribed, or a different PARLAMONITOR_WHISPER_MODEL, fails the fingerprint
+# and is reported STALE (the sitting then falls back to the estimate).
+python check_whisper_cache.py ../data
+
+# A host with no backend resolves `auto` to `character`, which returns BEFORE
+# reading any cache — name the backend explicitly to load the copied words. No
+# install needed: every day is a cache hit, so none reaches the backend.
+python -m parlamonitor proceedings --cycle 43 --transform-only \
+    --timing-backend whisper-local ../data
+```
+
+The transform only rebuilds sittings whose raw bundle is newer than their session
+JSON, and copying a cache changes neither — `touch` the day bundles you have words
+for first. Do **not** reach for `--force`: it also forces `ensure_words`, which
+bypasses the cache and tries to re-transcribe. The deployment-side version of this
+recipe (containers, DB reload) is in
+[DEPLOYMENT.md](../DEPLOYMENT.md#reusing-a-whisper-cache-copied-from-another-machine).
 
 ## Running
 
@@ -118,7 +154,7 @@ tracks processed files individually, and adds the two `person` columns in place)
 | `--ssh-key` | `PARLAMONITOR_SSH_KEY` | — | path to the SSH private key |
 | `--ssh-known-hosts` | `PARLAMONITOR_SSH_KNOWN_HOSTS` | — | `known_hosts` file (else trust-on-first-use) |
 | — | `PARLAMONITOR_SSH_KEY_PASSPHRASE` | — | passphrase for an encrypted key |
-| `--timing-backend` | `PARLAMONITOR_TIMING_BACKEND` | `auto` | sentence timing: `auto`/`whisper-modal`/`whisper-local`/`character` (TIM-1) |
+| `--timing-backend` | `PARLAMONITOR_TIMING_BACKEND` | `auto` | sentence timing: `auto`/`whisper-modal`/`whisper-local`/`character` (TIM-1). `auto` resolves to the first backend actually present, then `character` — which reads **no** cache at all, so name a backend explicitly to use [copied words](#reusing-a-cached-transcription) |
 | — | `PARLAMONITOR_MODAL_CYCLES` | `latest` | which cycles may be transcribed on **Modal** (`latest`/`all`/`43,42`) — the metered-GPU guard; out-of-scope days keep their cached words, or fall back to the positional estimate |
 
 #### SSH tunnel proxy
@@ -219,7 +255,9 @@ parlamonitor/
   names.py             speaker → name / faction / role / context
   agenda.py            HU agenda-type classification (+ bill-code extraction)
   segment.py           HTML cleanup + Hungarian sentence segmentation
-  timing.py            v1 positional/character timing stage
+  timing.py            timing stage: alignment where available, else positional
+  whisper_align.py     forced alignment + the per-sitting transcription cache
+  whisper_modal.py     Modal GPU transcription backend (see whisper_modal_app.py)
   detail_cache.py      incremental per-item detail caching (bills/votes)
   proceedings/
     scrape.py          download stage → raw-<session>-day.json
@@ -237,6 +275,8 @@ parlamonitor/
   votes/
     scrape.py          szavazások list + per-vote detail → votes-<cycle>.json
   cli.py               workflow orchestration (stages, lockfile, ingest log)
+whisper_modal_app.py   the Modal app deployed for the GPU backend
+check_whisper_cache.py which copied whisper-<session>.json caches are usable
 tests/
   test_pipeline.py     offline tests: transform, timing, names, agenda, segment
   test_advocates.py    offline tests: szószóló registry shape + cycle discovery

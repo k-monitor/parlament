@@ -90,6 +90,13 @@ used and one that is silently ignored:
 # and is reported STALE (the sitting then falls back to the estimate).
 python check_whisper_cache.py ../data
 
+# A sitting is served as a CUT of one continuous daily recording, and the cut's
+# bounds are in the URL (/vod/smil:<date>.<time>.<startMs>.<endMs>.smil/). When
+# only those moved, the audio is identical and the words merely need re-anchoring
+# — a shift, not a GPU. Anything else (different recording, different model) is
+# left alone to be re-transcribed.
+python check_whisper_cache.py ../data --rebase
+
 # A host with no backend resolves `auto` to `character`, which returns BEFORE
 # reading any cache — name the backend explicitly to load the copied words. No
 # install needed: every day is a cache hit, so none reaches the backend.

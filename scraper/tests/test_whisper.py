@@ -442,3 +442,67 @@ def test_session_cycle_parses_the_session_key():
     assert cfg.session_cycle("43007") == 43
     assert cfg.session_cycle("41007") == 41
     assert cfg.session_cycle("x") is None
+
+
+# --- stale-cache repair (check_whisper_cache.py) ---------------------------
+
+import json                                                   # noqa: E402
+import check_whisper_cache as ccw                             # noqa: E402
+
+_OLD = "https://sgis.parlament.hu:446/vod/smil:20260713.124621.1031000.23291000.smil/playlist.m3u8"
+_NEW = "https://sgis.parlament.hu:446/vod/smil:20260713.124621.1031192.23291570.smil/playlist.m3u8"
+
+
+def test_parse_cut_reads_the_smil_bounds_in_seconds():
+    assert ccw.parse_cut(_OLD) == ("20260713.124621", 1031.0, 23291.0)
+    assert ccw.parse_cut(_NEW) == ("20260713.124621", 1031.192, 23291.57)
+    assert ccw.parse_cut("https://x/playlist.m3u8") is None
+    assert ccw.parse_cut(None) is None
+
+
+def _stale_cache_dir(tmp_path, *, raw_m3u8, cached_m3u8=_OLD):
+    """A data dir holding one day bundle plus a cache made from ``cached_m3u8``."""
+    paths = Paths(tmp_path)
+    paths.ensure()
+    paths.raw_day("43016").write_text(json.dumps({"video": {"m3u8": raw_m3u8}}))
+    whisper_align.save_words_cache(
+        paths.whisper_cache("43016"), m3u8=cached_m3u8,
+        model_tag=whisper_align.method_tag("large-v3-turbo"),
+        words=[[0.1, 0.5, "jó"], [3.05, 3.61, "reggelt"]])
+    return paths
+
+
+def test_rebase_reanchors_a_recut_sitting_onto_the_new_cut(tmp_path):
+    """Same recording, later trim: the words are still right, so shifting them by
+    the difference makes the cache valid again — no GPU, exact to the ms."""
+    paths = _stale_cache_dir(tmp_path, raw_m3u8=_NEW)
+    tag = whisper_align.method_tag("large-v3-turbo")
+
+    assert whisper_align.load_words_cache(paths.whisper_cache("43016"),
+                                          m3u8=_NEW, model_tag=tag) is None
+    assert ccw.main([str(tmp_path), "--rebase"]) == 0
+
+    words = whisper_align.load_words_cache(paths.whisper_cache("43016"),
+                                           m3u8=_NEW, model_tag=tag)
+    # t=0 moved 0.192 s later, so every word is that much earlier in the new
+    # stream; the first one would go negative and is clamped to the new start.
+    assert words == [[0.0, 0.308, "jó"], [2.858, 3.418, "reggelt"]]
+
+
+def test_rebase_refuses_a_different_recording(tmp_path):
+    """A different date/time base is different audio — no shift can repair it, so
+    the cache is left alone for a re-transcription."""
+    other = "https://sgis.parlament.hu:446/vod/smil:20260714.084536.1127000.45590000.smil/playlist.m3u8"
+    paths = _stale_cache_dir(tmp_path, raw_m3u8=other)
+    before = paths.whisper_cache("43016").read_text()
+
+    assert ccw.main([str(tmp_path), "--rebase"]) == 1
+    assert paths.whisper_cache("43016").read_text() == before
+
+
+def test_check_reports_a_usable_cache_without_touching_it(tmp_path):
+    paths = _stale_cache_dir(tmp_path, raw_m3u8=_OLD)
+    before = paths.whisper_cache("43016").read_text()
+
+    assert ccw.main([str(tmp_path)]) == 0
+    assert paths.whisper_cache("43016").read_text() == before

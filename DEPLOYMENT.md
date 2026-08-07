@@ -432,6 +432,8 @@ cd ~/parlament
 #    A cache is keyed by the recording URL + model, so a day re-cut upstream since
 #    it was transcribed, or a different PARLAMONITOR_WHISPER_MODEL, reports STALE.
 python scraper/check_whisper_cache.py data
+#    A "re-cut" STALE is repairable in place, without a GPU — see below:
+python scraper/check_whisper_cache.py data --rebase
 
 # 2. mark exactly those days for rebuild
 cd data/original/plenary
@@ -476,7 +478,47 @@ podman run --rm -v parlamonitor_dbdata:/db parlamonitor:latest \
 ```
 
 The sittings you copied words for read `whisper-forced-alignment`; the rest stay
-`felicitas-speech-offset`. To keep it working for caches copied in *later*, set
+`felicitas-speech-offset`.
+
+##### When one sitting still isn't aligned
+
+Three different things look identical from the outside — a sitting that "should"
+have Whisper timing and doesn't. `check_whisper_cache.py` tells them apart:
+
+- **`STALE … (re-cut ±X s)`** — upstream re-trimmed the sitting out of the same
+  continuous daily recording. The audio is unchanged, so the cached words are still
+  right; only the `t=0` they are measured from moved (the smil URL carries the cut's
+  bounds in ms: `…/smil:<date>.<time>.<startMs>.<endMs>.smil/`). `--rebase` shifts
+  the words by the difference and re-fingerprints — free, exact, no GPU. Re-run
+  steps 2–4 afterwards. Trims are typically sub-second (sitting 43016 moved 192 ms),
+  which is exactly why it is worth repairing rather than re-transcribing.
+- **`STALE … (different recording | model changed)`** — nothing can be shifted into
+  place; the day must be re-transcribed on a host that has a backend. Delete the
+  cache, `touch` the raw bundle, and run step 3 there with `--timing-backend
+  whisper-modal` and `MODAL_TOKEN_*` set (cycle 43 is inside the default
+  `PARLAMONITOR_MODAL_CYCLES=latest` scope). Then copy the new `whisper-*.json` over
+  and run steps 2–4 on the deployment.
+- **`OK`, yet the sitting is still untimed** — the cache is fine and the *transcript*
+  is missing. Check the day: a sitting whose speeches carry no text has nothing to
+  align, whatever its words look like. Note that `meta.timingMethod` (and so the DB's
+  `session.timing_method`) reports the method that was *available*, not that anything
+  aligned — so it reads `whisper-forced-alignment` for such a day too. Count the
+  actual text instead:
+
+  ```bash
+  python -c 'import json;r=json.load(open("data/processed/43016-session.json"));print(r["meta"]["counts"])'
+  # {"speeches": 152, "withText": 0}  → the transcript is missing, not the alignment
+  ```
+
+  There is **nothing to do** here: parlament.hu publishes the recording and the
+  speech listing days before the jegyzőkönyv, and the sync sidecar chases exactly
+  this (`incomplete_text` → a one-request probe per poll, with no day cutoff — see
+  [`sync.py`](scraper/parlamonitor/sync.py)), so the day re-scrapes itself the poll
+  after the text lands and the existing cache is then aligned against it. A day
+  stuck text-less for weeks means upstream still hasn't published it — confirm with
+  the sidecar's own log rather than deleting anything.
+
+To keep the copied-cache path working for caches copied in *later*, set
 `PARLAMONITOR_TIMING_BACKEND=whisper-local` in `.env` permanently: it costs nothing
 (the sidecar's genuinely new sittings just log one `Local transcription failed`
 warning and time positionally, exactly as they do under `auto`), but it means a

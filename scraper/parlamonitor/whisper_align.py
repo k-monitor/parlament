@@ -555,13 +555,22 @@ def ensure_words(paths, days: list[tuple[str, str | None, str | None]], *,
 
 def _run_backend(resolved: str, misses: list, *, model: str, language: str):
     """Yield ``(session, words)`` for each miss, running the chosen backend. Errors
-    on one day are isolated (logged, skipped) so one bad recording never sinks the
-    whole run (SCR-5)."""
+    on one *day* are isolated (logged, skipped) so one bad recording never sinks the
+    whole run (SCR-5); a broken *backend* aborts the batch instead — see below."""
     if resolved == "whisper-modal":
         from . import whisper_modal
         yield from whisper_modal.transcribe(misses, model=model, language=language)
         return
     if resolved == "whisper-local":
+        # Build the model before the loop. A broken install (the usual case: the
+        # CTranslate2 wheel not finding libcublas/libcudnn) fails identically for
+        # every day, and transcribe_local decodes the recording — minutes of
+        # download — *before* it ever touches the model, so retrying per day would
+        # spend hours arriving at the same error once per sitting. Letting it
+        # propagate aborts the batch after one failure; the caller logs it and the
+        # run falls back to positional timing, which is the same outcome as the
+        # per-day path but hours sooner.
+        _get_local_model(model)
         for session, m3u8, playseq in misses:
             try:
                 yield session, transcribe_local(m3u8, playseq, model=model,

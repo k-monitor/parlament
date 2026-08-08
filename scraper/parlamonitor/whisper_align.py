@@ -328,6 +328,7 @@ def align_speech(sentences: list[dict], words: list, window: tuple[float, float]
 
 _REFERER = {"Referer": "https://www.parlament.hu/web/guest/orszaggyulesi-naplo"}
 _local_model = None    # cached faster-whisper model for the local backend
+_local_device = "cpu"  # the device it was actually built on (see _get_local_model)
 
 
 def method_tag(model: str) -> str:
@@ -379,12 +380,41 @@ def segments_to_words(segments) -> list[list]:
     return words
 
 
+def _resolve_device(requested: str) -> str:
+    """Turn ``auto`` into the device CTranslate2 will actually use.
+
+    Resolving it here rather than passing ``auto`` straight to ``WhisperModel``
+    is what lets the load be logged with a concrete device. CTranslate2 falls
+    back to CPU in complete silence when it cannot see a GPU — the usual cause
+    being the cuBLAS/cuDNN 9 shared libraries missing rather than the driver —
+    and at roughly 20x the wall clock that reads as "slow" instead of
+    "misconfigured", which is expensive to discover halfway through a backfill.
+    """
+    if requested != "auto":
+        return requested
+    try:
+        import ctranslate2                          # lazy (a faster-whisper dep)
+        return "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+    except Exception as exc:
+        logger.debug("CTranslate2 device probe failed (%s); assuming CPU", exc)
+        return "cpu"
+
+
 def _get_local_model(model: str):
-    global _local_model
+    global _local_model, _local_device
     if _local_model is None:
         from faster_whisper import WhisperModel      # lazy
-        # int8 keeps it light on CPU and cheap on GPU; auto device picks CUDA if present.
-        _local_model = WhisperModel(model, device="auto", compute_type="int8")
+        device = _resolve_device(config.whisper_device())
+        compute_type = config.whisper_compute_type(device)
+        logger.info("Loading faster-whisper %s on %s (compute_type=%s)",
+                    model, device, compute_type)
+        if device == "cpu":
+            logger.warning("Local Whisper is running on the CPU — a cycle's "
+                           "backfill will take days. Set "
+                           "PARLAMONITOR_WHISPER_DEVICE=cuda to fail loudly "
+                           "instead if a GPU was expected.")
+        _local_model = WhisperModel(model, device=device, compute_type=compute_type)
+        _local_device = device
     return _local_model
 
 
@@ -395,8 +425,8 @@ def transcribe_local(m3u8: str, playseq: str | None, *, model: str,
     audio = ffmpeg_decode(m3u8, playseq=playseq)
     pipe = BatchedInferencePipeline(_get_local_model(model))
     segments, _info = pipe.transcribe(
-        audio, language=language, word_timestamps=True,
-        vad_filter=True, batch_size=8)
+        audio, language=language, word_timestamps=True, vad_filter=True,
+        batch_size=config.whisper_batch_size(_local_device))
     return segments_to_words(segments)
 
 

@@ -48,6 +48,42 @@ def whisper_language() -> str:
     return (os.environ.get("PARLAMONITOR_WHISPER_LANGUAGE") or "hu").strip()
 
 
+# --- local faster-whisper tuning -------------------------------------------
+# Mirrors the knobs the Modal image already reads (whisper_modal_app.py) so the
+# two backends are configured the same way. They matter for a local GPU backfill
+# of the archive: the CPU defaults are ~20x slower, and CTranslate2 picks a
+# device silently, so a missing CUDA runtime otherwise looks like a slow run
+# rather than a misconfiguration.
+
+def whisper_device() -> str:
+    """``auto`` | ``cuda`` | ``cpu`` for the local ``faster-whisper`` backend.
+
+    ``auto`` is resolved to a concrete device before the model is built (see
+    :func:`whisper_align._resolve_device`) so the choice can be logged."""
+    return (os.environ.get("PARLAMONITOR_WHISPER_DEVICE") or "auto").strip().lower()
+
+
+def whisper_compute_type(device: str) -> str:
+    """CTranslate2 compute type for ``device``. ``int8`` keeps a CPU run light;
+    on a GPU ``float16`` is both faster and more accurate, which is why the Modal
+    image runs it."""
+    default = "float16" if device == "cuda" else "int8"
+    return (os.environ.get("PARLAMONITOR_WHISPER_COMPUTE_TYPE") or default).strip()
+
+
+def whisper_batch_size(device: str) -> int:
+    """Intra-day batch size for ``BatchedInferencePipeline``. A GPU has the
+    memory to keep more windows in flight (12 GB fits the 16 the Modal image
+    uses); on CPU the batch buys little and costs RAM."""
+    raw = os.environ.get("PARLAMONITOR_WHISPER_BATCH_SIZE")
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    return 16 if device == "cuda" else 8
+
+
 def whisper_modal_app() -> str:
     return (os.environ.get("PARLAMONITOR_WHISPER_MODAL_APP")
             or "parlamonitor-whisper").strip()

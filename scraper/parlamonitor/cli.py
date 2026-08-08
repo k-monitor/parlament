@@ -39,8 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import whisper_align
-from .config import (Paths, RuntimeConfig, timing_backend, whisper_language,
-                     whisper_model)
+from .config import (Paths, RuntimeConfig, session_cycle, timing_backend,
+                     whisper_language, whisper_model)
 from .felicitas import FelicitasClient
 from .http_client import HttpClient
 from .lockfile import acquire
@@ -98,14 +98,19 @@ def _write_log(paths: Paths, payload: dict) -> None:
 # --- transform stage -------------------------------------------------------
 
 def _pending_builds(paths: Paths, *, force: bool,
-                    only: list[str] | None = None) -> list[str]:
+                    cycle: int | None = None) -> list[str]:
     """Sessions whose session record is missing or older than its raw bundle (all,
-    when ``force``). The align and transform stages act on this same set so their
-    work stays in step."""
+    when ``force``), restricted to ``cycle`` when one is given. The align and
+    transform stages act on this same set so their work stays in step.
+
+    The scope matters because the data directory accumulates *every* cycle ever
+    scraped: an unscoped sweep silently pulls archive sittings into a run asked to
+    do one cycle, and since the align stage runs over the same set, that means
+    hours of Whisper (or a metered Modal bill) on days the caller never named."""
     pending: list[str] = []
     for raw_path in sorted(paths.raw_plenary.glob("raw-*-day.json")):
         session = raw_path.name[len("raw-"):-len("-day.json")]
-        if only is not None and session not in only:
+        if cycle is not None and session_cycle(session) != cycle:
             continue
         out_path = paths.session_file(session)
         if (not force and out_path.exists()
@@ -189,7 +194,10 @@ def cmd_proceedings(args) -> None:
             built = []
             words_by_session: dict[str, list] = {}
             if not args.download_only:
-                pending = _pending_builds(paths, force=args.force)
+                pending = _pending_builds(paths, force=args.force,
+                                          cycle=args.cycle)
+                logger.info("Cycle %s: %d sitting(s) to build", args.cycle,
+                            len(pending))
                 if pending and not args.no_align:
                     try:
                         backend = args.timing_backend or timing_backend()

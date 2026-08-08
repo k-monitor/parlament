@@ -6,6 +6,7 @@ offline, no network. Run with ``pytest`` from the ``scraper/`` directory.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -1017,3 +1018,46 @@ def test_load_cache_skips_records_without_detail(tmp_path):
     ]}))
     cache = load_cache(path, "billId", lambda r: r.get("status"))
     assert set(cache) == {"b1"}
+
+
+# --- transform-stage scope -------------------------------------------------
+
+def _seed_day(paths, session: str, *, built: bool = False) -> None:
+    paths.raw_day(session).write_text("{}")
+    if built:
+        # A session record at least as new as its raw bundle means "up to date".
+        paths.session_file(session).write_text("{}")
+        os.utime(paths.session_file(session),
+                 (0, paths.raw_day(session).stat().st_mtime + 1))
+
+
+def test_pending_builds_scopes_to_the_requested_cycle(tmp_path):
+    """``--cycle N`` must bound the build set. The data directory accumulates every
+    cycle ever scraped, and the align stage transcribes whatever this returns, so an
+    unscoped sweep would spend hours of Whisper on archive sittings nobody asked
+    for."""
+    from parlamonitor.cli import _pending_builds
+    from parlamonitor.config import Paths
+
+    paths = Paths(tmp_path)
+    paths.ensure()
+    for session in ("37002", "42001", "42002", "43007"):
+        _seed_day(paths, session)
+
+    assert _pending_builds(paths, force=False, cycle=42) == ["42001", "42002"]
+    # No cycle given: every pending sitting, as before.
+    assert _pending_builds(paths, force=False) == ["37002", "42001", "42002",
+                                                  "43007"]
+
+
+def test_pending_builds_skips_up_to_date_sittings_unless_forced(tmp_path):
+    from parlamonitor.cli import _pending_builds
+    from parlamonitor.config import Paths
+
+    paths = Paths(tmp_path)
+    paths.ensure()
+    _seed_day(paths, "43001", built=True)
+    _seed_day(paths, "43002")
+
+    assert _pending_builds(paths, force=False, cycle=43) == ["43002"]
+    assert _pending_builds(paths, force=True, cycle=43) == ["43001", "43002"]

@@ -106,7 +106,8 @@ python -m parlamonitor proceedings --cycle 43 --transform-only \
 
 The transform only rebuilds sittings whose raw bundle is newer than their session
 JSON, and copying a cache changes neither — `touch` the day bundles you have words
-for first. Do **not** reach for `--force`: it also forces `ensure_words`, which
+for first. It is also scoped to `--cycle`, so name the cycle the copied caches
+belong to. Do **not** reach for `--force`: it also forces `ensure_words`, which
 bypasses the cache and tries to re-transcribe. The deployment-side version of this
 recipe (containers, DB reload) is in
 [DEPLOYMENT.md](../DEPLOYMENT.md#reusing-a-whisper-cache-copied-from-another-machine).
@@ -123,7 +124,10 @@ pip install -r requirements.txt        # just `requests`; spaCy is optional
 # Proceedings: download + transform the current cycle (43) into ./data
 python -m parlamonitor proceedings --cycle 43 ./data
 
-# Re-run only the offline transform/timing over already-downloaded raw files
+# Re-run only the offline transform/timing over already-downloaded raw files.
+# `--cycle` bounds the build/align stage too, so this touches cycle 43 only —
+# pass the cycle you actually mean, or the older sittings sitting in ./data stay
+# as they are (run it once per cycle to rebuild several).
 python -m parlamonitor proceedings --cycle 43 --transform-only ./data
 
 # A bounded slice (e.g. backfill a date window)

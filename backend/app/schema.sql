@@ -483,10 +483,12 @@ CREATE TABLE vote_faction_stat (
 CREATE INDEX idx_vote_faction_stat_vote ON vote_faction_stat(vote_id);
 
 -- ---------------------------------------------------------------------------
--- NER/NEL stage (§10): person + institution entities recognized in transcript
--- sentences and linked out. `entity` is one row per mention (its char span in the
--- sentence, for inline linking), tagged `kind` PER/ORG; `entity_link` resolves each
--- distinct normalized name to an ordered set of destinations, once (loader-derived).
+-- NER/NEL stage (§10): named entities recognized in transcript sentences, and the
+-- subset of them linked out. `entity` is one row per mention (its char span in the
+-- sentence, for inline linking), tagged `kind` with the NER label — every label the
+-- model emits is stored, so the corpus keeps a complete entity layer, but only
+-- PER/ORG are ever resolved and rendered. `entity_link` resolves each distinct
+-- normalized PER/ORG name to an ordered set of destinations, once (loader-derived).
 -- ---------------------------------------------------------------------------
 CREATE TABLE entity (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -495,7 +497,10 @@ CREATE TABLE entity (
     surface     TEXT NOT NULL,     -- exact text as it appears in the sentence
     char_start  INTEGER,
     char_end    INTEGER,
-    kind        TEXT NOT NULL DEFAULT 'PER'  -- 'PER' (person) | 'ORG' (institution)
+    -- NER label: 'PER' (person) | 'ORG' (institution) | 'LOC' (place) | 'MISC'.
+    -- Only PER/ORG join entity_link; LOC/MISC are stored for analysis and never
+    -- shown — read paths filter on app.nlp.LINKABLE_LABELS.
+    kind        TEXT NOT NULL DEFAULT 'PER'
 );
 CREATE INDEX idx_entity_sentence ON entity(sentence_id);
 CREATE INDEX idx_entity_key ON entity(entity_key);

@@ -1423,7 +1423,10 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
 # Bump when the entity-span extraction logic changes in a way that should
 # invalidate the on-disk entity cache even if the model/text are unchanged.
 # ent-v2: extract ORG (institutions) alongside PER, and carry the span `kind`.
-_ENTITY_LOGIC = "ent-v2"
+# ent-v3: extract EVERY label the model emits — LOC and MISC too — so the corpus
+# keeps a complete entity layer. Only PER/ORG are linked, so this is invisible on
+# the site; it does force a full re-run of NER (no cached entry has LOC/MISC).
+_ENTITY_LOGIC = "ent-v3"
 
 
 def _entity_cache_path(cache_dir: Path) -> Path:
@@ -1489,8 +1492,13 @@ def _delete_session_entities(conn: sqlite3.Connection, sid: str) -> None:
 def rebuild_entity_mentions(conn: sqlite3.Connection,
                             cache_dir: str | Path | None = None,
                             only_sessions: set[str] | None = None) -> None:
-    """Extract PERSON + ORGANISATION mentions from transcript sentences into the
-    ``entity`` table (NEL, §10) so the transcript can link names inline.
+    """Extract named-entity mentions from transcript sentences into the ``entity``
+    table (NEL, §10) so the transcript can link names inline.
+
+    Every label the model emits is stored — PER, ORG, LOC and MISC — so the corpus
+    carries a complete entity layer for analysis. Only PER/ORG are resolved to a
+    destination (``resolve_entity_links``) and therefore only those ever render:
+    the LOC/MISC rows are inert as far as the site is concerned.
 
     Uses the same HuSpaCy backend and per-cycle model routing as the word cloud
     (Modal when configured *and* the cycle is within the Modal budget scope, else
@@ -1684,18 +1692,31 @@ def rebuild_entity_mentions(conn: sqlite3.Connection,
 
     conn.commit()
     _flush()
+    # Per-kind totals come from the table, not the run: on a scoped --update the
+    # run touches a sitting or two, and what matters is what the corpus now holds.
+    by_kind = ", ".join(
+        f"{k} {n}" for k, n in conn.execute(
+            "SELECT kind, COUNT(*) FROM entity GROUP BY kind ORDER BY 2 DESC"))
     logger.info("entity mentions: %d sittings (%d processed, %d cached, %d skipped), "
-                "%d PER+ORG mentions", len(sids), processed, reused, skipped, mentions)
+                "%d mentions written; table holds %s", len(sids), processed, reused,
+                skipped, mentions, by_kind or "nothing")
 
 
 def _entity_kinds(conn: sqlite3.Connection) -> dict[str, str]:
     """Each distinct ``entity_key`` → its majority ``kind`` (PER/ORG). One key is
     almost always one kind; the rare mixed key takes whichever mention kind is more
-    frequent. Shared by both resolvers so they agree on how to query/match a name."""
+    frequent. Shared by both resolvers so they agree on how to query/match a name.
+
+    Only the linkable kinds are considered: LOC/MISC mentions are stored but never
+    resolved, and counting them here would both pull unlinkable names into the
+    Wikidata queries and let a place flip the kind of a name that is also an org."""
+    placeholders = ",".join("?" * len(nlp.LINKABLE_LABELS))
     try:
         rows = conn.execute(
-            "SELECT entity_key, kind, COUNT(*) c FROM entity GROUP BY entity_key, kind"
-        ).fetchall()
+            "SELECT entity_key, kind, COUNT(*) c FROM entity "
+            f"WHERE kind IS NULL OR kind IN ({placeholders}) "
+            "GROUP BY entity_key, kind",
+            tuple(sorted(nlp.LINKABLE_LABELS))).fetchall()
     except sqlite3.OperationalError:  # pre-NEL DB
         return {}
     best: dict[str, tuple[int, str]] = {}

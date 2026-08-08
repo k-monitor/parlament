@@ -18,6 +18,7 @@ from ...analytics import search_analytics
 from ...config import settings
 from ...db import get_db, like_contains, period_key, period_list, period_sql
 from ...media import per_speech_clip
+from ...nlp import LINKABLE_LABELS
 from ...query_cache import cached_aggregate
 from ... import readability
 from ...search import build_match
@@ -958,6 +959,11 @@ def _doc_freqs(db, period, words):
 # Viewer: a single speech with its sentences (VIE-1/3/5)
 # ---------------------------------------------------------------------------
 
+# SQL literal list of the mention kinds that can carry a link. Built from the one
+# definition in `app.nlp`; the values are our own fixed labels, never user input.
+_LINKED_KINDS_SQL = ",".join(f"'{k}'" for k in sorted(LINKABLE_LABELS))
+
+
 def _speech_entities(db, uid: str) -> list[dict]:
     """Resolved person/institution links occurring in a speech's transcript (NEL, §10).
 
@@ -966,14 +972,19 @@ def _speech_entities(db, uid: str) -> list[dict]:
     or Wikipedia (the fallback). The frontend matches these surfaces in the rendered
     text and wraps each as the name plus a cluster of destination badges; `ambiguous`
     marks a name that resolved to more than one candidate (shown as alternatives).
-    Degrades to [] on a pre-NEL DB (no entity tables)."""
+    Degrades to [] on a pre-NEL DB (no entity tables).
+
+    `entity` also holds LOC/MISC mentions, which are stored for analysis only — the
+    kind filter keeps them out, so a place whose normalized name happens to equal a
+    linked org's can never light up an extra stretch of text."""
     try:
         rows = db.execute(
-            """SELECT DISTINCT e.surface, el.kind, el.ambiguous, el.links_json
+            f"""SELECT DISTINCT e.surface, el.kind, el.ambiguous, el.links_json
                FROM entity e
                JOIN sentence se ON se.id = e.sentence_id
                JOIN entity_link el ON el.entity_key = e.entity_key
-               WHERE se.speech_id = ? AND el.links_json IS NOT NULL""",
+               WHERE se.speech_id = ? AND e.kind IN ({_LINKED_KINDS_SQL})
+                 AND el.links_json IS NOT NULL""",
             (uid,)).fetchall()
     except sqlite3.OperationalError:
         return []

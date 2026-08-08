@@ -152,8 +152,8 @@ def extract_lemmas(misses, *, batch_sentences: int | None = None,
 def extract_spans(misses, *, batch_sentences: int | None = None,
                   app_name: str | None = None):
     """Yield ``(sid, fp, per_sentence_spans)`` for each miss (a ``(sid, fp, texts)``
-    triple), running HuSpaCy PERSON + ORGANISATION span extraction on Modal (NEL,
-    §10). ``per_sentence_spans`` is a list — one entry per input sentence, in order
+    triple), running HuSpaCy named-entity span extraction — every NER label — on
+    Modal (NEL, §10). ``per_sentence_spans`` is a list — one entry per input sentence, in order
     — of ``[surface, start, end, key, kind]`` spans, exactly what
     ``app.nlp.entity_spans`` yields. Batched + ``.map``-dispatched like
     :func:`extract`; ``app_name`` picks the deployed service."""

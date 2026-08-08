@@ -304,8 +304,11 @@ Primary use cases:
   who spoke). One person can be both across different cycles.
 - **faction / party** — label, optional Wikidata id, color (for charts).
 - **membership** — person ↔ faction ↔ period (factions change over time).
-- **entity** (optional, from NER stage) — in-transcript linked entities
-  (Wikidata) and their sentence offsets.
+- **entity** (optional, from NER stage) — in-transcript entities and their
+  sentence offsets. **Every** NER label the model emits is stored (person,
+  organisation, place, misc), so the corpus carries a complete entity layer for
+  later analysis; only persons and organisations are resolved to a destination
+  (Wikidata/K-Monitor/MP profile) and rendered as inline links.
 
 ### 4.2 Derived / statistics tables
 

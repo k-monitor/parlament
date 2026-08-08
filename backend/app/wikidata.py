@@ -1,9 +1,10 @@
 """Gather Wikidata / Wikipedia candidates for names recognized in transcripts (NEL).
 
 The loader's :func:`app.loader.rebuild_entity_mentions` fills the ``entity`` table
-with PERSON and ORGANISATION mentions, each keyed by a normalized name
-(``entity_key``) and tagged ``kind`` (``PER``/``ORG``). This module resolves every
-distinct name to an ordered list of Wikidata candidates — and thence Wikipedia
+with named-entity mentions, each keyed by a normalized name (``entity_key``) and
+tagged with its NER ``kind``. Only the linkable kinds (``PER``/``ORG``) are
+resolved here — the stored ``LOC``/``MISC`` mentions are for analysis and are never
+queried. This module resolves every such name to an ordered list of Wikidata candidates — and thence Wikipedia
 articles — which the K-Monitor resolver (:mod:`app.kmonitor`) then merges with
 K-Monitor matches into the ``entity_link`` table the transcript reads.
 
@@ -28,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import settings
+from .nlp import LINKABLE_LABELS
 
 logger = logging.getLogger("parlamonitor.wikidata")
 
@@ -137,10 +139,15 @@ def _cache_path(cache_dir) -> Path:
 
 def _read_kinds(conn) -> dict[str, str]:
     """Map each distinct ``entity_key`` to its (majority) ``kind`` — fallback for a
-    caller that passes no ``kinds`` (the loader computes it once and passes it in)."""
+    caller that passes no ``kinds`` (the loader computes it once and passes it in).
+
+    Restricted to the linkable kinds, mirroring ``loader._entity_kinds``: the table
+    also holds LOC/MISC mentions, which are stored for analysis and never queried."""
+    linkable = ",".join(f"'{k}'" for k in sorted(LINKABLE_LABELS))
     try:
         rows = conn.execute(
             "SELECT entity_key, kind, COUNT(*) c FROM entity "
+            f"WHERE kind IS NULL OR kind IN ({linkable}) "
             "GROUP BY entity_key, kind").fetchall()
     except Exception:  # pre-NEL DB
         return {}

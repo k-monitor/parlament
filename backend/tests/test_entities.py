@@ -209,10 +209,58 @@ def test_speech_text_endpoint_returns_entity_links(conn, client, monkeypatch):
     assert client.get("/api/v1/proceedings/speeches/43001-2/text").json()["entities"] == []
 
 
-# --- HuSpaCy PER + ORG span extraction (skipped without the model) ----------
+# --- Non-linkable kinds: stored, never resolved, never rendered -------------
+
+def test_loc_and_misc_mentions_are_stored_but_never_linked(conn, client, monkeypatch):
+    """Every NER label is persisted, but only PER/ORG reach the site.
+
+    The mentions the loader stores for later analysis (LOC, MISC) must stay inert:
+    they are not offered to the resolvers, they get no ``entity_link`` row, and —
+    the case that would leak into the UI — a place whose normalized name equals a
+    linked institution's must not contribute its own surface to the transcript."""
+    monkeypatch.setattr(wikidata.settings, "entity_links", True)
+    monkeypatch.setattr(kmonitor.settings, "kmonitor_links", True)
+    sid = conn.execute("SELECT id FROM sentence WHERE speech_id='43001-1' LIMIT 1").fetchone()[0]
+    _seed_entity(conn, sid, "Magyar Nemzeti Bank", "Magyar Nemzeti Bank", "ORG")
+    # Same key, tagged LOC in another sentence (the model does this with buildings
+    # and institution-as-place mentions) — a different surface that must NOT render.
+    _seed_entity(conn, sid, "Magyar Nemzeti Bank", "Magyar Nemzeti Bankban", "LOC")
+    _seed_entity(conn, sid, "Brüsszel", "Brüsszelben", "LOC")
+    _seed_entity(conn, sid, "Alaptörvény", "Alaptörvényt", "MISC")
+    conn.commit()
+
+    # The resolvers only ever see the linkable kinds — both the loader's computed
+    # map and the wikidata fallback that reads the table itself.
+    kinds = loader._entity_kinds(conn)
+    assert kinds == {"Magyar Nemzeti Bank": "ORG"}
+    assert wikidata._read_kinds(conn) == kinds
+
+    queried: list[str] = []
+
+    def _recording_fetch(names, kind):
+        queried.extend(names)
+        return _fake_wd_fetch(names, kind)
+
+    wd = wikidata.resolve_candidates(conn, None, kinds, fetch=_recording_fetch)
+    kmonitor.resolve_links(conn, kinds, wd, _index())
+    assert "Brüsszel" not in queried and "Alaptörvény" not in queried
+
+    linked = {r[0] for r in conn.execute("SELECT entity_key FROM entity_link")}
+    assert linked == {"Magyar Nemzeti Bank"}
+
+    # The mentions are still on disk — that is the point of storing them.
+    stored = dict(conn.execute("SELECT kind, COUNT(*) FROM entity GROUP BY kind"))
+    assert stored == {"ORG": 1, "LOC": 2, "MISC": 1}
+
+    # ...and the transcript is unchanged: only the ORG surface comes back.
+    d = client.get("/api/v1/proceedings/speeches/43001-1/text").json()
+    assert {e["surface"] for e in d["entities"]} == {"Magyar Nemzeti Bank"}
+
+
+# --- HuSpaCy span extraction (skipped without the model) --------------------
 
 @pytest.mark.skipif(not nlp.available(), reason="HuSpaCy model not installed")
-def test_entity_spans_finds_people_and_institutions():
+def test_entity_spans_finds_people_institutions_and_places():
     text = "Orbán Viktor a Fideszről és az Alkotmánybíróságról beszélt Brüsszelben."
     spans = list(nlp.entity_spans([text]))[0]
     by_kind: dict[str, set] = {}
@@ -222,6 +270,10 @@ def test_entity_spans_finds_people_and_institutions():
     assert "Orbán Viktor" in by_kind.get("PER", set())
     # Institutions (ORG) are now captured too — at least one of the two orgs.
     assert by_kind.get("ORG")
+    # Places are extracted and lemma-normalized as well, even though nothing links
+    # them: the corpus keeps a complete entity layer for later use.
+    assert "Brüsszel" in by_kind.get("LOC", set())
+    assert set(by_kind) <= set(nlp._SPAN_KEYERS)
 
 
 @pytest.mark.skipif(not nlp.available(), reason="HuSpaCy model not installed")

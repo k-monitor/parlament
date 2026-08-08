@@ -334,6 +334,22 @@ as every other loader run, no scrape and no JSON reload. Omit `--period` to cove
 every sitting. Directly: `python -m app.loader --reextract-entities --period 43
 <data> <db>`.
 
+> **After an extraction-logic bump the cache is cold.** `loader._ENTITY_LOGIC` is
+> part of each sitting's cache fingerprint, so raising it (most recently `ent-v3`:
+> store **every** NER label — LOC and MISC alongside PER/ORG — for later analysis)
+> makes every sitting a miss and the "re-runs are free" line above stops holding
+> until each cycle has been re-extracted once. Two consequences worth planning for:
+>
+> - **Redeploy the Modal apps first.** The workers run the `app` package shipped at
+>   deploy time (`add_local_python_source`), so until `modal deploy modal_app.py`
+>   runs — once per app, primary *and* archive — they still return the old labels
+>   under the new tag. Then `reextract-entities --period 43`; widen
+>   `PARLAMONITOR_MODAL_CYCLES` per cycle to backfill the archive, at archive cost.
+> - **Nothing breaks in the meantime.** A cycle that can't reach its model is
+>   skipped non-destructively, so it keeps its previous mentions and its inline
+>   links; and since only PER/ORG are ever resolved, cycles at different extraction
+>   versions look identical on the site.
+
 #### Re-measuring speech readability / diversity (`remeasure-speeches`)
 
 The same escape hatch for the per-speech language metrics (§5.7), needed for the

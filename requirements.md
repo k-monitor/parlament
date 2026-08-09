@@ -1213,7 +1213,10 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   **document type** (interpelláció, kérdés, határozati javaslat, …), **status**
   and **free text** (title *and* iromány number, as BILL-1); filters combine and
   live in the **URL query**
-  (deep-linkable). The **electoral period** is set by the global cycle selector
+  (deep-linkable). Type and status are **multi-select** — several categories can
+  be in scope at once (a reader after "questions" wants kérdés *and*
+  interpelláció), each value repeated in the query param, an empty selection
+  meaning "all" as with the cycle scope (§4A). The **electoral period** is set by the global cycle selector
   (§4A). The free-text filter is **accent-insensitive** (§4B FOLD-1). It shares
   the Bills module's data layer and `/api/v1/bills`
   routes (scoped by `main_type`: `= T` for bills, `!= T` for this page) and the

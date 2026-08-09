@@ -50,6 +50,21 @@ _DEBATE_STARTS = {
 }
 
 
+def _any_of(where: list, params: dict, column: str, values: list[str], prefix: str) -> None:
+    """Restrict ``column`` to any of ``values``, in-place on a WHERE/params pair.
+
+    Blank entries are dropped and an empty list adds no condition at all, so a
+    multi-value filter left unset (``?type=`` or simply omitted) means "all"
+    rather than "nothing" — the same "empty selection is the whole set" rule the
+    cycle scope follows."""
+    vals = [v for v in values if v]
+    if not vals:
+        return
+    keys = [f"{prefix}{i}" for i in range(len(vals))]
+    where.append(f"{column} IN (" + ",".join(":" + k for k in keys) + ")")
+    params.update(dict(zip(keys, vals)))
+
+
 def _has_portfolios(db: sqlite3.Connection) -> bool:
     """Whether the loader has derived the §6C portfolio tables into this DB."""
     return bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
@@ -144,8 +159,10 @@ def list_bills(
     main_type_not: Optional[str] = None,     # exclude a fotipus, e.g. T (bills)
     main_type_in: Optional[str] = None,      # include any of these fotipusok (CSV)
     main_type_not_in: Optional[str] = None,  # exclude any of these fotipusok (CSV)
-    type: Optional[str] = None,              # exact iromány type (category)
-    status: Optional[str] = None,
+    type: Optional[List[str]] = Query(
+        None, description="Iromány type (category); repeat to match any of several"),
+    status: Optional[List[str]] = Query(
+        None, description="Status; repeat to match any of several"),
     sponsor: Optional[str] = None,           # person_id — bills by this MP
     portfolio: Optional[str] = None,         # portfolio slug (§6C) — see below
     portfolio_role: str = Query(
@@ -184,11 +201,8 @@ def list_bills(
         where.append("(b.main_type IS NULL OR b.main_type != :mtn)")
         params["mtn"] = main_type_not
     if main_type_in:
-        codes = [c.strip() for c in main_type_in.split(",") if c.strip()]
-        if codes:
-            keys = [f"mti{i}" for i in range(len(codes))]
-            where.append("b.main_type IN (" + ",".join(":" + k for k in keys) + ")")
-            params.update(dict(zip(keys, codes)))
+        _any_of(where, params, "b.main_type",
+                [c.strip() for c in main_type_in.split(",")], "mti")
     if main_type_not_in:
         codes = [c.strip() for c in main_type_not_in.split(",") if c.strip()]
         if codes:
@@ -196,10 +210,13 @@ def list_bills(
             where.append("(b.main_type IS NULL OR b.main_type NOT IN ("
                          + ",".join(":" + k for k in keys) + "))")
             params.update(dict(zip(keys, codes)))
+    # Type and status are multi-value: the documents list lets a reader tick
+    # several categories at once (kérdés *and* interpelláció), and each arrives
+    # as a repeated query param. A single value still works unchanged.
     if type:
-        where.append("b.type = :ty"); params["ty"] = type
+        _any_of(where, params, "b.type", type, "ty")
     if status:
-        where.append("b.status = :st"); params["st"] = status
+        _any_of(where, params, "b.status", status, "st")
     if sponsor:
         where.append("EXISTS (SELECT 1 FROM bill_sponsor bs WHERE bs.bill_id=b.id "
                      "AND bs.person_id=:sp)"); params["sp"] = sponsor

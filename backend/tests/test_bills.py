@@ -117,6 +117,25 @@ def test_list_documents_filter_by_type(client):
                       params={"main_type_not": "T", "type": "törvényjavaslat"}).json()["total"] == 0
 
 
+def test_list_documents_type_and_status_take_several_values(client):
+    """The documents list's type and status pickers are multi-select, so both
+    filters arrive as repeated params and match any of the values given — while
+    a single value still behaves exactly as before."""
+    both = client.get("/api/v1/bills",
+                      params=[("type", "interpelláció"), ("type", "törvényjavaslat")]).json()
+    assert both["total"] == 3
+    statuses = client.get("/api/v1/bills",
+                          params=[("status", "kihirdetve"), ("status", "benyújtva")]).json()
+    assert {b["bill_number"] for b in statuses["bills"]} == {"T/101", "I/5"}
+    # The two combine, as every other pair of filters does.
+    combined = client.get("/api/v1/bills",
+                          params=[("type", "interpelláció"), ("type", "törvényjavaslat"),
+                                  ("status", "kihirdetve")]).json()
+    assert combined["total"] == 1 and combined["bills"][0]["bill_number"] == "T/101"
+    # An empty selection is "all", not "nothing" — a blank param filters nothing.
+    assert client.get("/api/v1/bills", params={"type": ""}).json()["total"] == 3
+
+
 def test_list_bills_filter_by_sponsor(client):
     # The profile "bills submitted" link points at the bills page (main_type=T);
     # k001 also sponsors a non-bill document, which that scoped view excludes.

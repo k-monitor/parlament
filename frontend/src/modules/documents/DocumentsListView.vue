@@ -18,6 +18,7 @@ import { store, loadMeta } from '../../store.js'
 import { formatDate } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
+import MultiSelect from '../../components/MultiSelect.vue'
 import Pagination from '../../components/Pagination.vue'
 
 const route = useRoute()
@@ -34,21 +35,29 @@ const statuses = ref([])
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
 
+// Type and status hold several values at once (a reader after "questions" wants
+// kérdés *and* interpelláció), so they travel as repeated query params — which
+// vue-router hands back as a string when there is one and an array beyond that.
+function toArray(v) {
+  if (v === undefined || v === null || v === '') return []
+  return (Array.isArray(v) ? v : [v]).filter((x) => x !== null && x !== '')
+}
+
 const f = reactive({
   q: route.query.q || '',
-  type: route.query.type || '',
-  status: route.query.status || '',
+  type: toArray(route.query.type),
+  status: toArray(route.query.status),
   // Did the MP who asked accept the answer they got? (interpellációk only)
   verdict: route.query.verdict || '',
   sort: route.query.sort || 'number',
 })
 // Open the filter panel on load when a filter is already active (e.g. a shared
 // or deep-linked list), so its filters are visible rather than hidden.
-const showFilters = ref(!!(route.query.type || route.query.status || route.query.verdict))
+const showFilters = ref(!!(f.type.length || f.status.length || route.query.verdict))
 
 function clearFilters() {
-  f.type = ''
-  f.status = ''
+  f.type = []
+  f.status = []
   f.verdict = ''
   apply()
 }
@@ -79,8 +88,8 @@ async function loadSponsorLabel() {
 function apply() {
   const query = {}
   if (f.q) query.q = f.q
-  if (f.type) query.type = f.type
-  if (f.status) query.status = f.status
+  if (f.type.length) query.type = f.type
+  if (f.status.length) query.status = f.status
   if (f.verdict) query.verdict = f.verdict
   if (f.sort && f.sort !== 'number') query.sort = f.sort
   if (sponsor.value) query.sponsor = sponsor.value
@@ -98,7 +107,9 @@ async function loadFacets() {
       period: store.cycles, main_type_not: mainTypeNot.value,
       sponsor: sponsor.value || undefined,
     })
-    types.value = r.types.map((t) => t.type)
+    // One type name can appear under two fotipusok, so the same string comes
+    // back twice — dedupe, or the picker lists it twice.
+    types.value = [...new Set(r.types.map((t) => t.type).filter(Boolean))]
     statuses.value = r.statuses
   } catch { types.value = []; statuses.value = [] }
 }
@@ -117,7 +128,8 @@ async function load() {
   try {
     // `period` comes from the global cycle chooser (store.cycles; empty = all).
     const res = await api.bills({
-      q: route.query.q, type: route.query.type, status: route.query.status,
+      q: route.query.q,
+      type: toArray(route.query.type), status: toArray(route.query.status),
       period: store.cycles, sort: route.query.sort || 'number',
       sponsor: route.query.sponsor, main_type_not: mainTypeNot.value,
       answer_verdict: route.query.verdict || undefined,
@@ -135,7 +147,7 @@ onMounted(() => {
   loadMeta().catch(() => {}).finally(() => { loadFacets(); loadSponsorLabel(); load() })
 })
 watch(() => route.query, (q, prev) => {
-  f.q = q.q || ''; f.type = q.type || ''; f.status = q.status || ''
+  f.q = q.q || ''; f.type = toArray(q.type); f.status = toArray(q.status)
   f.verdict = q.verdict || ''; f.sort = q.sort || 'number'
   if (q.sponsor !== (prev && prev.sponsor)) loadSponsorLabel()
   loadFacets(); load()
@@ -167,19 +179,20 @@ onUnmounted(() => clearTimeout(t))
     <fieldset v-show="showFilters" class="filters">
       <legend class="visually-hidden">{{ $t('search.filters') }}</legend>
       <div class="filter-grid">
+        <!-- Type and status take several values at once — see `f` above. -->
         <div>
           <label for="d-type">{{ $t('documents.type') }}</label>
-          <select id="d-type" v-model="f.type" @change="apply">
-            <option value="">{{ $t('search.all') }}</option>
-            <option v-for="ty in types" :key="ty" :value="ty">{{ ty }}</option>
-          </select>
+          <MultiSelect
+            id="d-type" v-model="f.type" :options="types"
+            :label="$t('documents.type')" @change="apply"
+          />
         </div>
         <div>
           <label for="d-status">{{ $t('documents.status') }}</label>
-          <select id="d-status" v-model="f.status" @change="apply">
-            <option value="">{{ $t('search.all') }}</option>
-            <option v-for="s in statuses" :key="s" :value="s">{{ s }}</option>
-          </select>
+          <MultiSelect
+            id="d-status" v-model="f.status" :options="statuses"
+            :label="$t('documents.status')" @change="apply"
+          />
         </div>
         <!-- Only question-type irományok record the asking MP's verdict on the
              answer, so this narrows the list to interpellációk by itself. -->

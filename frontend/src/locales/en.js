@@ -64,6 +64,8 @@ export default {
     hint: 'Tip: use quotes for an exact phrase, e.g. "tisztelt ház".',
     filters: 'Filters', clearFilters: 'Clear filters', period: 'Term', dateFrom: 'From', dateTo: 'To',
     speaker: 'Speaker', faction: 'Faction', agendaType: 'Agenda type', all: 'All', watch: 'Watch', on: '·',
+    // Multi-value filter (MultiSelect): the trigger's label and the panel's hint.
+    selectedCount: '{n} selected', multiHint: 'You can pick several values.',
     sort: 'Sort:', sortRelevance: 'Relevance', sortNewest: 'Newest first', sortOldest: 'Oldest first',
     trendCaption: 'Occurrences of “{q}” over time',
     trendHint: 'Click a bar to narrow the search to that period.',

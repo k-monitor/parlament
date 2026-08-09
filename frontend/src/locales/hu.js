@@ -104,6 +104,9 @@ export default {
     faction: 'Frakció',
     agendaType: 'Napirend típusa',
     all: 'Mind',
+    // Több értéket is felvevő szűrő (MultiSelect): a gomb felirata és a panel súgója.
+    selectedCount: '{n} kiválasztva',
+    multiHint: 'Több érték is kiválasztható.',
     watch: 'Megtekintés',
     on: '·',
     sort: 'Rendezés:',

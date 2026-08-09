@@ -11,7 +11,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { store, periodLabel, serializeCycles, setCycles } from '../store.js'
+import { defaultCycles, store, periodLabel, serializeCycles, setCycles } from '../store.js'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -44,10 +44,18 @@ function isSelected(number) { return store.cycles.includes(number) }
 
 // Apply a new scope: persist it and mirror it into the URL (replace, so the
 // chooser doesn't pile up history entries) — the router guard keeps store ↔ URL
-// in sync from there.
+// in sync from there. Picking the *default* scope back removes the param rather
+// than spelling it out, so browsing at the default keeps the clean, canonical
+// address a crawler and a copy-pasted link both want (§SEO-2).
 function apply(cycles) {
   setCycles(cycles)
-  router.replace({ query: { ...route.query, cycle: serializeCycles(store.cycles) } })
+  const query = { ...route.query }
+  if (serializeCycles(store.cycles) === serializeCycles(defaultCycles(periods.value))) {
+    delete query.cycle
+  } else {
+    query.cycle = serializeCycles(store.cycles)
+  }
+  router.replace({ query })
 }
 
 function toggle(number) {

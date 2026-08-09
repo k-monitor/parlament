@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { loadMeta, parseCycles, serializeCycles, setCycles, store } from './store.js'
+import { defaultCycles, loadMeta, parseCycles, serializeCycles, setCycles, store } from './store.js'
 import { COHESION_ENABLED } from './features.js'
 import { keepInPlace, rememberScroll, scrollTarget, whenReachable } from './lib/scrollMemory.js'
 
@@ -218,9 +218,16 @@ router.beforeEach(async (to) => {
   // Sync the global cycle scope with the URL. A valid `?cycle=` wins — adopt it
   // so a shared link overrides the visitor's saved default. Otherwise write the
   // current scope (set by loadMeta→initCycles from localStorage/latest) back
-  // into the URL, so every address carries an explicit, shareable scope. The
+  // into the URL, **unless it is the default scope**, which stays implicit. The
   // in-guard redirect commits once (no extra history entry), and views that
   // rebuild the query on filter/pagination simply get the param re-added.
+  //
+  // The default-scope exemption is what keeps the site indexable (§SEO-2).
+  // Appending `?cycle=` to *every* address meant that a crawler asking for the
+  // clean URL got a JS redirect to a parameterised twin, whose server-rendered
+  // <link rel="canonical"> points straight back at the clean URL — so Google
+  // filed the clean URL as "Page with redirect", the twin as "Alternate page
+  // with proper canonical tag", and indexed neither.
   if (store.loaded) {
     const periods = (store.meta && store.meta.periods) || []
     const fromUrl = parseCycles(to.query[CYCLE_QUERY], periods)
@@ -231,13 +238,23 @@ router.beforeEach(async (to) => {
       // stale cycle number, or the cycles out of order ("43,42", "43,99") — so
       // the address always spells out the scope actually applied, and re-sharing
       // it can't drift. Settles in one redirect: the canonical form parses to
-      // itself.
+      // itself. A URL that *explicitly* spells out the default scope is left
+      // alone: it may already be shared or indexed, and its canonical tag
+      // consolidates it onto the clean URL anyway.
       if (to.query[CYCLE_QUERY] !== canonical) {
         return { path: to.path, query: { ...to.query, [CYCLE_QUERY]: canonical }, hash: to.hash }
       }
     } else {
       const desired = serializeCycles(store.cycles)
-      if (to.query[CYCLE_QUERY] !== desired) {
+      if (desired === serializeCycles(defaultCycles(periods))) {
+        // Default scope — the address stays parameter-free. Drop an
+        // unparseable leftover (`?cycle=`, `?cycle=99`) so it does.
+        if (to.query[CYCLE_QUERY] !== undefined) {
+          const query = { ...to.query }
+          delete query[CYCLE_QUERY]
+          return { path: to.path, query, hash: to.hash }
+        }
+      } else if (to.query[CYCLE_QUERY] !== desired) {
         return { path: to.path, query: { ...to.query, [CYCLE_QUERY]: desired }, hash: to.hash }
       }
     }

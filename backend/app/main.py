@@ -18,7 +18,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import readability
+from . import readability, seo
 from .analytics import search_analytics
 from .caching import CacheControlMiddleware
 from .config import settings
@@ -73,6 +73,11 @@ app.add_middleware(CacheControlMiddleware)
 _MODULES = [m for m in load_modules() if settings.module_enabled(m.name)]
 for spec in _MODULES:
     app.include_router(spec.router, prefix=API_PREFIX)
+
+# robots.txt + the XML sitemaps (SEO-1/SEO-3). Registered here, ahead of the SPA
+# mount below: they carry a file extension, so the static handler would 404 them
+# rather than fall through to the app shell.
+seo.register(app)
 
 
 def _metric_totals(db: sqlite3.Connection) -> dict:

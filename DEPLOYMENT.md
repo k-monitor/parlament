@@ -1018,6 +1018,47 @@ HTML/API entries age out within their ≤5-min TTL on their own. Purge only when
 you need a change visible instantly: Caching → Purge → _Purge everything_ (or
 just the shell URLs).
 
+### Search engines (robots.txt, sitemaps, Search Console)
+
+The origin serves both crawler entry points itself, generated from the DB — no
+files to maintain, nothing to regenerate after a sync:
+
+| URL | What it is |
+| --- | --- |
+| `/robots.txt` | Opens the content pages, closes the faceted browse URLs (`?person=`, `?sponsor=`, …) and the `/api/` + `/embed/` namespaces, and names the sitemap. |
+| `/sitemap.xml` | Sitemap **index** over `/sitemap-<section>-<n>.xml` (core, sessions, speeches, representatives, bills, documents, votes) — ~260 000 URLs in ≤25 000-URL files. |
+
+`PARLAMONITOR_SITE_URL` (set above) is what makes the URLs inside them absolute
+and on the right host — **without it they are built from whatever `Host` the
+proxy forwards**, which is how a sitemap ends up advertising `http://localhost`.
+
+Each child sitemap is built on first request and cached in-process until the
+next loader run (keyed on `build_meta`), and served with a 24 h edge TTL. The
+deepest speeches page costs the origin a ~200 000-row scan; that is once per
+sync, not once per crawler hit.
+
+Two things to check when you first put this behind Cloudflare:
+
+- **Cloudflare can serve its own `robots.txt`.** With the managed robots.txt /
+  AI-crawler-control feature on, the edge may answer `/robots.txt` itself and
+  the origin's file never appears (`curl https://…/robots.txt` and look for the
+  `Sitemap:` line). If it is missing, either turn the managed file off, or add
+  the `Sitemap:` line in the Cloudflare dashboard as well.
+- **Sitemaps must not be cached as the SPA shell.** They carry an extension, so
+  the app's static handler would 404 them if the SEO routes were not registered
+  first; a 404 is never stamped `immutable`, but if you ever see HTML at a
+  `/sitemap-*.xml` URL, purge it before Google fetches it again.
+
+In **Google Search Console** (once per property):
+
+1. Sitemaps → submit `sitemap.xml` (the index; the children are discovered).
+2. Pages → for each reported reason ("Page with redirect", "Alternate page with
+   proper canonical tag") → _Validate fix_ once the deploy is live. Validation
+   takes days-to-weeks and re-crawls the affected sample.
+3. Expect indexed-page counts to move over **weeks**, not hours — discovery of a
+   260 000-page corpus is rate-limited by crawl budget, and the sitemap's
+   `lastmod` is what steers it at the recent sittings first.
+
 ### If the VM itself becomes the bottleneck
 
 Cache misses are cheap (read-only SQLite, mmap'd), so a single small VM goes a

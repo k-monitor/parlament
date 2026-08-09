@@ -60,6 +60,22 @@ def _meta(html: str) -> dict:
     return out
 
 
+def _canonical(html: str) -> str | None:
+    """The page's declared canonical URL — the tag that decides which of several
+    addresses for the same content gets indexed (§SEO-2)."""
+    import re
+    m = re.search(r'<link rel="canonical" href="([^"]*)"', html)
+    return m.group(1) if m else None
+
+
+def _jsonld(html: str) -> list[dict]:
+    """Every JSON-LD block on the page, parsed."""
+    import json
+    import re
+    return [json.loads(b.replace("\\u003c", "<")) for b in re.findall(
+        r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL)]
+
+
 # --- pure helpers -----------------------------------------------------------
 
 def test_strip_speaker_label_removes_caps_prefix():
@@ -105,8 +121,12 @@ def test_share_specific_sentence_shows_quote_and_speaker(og_client):
     assert "Fidesz" in m["og:title"]
     assert "ágazati fejlesztés".lower() in m["og:description"].lower()
     assert m["og:type"] == "article"
-    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/proceedings/43001-1?s=1"
     assert m["og:site_name"] == "Parlamonitor"
+    # The card text follows `?s=`, but the address does not: a sentence is part
+    # of this page, not a page of its own, so canonical/og:url stay the speech
+    # and every sentence link consolidates onto it (§SEO-2).
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/proceedings/43001-1"
+    assert _canonical(r.text) == "https://parlamonitor.k-monitor.hu/proceedings/43001-1"
 
 
 def test_share_whole_speech_uses_opening_and_strips_label(og_client):
@@ -126,17 +146,19 @@ def test_share_video_only_speech_has_no_quote_but_still_a_card(og_client):
     assert "„" not in m["og:description"]  # no empty quote marks
 
 
-def test_share_unknown_speech_falls_back_to_default_card(og_client):
-    # An unknown id has no per-page card, so it previews with the site-wide
-    # DEFAULT card (not a bare shell): generic title + the default OG image.
+def test_share_unknown_speech_is_a_noindex_404_carrying_the_app(og_client):
+    # An unknown id is a real 404 — a 200 "not found" page is the soft 404 that
+    # Search Console files under "Crawled – currently not indexed" (§SEO-4) —
+    # but the body is still the app shell, so the SPA boots and renders its own
+    # 404 view rather than the user seeing a JSON error.
     r = og_client.get("/proceedings/nope-nope")
-    assert r.status_code == 200
+    assert r.status_code == 404
+    assert '<div id="app">' in r.text
     m = _meta(r.text)
     assert "GENERIC SITE DESCRIPTION" not in r.text  # generic shell desc replaced
     assert m["og:title"] == "Parlamonitor"
-    assert m["og:type"] == "website"
+    assert m["robots"] == "noindex, follow"
     assert m["og:image"].endswith("/og-image.png")
-    assert m["twitter:card"] == "summary_large_image"
 
 
 def test_share_profile_card(og_client):
@@ -149,14 +171,81 @@ def test_share_profile_card(og_client):
     assert m["og:image"].endswith("/og-image.png")
 
 
-def test_share_representatives_index_is_not_hijacked(og_client):
-    # /representatives (the list) and /representatives/factions must NOT be
-    # treated as an MP id: they get the site-wide default card, NOT a profile
-    # card (og:type website, not profile; no MP-specific image).
-    r = og_client.get("/representatives/factions")
+def test_share_vote_card(og_client):
+    # v-1 (conftest): decides T/100, 2026-05-26, with a roll call.
+    r = og_client.get("/votes/v-1")
+    assert r.status_code == 200
     m = _meta(r.text)
-    assert m["og:type"] == "website"  # the default card, not "profile"
-    assert m["og:title"] == "Parlamonitor"
+    assert "T/100" in m["og:title"]
+    assert "2026. május 26." in m["og:title"]
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/votes/v-1"
+    # The vote's own numbers, so 19 000 vote pages don't share one description.
+    assert "igen" in m["og:description"]
+
+
+def test_votes_cohesion_is_not_taken_for_a_vote_id(og_client):
+    # /votes/cohesion is a real sub-page, not a vote — it keeps its own card
+    # and a 200 rather than becoming a 404 for a vote that doesn't exist.
+    r = og_client.get("/votes/cohesion")
+    assert r.status_code == 200
+    assert _meta(r.text)["og:title"] == "Frakcióelemzés · Parlamonitor"
+
+
+def test_detail_pages_carry_structured_data(og_client):
+    """Each entity type declares what it *is* (SEO-5). The `Person` block is the
+    one that ties an MP page to the person as an entity rather than a name."""
+    person = _jsonld(og_client.get("/representatives/k001").text)
+    types = {b["@type"] for b in person}
+    assert types == {"Person", "BreadcrumbList"}
+    p = next(b for b in person if b["@type"] == "Person")
+    assert p["name"] == "Kovács Béla"
+    assert p["memberOf"]["name"] == "Fidesz"
+
+    speech = _jsonld(og_client.get("/proceedings/43001-1").text)
+    article = next(b for b in speech if b["@type"] == "Article")
+    assert article["author"]["name"] == "Kovács Béla"
+    assert article["datePublished"] == "2026-05-09"
+
+    iromany = _jsonld(og_client.get("/bills/bill-uuid-1").text)
+    law = next(b for b in iromany if b["@type"] == "Legislation")
+    assert law["legislationIdentifier"] == "T/100"
+
+    # Breadcrumbs everywhere, rooted at the home page and ending on the page.
+    crumbs = next(b for b in speech if b["@type"] == "BreadcrumbList")
+    assert crumbs["itemListElement"][0]["item"].endswith("/")
+    assert crumbs["itemListElement"][-1]["item"].endswith("/proceedings/43001-1")
+
+
+def test_detail_pages_serve_their_text_without_javascript(og_client):
+    """The shell's `#app` carries the page's own content, so the first crawl
+    pass (and a reader with no JS) sees the transcript rather than an empty
+    div. Vue clears the container on mount, so nothing is rendered twice."""
+    body = og_client.get("/proceedings/43001-1").text
+    assert "A költségvetés fontos kérdés." in body
+    assert "Az ÁGAZATI fejlesztés ügye sürgős!" in body
+    # …and a link back to the sitting day, which is how a crawler walks the
+    # corpus at all: nothing else links to a speech.
+    assert 'href="/sessions/43001"' in body
+
+    # The sitting day lists its speeches — the other half of that crawl path.
+    session = og_client.get("/sessions/43001").text
+    assert 'href="/proceedings/43001-1"' in session
+    assert 'href="/proceedings/43001-2"' in session
+
+    # A video-only speech (VIE-8) says so instead of rendering an empty page.
+    assert "csak a videófelvétel" in og_client.get("/proceedings/43001-2").text
+
+
+def test_share_representatives_index_is_not_hijacked(og_client):
+    # /representatives/factions must NOT be treated as an MP id: it is a real
+    # browse page, so it keeps a 200 and gets its OWN card (not a profile card,
+    # and not the generic site one — every route needs a distinct title).
+    r = og_client.get("/representatives/factions")
+    assert r.status_code == 200
+    m = _meta(r.text)
+    assert m["og:type"] == "website"  # a browse page, not "profile"
+    assert m["og:title"] == "Frakciók · Parlamonitor"
+    assert "robots" not in m  # indexable
     assert m["og:image"].endswith("/og-image.png")
     assert m["og:url"] == "https://parlamonitor.k-monitor.hu/representatives/factions"
 
@@ -183,25 +272,35 @@ def test_share_bill_card(og_client):
     assert m["og:url"] == "https://parlamonitor.k-monitor.hu/bills/bill-uuid-1"
 
 
-def test_share_document_card_uses_its_own_path(og_client):
+def test_share_document_card_uses_the_preferred_path(og_client):
     # doc-uuid-3 (conftest): I/5, an interpelláció, shared on the /documents path.
     r = og_client.get("/documents/doc-uuid-3")
     m = _meta(r.text)
     assert "I/5" in m["og:title"]
     assert "közlekedésről" in m["og:title"]
-    # The card's canonical URL matches the path the link was shared on.
     assert m["og:url"] == "https://parlamonitor.k-monitor.hu/documents/doc-uuid-3"
 
 
-def test_share_unknown_bill_falls_back_to_default_card(og_client):
-    # An unknown bill id previews with the site-wide default card.
+def test_iromany_canonical_is_the_same_whichever_path_is_requested(og_client):
+    """`/bills/:id` and `/documents/:id` render the same iromány — duplicate
+    content at two addresses. Both must name ONE canonical: a törvényjavaslat
+    belongs under /bills, everything else under /documents (§SEO-2)."""
+    bill = "https://parlamonitor.k-monitor.hu/bills/bill-uuid-1"
+    assert _canonical(og_client.get("/bills/bill-uuid-1").text) == bill
+    assert _canonical(og_client.get("/documents/bill-uuid-1").text) == bill
+
+    doc = "https://parlamonitor.k-monitor.hu/documents/doc-uuid-3"
+    assert _canonical(og_client.get("/documents/doc-uuid-3").text) == doc
+    assert _canonical(og_client.get("/bills/doc-uuid-3").text) == doc
+
+
+def test_share_unknown_bill_is_a_noindex_404(og_client):
     r = og_client.get("/bills/no-such-bill")
-    assert r.status_code == 200
+    assert r.status_code == 404
     m = _meta(r.text)
     assert "GENERIC SITE DESCRIPTION" not in r.text
     assert m["og:title"] == "Parlamonitor"
-    assert m["og:type"] == "website"
-    assert m["og:image"].endswith("/og-image.png")
+    assert m["robots"] == "noindex, follow"
 
 
 def test_home_and_list_routes_get_default_card(tmp_path, db_path, monkeypatch):
@@ -234,12 +333,42 @@ def test_home_and_list_routes_get_default_card(tmp_path, db_path, monkeypatch):
     assert m["og:url"] == "https://parlamonitor.k-monitor.hu/"
     assert m["twitter:card"] == "summary_large_image"
 
-    # A list route with no card of its own (the representatives index) resolves
-    # via the history fallback and also gets the default card + canonical URL.
+    # …and the home page alone declares the site itself and how to search it.
+    site = _jsonld(client.get("/").text)
+    assert [b["@type"] for b in site] == ["WebSite"]
+    assert site[0]["potentialAction"]["target"]["urlTemplate"].endswith(
+        "/search?q={search_term_string}")
+
+    # A browse route resolves via the history fallback and gets its OWN card —
+    # a site whose every page is titled "Parlamonitor" gives a search engine
+    # nothing to tell its pages apart by (§SEO-2).
     m2 = _meta(client.get("/representatives").text)
-    assert m2["og:title"] == "Parlamonitor"
+    assert m2["og:title"] == "Képviselők · Parlamonitor"
     assert m2["og:image"].endswith("/og-image.png")
     assert m2["og:url"] == "https://parlamonitor.k-monitor.hu/representatives"
+
+    # A filtered/paginated variant of a browse page is the same page: it
+    # consolidates onto the clean URL rather than competing with it.
+    assert (_canonical(client.get("/representatives?faction=7&offset=40").text)
+            == "https://parlamonitor.k-monitor.hu/representatives")
+
+    # The home page carries the site's navigation without JS — otherwise the
+    # only way into the corpus for a first-pass crawler is the sitemap.
+    home = client.get("/").text
+    assert 'href="/representatives"' in home
+    assert 'href="/votes"' in home
+
+    # A URL matching no route at all renders the SPA's 404 view — keep it out
+    # of the index instead of letting it in as a soft 404, and give it no
+    # content of its own.
+    notfound = client.get("/nincs-ilyen-oldal")
+    assert _meta(notfound.text)["robots"] == "noindex, follow"
+    assert '<div id="app"></div>' in notfound.text
+
+    # An embed is a chart inside someone else's page (§4C), not a destination:
+    # crawlable (so this very tag can be read) but never indexed on its own.
+    assert _meta(client.get("/embed/faction-cohesion").text)["robots"] \
+        == "noindex, follow"
 
     # A real asset miss still 404s (never the shell) so the edge can't cache
     # HTML under a hashed-asset URL.

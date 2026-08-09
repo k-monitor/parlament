@@ -101,9 +101,16 @@ export function setCycles(values) {
   }
 }
 
+// The scope a visitor gets with no saved choice and no `?cycle=` in the URL:
+// the latest cycle (periods arrive newest-first from /meta). It is also the
+// scope the router leaves *implicit* in the address bar, so the site's default
+// pages keep clean, canonical, parameter-free URLs (§SEO-2).
+export function defaultCycles(periods) {
+  return periods && periods.length ? [periods[0].number] : []
+}
+
 // Initialise the global scope once the available periods are known: honour a
-// valid saved choice, otherwise default to the latest cycle (periods are sorted
-// newest-first by /meta).
+// valid saved choice, otherwise default to the latest cycle.
 function initCycles(meta) {
   const periods = meta.periods || []
   let saved
@@ -112,11 +119,7 @@ function initCycles(meta) {
   } catch {
     saved = undefined
   }
-  if (saved !== undefined) {
-    store.cycles = saved
-  } else {
-    store.cycles = periods.length ? [periods[0].number] : []
-  }
+  store.cycles = saved !== undefined ? saved : defaultCycles(periods)
 }
 
 let inflight = null

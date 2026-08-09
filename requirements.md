@@ -357,6 +357,14 @@ selector** that scopes every period-aware view at once.
   type, faction, date range, sort, etc.) stay **per-page URL state** so a
   filtered/searched view is still deep-linkable and citable (§SEA-6); only the
   electoral period moved out of the per-page URL into the global selector.
+- **CYC-6.** The scope is mirrored into the URL as `?cycle=` **only when it is
+  not the default** (the latest cycle): a reader browsing at the default keeps
+  clean, parameter-free addresses, and a link shared from a non-default scope
+  still reproduces it. This is a hard indexing requirement, not a cosmetic one —
+  writing the param onto every address made every clean URL a client-side
+  redirect to a duplicate of itself, and the site went unindexed (§SEO-2). A
+  `?cycle=` that is already in the URL is honoured and left alone, whatever it
+  says.
 
 ---
 
@@ -1523,6 +1531,50 @@ rework of existing features.
   (`PARLAMONITOR_MODAL_CYCLES`, default: the newest one), so backfilling the
   archive — the one operation that can miss the cache thousands of times at once —
   degrades locally instead of spending the budget the live cycle depends on.
+
+### 8.6 Discoverability & indexing (SEO)
+
+The corpus is public-interest text that people search for by name and by phrase
+("mit mondott X a költségvetésről"), so being **findable** is part of the
+product, not decoration. The site is a client-rendered SPA over ~260 000 content
+pages, which puts three things at risk: a crawler must be able to *reach* a page,
+get *one* address for it, and find *content* on it without running the app.
+
+- **SEO-1 (MUST).** The site serves a **`robots.txt`** naming its sitemap, and an
+  **XML sitemap index** covering every content page — speeches, sitting days,
+  representatives, irományok, votes — plus the browse pages. It is generated from
+  the database (never hand-maintained), split into ≤25 000-URL child sitemaps,
+  carries each page's `lastmod`, and lists only sections whose module is
+  mounted (EXT-6). Pages too thin to stand on their own (a one-line procedural
+  interjection) are left out rather than offered up to be crawled.
+- **SEO-2 (MUST).** Every page has **exactly one canonical address**, and the app
+  must not redirect away from it. Concretely: the **global cycle scope stays
+  implicit in the URL while it is the default** (§4A) — appending `?cycle=` to
+  every address turned each clean URL into a client-side redirect to a
+  parameterised twin whose canonical pointed back at the clean URL, and Google
+  indexed neither; a filtered/paginated browse view canonicalises to its clean
+  browse URL; a sentence anchor (`?s=`) canonicalises to its speech; and an
+  iromány reachable at both `/bills/:id` and `/documents/:id` canonicalises to
+  the one its type belongs to.
+- **SEO-3 (MUST).** Every route carries a **distinct `<title>` and description**
+  derived from what is on it. Faceted/parameterised browse URLs are closed off in
+  `robots.txt` so the crawl budget is spent on content pages.
+- **SEO-4 (MUST).** A URL that resolves to nothing answers **404** (with the app
+  shell, so the SPA still renders its own not-found view), and a route the site
+  does not serve is marked `noindex` — a 200 "not found" page is a soft 404 and
+  is what a crawler files under "crawled, not indexed".
+- **SEO-5 (SHOULD).** Detail pages carry **schema.org structured data** for what
+  they are — `Person` for a representative (with `sameAs` to Wikipedia/Wikidata,
+  EXT-2), `Article` for a speech, `Legislation` for an iromány, `Event` for a
+  sitting day — plus breadcrumbs, and the home page declares the site and its
+  search.
+- **SEO-6 (SHOULD).** The server-rendered shell carries a **plain-HTML rendering
+  of the page's own content** (the speech text, the sitting's speech list, the
+  MP's details and recent speeches) inside the app's mount point, which the SPA
+  replaces on boot. This is what a first-pass crawler and a reader without JS
+  see, and — since nothing else links to a speech — it is also the site's
+  internal link graph. It MUST be the same content the app renders; a
+  crawler-only variant is cloaking.
 
 ---
 

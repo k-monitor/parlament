@@ -31,7 +31,7 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 const NAV_SECTIONS = {
   reps: {
     match: ['representatives', 'lookup', 'advocates', 'speakers', 'officials',
-            'factions', 'profile'],
+            'portfolios', 'portfolio', 'factions', 'profile'],
     // `profile` is a detail page of every person tab — which one is decided at
     // runtime by the kind of person the profile is (see `tabActive`).
     tabs: [
@@ -40,6 +40,10 @@ const NAV_SECTIONS = {
       { name: 'advocates', key: 'advocates', detail: ['profile'] },
       { name: 'speakers', key: 'speakers', detail: ['profile'] },
       { name: 'officials', key: 'officials', detail: ['profile'] },
+      // Tárcák (§6C): the institution behind those offices. Its own module, so
+      // the tab goes when the module is switched off (EXT-6) while the rest of
+      // the section stays.
+      { name: 'portfolios', key: 'portfolios', detail: ['portfolio'] },
       { name: 'factions', key: 'factions' },
     ],
   },
@@ -75,6 +79,7 @@ const sectionTabs = computed(() =>
   (currentSection.value ? currentSection.value.tabs : []).filter((t) => {
     if (t.name === 'cohesion') return COHESION_ENABLED && store.cycles.length > 0
     if (t.name === 'lookup') return store.featureEnabled('constituency_lookup')
+    if (t.name === 'portfolios') return store.moduleEnabled('portfolios')
     return true
   }))
 function tabActive(tab) {

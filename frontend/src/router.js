@@ -72,6 +72,21 @@ const routes = [
     component: () => import('./modules/representatives/OfficialsView.vue'),
   },
   {
+    // Tárcák (§6C) — the government side of the record. Its own module (so it
+    // switches off on its own, EXT-6) but its pages live in the Representatives
+    // section's tab bar, next to the office holders whose institution it is
+    // (MIN-5). Declared before `/representatives/:id` like the other static
+    // segments, so "portfolios" is never taken for a person id.
+    path: '/representatives/portfolios', name: 'portfolios',
+    meta: { module: 'portfolios' },
+    component: () => import('./modules/portfolios/PortfolioListView.vue'),
+  },
+  {
+    path: '/representatives/portfolios/:slug', name: 'portfolio',
+    meta: { module: 'portfolios' },
+    component: () => import('./modules/portfolios/PortfolioView.vue'), props: true,
+  },
+  {
     // "Who represents me?" — find your own constituency and its MP (REP-10). Also
     // declared before `/representatives/:id`. The guard below leaves its `?cycle=`
     // alone like every other page, but the view ignores the scope: it answers for

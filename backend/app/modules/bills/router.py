@@ -15,6 +15,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ... import portfolios as portfolio_map
 from ...db import get_db, like_contains, period_key, period_list, period_sql
 from ...media import per_speech_clip
 from ...query_cache import cached_aggregate
@@ -47,6 +48,12 @@ _DEBATE_STARTS = {
     "általános vita megkezdve": {"end": "általános vita lezárva", "label": "általános vita"},
     "összevont vita megkezdve": {"end": "összevont vita lezárva", "label": "összevont vita"},
 }
+
+
+def _has_portfolios(db: sqlite3.Connection) -> bool:
+    """Whether the loader has derived the §6C portfolio tables into this DB."""
+    return bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                           "AND name='portfolio_bill'").fetchone())
 
 
 def _stages(stages_json: Optional[str]) -> list[dict]:
@@ -140,6 +147,15 @@ def list_bills(
     type: Optional[str] = None,              # exact iromány type (category)
     status: Optional[str] = None,
     sponsor: Optional[str] = None,           # person_id — bills by this MP
+    portfolio: Optional[str] = None,         # portfolio slug (§6C) — see below
+    portfolio_role: str = Query(
+        "any", pattern="^(any|answered|submitted)$",
+        description="With `portfolio`: irományok the tárca answered, ones the "
+                    "government submitted through it, or either"),
+    portfolio_period: Optional[List[int]] = Query(
+        None, description="With `portfolio`: scope by the cycle the tárca *acted* "
+                          "in (answered / submitted), rather than the cycle the "
+                          "iromány itself is filed under — see §6C"),
     answer_verdict: Optional[str] = Query(
         None, pattern="^(accepted|rejected)$",
         description="Question-type irományok where the asking MP accepted / "
@@ -187,6 +203,30 @@ def list_bills(
     if sponsor:
         where.append("EXISTS (SELECT 1 FROM bill_sponsor bs WHERE bs.bill_id=b.id "
                      "AND bs.person_id=:sp)"); params["sp"] = sponsor
+    if portfolio:
+        # The tárca filter (MIN-7). Resolved through the loader's derived link
+        # table rather than by matching the free-text office labels here, so the
+        # list and the portfolio pages can never disagree about what belongs to a
+        # ministry. On a DB built before §6C the table is absent — the filter then
+        # matches nothing rather than erroring, exactly as a disabled module's
+        # metric is hidden rather than faked (EXT-6).
+        if _has_portfolios(db):
+            role_sql = "" if portfolio_role == "any" else " AND role = :pfrole"
+            # `portfolio_period` scopes by the cycle the tárca *acted* in, which is
+            # not always the cycle the iromány is filed under: parlament.hu
+            # re-lists an iromány still in progress under the new cycle, so a bill
+            # submitted in 2024 comes back as a cycle-43 row. The tárca pages count
+            # by the link's own cycle, and this is how their document lists stay
+            # the same set as their counts (cf. VOTE-6).
+            per_sql = period_sql(portfolio_period, "period_number")
+            where.append("b.id IN (SELECT bill_id FROM portfolio_bill "
+                         f"WHERE portfolio_slug = :pfslug{role_sql}"
+                         + (f" AND {per_sql}" if per_sql else "") + ")")
+            params["pfslug"] = portfolio
+            if portfolio_role != "any":
+                params["pfrole"] = portfolio_role
+        else:
+            where.append("1=0")
     if answer_verdict:
         # `IN (subquery)` rather than a correlated EXISTS: the verdict events are
         # a thin slice of bill_event with no index on `name`, so one scan of the
@@ -351,16 +391,29 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[List[int]], top
     aph = ",".join("?" * len(answer_events))
     oral_ministry: dict[str, Optional[str]] = {}     # bill -> responder label (or None)
     written_ministry: dict[str, Optional[str]] = {}  # bill -> responder label (or None)
+    slug_of: dict[str, Optional[str]] = {}           # responder label -> tárca slug
     for r in db.execute(
         f"""SELECT e.bill_id, e.name, e.related_label
             FROM bill_event e JOIN bill b ON b.id = e.bill_id
             WHERE {where_sql} AND e.name IN ({aph})""",
         params + list(answer_events)):
         target = oral_ministry if r["name"] in _ORAL_ANSWER_EVENTS else written_ministry
+        # The responder is named by *office*, so one ministry arrives under
+        # several labels — "Emberi Erőforrások Minisztériumának államtitkára" and
+        # "emberi erőforrások minisztere" are the same tárca answering, and left
+        # raw they occupy two nodes and split one ministry's flow in half. Collate
+        # them through the portfolio table (§6C), which is also what makes a node
+        # clickable through to that tárca's page (MIN-7). A label the table does
+        # not cover keeps its own node under its own name (MIN-3).
+        label = r["related_label"]
+        if label:
+            tarca = portfolio_map.resolve(label)
+            label = tarca.name if tarca else portfolio_map.normalize_label(label)
+            slug_of.setdefault(label, tarca.slug if tarca else None)
         # mark the bill as answered, keeping the first non-empty responder label
         # seen for it (None until/unless one appears)
         if not target.get(r["bill_id"]):
-            target[r["bill_id"]] = r["related_label"]
+            target[r["bill_id"]] = label
 
     def responder_label(bid: str) -> Optional[str]:
         """The responding portfolio for an answered question: the oral answer's
@@ -374,8 +427,15 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[List[int]], top
         m = responder_label(bid)
         if m:
             ministry_totals[m] += 1
+    # Tie-break by name, not by `most_common`'s insertion order: ministries with
+    # equal counts are common in a short scope, and insertion order here is the
+    # order SQLite happened to return the answer events in. Left to chance, which
+    # of two tied ministries keeps its own node and which is pooled into "other"
+    # can differ between two identical requests — a diagram that reshuffles on
+    # reload, and a drill-down that disagrees with the diagram it was clicked from.
+    ranked = sorted(ministry_totals.items(), key=lambda kv: (-kv[1], kv[0]))
     top_ministries = (set(ministry_totals) if expand_other
-                      else {m for m, _ in ministry_totals.most_common(top)})
+                      else {m for m, _ in ranked[:top]})
 
     def faction_key(bid: str) -> Optional[int]:
         fid = asker_faction.get(bid)
@@ -403,7 +463,7 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[List[int]], top
             return ("unnamed", "") if expand_other else ("other", "")
         return ("ministry", m) if m in top_ministries else ("other", "")
 
-    return order_ids, factions, faction_key, type_key, answerer_key
+    return order_ids, factions, faction_key, type_key, answerer_key, slug_of
 
 
 @router.get("/questions/sankey")
@@ -433,7 +493,7 @@ def questions_sankey(
     nodes their label)."""
     from collections import Counter
 
-    bill_ids, factions, faction_key, type_key, answerer_key = _classify_questions(
+    bill_ids, factions, faction_key, type_key, answerer_key, slug_of = _classify_questions(
         db, period, limit, expand_other)
     if not bill_ids:
         return {"period": period_list(period), "total": 0, "nodes": [], "links": []}
@@ -487,7 +547,10 @@ def questions_sankey(
         kind, label = ans
         index[("s", ans)] = len(nodes)
         nodes.append({"column": answerer_col, "side": "answerer", "kind": kind,
-                      "label": label or None, "color": None})
+                      "label": label or None, "color": None,
+                      # A named tárca links through to its own page (§6C / MIN-7);
+                      # the pooled and unanswered nodes have nowhere to go.
+                      "slug": slug_of.get(label) if kind == "ministry" else None})
 
     # Type → faction ribbons take the question type's colour; faction → answerer
     # ribbons take the asking faction's colour, so the right half stays split and
@@ -530,7 +593,7 @@ def questions_list(
     ``expand_other`` setting) so a clicked flow lists exactly its questions.
     Paginated, newest-first; each links back to its detail view. Omitting the
     filters lists every question."""
-    order_ids, _factions, faction_key, type_key, answerer_key = _classify_questions(
+    order_ids, _factions, faction_key, type_key, answerer_key, _slugs = _classify_questions(
         db, period, top, expand_other)
 
     want = (answerer, ministry or "") if answerer == "ministry" else (answerer, "")

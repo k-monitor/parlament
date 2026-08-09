@@ -23,6 +23,7 @@ class ModuleSpec:
 def load_modules() -> list[ModuleSpec]:
     # Imported lazily so a syntax error in one module can't break import order.
     from .bills.router import router as bills_router
+    from .portfolios.router import router as portfolios_router
     from .proceedings.router import router as proceedings_router
     from .representatives.router import router as representatives_router
     from .votes.router import router as votes_router
@@ -31,4 +32,8 @@ def load_modules() -> list[ModuleSpec]:
         ModuleSpec("representatives", "Képviselők", representatives_router),
         ModuleSpec("bills", "Törvényjavaslatok", bills_router),
         ModuleSpec("votes", "Szavazások", votes_router),
+        # Its pages live in the Representatives section's tab bar (MIN-5), but it
+        # is its own slice: it reads the bills module's tables and owns none of
+        # them, so it switches off independently of both (EXT-1/EXT-6).
+        ModuleSpec("portfolios", "Tárcák", portfolios_router),
     ]

@@ -22,7 +22,7 @@ export default {
       status: 'Page {page} of {total}',
     },
   },
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', lookup: 'Find your MP', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', lookup: 'Find your MP', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -256,6 +256,60 @@ export default {
     },
   },
   // "Find your MP" — settlement → single-member constituency → MP (REP-10).
+  // Portfolios (§6C): the government side of the record.
+  portfolios: {
+    title: 'Portfolios',
+    intro: 'Which ministry was asked what, which portfolio laid which documents '
+      + 'before the House, and what its ministers said in plenary. A portfolio is '
+      + 'the institution behind the offices: the ministerial, state-secretary and '
+      + 'ministry forms the record uses — "belügyminiszter", "Belügyminisztérium '
+      + 'államtitkára", "kormány (belügyminiszter)" — all belong to one portfolio.',
+    unit: 'portfolios',
+    searchPlaceholder: 'Search by portfolio name…',
+    scope: 'in {cycle}',
+    noResults: 'No portfolio matches these filters.',
+    backToList: 'Portfolios',
+    kinds: {
+      ministry: 'Ministries',
+      pm: 'Prime Minister',
+      'no-portfolio': 'Ministers without portfolio',
+      other: 'Other government offices',
+      body: 'Independent state bodies',
+    },
+    bodyNote: 'Not part of the government, but they answer to the House and '
+      + 'reply to members\' questions in the same way.',
+    answered: 'questions answered',
+    submitted: 'documents submitted',
+    speeches: 'speeches',
+    answeredShort: 'questions',
+    submittedShort: 'documents',
+    speechesShort: 'speeches',
+    medianDays: 'days — median time to answer',
+    holders: 'Who held it',
+    holdersMore: '{count} more office holders',
+    holdersFewer: 'Show fewer',
+    trendTitle: 'Questions answered per year',
+    trendCaption: 'Questions answered by this portfolio, per year.',
+    emptyPanel: 'Nothing of this kind in the selected cycle.',
+    noAgenda: 'No agenda item',
+    aliases: 'Labels collated',
+    answeredNote: 'Only answered questions are listed for now: the documents\' '
+      + 'addressee has not been ingested yet, so questions left unanswered do not '
+      + 'appear here and no answer rate is shown.',
+    speechCoverage: 'The office a speaker spoke in is only recorded for the cycles '
+      + 'we have re-ingested since — elsewhere a zero means we have no such data '
+      + 'for that cycle, not that the portfolio never spoke.',
+    methodology: 'A portfolio is identified from the source\'s own labels: the '
+      + 'answering office on a document event, the government submitter '
+      + '("kormány (…)"), the office recorded on a speech, and the office-holder '
+      + 'registry\'s terms. A hand-reviewed, published table maps those labels to '
+      + 'portfolios; a label the table does not cover stands alone under its own '
+      + 'name rather than being folded into a neighbour. Renames are not merged: '
+      + 'the Nemzeti Erőforrás Minisztérium and the Emberi Erőforrások '
+      + 'Minisztériuma are listed separately, because the succession is not '
+      + 'something the data states. Personal commissions (miniszterelnöki biztos, '
+      + 'kormánymegbízott) belong to no portfolio and are left out.',
+  },
   lookup: {
     title: 'Find your MP',
     intro: 'Enter your settlement and we will show which single-member constituency '
@@ -449,11 +503,12 @@ export default {
     showType: 'Show question type',
     ungroupOther: 'Ungroup “Other ministry”',
     groupOther: 'Group “Other ministry”',
+    openPortfolio: 'Open portfolio page',
     close: 'Close',
     askerHeading: 'Asker (faction)',
     typeHeading: 'Question type',
     answererHeading: 'Answerer',
-    methodology: 'The asker is the faction of the MP who submitted the question; the answerer is the responding ministry (minister / state secretary), whether answered orally or in writing. Use “Show question type” to prepend a column that splits the flow by question type (interpellation, question, immediate question or written). Only the busiest ministries appear separately — the rest are pooled into an “Other ministry” node; “Ungroup «Other ministry»” opens that pool so every responder gets its own row. The cycle is set by the header’s cycle selector.',
+    methodology: 'The asker is the faction of the MP who submitted the question; the answerer is the responding portfolio, whether answered orally or in writing. The source names the answerer by office ("Belügyminisztérium államtitkára", "belügyminiszter"); the Portfolios page\'s table collates those into one ministry, so a portfolio is a single node, and a label the table does not cover keeps its own name. Use “Show question type” to prepend a column that splits the flow by question type (interpellation, question, immediate question or written). Only the busiest ministries appear separately — the rest are pooled into an “Other ministry” node; “Ungroup «Other ministry»” opens that pool so every responder gets its own row. The cycle is set by the header’s cycle selector.',
     type: {
       I: 'Interpellation',
       K: 'Question',

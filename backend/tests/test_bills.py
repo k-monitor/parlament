@@ -487,14 +487,49 @@ def test_questions_sankey_can_hide_the_type_column(client):
 
 
 def test_questions_sankey_oral_answer_routes_to_ministry(client, db_path):
-    """An oral-answer event routes the question to its responding ministry node,
-    named from the event's related_label."""
+    """An oral-answer event routes the question to its responding ministry node.
+
+    The node is the **tárca**, not the office the event happens to name: upstream
+    records the responder as "Belügyminisztérium államtitkára", which the
+    portfolio table (§6C) collates to the ministry itself, and the node carries
+    that tárca's slug so a click can open its page (MIN-7)."""
     _seed_question_answer(db_path, "interpelláció szóban megválaszolva",
                           "Belügyminisztérium államtitkára")
     j = client.get("/api/v1/bills/questions/sankey").json()
     ministries = [n for n in j["nodes"]
                   if n["side"] == "answerer" and n["kind"] == "ministry"]
-    assert any(n["label"] == "Belügyminisztérium államtitkára" for n in ministries)
+    assert any(n["label"] == "Belügyminisztérium" for n in ministries)
+    assert all(n["slug"] for n in ministries)
+
+
+def test_questions_sankey_merges_the_offices_of_one_ministry(client, db_path):
+    """A ministry answers under several office titles — the minister's and the
+    state secretary's — and left raw they split one ministry's flow across two
+    nodes. They are one tárca, so they are one node."""
+    _seed_question_answer(db_path, "interpelláció szóban megválaszolva",
+                          "Belügyminisztérium államtitkára")
+    _seed_second_question(db_path, "belügyminiszter")
+    j = client.get("/api/v1/bills/questions/sankey").json()
+    ministries = [n for n in j["nodes"]
+                  if n["side"] == "answerer" and n["kind"] == "ministry"]
+    assert [n["label"] for n in ministries] == ["Belügyminisztérium"]
+    # …and both questions flow into it.
+    into = sum(l["value"] for l in j["links"]
+               if l["target"] == j["nodes"].index(ministries[0]))
+    assert into == 2
+
+
+def test_questions_sankey_keeps_an_unmapped_responder_under_its_own_name(client, db_path):
+    """A responder the portfolio table does not cover keeps its own node rather
+    than being folded into a neighbour or dropped (MIN-3) — it just has no page
+    to link to."""
+    _seed_question_answer(db_path, "interpelláció szóban megválaszolva",
+                          "holnaputáni miniszter")
+    j = client.get("/api/v1/bills/questions/sankey").json()
+    node = next(n for n in j["nodes"]
+                if n["side"] == "answerer" and n["kind"] == "ministry")
+    assert node["label"] == "holnaputáni miniszter"
+    assert node["slug"] is None
 
 
 def test_questions_sankey_written_answer_routes_to_responder(client, db_path):
@@ -505,7 +540,7 @@ def test_questions_sankey_written_answer_routes_to_responder(client, db_path):
                           "Belügyminisztérium államtitkára")
     j = client.get("/api/v1/bills/questions/sankey").json()
     answerers = [n for n in j["nodes"] if n["side"] == "answerer"]
-    assert any(n["kind"] == "ministry" and n["label"] == "Belügyminisztérium államtitkára"
+    assert any(n["kind"] == "ministry" and n["label"] == "Belügyminisztérium"
                for n in answerers)
     assert not any(n["kind"] == "written" for n in answerers)
 
@@ -555,7 +590,7 @@ def test_questions_sankey_expand_other_ungroups_the_pool(client, db_path):
     ea = [n for n in exp["nodes"] if n["side"] == "answerer"]
     assert not any(n["kind"] == "other" for n in ea)      # nothing left pooled
     assert {n["label"] for n in ea if n["kind"] == "ministry"} == {
-        "Belügyminisztérium államtitkára", "agrárminiszter"}
+        "Belügyminisztérium", "Agrárminisztérium"}
     # same questions, same flow volume — only the answerer column is finer
     assert exp["total"] == grouped["total"]
     assert (sum(l["value"] for l in exp["links"])
@@ -564,15 +599,21 @@ def test_questions_sankey_expand_other_ungroups_the_pool(client, db_path):
 
 def test_questions_list_matches_the_expanded_diagram(client, db_path):
     """The drill-down honours `expand_other` too, so a node that only exists when
-    the pool is open is still listable (and isn't under the grouped ranking)."""
+    the pool is open is still listable (and isn't under the grouped ranking).
+
+    Both ministries answer one question each, so which of them `top=1` keeps is
+    decided by the ranking's name tie-break — Agrárminisztérium — leaving the
+    interior ministry as the pooled runner-up this drills into. That tie-break is
+    what makes the outcome reproducible at all: ranked by count alone, the two
+    swap places between runs."""
     _seed_question_answer(db_path, "interpelláció szóban megválaszolva",
                           "Belügyminisztérium államtitkára")
     _seed_second_question(db_path, "agrárminiszter")
-    params = {"top": 1, "answerer": "ministry", "ministry": "agrárminiszter"}
+    params = {"top": 1, "answerer": "ministry", "ministry": "Belügyminisztérium"}
     assert client.get("/api/v1/bills/questions/list", params=params).json()["total"] == 0
     hit = client.get("/api/v1/bills/questions/list",
                      params={**params, "expand_other": "true"}).json()
-    assert [b["bill_number"] for b in hit["bills"]] == ["K/78"]
+    assert [b["bill_number"] for b in hit["bills"]] == ["I/5"]
 
 
 def test_questions_sankey_expand_other_names_unnamed_responders(client, db_path):
@@ -601,7 +642,7 @@ def test_questions_list_drills_into_a_flow(client, db_path):
                if n["side"] == "asker" and n["label"] == "Fidesz")
     r = client.get("/api/v1/bills/questions/list", params={
         "faction": fac, "answerer": "ministry",
-        "ministry": "Belügyminisztérium államtitkára"}).json()
+        "ministry": "Belügyminisztérium"}).json()
     assert r["total"] == 1
     assert r["bills"][0]["bill_number"] == "I/5"
     # a non-matching answerer for the same faction is empty (the question was

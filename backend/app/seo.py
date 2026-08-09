@@ -22,6 +22,7 @@ deployment running without the votes module must not sitemap ``/votes/…``.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from urllib.parse import quote
@@ -32,6 +33,8 @@ from fastapi.responses import PlainTextResponse, Response
 
 from .config import settings
 from .db import get_db
+
+logger = logging.getLogger(__name__)
 
 # A sitemap may hold 50 000 URLs / 50 MB; half that keeps each file small enough
 # to fetch quickly and re-generate cheaply.
@@ -63,6 +66,7 @@ STATIC_PATHS: tuple[tuple[str, str | None], ...] = (
     ("/representatives/advocates", "representatives"),
     ("/representatives/speakers", "representatives"),
     ("/representatives/officials", "representatives"),
+    ("/representatives/portfolios", "portfolios"),
     ("/bills", "bills"),
     ("/documents", "bills"),
     ("/questions", "bills"),
@@ -142,6 +146,16 @@ _SECTIONS: tuple[_Section, ...] = (
         """SELECT '/documents/' || id AS path, submitted_date AS lastmod
              FROM bill WHERE main_type IS NULL OR main_type<>'T'
             ORDER BY submitted_date DESC, id
+            LIMIT :limit OFFSET :offset""",
+    ),
+    # The tárcák (§6C). Few pages, but each is a standing entry point into a
+    # ministry's whole record — the kind of page a search for "Belügyminisztérium
+    # kérdések" should be able to land on.
+    _Section(
+        "portfolios", "portfolios",
+        "SELECT COUNT(*) FROM portfolio",
+        """SELECT '/representatives/portfolios/' || slug AS path, NULL AS lastmod
+             FROM portfolio ORDER BY ord
             LIMIT :limit OFFSET :offset""",
     ),
     _Section(
@@ -250,9 +264,21 @@ def _params(**extra) -> dict:
 
 def _section_counts(db: sqlite3.Connection) -> dict[str, int]:
     """How many URLs each enabled section holds, so the index knows how many
-    child sitemaps to advertise."""
-    return {s.name: db.execute(s.count_sql, _params()).fetchone()[0]
-            for s in _enabled_sections()}
+    child sitemaps to advertise.
+
+    A section whose table the loaded DB doesn't have yet (an enabled module whose
+    derived tables post-date the file being served — §6C's portfolios are the
+    first) counts zero rather than taking the whole sitemap down with it: the
+    sitemap is the site's only route into the corpus for a crawler (SEO-1)."""
+    counts = {}
+    for s in _enabled_sections():
+        try:
+            counts[s.name] = db.execute(s.count_sql, _params()).fetchone()[0]
+        except sqlite3.OperationalError:
+            logger.warning("Sitemap section %r skipped: %s not in this DB yet",
+                           s.name, s.module)
+            counts[s.name] = 0
+    return counts
 
 
 def _pages(count: int) -> int:
@@ -342,9 +368,14 @@ def register(app) -> None:
             return Response(status_code=404)
 
         def build() -> str:
-            rows = db.execute(section.sql, _params(
-                limit=URLS_PER_SITEMAP,
-                offset=(page - 1) * URLS_PER_SITEMAP)).fetchall()
+            try:
+                rows = db.execute(section.sql, _params(
+                    limit=URLS_PER_SITEMAP,
+                    offset=(page - 1) * URLS_PER_SITEMAP)).fetchall()
+            except sqlite3.OperationalError:
+                # Same guard as the index (_section_counts): a section whose
+                # table this DB doesn't carry yet is empty, not an error.
+                rows = []
             return _urlset(base, [(r[0], r[1]) for r in rows])
 
         body = _cached(db, f"{name}:{page}:{base}", build)

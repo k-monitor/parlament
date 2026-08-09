@@ -33,6 +33,7 @@ export default {
     advocates: 'Nemzetiségi szószólók',
     speakers: 'Egyéb felszólalók',
     officials: 'Tisztségviselők',
+    portfolios: 'Tárcák',
     factions: 'Frakciók',
     bills: 'Törvényjavaslatok',
     documents: 'Egyéb irományok',
@@ -324,6 +325,64 @@ export default {
       uncategorised: 'Besorolás nélkül',
     },
   },
+  // Tárcák (§6C): a kormányzati oldal – melyik minisztériumhoz milyen kérdés
+  // érkezett, és melyik tárca mit nyújtott be.
+  portfolios: {
+    title: 'Tárcák',
+    intro: 'Melyik minisztériumhoz milyen kérdések és interpellációk érkeztek, '
+      + 'melyik tárca milyen irományokat nyújtott be a Ház elé, és mit mondtak a '
+      + 'miniszterei a plenáris ülésen. A tárca a hozzá tartozó tisztségek '
+      + 'intézménye: a miniszteri, államtitkári és minisztériumi megnevezések – '
+      + '„belügyminiszter”, „Belügyminisztérium államtitkára”, „kormány '
+      + '(belügyminiszter)” – egyetlen tárcához tartoznak.',
+    unit: 'tárca',
+    searchPlaceholder: 'Keresés tárca neve szerint…',
+    scope: 'a(z) {cycle} ciklusban',
+    noResults: 'Nincs a feltételeknek megfelelő tárca.',
+    backToList: 'Tárcák',
+    kinds: {
+      ministry: 'Minisztériumok',
+      pm: 'Miniszterelnök',
+      'no-portfolio': 'Tárca nélküli miniszterek',
+      other: 'Egyéb kormányzati tisztségek',
+      body: 'Független állami szervek',
+    },
+    bodyNote: 'Nem a kormány részei, de a Háznak felelnek, és ugyanúgy '
+      + 'válaszolnak a képviselői kérdésekre.',
+    answered: 'megválaszolt kérdés',
+    submitted: 'benyújtott iromány',
+    speeches: 'felszólalás',
+    answeredShort: 'kérdés',
+    submittedShort: 'iromány',
+    speechesShort: 'felszólalás',
+    medianDays: 'nap – a válasz medián ideje',
+    holders: 'A tárca vezetői',
+    holdersMore: 'További {count} tisztségviselő',
+    holdersFewer: 'Kevesebb',
+    trendTitle: 'Megválaszolt kérdések évenként',
+    trendCaption: 'A tárca által megválaszolt kérdések száma évenként.',
+    emptyPanel: 'Ebben a ciklusban nincs ilyen tétel.',
+    noAgenda: 'Napirendi pont nélkül',
+    aliases: 'Összevont megnevezések',
+    // Amit az adat még nem tud – kimondva, nem a számból kitalálva (MIN-10a).
+    answeredNote: 'Egyelőre csak a megválaszolt kérdések szerepelnek: az '
+      + 'irományok címzettje még nincs betöltve, így a megválaszolatlanul maradt '
+      + 'kérdések nem jelennek meg, és válaszadási arányt sem mutatunk.',
+    speechCoverage: 'A felszólalás melletti tisztséget csak azokban a ciklusokban '
+      + 'rögzíti a letöltés, amelyeket azóta újratöltöttünk – a többinél nem azt '
+      + 'jelenti a nulla, hogy a tárca nem szólalt fel, hanem hogy erről az '
+      + 'adatról ott még nincs információnk.',
+    methodology: 'A tárcát a forrás saját megnevezéseiből azonosítjuk: a válaszoló '
+      + 'tisztség (iromány-esemény), a kormányzati benyújtó („kormány (…)”), a '
+      + 'felszólaláshoz rögzített tisztség és a tisztségviselői nyilvántartás '
+      + 'megbízatásai. A megnevezéseket kézzel ellenőrzött, nyilvános táblázat '
+      + 'kapcsolja tárcákhoz; amit a táblázat nem ismer, az saját néven, önálló '
+      + 'tételként jelenik meg, nem olvad össze mással. Az átnevezéseket nem vonjuk '
+      + 'össze: a Nemzeti Erőforrás Minisztérium és az Emberi Erőforrások '
+      + 'Minisztériuma külön szerepel, mert a jogutódlás nem az adatból következik. '
+      + 'A miniszterelnöki biztosi és kormánymegbízotti megbízatások nem tartoznak '
+      + 'egyik tárcához sem, ezért kimaradnak.',
+  },
   // "Ki a képviselőm?" — település → egyéni választókerület → képviselő (REP-10).
   lookup: {
     title: 'Ki a képviselőm?',
@@ -558,11 +617,12 @@ export default {
     showType: 'Kérdéstípus megjelenítése',
     ungroupOther: 'Egyéb tárca szétbontása',
     groupOther: 'Egyéb tárca összevonása',
+    openPortfolio: 'A tárca oldala',
     close: 'Bezárás',
     askerHeading: 'Kérdező (frakció)',
     typeHeading: 'Kérdés típusa',
     answererHeading: 'Válaszadó',
-    methodology: 'A kérdező a kérdést benyújtó képviselő frakciója; a válaszadó a válaszoló tárca (miniszter/államtitkár) – akár szóban, akár írásban válaszolták meg a kérdést. A „Kérdéstípus megjelenítése” gombbal egy vezető oszlop kapcsolható be, amely a kérdés típusa (interpelláció, kérdés, azonnali kérdés vagy írásbeli) szerint bontja a folyamot. A csak a legtöbbet válaszoló tárcák jelennek meg külön, a többi az „Egyéb tárca” csomópontban összesül; az „Egyéb tárca szétbontása” gombbal ez a csomópont felnyitható, és minden válaszadó külön sorban jelenik meg. A ciklust a fejléc ciklusválasztója szabja meg.',
+    methodology: 'A kérdező a kérdést benyújtó képviselő frakciója; a válaszadó a válaszoló tárca – akár szóban, akár írásban válaszolták meg a kérdést. A forrás a válaszadót tisztség szerint nevezi meg („Belügyminisztérium államtitkára”, „belügyminiszter”), ezeket a Tárcák oldal feloldótáblája vonja össze egyetlen minisztériummá, így egy tárca egyetlen csomópont; amit a táblázat nem ismer, az saját néven marad. A „Kérdéstípus megjelenítése” gombbal egy vezető oszlop kapcsolható be, amely a kérdés típusa (interpelláció, kérdés, azonnali kérdés vagy írásbeli) szerint bontja a folyamot. A csak a legtöbbet válaszoló tárcák jelennek meg külön, a többi az „Egyéb tárca” csomópontban összesül; az „Egyéb tárca szétbontása” gombbal ez a csomópont felnyitható, és minden válaszadó külön sorban jelenik meg. A ciklust a fejléc ciklusválasztója szabja meg.',
     type: {
       I: 'Interpelláció',
       K: 'Kérdés',

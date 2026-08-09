@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import sqlite3
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,7 +40,7 @@ try:                                    # POSIX only; the writer lock degrades t
 except ImportError:                     # pragma: no cover - non-POSIX
     fcntl = None
 
-from . import kmonitor, nlp, nlp_modal, readability, wikidata
+from . import kmonitor, nlp, nlp_modal, portfolios, readability, wikidata
 from .config import settings
 from .parlament_links import bill_page_url
 from .wordfreq import count_words
@@ -587,6 +588,11 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
         "DELETE FROM bill_motion_sponsor WHERE motion_id IN "
         "(SELECT id FROM bill_motion WHERE bill_id IN "
         "(SELECT id FROM bill WHERE period_number IS ?))", (period,))
+    # The derived §6C links reference these bills; clear them so the delete below
+    # isn't blocked by a foreign key (rebuild_portfolios re-derives them).
+    _drop_portfolio_links(
+        conn, "portfolio_bill",
+        "bill_id IN (SELECT id FROM bill WHERE period_number IS ?)", (period,))
     child_tables = ("bill_sponsor", "bill_event", "bill_committee_event",
                     "bill_vote", "bill_deadline", "bill_committee",
                     "bill_document", "bill_motion_summary", "bill_motion")
@@ -942,6 +948,12 @@ def load_session(conn: sqlite3.Connection, record: dict) -> str:
 
 
 def _delete_session(conn: sqlite3.Connection, sid: str) -> None:
+    # Derived §6C links point at the speeches about to go; drop them first so the
+    # delete isn't blocked by a foreign key. rebuild_portfolios re-derives them
+    # wholesale after the load, so nothing is lost.
+    _drop_portfolio_links(
+        conn, "portfolio_speech",
+        "speech_uid IN (SELECT uid FROM speech WHERE session_id = ?)", (sid,))
     conn.execute(
         "DELETE FROM entity WHERE sentence_id IN (SELECT se.id FROM sentence se "
         "JOIN speech sp ON sp.uid = se.speech_id WHERE sp.session_id = ?)", (sid,))
@@ -1070,6 +1082,245 @@ def wire_nonmp_photos(conn: sqlite3.Connection, photos_dir) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Portfolios (tárcák) — §6C
+# ---------------------------------------------------------------------------
+
+# The bill events that name a **responding tárca**. Enumerated rather than
+# pattern-matched, for the same reason as STAT-1's procedural types: the list is
+# auditable and can never silently swallow an event kind whose `related_label`
+# means something else. `azonnali kérdésre adott képviselői viszonválasz` is
+# deliberately absent — that one is the *asking MP's* counter-reply, and upstream
+# leaves its related label empty on all 4 066 of them.
+_PORTFOLIO_ANSWER_EVENTS = (
+    "kérdés megválaszolva",                        # answered orally (K and A)
+    "kérdés írásban megválaszolva",                # answered in writing (K)
+    "interpelláció szóban megválaszolva",          # answered in plenary (I)
+    "azonnali kérdésre adott miniszteri viszonválasz",   # the minister's reply (A)
+)
+
+
+def _drop_portfolio_links(conn: sqlite3.Connection, table: str, where: str,
+                          params: tuple) -> None:
+    """Delete the §6C link rows pointing at records a loader is about to replace.
+
+    The portfolio tables are derived, so they are always rebuilt after a load —
+    but they hold foreign keys into `bill` and `speech`, and SQLite refuses to
+    delete a parent while a stale link still points at it. A DB loaded before this
+    module existed has no such table, which is not an error: there is nothing to
+    clear."""
+    try:
+        conn.execute(f"DELETE FROM {table} WHERE {where}", params)
+    except sqlite3.OperationalError:
+        pass
+
+
+def _ensure_portfolio_tables(conn: sqlite3.Connection) -> None:
+    """Create the §6C tables on a pre-existing DB, so the portfolios land on an
+    already-built deployment through the incremental update alone — they are
+    derived from rows the other modules already wrote, so there is nothing to
+    re-scrape and no reason to force a full rebuild."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS portfolio (
+            slug TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+            ord INTEGER);
+        CREATE TABLE IF NOT EXISTS portfolio_alias (
+            label TEXT PRIMARY KEY,
+            portfolio_slug TEXT NOT NULL REFERENCES portfolio(slug));
+        CREATE TABLE IF NOT EXISTS portfolio_bill (
+            portfolio_slug TEXT NOT NULL REFERENCES portfolio(slug),
+            bill_id TEXT NOT NULL REFERENCES bill(id),
+            role TEXT NOT NULL, label TEXT, event_date TEXT, period_number INTEGER,
+            PRIMARY KEY (portfolio_slug, bill_id, role)) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS idx_portfolio_bill_bill ON portfolio_bill(bill_id);
+        CREATE TABLE IF NOT EXISTS portfolio_speech (
+            portfolio_slug TEXT NOT NULL REFERENCES portfolio(slug),
+            speech_uid TEXT NOT NULL REFERENCES speech(uid),
+            PRIMARY KEY (portfolio_slug, speech_uid)) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS idx_portfolio_speech_speech ON portfolio_speech(speech_uid);
+        CREATE TABLE IF NOT EXISTS portfolio_office (
+            portfolio_slug TEXT NOT NULL REFERENCES portfolio(slug),
+            person_id TEXT NOT NULL REFERENCES person(person_id),
+            title TEXT NOT NULL, category TEXT, date_start TEXT, date_end TEXT);
+        CREATE INDEX IF NOT EXISTS idx_portfolio_office_slug ON portfolio_office(portfolio_slug);
+        CREATE INDEX IF NOT EXISTS idx_portfolio_office_person ON portfolio_office(person_id);
+    """)
+    # `portfolio_bill.period_number` post-dates the table, so a DB built between
+    # the two gets the column added here rather than needing a full rebuild.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(portfolio_bill)")}
+    if cols and "period_number" not in cols:
+        conn.execute("ALTER TABLE portfolio_bill ADD COLUMN period_number INTEGER")
+    # Declared after the ALTER above, which is what puts the column there on a DB
+    # that predates it — an index over a missing column is a hard error.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_bill_period "
+                 "ON portfolio_bill(portfolio_slug, role, period_number)")
+
+
+def rebuild_portfolios(conn: sqlite3.Connection) -> int:
+    """Rebuild the tárca tables (§6C) from the rows the other modules wrote.
+
+    Three link kinds, all from data already in the database (MIN-10a): who
+    **answered** a question (`bill_event`), which tárca the government
+    **submitted** an iromány through (`bill_sponsor`), and which speeches were
+    given in the tárca's offices (`speech.speaker_office`). Plus the office terms
+    (`person_office`) filed under the tárca they belong to, so a profile can say
+    who held it and when.
+
+    Every label goes through `app.portfolios`: it resolves, or it is an excluded
+    personal commission, or it stands alone as its own portfolio (MIN-3) — the
+    last is logged, because an unmapped label is a gap in the table, not a
+    finding about the House.
+    """
+    _ensure_portfolio_tables(conn)
+    for tbl in ("portfolio_office", "portfolio_speech", "portfolio_bill",
+                "portfolio_alias", "portfolio"):
+        conn.execute(f"DELETE FROM {tbl}")
+
+    used: dict[str, portfolios.Portfolio] = {}
+    alias_of: dict[str, str] = {}          # normalized label -> slug
+    weight: Counter = Counter()            # slug -> corpus rows behind it
+    unmapped: Counter = Counter()
+
+    def slug_for(label: str | None) -> str | None:
+        p = portfolios.resolve(label)
+        if p is None:
+            if portfolios.is_excluded(label):
+                return None
+            p = portfolios.standalone(label)
+            if p is None:                   # empty label
+                return None
+            unmapped[portfolios.normalize_label(label)] += 1
+        used.setdefault(p.slug, p)
+        alias_of.setdefault(portfolios.normalize_label(label), p.slug)
+        weight[p.slug] += 1
+        return p.slug
+
+    # A link belongs to the cycle it **happened in**, taken from its own date —
+    # not to the cycle its parent iromány is filed under. parlament.hu re-lists an
+    # iromány that is still in progress under the new cycle, so a bill the
+    # government submitted in 2024 comes back as a cycle-43 row; counted by the
+    # parent, a ministry abolished in 2026 reappears in the 2026 listing on the
+    # strength of a document it filed two years earlier.
+    periods = [(r["number"], r["date_start"], r["date_end"]) for r in conn.execute(
+        "SELECT number, date_start, date_end FROM electoral_period "
+        "WHERE date_start IS NOT NULL ORDER BY date_start")]
+
+    def cycle_of(date: str | None, fallback: int | None) -> int | None:
+        """The electoral period whose span contains ``date``. Falls back to the
+        parent iromány's cycle when the link carries no date (or predates the
+        first recorded period), so a link is never dropped from every scope."""
+        if not date:
+            return fallback
+        day = date[:10]
+        for number, start, end in periods:
+            if start <= day and (end is None or day <= end):
+                return number
+        return fallback
+
+    # 1. answered — the responding tárca named on a question's answer event.
+    ph = ",".join("?" * len(_PORTFOLIO_ANSWER_EVENTS))
+    links: dict[tuple[str, str, str], tuple[str, str | None, int | None]] = {}
+    for r in conn.execute(
+            f"""SELECT e.bill_id, e.related_label, MIN(e.event_date) AS d,
+                       b.period_number
+                FROM bill_event e JOIN bill b ON b.id = e.bill_id
+                WHERE e.name IN ({ph}) AND e.related_label IS NOT NULL
+                GROUP BY e.bill_id, e.related_label""",
+            _PORTFOLIO_ANSWER_EVENTS):
+        slug = slug_for(r["related_label"])
+        if slug:
+            key = (slug, r["bill_id"], "answered")
+            if key not in links:
+                links[key] = (r["related_label"], r["d"],
+                              cycle_of(r["d"], r["period_number"]))
+
+    # 2. submitted — "kormány (belügyminiszter)" names the tárca it came through.
+    for r in conn.execute(
+            """SELECT bs.bill_id, bs.label, b.submitted_date, b.period_number
+               FROM bill_sponsor bs JOIN bill b ON b.id = bs.bill_id
+               WHERE bs.person_id IS NULL AND bs.label LIKE 'kormány (%'"""):
+        slug = slug_for(r["label"])
+        if slug:
+            links.setdefault(
+                (slug, r["bill_id"], "submitted"),
+                (r["label"], r["submitted_date"],
+                 cycle_of(r["submitted_date"], r["period_number"])))
+
+    # 3. spoken for — the office a speaker actually spoke in. Only the cycles
+    # scraped since `speaker_office` was added carry it (MIN-10), so this half is
+    # partial by construction; the API discloses which cycles it covers rather
+    # than letting an empty list read as silence.
+    speeches = []
+    for r in conn.execute(
+            "SELECT uid, speaker_office FROM speech "
+            "WHERE speaker_office IS NOT NULL AND speaker_office <> ''"):
+        slug = slug_for(r["speaker_office"])
+        if slug:
+            speeches.append((slug, r["uid"]))
+
+    # 4. who held it — the registry's dated terms (REP-2a) under their tárca.
+    try:
+        office_rows = list(conn.execute(
+            "SELECT person_id, title, category, date_start, date_end FROM person_office "
+            # `person_office` carries the same term from two sources (REP-2a): the
+            # all-time registry and the per-MP roster's own list. Only the registry
+            # copy is categorised, so an undeduped read lists a minister twice — once
+            # under "miniszter" and again under "egyéb tisztség". The registry copy
+            # wins, exactly as it does on the profile.
+            "ORDER BY source = 'registry' DESC"))
+    except sqlite3.OperationalError:        # a DB built before person_office
+        office_rows = []
+    offices = []
+    seen_terms: set = set()
+    for r in office_rows:
+        term = (r["person_id"], r["title"], r["date_start"])
+        if term in seen_terms:
+            continue
+        seen_terms.add(term)
+        # An office term is not itself corpus activity, so it must not decide a
+        # tárca's rank on the listing page — resolve without adding weight.
+        p = portfolios.resolve(r["title"])
+        if p is None:
+            continue
+        used.setdefault(p.slug, p)
+        alias_of.setdefault(portfolios.normalize_label(r["title"]), p.slug)
+        offices.append((p.slug, r["person_id"], r["title"], r["category"],
+                        r["date_start"], r["date_end"]))
+
+    # The portfolios themselves, ranked within their kind by how much of the
+    # corpus stands behind them — the listing's default order (MIN-5). Written
+    # first: every link table points at this one.
+    order = sorted(used.values(), key=lambda p: (portfolios.KINDS.index(p.kind)
+                                                 if p.kind in portfolios.KINDS else 99,
+                                                 -weight[p.slug], p.name))
+    conn.executemany(
+        "INSERT INTO portfolio(slug, name, kind, ord) VALUES (?,?,?,?)",
+        [(p.slug, p.name, p.kind, i) for i, p in enumerate(order)])
+    conn.executemany(
+        "INSERT OR IGNORE INTO portfolio_alias(label, portfolio_slug) VALUES (?,?)",
+        list(alias_of.items()))
+    conn.executemany(
+        "INSERT INTO portfolio_bill(portfolio_slug, bill_id, role, label, event_date, "
+        "period_number) VALUES (?,?,?,?,?,?)",
+        [(s, b, role, lab, d, per)
+         for (s, b, role), (lab, d, per) in links.items()])
+    conn.executemany("INSERT OR IGNORE INTO portfolio_speech(portfolio_slug, speech_uid) "
+                     "VALUES (?,?)", speeches)
+    conn.executemany(
+        "INSERT INTO portfolio_office(portfolio_slug, person_id, title, category, "
+        "date_start, date_end) VALUES (?,?,?,?,?,?)", offices)
+    conn.commit()
+
+    if unmapped:
+        logger.warning(
+            "Portfolio table does not cover %d label(s); each stands alone as its "
+            "own tárca — add them to app/portfolios.py: %s", len(unmapped),
+            ", ".join(f"{lab!r} ({n})" for lab, n in unmapped.most_common(10)))
+    logger.info("Rebuilt %d portfolios (%d iromány links, %d speeches, %d office terms)",
+                len(order), len(links), len(speeches), len(offices))
+    return len(order)
+
+
+# ---------------------------------------------------------------------------
 # Aggregates (rebuilt every run — REP-7)
 # ---------------------------------------------------------------------------
 
@@ -1128,6 +1379,9 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
     conn.commit()
     rebuild_word_doc_freq(conn)
     rebuild_word_first_seen(conn)
+    # Derived from the bill/speech/office rows just loaded (§6C), so it belongs
+    # to the same rebuild pass — never to a request.
+    rebuild_portfolios(conn)
     logger.info("Rebuilt aggregate tables")
 
 

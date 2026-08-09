@@ -1373,6 +1373,204 @@ header).
 
 ---
 
+## 6C. Functional Requirements — Module: Portfolios (Tárcák / minisztériumok)
+
+Almost everything the House puts to the executive is addressed to a **tárca** — a
+ministry, or a portfolio held by a *tárca nélküli miniszter* — and almost
+everything the government puts to the House comes back through one. The corpus
+already records that relationship in four separate places, but only ever as a
+**free-text office label** on a row, never as an entity: so the most natural
+question a citizen has about the government side of the record — *what was put to
+this ministry, and what did it put to the House* — cannot be asked at all today.
+A reader who wants the interior ministry's year has to recognise
+*„Belügyminisztérium államtitkára”*, *„belügyminiszter”* and *„kormány
+(belügyminiszter)”* as the same thing by eye, across 67 000 irományok.
+
+This module makes the portfolio a **browsable dimension of its own**, in both
+directions: what **arrived at** a tárca (questions, interpellations, the speeches
+answering them) and what **came from** it (the irományok it submitted, the
+speeches its minister and state secretaries gave).
+
+- **MIN-1 (MUST).** The unit is the **portfolio**, not the person and not the
+  office title: one entity per *tárca* (Belügyminisztérium, Agrárminisztérium,
+  Miniszterelnökség, …), to which the corpus's many surface forms of the same
+  thing resolve — the ministry noun (*„Belügyminisztérium államtitkára”*), the
+  minister's title (*„belügyminiszter”*), the older adjectival form
+  (*„közigazgatási és igazságügyi minisztériumi államtitkár”*) and the
+  government-submitter parenthetical (*„kormány (belügyminiszter)”*) are one
+  portfolio, not four. A **person is not a portfolio**: ministers change, the
+  tárca persists, and the office-holder registry (REP-2a/REP-11) already dates who
+  held it when — so the portfolio **links to** those people rather than duplicating
+  them (EXT-2).
+- **MIN-2 (MUST).** A portfolio is linked to the corpus **four ways**, each from
+  data the corpus already holds:
+  1. **addressed to** — the iromány's *címzett* (MIN-4), i.e. every kérdés,
+     interpelláció and azonnali kérdés put to that tárca, answered or not;
+  2. **answered by** — the responding office named on the answer event
+     (`bill_event.related_label` on *kérdés/interpelláció … megválaszolva*),
+     which today drives the Kérdések Sankey's answerer column (BILL-11);
+  3. **submitted by** — the government submitter on an iromány
+     (`bill_sponsor.label` of the form *„kormány (…)”*), i.e. the bills and other
+     writings the tárca itself laid before the House;
+  4. **spoken for** — the plenary speeches whose speaker spoke **in** that office
+     (`speech.speaker_office`, §4.1), so a tárca's own voice in the debate is part
+     of its page.
+  Links 2–4 need **no new scraping whatsoever**; link 1 needs two extra fields
+  from a query the scraper already runs (MIN-4).
+- **MIN-3 (MUST).** Resolution from label to portfolio is **auditable and
+  configurable, never silently inferred** (OPS-4 / TRUST-1). The label space is
+  small and closed enough to be checked by hand — corpus-wide the answer events
+  use **94 distinct responder labels**, the government submitters **47**, the
+  speeches **55** — so the mapping is a **checked-in table, seeded from the data**
+  and reviewable in one sitting, not a morphological guess at runtime. Its rules:
+  - A label the table does not cover **stands as its own portfolio** under its own
+    name. An unmapped tárca is a visible gap to be fixed in the table; silently
+    folding it into a neighbour, or dropping it, would misreport the record.
+  - **Non-ministry state bodies are kept and labelled as such**, not discarded and
+    not called ministries: the House also addresses the *legfőbb ügyész* (1 215
+    answers), the *Magyar Nemzeti Bank elnöke*, the *Állami Számvevőszék elnöke*
+    and the *alapvető jogok biztosa*. They belong to the same view — a reader
+    looking for "who answers to Parliament" wants them — under their own category.
+  - A **tárca nélküli miniszter** is a portfolio in its own right, keyed by its
+    parenthesised remit (*„tárca nélküli miniszter (családokért felelős)”*),
+    because that remit is the thing questions are addressed to.
+  - Matching is **accent- and case-insensitive** (§4B FOLD-3), since the same
+    tárca appears both capitalised as an institution and lowercased as a title.
+- **MIN-4 (MUST).** The iromány's **addressee (*címzett*) is captured** at
+  ingestion. Upstream carries it on the per-iromány header sheet the scraper
+  **already fetches for every document** (`onallo-iromany-adatlap-for-intra-query`,
+  BILL-7) as a `cimzettNeve` sub-table of `(nev, allamiSzerv)` — the **office
+  addressed** (*„belügyminiszter”*) and the **state organ** it belongs to
+  (*„Belügyminisztérium”*) — so capturing it costs **no additional request**, only
+  two more mapped fields. It matters beyond convenience for two reasons: it is the
+  only record of the tárca a question was put to when the question is **still
+  unanswered** (~8% of the corpus's questions, and by definition every pending one
+  in the live cycle), and its `(nev, allamiSzerv)` pairing is **upstream's own
+  statement** of which office belongs to which organ — the ground truth MIN-3's
+  table is seeded from, rather than a rule we invented.
+  - Because the detail sheets already scraped were cached (SCR-2) before this
+    field existed, a **targeted backfill** re-runs the header query alone for
+    documents missing an addressee — one cheap request per document, not the ~9 of
+    a full detail re-fetch, and skippable entirely for a corpus that does not want
+    it (the module degrades to link 2 alone, MIN-10).
+- **MIN-4a (MUST).** A link belongs to the cycle it **happened in** — the date the
+  tárca answered or submitted — **not** to the cycle its iromány is filed under.
+  `parlament.hu` re-lists an iromány that is still in progress under the **new**
+  cycle, so a bill the government submitted in 2024 comes back as a cycle-43 row.
+  Attributed to its parent's cycle, a ministry **abolished** at the change of
+  government reappears in the new cycle's listing on the strength of a document it
+  filed two years earlier — which reads as a claim that the ministry still exists.
+  The count and the **document list behind it are scoped the same way**, so the two
+  can never disagree (cf. VOTE-6); a link whose date resolves to no known cycle
+  keeps its iromány's, so the date rule can never drop it out of every scope.
+- **MIN-5 (MUST).** A **browsable list of portfolios**, carried as its **own page
+  in the Representatives section's tab bar** (§REP-9's precedent, beside the
+  office holders of REP-11 — the tárca is the institution those offices belong to,
+  so the two are read together), scoped by the global cycle selector (§4A) and
+  ordered by activity: each row names the tárca, **who held it in scope** (linked
+  to their profiles, REP-2), and its headline counts — irományok addressed to it,
+  irományok it submitted, plenary speeches in its name. Its text filter is
+  accent-insensitive (§4B FOLD-1). Non-ministry bodies (MIN-3) are grouped apart
+  from the ministries so the list reads as what it is.
+- **MIN-6 (MUST).** A **portfolio profile** at its own deep-linkable URL, showing:
+  - the tárca's **office holders** in scope — minister and state secretaries, each
+    with the dates of their term (REP-2a) and a link to their profile. Scoped by
+    the term's **start**, not by REP-11's overlap: an outgoing government serves
+    until the new one is sworn in, so every one of its ministers overlaps the
+    cycle that replaced them, and by overlap a ministry's panel for a new cycle
+    opens with the *previous* government's whole bench above the people actually
+    running it. The exception is a term that is **still open**, kept whenever it
+    began before the scope ended — the offices deliberately not synchronised with
+    the House (the MNB's governor and deputies, the ombudsman, the Állami
+    Számvevőszék, the legfőbb ügyész) run six to nine years across cycle
+    boundaries, and a start-date-only rule would empty their panels of the very
+    people holding them now;
+  - **what was put to it**: the questions/interpellations addressed to it,
+    paginated and newest-first, each showing its asker (linked, EXT-2), its
+    status — **answered in plenary / answered in writing / still unanswered** —
+    and linking to the iromány detail (BILL-2);
+  - **what it submitted**: the irományok the government laid before the House
+    through it, reusing the bills list rows (BILL-1/BILL-9);
+  - **what it said**: the plenary speeches given in its offices, each linking into
+    the viewer (VIE-5), subject to MIN-10's coverage caveat;
+  - a small **over-time chart** of questions received, which honours the cycle
+    scope and is **embeddable** (§4C).
+- **MIN-7 (SHOULD).** The portfolio is also a **filter on the views that already
+  exist**, so a reader who is on the irományok page does not have to leave it: the
+  bills and egyéb-irományok lists (BILL-1/BILL-9) gain a portfolio filter in
+  **both senses** — *addressed to* and *submitted by* — held in the **URL query**
+  like every other filter (§CYC-5), and the Kérdések Sankey's answerer nodes
+  (BILL-11) **link to the portfolio's profile**, so the diagram becomes a way in
+  rather than a terminus. The Sankey's answerer grouping MUST then be the **same
+  resolution** as MIN-3 rather than the raw labels it groups by today, so the
+  diagram and the profile can never disagree about who answered what.
+- **MIN-8 (SHOULD).** The profile carries the two figures a tárca is actually
+  accountable for: **how many of the questions put to it were answered**, and
+  **how long it took** (submission → answer event, median). Both are computed only
+  over questions whose outcome is on record, both state their method (TRUST-1),
+  and neither is presented as a score or a ranking of ministries against one
+  another (§1.2 — no editorializing). A question still within its statutory answer
+  deadline is **pending, not late**, and is counted as such.
+- **MIN-9 (MUST).** **Renames are disclosed, never silently merged.** Hungarian
+  ministries are renamed, split and merged at nearly every change of government
+  (*Nemzeti Erőforrás Minisztérium* → *Emberi Erőforrások Minisztériuma* → carved
+  up in 2022), and upstream's own `allamiSzerv` sometimes files an office under a
+  **successor** organ rather than the one that existed at the time — the same
+  *„nemzetgazdasági miniszter”* comes back under both *Nemzetgazdasági
+  Minisztérium* and *Gazdaságfejlesztési Minisztérium*. Therefore:
+  - a portfolio is labelled with the name **in use in the cycle being viewed**,
+    not today's name back-projected onto history;
+  - where the mapping table records a **rename**, the profile says so and links
+    the predecessor/successor, so a reader can follow the thread themselves;
+  - the site never asserts a **merge or split** as an identity. Continuity that
+    the source does not state is a claim about machinery-of-government, not a
+    data fact, and belongs to the reader.
+- **MIN-10 (coverage & degradation).** Each link kind degrades on its own, and the
+  page says which one is thin rather than showing a confident zero:
+  - links 2 and 3 are **complete today** across all five cycles — 92% of the
+    corpus's 58 840 question-type irományok already carry a named responder
+    (54 252), and all 2 461 government-submitted irományok carry their tárca in
+    the submitter label;
+  - link 1 arrives with the backfill (MIN-4) and is **absent, not empty**, until
+    then;
+  - link 4 is **partial by construction**: `speech.speaker_office` is populated
+    only for the cycles scraped since it was added (39 and 43), so the other
+    cycles show **no** speech attribution rather than an implied silence, until a
+    re-scrape (SCR-2) fills them. The profile states the coverage it is drawing on.
+- **MIN-10a (v1 scope).** v1 is built **entirely from data already in the
+  database** — links 2, 3 and 4 (MIN-2) — so it ships with **no scraper change and
+  no re-scrape**: the resolution table, the derived tables, the API, the two pages
+  and the MIN-7 filters all read rows the loader already writes. **MIN-4's
+  addressee is deferred**, and with it the *addressed to* sense of the MIN-7
+  filter and the unanswered questions on a profile: until it lands, "what was put
+  to this tárca" means the questions it **answered**, and the page says so rather
+  than implying the set is complete. Adding MIN-4 later is purely additive — two
+  fields on a query the scraper already runs, plus the backfill.
+- **MIN-11 (MUST).** The module is a self-contained vertical slice per EXT-1..6:
+  its own loader step and `portfolio` / `portfolio_alias` / iromány-link tables
+  derived from the shared `bill`, `bill_event`, `bill_sponsor`, `speech` and
+  `person_office` rows (EXT-2 — no duplication of them), `/api/v1/portfolios`
+  routes, and its own frontend views. It **owns no scraping of its own** beyond
+  MIN-4's two fields on an existing query. Disabling it via `PARLAMONITOR_MODULES`
+  removes its nav entry, routes and the MIN-7 filters — no errors (EXT-6) — and
+  the module is itself dependent on Bills (§6A): with Bills disabled it hides the
+  iromány halves rather than failing.
+  > **✅ realized (v1, per MIN-10a).** `app/portfolios.py` holds the reviewed
+  > table — 92 tárcák over the corpus's 240 distinct office labels, with the
+  > personal commissions excluded by name — and the loader's `rebuild_portfolios`
+  > derives `portfolio` / `portfolio_alias` / `portfolio_bill` / `portfolio_speech`
+  > / `portfolio_office` from rows the other modules already wrote (56 758 iromány
+  > links, 6 864 speeches, 930 office terms; `migrate_portfolios.py` builds them
+  > into a live DB with no re-scrape and no full rebuild). `/api/v1/portfolios`
+  > serves the listing, the profile, the year trend and the speech panel; the
+  > iromány panels are `/api/v1/bills?portfolio=…&portfolio_role=…` (MIN-7), so
+  > there is one list implementation. The pages sit in the Representatives tab bar
+  > as *Tárcák*, and the **Kérdések Sankey now groups its answerer column by the
+  > same resolution** — before this a single ministry occupied two nodes, one for
+  > its minister and one for its state secretary.
+
+---
+
 ## 7. Extensibility — Module Architecture
 
 The site must accommodate new data domains (next likely: **Bills/irományok**,
@@ -1439,6 +1637,18 @@ rework of existing features.
 > decoupled and either can be re-ingested independently (EXT-1). These two
 > modules stand as the worked examples for the remaining domains (committees,
 > interpellations).
+>
+> The **Portfolios module (§6C)** is the third, and the first to be built with
+> *no source of its own at all*: it owns no scraper stage and no source file,
+> deriving its five `portfolio*` tables at load time from rows the proceedings,
+> representatives and bills modules already wrote (EXT-2). Its cross-module reads
+> follow the established pattern — resolved through shared keys at query time, not
+> foreign keys into another module's tables — and its one intrusion into a
+> neighbour is additive: `/api/v1/bills` gained a `portfolio` filter, which
+> answers empty rather than erroring on a DB whose tables predate the module. Its
+> pages are mounted in the Representatives section's tab bar while remaining a
+> separately switchable module, which is the first time the two have come apart:
+> a section's tab bar is a navigation choice, not a module boundary.
 
 ---
 

@@ -256,6 +256,10 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
         "Tisztségviselők",
         "Az Országgyűlés tisztségviselői ciklusról ciklusra: házelnökök, "
         "alelnökök, jegyzők és háznagyok."),
+    "/representatives/portfolios": (
+        "Tárcák",
+        "Melyik minisztériumhoz milyen kérdések érkeztek, melyik tárca mit "
+        "nyújtott be a Ház elé, és kik vezették."),
     "/representatives/lookup": (
         "Ki a képviselőm?",
         "Keresd meg a saját választókerületedet és az ott megválasztott "
@@ -507,6 +511,25 @@ def _bill_body(b, sponsors: list[tuple[str, str | None]], title: str) -> str:
     return _wrap(body)
 
 
+def _portfolio_body(name: str, kind_hu: str, counts: dict,
+                    holders: list) -> str:
+    """The tárca's headline figures and who led it — the facts a crawler (and a
+    reader with JS off) can see without the SPA."""
+    facts = [_esc(kind_hu)]
+    if counts.get("answered"):
+        facts.append(f"{counts['answered']} megválaszolt kérdés")
+    if counts.get("submitted"):
+        facts.append(f"{counts['submitted']} benyújtott iromány")
+    if counts.get("speeches"):
+        facts.append(f"{counts['speeches']} felszólalás")
+    body = f"<h1>{_esc(name)}</h1><p>" + " · ".join(facts) + "</p>"
+    if holders:
+        body += "<h2>A tárca vezetői</h2><ul>" + "".join(
+            "<li>" + _link(f"/representatives/{pid}", nm) + " – " + _esc(title)
+            + "</li>" for pid, nm, title in holders) + "</ul>"
+    return _wrap(body)
+
+
 def _vote_body(v, subjects: list, title: str) -> str:
     """The vote's result and tally, with the irományok it decided linked."""
     counts = " · ".join(
@@ -732,6 +755,61 @@ def register(app) -> None:
                 body=_profile_body(db, person_id, p))
         except sqlite3.Error:
             return plain(request)
+
+    @app.get("/representatives/portfolios/{slug}", response_class=HTMLResponse,
+             include_in_schema=False)
+    def share_portfolio(slug: str, request: Request,
+                        db: sqlite3.Connection = Depends(get_db)):
+        """Metadata for one tárca's page (§6C). Registered as its own two-segment
+        route: `/representatives/{person_id}` never sees it, and without this the
+        page would fall through to the bare app shell with the generic site card.
+        A DB with no portfolio tables yet answers the generic card rather than a
+        500 (EXT-6)."""
+        try:
+            p = db.execute("SELECT slug, name, kind FROM portfolio WHERE slug = ?",
+                           (slug,)).fetchone()
+        except sqlite3.Error:
+            return plain(request)
+        if not p:
+            return _missing(request)
+        try:
+            counts = {}
+            for role in ("answered", "submitted"):
+                counts[role] = db.execute(
+                    "SELECT COUNT(*) c FROM portfolio_bill "
+                    "WHERE portfolio_slug = ? AND role = ?", (slug, role)).fetchone()["c"]
+            counts["speeches"] = db.execute(
+                "SELECT COUNT(*) c FROM portfolio_speech WHERE portfolio_slug = ?",
+                (slug,)).fetchone()["c"]
+            holders = [
+                (r["person_id"], r["name"], r["title"]) for r in db.execute(
+                    """SELECT po.person_id, po.title, p.label AS name
+                         FROM portfolio_office po
+                         JOIN person p ON p.person_id = po.person_id
+                        WHERE po.portfolio_slug = ?
+                        ORDER BY CASE po.category WHEN 'pm' THEN 0
+                                                  WHEN 'minister' THEN 1 ELSE 2 END,
+                                 po.date_start DESC
+                        LIMIT 8""", (slug,))]
+        except sqlite3.Error:
+            return plain(request)
+
+        kind_hu = {"ministry": "Minisztérium", "pm": "Miniszterelnök",
+                   "no-portfolio": "Tárca nélküli miniszter",
+                   "body": "Független állami szerv"}.get(p["kind"], "Kormányzati tisztség")
+        title = f"{p['name']} – kérdések és irományok"
+        description = (
+            f"{p['name']}: {counts['answered']} megválaszolt képviselői kérdés, "
+            f"{counts['submitted']} benyújtott iromány és a tárca vezetőinek "
+            "felszólalásai a Parlamonitoron.")
+        return render(
+            request, title=_truncate(title, 120),
+            description=_truncate(description),
+            url_path=f"/representatives/portfolios/{slug}", og_type="article",
+            jsonld=[_breadcrumbs(request, [
+                ("Parlamonitor", "/"), ("Tárcák", "/representatives/portfolios"),
+                (_truncate(p["name"], 60), f"/representatives/portfolios/{slug}")])],
+            body=_portfolio_body(p["name"], kind_hu, counts, holders))
 
     @app.get("/sessions/{session_id}", response_class=HTMLResponse,
              include_in_schema=False)

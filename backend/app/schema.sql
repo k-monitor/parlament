@@ -669,3 +669,70 @@ CREATE TABLE metric_distribution (
     n      INTEGER,            -- speeches behind the distribution
     PRIMARY KEY (metric, q)
 ) WITHOUT ROWID;
+
+-- ---------------------------------------------------------------------------
+-- Portfolios (tárcák) — the government side of the corpus (§6C)
+-- ---------------------------------------------------------------------------
+-- Derived tables, rebuilt wholesale by the loader from rows the other modules
+-- already wrote (EXT-2): no new scraping and no source of their own. The tárca a
+-- label names comes from `app/portfolios.py`, the one place that says which of
+-- the corpus's four label spaces means which tárca (MIN-3).
+
+CREATE TABLE portfolio (
+    slug TEXT PRIMARY KEY,     -- stable id, used in URLs
+    name TEXT NOT NULL,        -- canonical Hungarian name
+    kind TEXT NOT NULL,        -- ministry | pm | no-portfolio | other | body
+    ord  INTEGER               -- display order (by corpus weight) within a kind
+);
+
+-- Every corpus label that resolved to a tárca, materialised so the mapping is
+-- auditable in the database itself and not only in the code (TRUST-1).
+CREATE TABLE portfolio_alias (
+    label          TEXT PRIMARY KEY,   -- the label as the corpus writes it
+    portfolio_slug TEXT NOT NULL REFERENCES portfolio(slug)
+);
+
+-- An iromány's link to a tárca. `role` says in which direction:
+--   'answered'  — the tárca answered this kérdés/interpelláció (bill_event)
+--   'submitted' — the government laid it before the House through this tárca
+-- (MIN-4's 'addressed' role is not populated yet — see MIN-10a.)
+CREATE TABLE portfolio_bill (
+    portfolio_slug TEXT NOT NULL REFERENCES portfolio(slug),
+    bill_id        TEXT NOT NULL REFERENCES bill(id),
+    role           TEXT NOT NULL,
+    label          TEXT,               -- the label this link was resolved from
+    event_date     TEXT,               -- when the tárca acted: answered / submitted
+    -- The cycle this link *happened in*, derived from `event_date` — NOT the cycle
+    -- the parent iromány is filed under. parlament.hu re-lists an iromány that is
+    -- still in progress under the new cycle, so a bill the government submitted in
+    -- 2024 comes back as a cycle-43 row; counted by the parent's cycle, a ministry
+    -- abolished in 2026 reappears in the 2026 listing on the strength of a document
+    -- it filed two years earlier. Falls back to the parent's cycle when the link
+    -- carries no date of its own.
+    period_number  INTEGER,
+    PRIMARY KEY (portfolio_slug, bill_id, role)
+) WITHOUT ROWID;
+CREATE INDEX idx_portfolio_bill_bill ON portfolio_bill(bill_id);
+CREATE INDEX idx_portfolio_bill_period
+    ON portfolio_bill(portfolio_slug, role, period_number);
+
+-- A plenary speech given in one of the tárca's offices (speech.speaker_office).
+CREATE TABLE portfolio_speech (
+    portfolio_slug TEXT NOT NULL REFERENCES portfolio(slug),
+    speech_uid     TEXT NOT NULL REFERENCES speech(uid),
+    PRIMARY KEY (portfolio_slug, speech_uid)
+) WITHOUT ROWID;
+CREATE INDEX idx_portfolio_speech_speech ON portfolio_speech(speech_uid);
+
+-- Who held the tárca's offices and when — the office-holder registry's terms
+-- (REP-2a) filed under the tárca they belong to.
+CREATE TABLE portfolio_office (
+    portfolio_slug TEXT NOT NULL REFERENCES portfolio(slug),
+    person_id      TEXT NOT NULL REFERENCES person(person_id),
+    title          TEXT NOT NULL,
+    category       TEXT,
+    date_start     TEXT,
+    date_end       TEXT
+);
+CREATE INDEX idx_portfolio_office_slug ON portfolio_office(portfolio_slug);
+CREATE INDEX idx_portfolio_office_person ON portfolio_office(person_id);

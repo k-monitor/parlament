@@ -76,6 +76,13 @@ export const api = {
   factions: (period) => get('/representatives/factions', { period }),
   // Tisztségviselők (REP-11): one row per office term, not per person.
   officials: (params) => get('/representatives/officials', params),
+  // Tárcák (§6C). Its own module, but its pages sit in the Representatives tab
+  // bar (MIN-5). A tárca's iromány lists are `bills()` with `portfolio=` (MIN-7)
+  // rather than endpoints of their own.
+  portfolios: (params) => get('/portfolios', params),
+  portfolio: (slug, period) => get(`/portfolios/${slug}`, { period }),
+  portfolioTrend: (slug, period) => get(`/portfolios/${slug}/trend`, { period }),
+  portfolioSpeeches: (slug, params) => get(`/portfolios/${slug}/speeches`, params),
   // "Who represents me?" (REP-10). Not period-scoped: constituency boundaries are
   // redrawn between elections, so the answer belongs to the cycle the boundary data
   // elects, which the response names.

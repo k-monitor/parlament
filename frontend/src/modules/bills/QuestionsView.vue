@@ -71,6 +71,7 @@ const nodes = computed(() => (data.value ? data.value.nodes.map((n) => ({
   faction_id: n.faction_id ?? null,
   main_type: n.main_type ?? null,
   ministry: n.side === 'answerer' && n.kind === 'ministry' ? n.label : null,
+  slug: n.slug || null,
   label: nodeLabel(n),
   color: n.color || (n.side === 'asker' ? 'var(--accent)' : '#9c9188'),
 })) : []))
@@ -145,6 +146,15 @@ function applyNode(n, filt) {
   else filt.faction = n.faction_id != null ? n.faction_id : 'none'
 }
 
+// The tárca a drilled-into answerer belongs to, when it is a named one and the
+// portfolios module is on — the diagram then becomes a way *into* that
+// ministry's page rather than a terminus (§6C / MIN-7).
+function portfolioOf(...ns) {
+  if (!store.moduleEnabled('portfolios')) return null
+  const n = ns.find((x) => x && x.side === 'answerer' && x.slug)
+  return n ? { slug: n.slug, label: n.label } : null
+}
+
 // A stage-1 ribbon (faction → type) fixes faction + type; a stage-2 ribbon
 // (type → answerer) fixes type + answerer.
 function onSelect(sel) {
@@ -155,6 +165,7 @@ function onSelect(sel) {
   flow.value = {
     linkIndex: sel.index, nodeIndex: -1, ...filt,
     segs: [{ label: src.label, color: src.color }, { label: tgt.label, color: null }],
+    portfolio: portfolioOf(src, tgt),
   }
   flowOffset.value = 0
   loadFlow()
@@ -169,6 +180,7 @@ function onSelectNode(sel) {
   flow.value = {
     linkIndex: -1, nodeIndex: sel.index, ...filt,
     segs: [{ label: n.label, color: n.side === 'asker' ? n.color : null }],
+    portfolio: portfolioOf(n),
   }
   flowOffset.value = 0
   loadFlow()
@@ -278,7 +290,13 @@ watch(() => route.query.all, (v) => {
               <span :style="seg.color ? { color: seg.color } : undefined">{{ seg.label }}</span>
             </template>
           </h2>
-          <button type="button" class="btn secondary small" @click="clearFlow">✕ {{ $t('questions.close') }}</button>
+          <div class="flowactions">
+            <RouterLink
+              v-if="flow.portfolio" class="btn secondary small"
+              :to="{ name: 'portfolio', params: { slug: flow.portfolio.slug } }"
+            >{{ $t('questions.openPortfolio') }}</RouterLink>
+            <button type="button" class="btn secondary small" @click="clearFlow">✕ {{ $t('questions.close') }}</button>
+          </div>
         </div>
 
         <StateBlock
@@ -338,6 +356,7 @@ watch(() => route.query.all, (v) => {
 .flowpanel { margin-top: 1.5rem; scroll-margin-top: 5rem; }
 .flowhead { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: .5rem; }
 .flowhead h2 { margin: 0; font-size: 1.15rem; }
+.flowactions { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
 .arrow { color: var(--ink-soft); }
 .billlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
 .billcard { display: flex; flex-direction: column; gap: .4rem; }

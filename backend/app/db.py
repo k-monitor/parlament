@@ -15,6 +15,8 @@ import os
 import sqlite3
 import threading
 import unicodedata
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -96,6 +98,60 @@ def period_and(period: Iterable[int] | None, column: str) -> str:
 def period_key(period: Iterable[int] | None) -> tuple[int, ...]:
     """Hashable canonical scope, for aggregate cache keys (``()`` = all cycles)."""
     return tuple(period_list(period))
+
+
+# Office terms are stored as the **UTC instants** upstream reports (a term
+# beginning on 9 May 2026 arrives as "2026-05-08T22:00:00Z" — local midnight in
+# CEST), while an electoral cycle is bounded by plain **local dates**. Comparing
+# the two by date prefix is off by a day for exactly the timestamps this data is
+# full of: every House office begins at the first local midnight of a cycle, so a
+# prefix comparison files that whole opening cohort under the *previous* cycle.
+# The bounds are therefore converted to instants and compared as instants — ISO-8601
+# UTC strings in one fixed format sort as the instants they denote.
+_HU_TZ = "Europe/Budapest"
+
+
+def local_instant(day: str, *, end_of_day: bool = False) -> str:
+    """A local calendar date as the UTC instant of its first (or last) second,
+    formatted like the stored timestamps: ``2026-05-09`` → ``2026-05-08T22:00:00Z``.
+
+    Falls back to CEST (UTC+2) if the platform has no tz database — every Hungarian
+    electoral cycle has begun in May, so that is the right offset for every boundary
+    this actually compares, and it is only ever a fallback."""
+    try:
+        tz = ZoneInfo(_HU_TZ)
+    except Exception:                     # no tzdata on this platform
+        tz = timezone(timedelta(hours=2))
+    t = time(23, 59, 59) if end_of_day else time(0, 0, 0)
+    local = datetime.combine(date.fromisoformat(day), t, tzinfo=tz)
+    return local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def period_bounds(db: sqlite3.Connection,
+                   periods: list[int]) -> Optional[tuple[Optional[str], Optional[str]]]:
+    """The ``(first instant, last instant)`` spanned by ``periods``, in UTC.
+
+    Office terms are dated, not numbered by cycle, so scoping them to the global
+    cycle selection (§4A) means overlapping them with the cycles' span. A still-
+    running cycle has no end date — returned as ``None``, i.e. open at that end;
+    with no ``periods`` at all ("all cycles") both ends are open.
+
+    Returns ``None`` — distinct from an open-ended range — when the requested
+    cycles are ones this DB cannot date. Nothing can be said to overlap them, and
+    the caller must answer empty rather than fall back to listing everything."""
+    if not periods:
+        return None, None
+    rows = db.execute(
+        "SELECT date_start, date_end FROM electoral_period "
+        f"WHERE {period_sql(periods, 'number')}").fetchall()
+    starts = [r["date_start"] for r in rows if r["date_start"]]
+    if not rows or not starts:
+        return None
+    # An open-ended cycle in scope leaves the whole range open-ended.
+    ends = [r["date_end"] for r in rows]
+    return (local_instant(min(starts)),
+            (local_instant(max(ends), end_of_day=True) if all(ends) else None))
+
 
 
 def open_connection(db_path: str | None = None) -> sqlite3.Connection:

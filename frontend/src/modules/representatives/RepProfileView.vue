@@ -358,7 +358,7 @@ watch(() => store.cycles.join(','), load)
                 <a v-if="profile.kmonitor_url" :href="profile.kmonitor_url" target="_blank" rel="noopener"><span class="link-badge" aria-hidden="true"><img src="/kmonitor-badge.png" alt="" /></span> {{ $t('profile.kmonitor') }}</a>
                 <!-- The CV the MP had the House publish (REP-13) — a parlament.hu
                      PDF, so it sits with the other outbound identity links. -->
-                <a v-if="profile.cv_url" :href="profile.cv_url" target="_blank" rel="noopener">📄 {{ $t('profile.cv') }} (PDF)</a>
+                <a v-if="profile.cv_url" :href="profile.cv_url" target="_blank" rel="noopener">{{ $t('profile.cv') }} (PDF)</a>
               </div>
             </div>
           </div>
@@ -509,7 +509,7 @@ watch(() => store.cycles.join(','), load)
             <ul class="plain">
               <li v-for="(d, i) in shown(declarations, 'declarations')" :key="i" class="small">
                 <a v-if="d.url" :href="d.url" target="_blank" rel="noopener">
-                  📄 {{ d.title || $t('profile.assetDeclarations') }} (PDF)
+                  {{ d.title || $t('profile.assetDeclarations') }} (PDF)
                 </a>
                 <span v-else>
                   {{ d.title || $t('profile.assetDeclarations') }}

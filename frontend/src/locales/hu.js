@@ -332,12 +332,7 @@ export default {
   // érkezett, és melyik tárca mit nyújtott be.
   portfolios: {
     title: 'Tárcák',
-    intro: 'Melyik minisztériumhoz milyen kérdések és interpellációk érkeztek, '
-      + 'melyik tárca milyen irományokat nyújtott be a Ház elé, és mit mondtak a '
-      + 'miniszterei a plenáris ülésen. A tárca a hozzá tartozó tisztségek '
-      + 'intézménye: a miniszteri, államtitkári és minisztériumi megnevezések – '
-      + '„belügyminiszter”, „Belügyminisztérium államtitkára”, „kormány '
-      + '(belügyminiszter)” – egyetlen tárcához tartoznak.',
+    intro: 'Ez az oldal a minisztériumok alá tartozó kormányzati tisztségeket hivatott egységesíteni.',
     unit: 'tárca',
     searchPlaceholder: 'Keresés tárca neve szerint…',
     scope: 'a(z) {cycle} ciklusban',
@@ -350,8 +345,7 @@ export default {
       other: 'Egyéb kormányzati tisztségek',
       body: 'Független állami szervek',
     },
-    bodyNote: 'Nem a kormány részei, de a Háznak felelnek, és ugyanúgy '
-      + 'válaszolnak a képviselői kérdésekre.',
+    bodyNote: 'Nem a kormány részei.',
     answered: 'megválaszolt kérdés',
     submitted: 'benyújtott iromány',
     speeches: 'felszólalás',

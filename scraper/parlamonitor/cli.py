@@ -487,9 +487,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="politeness delay between requests (s)")
         sp.add_argument("--retry-count", type=int, default=None)
         sp.add_argument("--captcha-retries", type=int, default=None,
-                        help="how many hourly retries to spend waiting out a "
+                        help="how many 10-minute retries to spend waiting out a "
                              "CAPTCHA (rate-limit) wall before abandoning the "
-                             "run (default 5)")
+                             "run (default 9, i.e. ~1.5h)")
         sp.add_argument("--proxy", type=str, default=None)
         sp.add_argument("--ssh-host", default=None,
                         help="route parlament.hu traffic through this SSH host "

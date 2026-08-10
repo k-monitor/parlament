@@ -14,9 +14,9 @@
 #   (politeness knobs PARLAMONITOR_SLEEP / _RETRY_COUNT / _PROXY / _SSH_* apply)
 #
 # A pass that gets rate-limited (parlament.hu serves a CAPTCHA page instead of
-# data) waits for the next whole clock hour and retries, so it may sit idle for
-# hours before exiting 3 — deliberate, not a hang. The DB is reconciled either
-# way, with whatever the scrape managed to write.
+# data) retries every 10 minutes, so it may sit idle for up to ~1.5h before
+# exiting 3 — deliberate, not a hang. The DB is reconciled either way, with
+# whatever the scrape managed to write.
 set -eu
 
 DB="${PARLAMONITOR_DB:-/db/parlamonitor.db}"

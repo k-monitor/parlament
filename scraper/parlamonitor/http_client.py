@@ -8,10 +8,9 @@ uniformly.
 
 It also owns the response to being rate-limited. parlament.hu answers a client
 it considers too eager with a CAPTCHA challenge page (HTTP 200, HTML) in place of
-data; that is a wall, not a glitch, so it gets its own retry track — wait for the
-limiter's hourly window to roll over, then ask again — and after
-``captcha_retries`` fruitless hours the whole run is abandoned rather than left
-knocking.
+data; that is a wall, not a glitch, so it gets its own retry track — stand off for
+ten minutes, then ask again — and once ``captcha_retries`` such pauses have all
+come back walled the whole run is abandoned rather than left knocking.
 """
 
 from __future__ import annotations
@@ -42,7 +41,7 @@ class CaptchaBlocked(HttpError):
 
 
 class CaptchaWall(BaseException):
-    """The CAPTCHA wall outlasted every hourly retry: stop scraping.
+    """The CAPTCHA wall outlasted every stand-off retry: stop scraping.
 
     Deliberately a :class:`BaseException` rather than an ``Exception``. Every
     stage of the pipeline isolates its own failures behind ``except Exception``
@@ -58,11 +57,12 @@ class CaptchaWall(BaseException):
 # page) to match on some incidental mention further down.
 CAPTCHA_SNIFF_CHARS = 2000
 
-# The rate limiter's window is a whole clock hour, so a walled client waits for
-# the top of the next one rather than hammering through second-scale retries that
-# only re-confirm the block. The floor keeps a block landing at hh:59:58 from
-# degenerating into the immediate retry this mechanism replaces.
-MIN_CAPTCHA_WAIT = 60.0
+# How long a walled client stands off before asking again. Long enough that the
+# retry is not just re-confirming the same block (which is what the second-scale
+# backoff was doing), short enough that a brief throttle costs the run minutes
+# rather than an afternoon. Times `config.captcha_retries` this is the whole
+# patience budget: 9 × 10 min ≈ 1.5 h before the run is abandoned.
+CAPTCHA_WAIT = 600.0
 
 
 def looks_like_captcha(r: requests.Response) -> bool:
@@ -75,15 +75,6 @@ def looks_like_captcha(r: requests.Response) -> bool:
     if "html" not in (r.headers.get("Content-Type") or "").lower():
         return False
     return "captcha" in r.text[:CAPTCHA_SNIFF_CHARS].lower()
-
-
-def seconds_until_next_hour(now: float | None = None) -> float:
-    """Seconds from ``now`` (epoch seconds) until the next whole clock hour.
-
-    Epoch arithmetic puts the boundary on the whole UTC hour, which is also the
-    whole local hour everywhere the scraper runs (Hungary is UTC+1/+2)."""
-    now = time.time() if now is None else now
-    return max(MIN_CAPTCHA_WAIT, 3600.0 - (now % 3600.0))
 
 
 class HttpClient:
@@ -114,7 +105,7 @@ class HttpClient:
 
         A CAPTCHA wall (:class:`CaptchaBlocked`) is not one of those transient
         conditions and does not consume a retry attempt: it is handled by
-        :meth:`_captcha_wait`, which idles until the limiter's window rolls over."""
+        :meth:`_captcha_wait`, which stands off for minutes at a time."""
         last_exc: Exception | None = None
         attempt = 0
         while True:
@@ -138,27 +129,26 @@ class HttpClient:
         raise HttpError(f"{desc} failed after retries: {last_exc}")
 
     def _captcha_wait(self, desc: str, exc: CaptchaBlocked) -> None:
-        """Idle out a CAPTCHA wall — or abandon the run if it will not lift.
+        """Stand off from a CAPTCHA wall — or abandon the run if it will not lift.
 
         Retrying seconds later just re-confirms the block (and deepens it), so the
-        one useful move is to wait for the rate limiter's hourly window to roll
-        over and ask again. Raises :class:`CaptchaWall` once
-        ``config.captcha_retries`` consecutive hourly retries have all come back
-        walled: at that point parlament.hu has been refusing us for the better
-        part of a working day and the polite thing is to leave it alone until the
-        next scheduled run."""
+        one useful move is to leave the site alone for a while and ask again.
+        Raises :class:`CaptchaWall` once ``config.captcha_retries`` consecutive
+        stand-offs have all come back walled: at that point we have been refused
+        for ~1.5 h, and the polite thing is to stop and let the next scheduled run
+        try with a clean slate."""
         self._captcha_blocks += 1
         if self._captcha_blocks > max(0, self.config.captcha_retries):
             raise CaptchaWall(
                 f"{desc}: still behind the CAPTCHA wall after "
-                f"{self.config.captcha_retries} hourly retries; abandoning the "
-                f"run ({exc})")
-        wait = seconds_until_next_hour()
-        logger.warning("%s hit the CAPTCHA wall (%s); sleeping %.0fs until the "
-                       "next whole hour, then retrying (%d/%d)",
-                       desc, exc, wait, self._captcha_blocks,
+                f"{self.config.captcha_retries} retries "
+                f"{CAPTCHA_WAIT / 60:.0f} minutes apart; abandoning the run "
+                f"({exc})")
+        logger.warning("%s hit the CAPTCHA wall (%s); sleeping %.0fs, then "
+                       "retrying (%d/%d)",
+                       desc, exc, CAPTCHA_WAIT, self._captcha_blocks,
                        self.config.captcha_retries)
-        time.sleep(wait)
+        time.sleep(CAPTCHA_WAIT)
 
     def _send(self, method: str, url: str, **kw) -> requests.Response:
         r = self.session.request(method, url, timeout=self.config.timeout, **kw)

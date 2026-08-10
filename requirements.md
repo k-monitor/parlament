@@ -117,10 +117,10 @@ Primary use cases:
   deployment config, not hard-coded. Politeness also governs how a run reacts to
   being **rate-limited**: `parlament.hu` answers a client it considers too eager
   with a **CAPTCHA challenge page** (HTTP 200 + HTML) in place of data, and that
-  MUST NOT be retried like a transient error. A walled request waits for the
-  limiter's window — the next **whole clock hour** — and tries once more; after a
-  configurable number of such fruitless hours (default 5) the run is **abandoned**
-  with a distinct exit status rather than left knocking, and the next scheduled run
+  MUST NOT be retried like a transient error. A walled request stands off for
+  **ten minutes** and tries once more; after a configurable number of such
+  fruitless stand-offs (default 9, so ~1.5 h) the run is **abandoned** with a
+  distinct exit status rather than left knocking, and the next scheduled run
   resumes where it stopped (SCR-1/SCR-2).
 - **SCR-5.** A failed or partial sitting (e.g. PAIR-proxy error, no resolvable
   recording) MUST be ingested in degraded form (metadata/text without timing)

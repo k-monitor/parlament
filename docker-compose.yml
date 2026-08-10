@@ -134,9 +134,9 @@ services:
       PARLAMONITOR_SYNC_CYCLE: ${PARLAMONITOR_SYNC_CYCLE:-}
       # Politeness toward parlament.hu (SCR-4) — all optional.
       PARLAMONITOR_SLEEP: ${PARLAMONITOR_SLEEP:-1.0}
-      # Rate-limited (CAPTCHA page instead of data): retry once per whole clock
-      # hour, and give the pass up after this many fruitless hours.
-      PARLAMONITOR_CAPTCHA_RETRIES: ${PARLAMONITOR_CAPTCHA_RETRIES:-5}
+      # Rate-limited (CAPTCHA page instead of data): retry every 10 minutes, and
+      # give the pass up after this many fruitless stand-offs (9 ≈ 1.5h).
+      PARLAMONITOR_CAPTCHA_RETRIES: ${PARLAMONITOR_CAPTCHA_RETRIES:-9}
       PARLAMONITOR_USER_AGENT: ${PARLAMONITOR_USER_AGENT:-}
       PARLAMONITOR_PROXY: ${PARLAMONITOR_PROXY:-}
       # Optional SSH tunnel: route all parlament.hu traffic through an SSH host so

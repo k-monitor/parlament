@@ -156,7 +156,7 @@ tracks processed files individually, and adds the two `person` columns in place)
 | ---- | ------- | ------- | ------- |
 | `--sleep` | `PARLAMONITOR_SLEEP` | `1.0` | politeness delay between requests |
 | `--retry-count` | `PARLAMONITOR_RETRY_COUNT` | `5` | retries per request (exp. backoff) |
-| `--captcha-retries` | `PARLAMONITOR_CAPTCHA_RETRIES` | `5` | hourly retries spent waiting out a [CAPTCHA wall](#when-parlamenthu-rate-limits-us) before the run is abandoned |
+| `--captcha-retries` | `PARLAMONITOR_CAPTCHA_RETRIES` | `9` | 10-minute retries spent waiting out a [CAPTCHA wall](#when-parlamenthu-rate-limits-us) (~1.5h) before the run is abandoned |
 | `--proxy` | `PARLAMONITOR_PROXY` | — | SOCKS5/HTTP proxy for `parlament.hu` |
 | — | `PARLAMONITOR_USER_AGENT` | civic-tech UA | request User-Agent |
 | `--no-offsets` | — | off | skip per-speech offset resolution (faster) |
@@ -200,23 +200,22 @@ gives it away:
 
 ```text
 WARNING parlamonitor.http_client: GET .../kepviselo-lista-idopontban-query/p-ciklus
-  hit the CAPTCHA wall (CAPTCHA challenge page returned for ...); sleeping 897s
-  until the next whole hour, then retrying (1/5)
+  hit the CAPTCHA wall (CAPTCHA challenge page returned for ...); sleeping 600s,
+  then retrying (1/9)
 ```
 
 That is a wall, not a glitch, so it is **not** retried on the exponential backoff
 (seconds-scale retries only re-confirm the block and deepen it). Instead the
-client sleeps until the **next whole clock hour** — the limiter's window — and
-tries the same request again, keeping the run in place: nothing already
-downloaded is lost or re-fetched.
+client stands off for **10 minutes** and tries the same request again, keeping the
+run in place: nothing already downloaded is lost or re-fetched.
 
 The count is of *consecutive* walls across the whole run, so an occasional
-challenge never adds up; a success clears it. Once `--captcha-retries` hourly
-retries (default 5, i.e. ~5 hours of being walled) have all come back walled, the
-run is **abandoned** with exit status **3** — distinct from the `1` that means
-"some items failed" — so a cron wrapper can tell the two apart. Nothing is lost:
-every stage is idempotent and the next scheduled run resumes where this one
-stopped (SCR-1/SCR-2).
+challenge never adds up; a success clears it. Once `--captcha-retries` stand-offs
+(default 9, i.e. ~1.5 hours of being walled) have all come back walled, the run is
+**abandoned** with exit status **3** — distinct from the `1` that means "some items
+failed" — so a cron wrapper can tell the two apart. Nothing is lost: every stage is
+idempotent and the next scheduled run resumes where this one stopped
+(SCR-1/SCR-2).
 
 Runs are **idempotent** and guarded by a lockfile (`data/parlamonitor.lock`,
 SCR-1): a cached sitting is skipped unless it is the still-live latest sitting

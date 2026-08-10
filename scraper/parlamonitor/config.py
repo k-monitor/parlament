@@ -141,10 +141,10 @@ class RuntimeConfig:
     retry_delay_max: float = 30.0   # cap on exponential backoff
     timeout: float = 40.0           # per-request timeout (seconds)
     # A CAPTCHA challenge page (rate limiting) is retried on its own schedule —
-    # once per whole clock hour, since that is the limiter's window — and this is
-    # how many such hourly retries a run tolerates before giving up entirely
-    # (~5 hours of being walled). See http_client.HttpClient._captcha_wait.
-    captcha_retries: int = 5
+    # ten minutes apart, no exponential backoff — and this is how many such
+    # stand-offs a run tolerates before giving up entirely (~1.5 h of being
+    # walled). See http_client.HttpClient._captcha_wait.
+    captcha_retries: int = 9
     proxy: str | None = None        # optional SOCKS5/HTTP proxy URL
     user_agent: str = (
         "Parlamonitor/1.0 (+https://github.com/k-monitor; info@k-monitor.hu)"

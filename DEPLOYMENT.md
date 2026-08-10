@@ -588,20 +588,18 @@ docker compose run --rm sync sync        # a single scrape+update pass, then exi
 
 `parlament.hu` answers a client it considers too eager with a **CAPTCHA challenge
 page** instead of data (HTTP 200, HTML — so only the body gives it away). The
-scraper treats that as a wall rather than an error: it waits until the **next
-whole clock hour**, which is the limiter's window, and retries the same request.
-Expect log lines like
+scraper treats that as a wall rather than an error: it stands off for **10
+minutes** and retries the same request. Expect log lines like
 
 ```text
 WARNING parlamonitor.http_client: GET …/p-ciklus hit the CAPTCHA wall
-  (CAPTCHA challenge page returned for …); sleeping 897s until the next whole
-  hour, then retrying (1/5)
+  (CAPTCHA challenge page returned for …); sleeping 600s, then retrying (1/9)
 ```
 
-A pass can therefore sit idle for hours — that is deliberate, not a hang, and the
-`flock` means no second pass piles up behind it. After
-`PARLAMONITOR_CAPTCHA_RETRIES` fruitless hours (default 5) the pass gives up with
-exit status **3**, distinct from the `1` that means "some items failed"; the
+A pass can therefore sit idle for up to ~1.5 h — that is deliberate, not a hang,
+and the `flock` means no second pass piles up behind it. After
+`PARLAMONITOR_CAPTCHA_RETRIES` fruitless stand-offs (default 9) the pass gives up
+with exit status **3**, distinct from the `1` that means "some items failed"; the
 sidecar loop logs it and simply polls again later. Nothing is lost either way —
 the scrape is idempotent and resumes where it stopped, and `sync-once.sh` still
 reconciles whatever was written into the DB.
@@ -721,7 +719,7 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_SYNC_REPS_MAX_AGE` | `43200` | refresh the MP registry at most this often (s) |
 | `PARLAMONITOR_SYNC_ARGS` | _(none)_ | extra flags for `parlamonitor sync` (e.g. `--no-offsets`) |
 | `PARLAMONITOR_SLEEP` | `1.0` | politeness delay between scraper requests (SCR-4) |
-| `PARLAMONITOR_CAPTCHA_RETRIES` | `5` | when rate-limited (CAPTCHA page instead of data): hourly retries before the pass is abandoned — see [rate limiting](#when-parlamenthu-rate-limits-the-sync) |
+| `PARLAMONITOR_CAPTCHA_RETRIES` | `9` | when rate-limited (CAPTCHA page instead of data): 10-minute retries (~1.5h) before the pass is abandoned — see [rate limiting](#when-parlamenthu-rate-limits-the-sync) |
 | `PARLAMONITOR_PROXY` | — | SOCKS5/HTTP proxy URL for scraper traffic |
 | `PARLAMONITOR_SSH_HOST` | — | SSH host to tunnel scraper traffic through (enables the tunnel; see [SSH tunnel](#tunnelling-the-scraper-through-an-ssh-host)) |
 | `PARLAMONITOR_SSH_PORT` | `22` | SSH port |

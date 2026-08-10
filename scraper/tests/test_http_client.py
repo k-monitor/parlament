@@ -3,8 +3,8 @@
 Focus: how a rate-limited scrape behaves. parlament.hu serves a CAPTCHA
 challenge page (HTTP 200 + HTML) instead of data when it decides we are too
 eager, and that must not be treated like a transient glitch — no second-scale
-retry storm, one attempt per whole clock hour, and the whole run abandoned once
-the wall has outlasted every hourly retry.
+retry storm, one attempt every ten minutes, and the whole run abandoned once the
+wall has outlasted the last of those stand-offs (~1.5 h).
 """
 
 from __future__ import annotations
@@ -14,9 +14,8 @@ import requests
 
 from parlamonitor import http_client
 from parlamonitor.config import RuntimeConfig
-from parlamonitor.http_client import (CaptchaWall, HttpClient, HttpError,
-                                      looks_like_captcha,
-                                      seconds_until_next_hour)
+from parlamonitor.http_client import (CAPTCHA_WAIT, CaptchaWall, HttpClient,
+                                      HttpError, looks_like_captcha)
 
 
 # The head of the real challenge page (see the WARNING line in a walled run).
@@ -57,13 +56,12 @@ class _FakeSession:
 
 @pytest.fixture
 def client(monkeypatch):
-    """A client whose session is scriptable, whose sleeps are recorded rather
-    than slept, and whose hourly wait is a fixed, recognisable number."""
+    """A client whose session is scriptable and whose sleeps are recorded rather
+    than slept."""
     c = HttpClient(RuntimeConfig(sleep=0))
     c.session.close()
     slept: list[float] = []
     monkeypatch.setattr(http_client.time, "sleep", slept.append)
-    monkeypatch.setattr(http_client, "seconds_until_next_hour", lambda: 900.0)
     c.slept = slept
     return c
 
@@ -91,22 +89,23 @@ def test_captcha_further_down_a_long_html_page_is_not_the_wall():
     assert not looks_like_captcha(_response(body=body, ctype="text/html"))
 
 
-# --- the hourly retry track ------------------------------------------------
+# --- the stand-off retry track ---------------------------------------------
 
-def test_captcha_waits_for_the_next_whole_hour_then_retries(client):
+def test_captcha_stands_off_ten_minutes_then_retries(client):
     client.session = _FakeSession([
         _response(body=CAPTCHA_HTML, ctype="text/html"),
         _response(body=b'{"rows": []}'),
     ])
     assert client.get_json("https://www.parlament.hu/x") == {"rows": []}
-    # Exactly one wait, and it is the hour boundary — not an exponential backoff.
-    assert client.slept == [900.0]
+    # Exactly one wait, and it is the flat stand-off — not an exponential backoff.
+    assert client.slept == [600.0]
+    assert CAPTCHA_WAIT == 600.0
 
 
 def test_captcha_does_not_consume_the_transient_retry_budget(client):
-    """The wall gets its own budget: three walled hours followed by three
-    connection errors is still a success, even though either alone is under the
-    limit and both together exceed ``retry_count``."""
+    """The wall gets its own budget: three stand-offs followed by three connection
+    errors is still a success, even though either alone is under the limit and
+    both together exceed ``retry_count``."""
     client.config.retry_count = 3
     client.config.captcha_retries = 3
     client.session = _FakeSession(
@@ -114,18 +113,20 @@ def test_captcha_does_not_consume_the_transient_retry_budget(client):
         + [requests.ConnectionError("reset")] * 3
         + [_response(body=b'{"ok": true}')])
     assert client.get_json("https://www.parlament.hu/x") == {"ok": True}
-    assert client.slept == [900.0] * 3 + [1.0, 2.0, 4.0]
+    assert client.slept == [600.0] * 3 + [1.0, 2.0, 4.0]
 
 
-def test_captcha_wall_abandons_the_run_after_the_hourly_retries(client):
+def test_captcha_wall_abandons_the_run_after_the_stand_offs(client):
     client.session = _FakeSession([_response(body=CAPTCHA_HTML,
                                              ctype="text/html")] * 20)
     with pytest.raises(CaptchaWall):
         client.get_json("https://www.parlament.hu/x")
-    # 5 hourly retries spent (~5h), then the 6th consecutive wall ends the run;
+    # 9 stand-offs spent (~1.5h), then the 10th consecutive wall ends the run;
     # no request is made after the last wait.
-    assert client.slept == [900.0] * 5
-    assert client.session.calls == 6
+    assert client.config.captcha_retries == 9
+    assert client.slept == [600.0] * 9
+    assert client.session.calls == 10
+    assert sum(client.slept) == pytest.approx(1.5 * 3600, rel=0.02)
 
 
 def test_captcha_wall_is_not_swallowed_by_a_stage_error_handler(client):
@@ -154,7 +155,7 @@ def test_captcha_streak_is_consecutive_only(client):
     ])
     for _ in range(2):
         client.get_json("https://www.parlament.hu/x")
-    assert client.slept == [900.0] * 4
+    assert client.slept == [600.0] * 4
 
 
 # --- unchanged behaviour for ordinary failures ------------------------------
@@ -202,15 +203,3 @@ def test_lockfile_is_released_when_the_wall_ends_the_run(tmp_path):
         with acquire(lock):
             raise CaptchaWall("walled")
     assert not lock.exists()
-
-
-# --- the hour boundary itself ----------------------------------------------
-
-@pytest.mark.parametrize("now, expected", [
-    (0.0, 3600.0),                       # exactly on the hour
-    (16 * 3600 + 45 * 60 + 3, 897.0),    # 16:45:03 (the reported block) -> 17:00
-    (8 * 3600 + 40 * 60, 1200.0),        # 08:40 -> 09:00
-    (9 * 3600 - 2, 60.0),                # 08:59:58 -> floored, not 2s later
-])
-def test_seconds_until_next_hour(now, expected):
-    assert seconds_until_next_hour(now) == expected

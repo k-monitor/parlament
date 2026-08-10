@@ -12,6 +12,11 @@
 #   PARLAMONITOR_SYNC_CYCLE    cycle to watch         (default: latest, auto)
 #   PARLAMONITOR_SYNC_ARGS     extra `sync` flags     (e.g. "--no-offsets")
 #   (politeness knobs PARLAMONITOR_SLEEP / _RETRY_COUNT / _PROXY / _SSH_* apply)
+#
+# A pass that gets rate-limited (parlament.hu serves a CAPTCHA page instead of
+# data) waits for the next whole clock hour and retries, so it may sit idle for
+# hours before exiting 3 — deliberate, not a hang. The DB is reconciled either
+# way, with whatever the scrape managed to write.
 set -eu
 
 DB="${PARLAMONITOR_DB:-/db/parlamonitor.db}"

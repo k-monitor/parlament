@@ -140,6 +140,11 @@ class RuntimeConfig:
     retry_count: int = 5            # max retries per HTTP request
     retry_delay_max: float = 30.0   # cap on exponential backoff
     timeout: float = 40.0           # per-request timeout (seconds)
+    # A CAPTCHA challenge page (rate limiting) is retried on its own schedule —
+    # once per whole clock hour, since that is the limiter's window — and this is
+    # how many such hourly retries a run tolerates before giving up entirely
+    # (~5 hours of being walled). See http_client.HttpClient._captcha_wait.
+    captcha_retries: int = 5
     proxy: str | None = None        # optional SOCKS5/HTTP proxy URL
     user_agent: str = (
         "Parlamonitor/1.0 (+https://github.com/k-monitor; info@k-monitor.hu)"
@@ -169,6 +174,8 @@ class RuntimeConfig:
             sleep=_f("PARLAMONITOR_SLEEP", cls.sleep),
             retry_count=int(_f("PARLAMONITOR_RETRY_COUNT", cls.retry_count)),
             retry_delay_max=_f("PARLAMONITOR_RETRY_DELAY_MAX", cls.retry_delay_max),
+            captcha_retries=int(_f("PARLAMONITOR_CAPTCHA_RETRIES",
+                                   cls.captcha_retries)),
             timeout=_f("PARLAMONITOR_TIMEOUT", cls.timeout),
             proxy=_s("PARLAMONITOR_PROXY"),
             user_agent=os.environ.get("PARLAMONITOR_USER_AGENT") or cls.user_agent,

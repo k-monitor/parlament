@@ -42,7 +42,7 @@ from . import whisper_align
 from .config import (Paths, RuntimeConfig, session_cycle, timing_backend,
                      whisper_language, whisper_model)
 from .felicitas import FelicitasClient
-from .http_client import HttpClient
+from .http_client import CaptchaWall, HttpClient
 from .lockfile import acquire
 from .advocates.scrape import advocate_cycles, fetch_advocates, save_advocates
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
@@ -60,6 +60,7 @@ logger = logging.getLogger("parlamonitor")
 def _client(args) -> FelicitasClient:
     cfg = RuntimeConfig.from_env(
         sleep=args.sleep, retry_count=args.retry_count, proxy=args.proxy,
+        captcha_retries=args.captcha_retries,
         ssh_host=args.ssh_host, ssh_port=args.ssh_port, ssh_user=args.ssh_user,
         ssh_key=args.ssh_key, ssh_known_hosts=args.ssh_known_hosts)
     return FelicitasClient(HttpClient(cfg))
@@ -485,6 +486,10 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--sleep", type=float, default=None,
                         help="politeness delay between requests (s)")
         sp.add_argument("--retry-count", type=int, default=None)
+        sp.add_argument("--captcha-retries", type=int, default=None,
+                        help="how many hourly retries to spend waiting out a "
+                             "CAPTCHA (rate-limit) wall before abandoning the "
+                             "run (default 5)")
         sp.add_argument("--proxy", type=str, default=None)
         sp.add_argument("--ssh-host", default=None,
                         help="route parlament.hu traffic through this SSH host "
@@ -632,7 +637,15 @@ def main(argv=None) -> None:
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    args.func(args)
+    try:
+        args.func(args)
+    except CaptchaWall as e:
+        # parlament.hu has been serving CAPTCHAs for hours, so there is nothing
+        # left to try: stop, with an exit code of its own so a wrapping cron job
+        # can tell "we're rate-limited" from "some items failed". Nothing is lost —
+        # every stage is idempotent and resumes where this run stopped (SCR-1/2).
+        logger.error("Scrape abandoned: %s", e)
+        sys.exit(3)
 
 
 if __name__ == "__main__":

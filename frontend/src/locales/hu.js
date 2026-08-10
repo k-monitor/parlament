@@ -292,11 +292,7 @@ export default {
   // nyilvántartása, megbízatásonként egy sor.
   officials: {
     title: 'Tisztségviselők',
-    intro: 'Ki milyen kormányzati vagy országgyűlési tisztséget töltött be, és '
-      + 'mikortól meddig – az Országgyűlés hivatalos nyilvántartása szerint, '
-      + '1990-től napjainkig. Egy sor egy megbízatás, így ugyanaz a személy több '
-      + 'tisztségnél is szerepelhet; a listában olyanok is vannak, akik soha nem '
-      + 'szólaltak fel a Házban.',
+    intro: '',
     unit: 'megbízatás',
     searchPlaceholder: 'Keresés név vagy tisztség szerint…',
     category: 'Tisztség típusa',

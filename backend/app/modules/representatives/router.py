@@ -377,9 +377,7 @@ _OFFICE_CATEGORIES = ("pm", "minister", "state-secretary", "parliamentary",
 
 _OFFICE_METHODOLOGY = (
     "A tisztségviselők listája az Országgyűlés hivatalos nyilvántartásából "
-    "származik (parlament.hu, „Tisztségviselők”), és minden nyilvántartott "
-    "megbízatást tartalmaz 1990-től – kormányzati és országgyűlési tisztségeket "
-    "egyaránt, akkor is, ha a tisztségviselő nem volt országgyűlési képviselő. "
+    "származik (parlament.hu, „Tisztségviselők”)."
     "Egy sor egy megbízatás: a kinevezés és a felmentés napja a nyilvántartás "
     "szerinti dátum, a nyitott vég azt jelenti, hogy a tisztséget a lekérdezés "
     "időpontjában is betöltötte. Ugyanaz a személy több sorban is szerepelhet. "

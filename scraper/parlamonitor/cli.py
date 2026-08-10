@@ -505,7 +505,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--ssh-known-hosts", default=None,
                         help="known_hosts file (default: trust on first use)")
         sp.add_argument("--force-lock", action="store_true",
-                        help="reclaim the lockfile even if it looks held")
+                        help="run even while another run holds the lockfile")
 
     sp = sub.add_parser("proceedings", help="scrape plenary proceedings")
     _common(sp)

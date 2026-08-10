@@ -9,6 +9,9 @@ wall has outlasted the last of those stand-offs (~1.5 h).
 
 from __future__ import annotations
 
+import json
+import os
+
 import pytest
 import requests
 
@@ -202,4 +205,33 @@ def test_lockfile_is_released_when_the_wall_ends_the_run(tmp_path):
     with pytest.raises(CaptchaWall):
         with acquire(lock):
             raise CaptchaWall("walled")
-    assert not lock.exists()
+    # The file stays (an flock belongs to the inode, so it is never unlinked);
+    # what must be true is that the next run can take it.
+    with acquire(lock):
+        pass
+    assert lock.read_text() == ""       # no PID outlives the run that wrote it
+
+
+def test_lockfile_ignores_a_pid_it_does_not_hold(tmp_path):
+    """A lockfile left by a killed run must be reclaimable even when its PID looks
+    alive — it was written in another PID namespace (a container the deploy
+    recreated mid-scrape), so the number says nothing about the writer (SCR-1)."""
+    from parlamonitor.lockfile import acquire
+
+    lock = tmp_path / "parlamonitor.lock"
+    lock.write_text(json.dumps({"pid": os.getpid()}))   # our own PID: certainly alive
+    with acquire(lock):
+        pass
+
+
+def test_lockfile_blocks_a_second_run_while_actually_held(tmp_path):
+    """...while a run that really holds the flock still excludes the next one."""
+    from parlamonitor.lockfile import LockBusy, acquire
+
+    lock = tmp_path / "parlamonitor.lock"
+    with acquire(lock):
+        with pytest.raises(LockBusy):
+            with acquire(lock):
+                pass
+        with acquire(lock, force=True):  # the operator's escape hatch still works
+            pass

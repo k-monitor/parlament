@@ -218,7 +218,11 @@ idempotent and the next scheduled run resumes where this one stopped
 (SCR-1/SCR-2).
 
 Runs are **idempotent** and guarded by a lockfile (`data/parlamonitor.lock`,
-SCR-1): a cached sitting is skipped unless it is the still-live latest sitting
+SCR-1) — an `flock` on that file, so a killed run releases it and cannot wedge
+the schedule; the PID inside is diagnostic only, because the file is shared with
+containers whose PID namespace is not ours. The file is never deleted (the lock
+lives on the inode); empty contents mean nobody holds it. `--force-lock` runs
+without it. A cached sitting is skipped unless it is the still-live latest sitting
 or `--force` is given. A sitting with no resolvable recording or no transcript
 is still written in degraded form and flagged (`confidence`, `confidence_reason`,
 `align-method`), never silently dropped (SCR-5).
@@ -293,7 +297,7 @@ parlamonitor/
   config.py            paths + environment-driven runtime config
   http_client.py       polite, retrying HTTP client
   ssh_proxy.py         optional SSH-tunnel HTTP proxy (paramiko)
-  lockfile.py          PID lockfile (concurrency guard)
+  lockfile.py          flock concurrency guard (never a PID check)
   felicitas.py         Felicitas JSON API client (plenary + representatives
                        + szószólók + irományok + szavazások)
   names.py             speaker → name / faction / role / context

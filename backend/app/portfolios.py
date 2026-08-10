@@ -301,6 +301,7 @@ PORTFOLIOS: tuple[Portfolio, ...] = (
         "környezetvédelmi és vízügyi miniszter",
         "környezetvédelmi és vízügyi minisztériumi politikai államtitkár",
         "környezetvédelmi és vízügyi minisztériumi államtitkár",
+        "Környezetvédelmi és Vízügyi Minisztérium",
     )),  # 13
     Portfolio("igazsagugyi-es-rendeszeti", "Igazságügyi és Rendészeti Minisztérium", "ministry", (
         "igazságügyi és rendészeti miniszter",
@@ -322,10 +323,12 @@ PORTFOLIOS: tuple[Portfolio, ...] = (
     Portfolio("oktatasi-es-kulturalis", "Oktatási és Kulturális Minisztérium", "ministry", (
         "oktatási és kulturális miniszter",
         "oktatási és kulturális minisztériumi államtitkár",
+        "Oktatási és Kulturális Minisztérium",
     )),  # 10
     Portfolio("oktatasi", "Oktatási Minisztérium", "ministry", (
         "oktatási minisztériumi politikai államtitkár",
         "oktatási miniszter",
+        "Oktatási Minisztérium",
     )),  # 9
     Portfolio("munkaugyi", "Munkaügyi Minisztérium", "ministry", (
         "munkaügyi miniszter",
@@ -379,6 +382,7 @@ PORTFOLIOS: tuple[Portfolio, ...] = (
     Portfolio("ifjusagi-csaladugyi-szocialis-es-eselyegyenlosegi", "Ifjúsági, Családügyi, Szociális és Esélyegyenlőségi Minisztérium", "ministry", (
         "ifjúsági, családügyi, szociális és esélyegyenlőségi minisztériumi politikai államtitkár",
         "ifjúsági, családügyi, szociális és esélyegyenlőségi miniszter",
+        "Ifjúsági, Családügyi, Szociális és Esélyegyenlőségi Minisztérium",
     )),  # 4
     Portfolio("informatikai-es-hirkozlesi", "Informatikai és Hírközlési Minisztérium", "ministry", (
         "informatikai és hírközlési miniszter",
@@ -504,6 +508,15 @@ PORTFOLIOS: tuple[Portfolio, ...] = (
         "alapvető jogok biztosának a Magyarországon élő nemzetiségek jogainak védelmét ellátó helyettese",
         "alapvető jogok biztosának a jövő nemzedékek érdekeinek védelmét ellátó helyettese",
     )),  # 93
+    Portfolio("gazdasagi-versenyhivatal", "Gazdasági Versenyhivatal", "body", (
+        "Gazdasági Versenyhivatal elnöke",
+    )),  # 1
+    # The pre-2012 data-protection commissioner: a separate ombudsman office, not
+    # a deputy of the one above. It was folded into the NAIH, which the corpus
+    # does not name here — so, per MIN-9, the two are not merged.
+    Portfolio("adatvedelmi-biztos", "Adatvédelmi Biztos", "body", (
+        "adatvédelmi biztos",
+    )),  # 1
 )
 
 

@@ -18,9 +18,10 @@ from parlamonitor.names import build_person, split_name, split_speaker
 from parlamonitor.segment import html_to_text, split_sentences
 from parlamonitor.timing import apply_timing, smil_span_seconds
 from parlamonitor.proceedings.transform import transform_day
-from parlamonitor.proceedings.scrape import (_awaiting_content, cycle_days,
-                                             number_days, renumbered, scrape_day,
-                                             sitting_number)
+from parlamonitor.proceedings.scrape import (_awaiting_content, cancelled_sessions,
+                                             cycle_days, number_days,
+                                             prune_cancelled, renumbered,
+                                             scrape_day, sitting_number)
 
 
 # --- names -----------------------------------------------------------------
@@ -769,10 +770,115 @@ def test_download_period_refuses_to_renumber_over_an_existing_day(tmp_path,
 
 def test_renumbered_flags_a_key_held_by_another_date(tmp_path):
     raw = tmp_path / "raw-43001-day.json"
-    raw.write_text(json.dumps({"date": "2026-05-09", "speeches": []}))
+    raw.write_text(json.dumps({"date": "2026-05-09", "day_uuid": "u1",
+                               "speeches": []}))
     assert renumbered(raw, "2026-06-16") == "2026-05-09"
     assert renumbered(raw, "2026-05-09") is None
     assert renumbered(tmp_path / "missing.json", "2026-05-09") is None
+    # Same upstream day, new date: the sitting was MOVED, not renumbered — there
+    # is no other day's record to protect, so this is not flagged.
+    assert renumbered(raw, "2026-06-16", "u1") is None
+    assert renumbered(raw, "2026-06-16", "u2") == "2026-05-09"
+
+
+# --- cancelled sittings ----------------------------------------------------
+
+def _hold(paths, session, date, uuid, speeches=()):
+    """Write a downloaded day (raw + processed) as the pipeline would."""
+    paths.raw_day(session).write_text(json.dumps(
+        {"date": date, "day_uuid": uuid, "speeches": list(speeches)}))
+    paths.session_file(session).write_text(json.dumps({"meta": {"session": session}}))
+
+
+def _paths(tmp_path):
+    from parlamonitor import config as pm_config
+    paths = pm_config.Paths(tmp_path)
+    paths.ensure()
+    return paths
+
+
+def test_cancelled_sessions_finds_only_days_gone_from_the_listing(tmp_path):
+    paths = _paths(tmp_path)
+    _hold(paths, "43001", "2026-05-09", "u1", [{"text_html": "x"}])
+    _hold(paths, "43002", "2026-08-03", "cancel")       # announced, then called off
+    _hold(paths, "43003", "2026-08-31", "later")        # ditto
+    days = [{"uuid": "u1", "date": "2026-05-09"},
+            {"uuid": "new", "date": "2026-08-10"}]      # took over ülésnap 2
+
+    assert cancelled_sessions(paths, 43, days, "2026-05-01", "2026-09-01") == \
+        ["43002", "43003"]
+    # Another cycle's days are none of this cycle's business.
+    assert cancelled_sessions(paths, 42, days, "2026-05-01", "2026-09-01") == []
+
+
+def test_cancelled_sessions_is_conservative(tmp_path):
+    paths = _paths(tmp_path)
+    _hold(paths, "43001", "2026-05-09", "u1")
+    _hold(paths, "43002", "2026-08-03", "u2", [{"text_html": "elhangzott"}])
+    days = [{"uuid": "u9", "date": "2026-09-09"}]
+
+    # An empty answer is a failed query, never evidence that everything is gone.
+    assert cancelled_sessions(paths, 43, [], "2026-05-01", "2026-09-01") == []
+    # A day outside the window asked about cannot be missing from the answer.
+    assert cancelled_sessions(paths, 43, days, "2026-09-01", "2026-09-30") == []
+    # A day that already holds speeches is kept (an upstream glitch, not a
+    # cancellation) unless that is explicitly overridden.
+    assert cancelled_sessions(paths, 43, days, "2026-05-01", "2026-09-01") == ["43001"]
+    assert cancelled_sessions(paths, 43, days, "2026-05-01", "2026-09-01",
+                              prune_held=True) == ["43001", "43002"]
+
+
+def test_cancelled_sessions_ignores_a_day_that_only_moved(tmp_path):
+    """Same upstream day, new date (or a renumbering): not a cancellation."""
+    paths = _paths(tmp_path)
+    _hold(paths, "43002", "2026-08-03", "u2")
+    days = [{"uuid": "u2", "date": "2026-08-10"}]
+    assert cancelled_sessions(paths, 43, days, "2026-05-01", "2026-09-01") == []
+
+    _hold(paths, "43003", "2026-08-04", "u3")
+    days.append({"uuid": "renamed-u3", "date": "2026-08-04"})
+    assert cancelled_sessions(paths, 43, days, "2026-05-01", "2026-09-01") == []
+
+
+def test_prune_cancelled_deletes_every_file_of_the_day(tmp_path):
+    paths = _paths(tmp_path)
+    _hold(paths, "43002", "2026-08-03", "u2")
+    paths.whisper_cache("43002").write_text("{}")
+
+    assert prune_cancelled(paths, 43, [{"uuid": "u9", "date": "2026-08-10"}],
+                           "2026-05-01", "2026-09-01") == ["43002"]
+    assert not paths.raw_day("43002").exists()
+    assert not paths.session_file("43002").exists()
+    assert not paths.whisper_cache("43002").exists()
+
+
+def test_download_period_prunes_a_cancelled_day_and_scrapes_its_successor(
+        tmp_path, monkeypatch):
+    """The 2026-08 case end to end: the announced 2. ülésnap is called off and the
+    day announced in its place inherits the number. Without the prune the new day
+    could never be written — the renumbering guard would (rightly) refuse the key."""
+    from parlamonitor.proceedings import scrape as pm_scrape
+
+    monkeypatch.setattr(pm_scrape, "scrape_day",
+                        lambda felicitas, cycle, day, **kw: {
+                            "date": day["date"], "day_uuid": day["uuid"],
+                            "speeches": [], "video": {}})
+    paths = _paths(tmp_path)
+    _hold(paths, "43001", "2026-05-09", "u1", [{"text_html": "x"}])
+    _hold(paths, "43002", "2026-08-03", "cancelled")
+
+    stub = _DaysStub([{"uuid": "u1", "date": "2026-05-09",
+                       "datum_felirat": "2026.05.09.(1)"},
+                      {"uuid": "new", "date": "2026-08-10",
+                       "datum_felirat": "2026.08.10.(2)"}])
+    written = pm_scrape.download_period(stub, paths, 43, "2026-05-01", "2026-09-01")
+
+    assert written == ["43002"]
+    assert json.loads(paths.raw_day("43002").read_text())["date"] == "2026-08-10"
+    # The cancelled day's stale session record is gone with it, so the loader
+    # drops the row rather than serving a sitting that will never happen.
+    assert not paths.session_file("43002").exists()
+    assert paths.raw_day("43001").exists()
 
 
 # --- complete day speech listing (agenda listing + flat roster) -------------

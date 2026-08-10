@@ -187,7 +187,8 @@ def cmd_proceedings(args) -> None:
                         felicitas, paths, args.cycle, start, end,
                         force=args.force, resolve_offsets=not args.no_offsets,
                         reuse_text=args.reuse_text,
-                        allow_renumber=args.allow_renumber)
+                        allow_renumber=args.allow_renumber,
+                        prune=not args.no_prune)
                 except Exception as e:
                     logger.exception("Download failed")
                     errors.append(f"download: {e}")
@@ -439,14 +440,16 @@ def cmd_sync(args) -> None:
     _write_log(paths, {"command": "sync", **summary,
                        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                        "backend": "felicitas-json"})
-    logger.info("Sync done: %d sitting(s) changed, bills=%s votes=%s reps=%s "
-                "advocates=%s, %d error(s)",
-                len(summary["sessions"]), summary["bills"], summary["votes"],
+    logger.info("Sync done: %d sitting(s) changed, %d removed, bills=%s votes=%s "
+                "reps=%s advocates=%s, %d error(s)",
+                len(summary["sessions"]), len(summary["removedSessions"]),
+                summary["bills"], summary["votes"],
                 summary["representatives"], summary["advocates"],
                 len(summary["errors"]))
     # Machine-readable one-liner for a wrapping script / cron log.
     print(json.dumps({"changed": summary["changed"],
                       "sessions": summary["sessions"],
+                      "removedSessions": summary["removedSessions"],
                       "bills": summary["bills"], "votes": summary["votes"],
                       "representatives": summary["representatives"],
                       "advocates": summary["advocates"],
@@ -519,6 +522,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "a different date. Refused by default: a source-side "
                          "renumbering silently destroys the day the key meant. "
                          "Use (with --force) only to repair a mis-numbered cycle")
+    sp.add_argument("--no-prune", action="store_true",
+                    help="keep sittings the source no longer lists. By default a "
+                         "day that has vanished from the day list — an announced "
+                         "sitting since cancelled — has its local files deleted, "
+                         "freeing its ülésnap number for the day announced in its "
+                         "place (a day that already has speeches is never pruned)")
     sp.add_argument("--reuse-text", action="store_true",
                     help="with --force: re-list every day but keep the speech "
                          "text/offsets already downloaded, fetching only speeches "

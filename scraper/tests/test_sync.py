@@ -82,10 +82,13 @@ def patched(tmp_path, monkeypatch):
 
     def fake_scrape_day(felicitas, cycle, day, *, resolve_offsets=True):
         # Mirror the real scrape_day: attach each speech's text (empty until the
-        # transcript is published) so the sync's has-text bookkeeping is exercised.
+        # transcript is published) so the sync's has-text bookkeeping is exercised,
+        # and carry the day's identity (date + upstream uuid) the raw file is keyed
+        # and cross-checked on (renumbering guard / cancelled-sitting prune).
         speeches = [{**s, "text_html": felicitas.texts.get(s["speech_uuid"], "")}
                     for s in felicitas.day_speeches(day["uuid"])]
-        return {"session": day["uuid"], "speeches": speeches,
+        return {"session": day["uuid"], "date": day.get("date"),
+                "day_uuid": day["uuid"], "speeches": speeches,
                 "video": {"m3u8": None, "playseq": None}}
 
     def fake_transform_day(bundle, *, words=None):
@@ -259,6 +262,110 @@ def test_announced_day_with_no_speeches_is_ingested_then_filled(patched):
     s2 = _run(fel, paths)
     assert scraped == ["43002"]
     assert s2["sessions"] == ["43002"]
+
+
+# --- cancelled sittings -----------------------------------------------------
+#
+# parlament.hu announces sittings ahead of time and sometimes calls one off: the
+# day disappears from the day list and its ülésnap number is handed to the day
+# announced in its place (2026-08: the announced 22./23. ülésnap of 08-03/08-04
+# went away, 08-10/08-11 became 22./23.). Both halves have to work — drop the day
+# that is gone, and scrape the one that inherited its number.
+
+def _announced_pair(paths, scraped):
+    """A poll where 43001 is held and 43002/43003 are announced upcoming days."""
+    fel = FakeFelicitas(
+        days=[_day("u1", "2026-05-09", 1, 3600),
+              _day("cancel-a", "2026-05-25", 2, None),
+              _day("cancel-b", "2026-05-26", 3, None)],
+        speeches={"u1": [_sp("a", 10, 1)], "cancel-a": [], "cancel-b": []},
+        texts={"a": "<p>kész</p>"})
+    _run(fel, paths)
+    assert sorted(scraped) == ["43001", "43002", "43003"]
+    scraped.clear()
+    return fel
+
+
+def test_cancelled_sitting_is_pruned_and_its_number_reused(patched):
+    paths, scraped = patched
+    fel = _announced_pair(paths, scraped)
+
+    # Both announced days are called off; two new ones are announced a week later
+    # and take over ülésnap 2 and 3.
+    fel.days = [_day("u1", "2026-05-09", 1, 3600),
+                _day("moved-a", "2026-06-01", 2, None),
+                _day("moved-b", "2026-06-02", 3, None)]
+    fel.speeches.update({"moved-a": [], "moved-b": []})
+
+    s = _run(fel, paths)
+
+    assert sorted(s["removedSessions"]) == ["43002", "43003"]
+    # The freed numbers are scraped in the SAME pass — the renumbering guard no
+    # longer sees a foreign date holding the key.
+    assert sorted(scraped) == ["43002", "43003"]
+    assert sorted(s["sessions"]) == ["43002", "43003"]
+    assert s["changed"] is True
+    held = {json.loads(paths.raw_day(sid).read_text())["date"]
+            for sid in ("43002", "43003")}
+    assert held == {"2026-06-01", "2026-06-02"}
+    # The cancelled days are no longer remembered as scraped either.
+    assert set(sync.load_state(paths.sync_state)["proceedings"]) == {
+        "43001", "43002", "43003"}
+
+
+def test_cancelled_sitting_with_no_replacement_leaves_no_files(patched):
+    """The plain cancellation: nothing takes the number over, so the files stay
+    deleted and the loader's next update drops the row (the site stops showing it)."""
+    paths, scraped = patched
+    fel = _announced_pair(paths, scraped)
+
+    fel.days = [_day("u1", "2026-05-09", 1, 3600)]
+
+    s = _run(fel, paths)
+
+    assert sorted(s["removedSessions"]) == ["43002", "43003"]
+    assert scraped == []
+    assert not paths.raw_day("43002").exists()
+    assert not paths.session_file("43002").exists()
+    assert paths.raw_day("43001").exists()
+
+
+def test_a_held_sitting_is_never_pruned(patched):
+    """A day that already has speeches vanishing from the listing is an upstream
+    glitch, not a cancellation: the archive is kept."""
+    paths, scraped = patched
+    fel = FakeFelicitas(
+        days=[_day("u1", "2026-05-09", 1, 3600), _day("u2", "2026-05-16", 2, 1800)],
+        speeches={"u1": [_sp("a", 10, 1)], "u2": [_sp("b", 20, 1)]})
+    _run(fel, paths)
+    scraped.clear()
+
+    fel.days = [_day("u2", "2026-05-16", 2, 1800)]     # u1 drops out of the list
+
+    s = _run(fel, paths)
+
+    assert s["removedSessions"] == []
+    assert paths.raw_day("43001").exists()
+
+
+def test_rescheduled_day_keeps_its_number(patched):
+    """An announced day moved in place (same upstream uuid, new date) is the same
+    sitting — it is re-scraped under its own key, not refused as a renumbering."""
+    paths, scraped = patched
+    fel = FakeFelicitas(
+        days=[_day("u1", "2026-05-09", 1, 3600), _day("u2", "2026-05-25", 2, None)],
+        speeches={"u1": [_sp("a", 10, 1)], "u2": []},
+        texts={"a": "<p>kész</p>"})
+    _run(fel, paths)
+    scraped.clear()
+
+    fel.days[1] = _day("u2", "2026-06-01", 2, None)    # same uuid, later date
+
+    s = _run(fel, paths)
+
+    assert s["removedSessions"] == []
+    assert scraped == ["43002"]
+    assert json.loads(paths.raw_day("43002").read_text())["date"] == "2026-06-01"
 
 
 # --- partly-segmented video (media lag) ------------------------------------

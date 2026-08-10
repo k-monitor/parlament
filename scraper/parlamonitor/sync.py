@@ -24,8 +24,10 @@ What each poll checks, cheaply:
   the recording days before the jegyzőkönyv, so such a day is re-probed each poll —
   one speech-listing request plus one speech-text probe — until its text lands,
   then it is done. An **announced day with no recording yet** is ingested as a
-  placeholder (``scheduled``) so the site can show a sitting is coming. A finished
-  sitting whose text we already hold is never re-fetched.
+  placeholder (``scheduled``) so the site can show a sitting is coming; if that
+  day is later **cancelled** (it drops out of the listing) its files are pruned,
+  which also frees the ülésnap number it held for the day announced in its place.
+  A finished sitting whose text we already hold is never re-fetched.
 * **Bills / votes** — the cheap list query runs, but per-item detail reuses the
   on-disk detail cache (``detail_cache``), so an unchanged cycle spends network
   only on the list; the registry JSON is rewritten only when its contents differ.
@@ -56,8 +58,8 @@ from .config import Paths, session_id, timing_backend as _default_timing_backend
 from .config import whisper_language, whisper_model
 from .felicitas import FelicitasClient
 from .officeholders.scrape import fetch_office_holders, save_office_holders
-from .proceedings.scrape import (_write_json, cycle_days, renumbered, scrape_day,
-                                 sitting_number)
+from .proceedings.scrape import (_write_json, cycle_days, prune_cancelled,
+                                 renumbered, scrape_day, sitting_number)
 from .proceedings.transform import transform_day
 from .representatives.scrape import (fetch_missing_photos, fetch_representatives,
                                      save_representatives)
@@ -219,9 +221,10 @@ def _votes_fingerprint(records: list[dict]) -> str:
 
 def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
                       state: dict, *, force: bool, resolve_offsets: bool,
-                      timing_backend: str) -> list[str]:
-    """Re-scrape only the sitting days that are new or changed. Returns the list
-    of session ids whose ``processed`` JSON was (re)written.
+                      timing_backend: str) -> tuple[list[str], list[str]]:
+    """Re-scrape only the sitting days that are new or changed. Returns
+    ``(written, pruned)``: the session ids whose ``processed`` JSON was
+    (re)written, and those dropped because the sitting was cancelled upstream.
 
     Changed days are batch-transcribed with Whisper (forced-alignment timing, TIM-1)
     before transform; a day with no transcription degrades to positional timing."""
@@ -233,11 +236,18 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
     days = cycle_days(felicitas, cycle, start, end)
     if not days:
         logger.info("No sitting days for cycle %s in [%s, %s]", cycle, start, end)
-        return []
+        return [], []
     latest_date = max((d.get("date") or "") for d in days)
     media_cutoff = (datetime.now(timezone.utc).date()
                     - timedelta(days=MEDIA_CHASE_DAYS)).isoformat()
     proc = state.setdefault("proceedings", {})
+    # An announced sitting parlament.hu has since CANCELLED is dropped before
+    # anything else: nothing downstream ever removes a day, and its ülésnap number
+    # has already moved to the day announced in its place — which the renumbering
+    # guard below would refuse to scrape while the cancelled day still held the key.
+    pruned = prune_cancelled(paths, cycle, days, start, end)
+    for session in pruned:
+        proc.pop(session, None)
     changed: list[tuple[str, dict]] = []      # (session, bundle) to (re)build
 
     for day in days:
@@ -249,7 +259,7 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
         # renumbered the cycle under us; scraping on would overwrite that day with
         # this one (the 2026-07 outage). Leave it alone and shout — repairing a
         # real renumbering is a deliberate `proceedings --allow-renumber` run.
-        held = renumbered(paths.raw_day(session), day.get("date"))
+        held = renumbered(paths.raw_day(session), day.get("date"), day.get("uuid"))
         if held:
             logger.error("Refusing to renumber %s: it holds %s but the source now "
                          "numbers %s as ülésnap %d — skipping this day.",
@@ -272,6 +282,10 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
                "has_media": prev.get("has_media", False),
                "speech_count": prev.get("speech_count", 0)}
         needs = (force or not raw_exists or not prev
+                 # An announced sitting can be MOVED (parlament.hu re-dates the day
+                 # in place, keeping its uuid and number); nothing else would notice,
+                 # since a day with no recording yet has no duration to change.
+                 or prev.get("date") != sig["date"]
                  or prev.get("duration_s") != sig["duration_s"]
                  or prev.get("debate_s") != sig["debate_s"])
 
@@ -320,7 +334,7 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
         proc[session] = sig
 
     if not changed:
-        return []
+        return [], pruned
 
     # Transcribe the changed days' recordings (cache-aware, batched, parallel on
     # Modal); alignment failure for any day is isolated so it just falls back to the
@@ -345,7 +359,7 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
         written.append(session)
         logger.info("Synced sitting %s: %d speeches (%s)", session,
                     len(bundle["speeches"]), record["meta"]["timingMethod"])
-    return written
+    return written, pruned
 
 
 # --- bills / votes / representatives ---------------------------------------
@@ -475,12 +489,12 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
     backend = timing_backend or _default_timing_backend()
     state = load_state(paths.sync_state)
     summary = {"cycle": cycle, "checkedAt": _now(),
-               "sessions": [], "bills": False, "votes": False,
-               "representatives": False, "advocates": False,
+               "sessions": [], "removedSessions": [], "bills": False,
+               "votes": False, "representatives": False, "advocates": False,
                "officeHolders": False, "errors": []}
 
     try:
-        summary["sessions"] = _sync_proceedings(
+        summary["sessions"], summary["removedSessions"] = _sync_proceedings(
             felicitas, paths, cycle, state, force=force,
             resolve_offsets=not no_offsets, timing_backend=backend)
     except Exception as e:
@@ -535,7 +549,8 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
     state["lastCheckAt"] = summary["checkedAt"]
     save_state(paths.sync_state, state)
 
-    summary["changed"] = bool(summary["sessions"] or summary["bills"]
-                              or summary["votes"] or summary["representatives"]
+    summary["changed"] = bool(summary["sessions"] or summary["removedSessions"]
+                              or summary["bills"] or summary["votes"]
+                              or summary["representatives"]
                               or summary["advocates"])
     return summary

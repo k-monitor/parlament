@@ -32,7 +32,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from ..config import Paths, session_id
+from ..config import Paths, session_cycle, session_id
 from ..felicitas import FelicitasClient
 
 logger = logging.getLogger(__name__)
@@ -138,24 +138,115 @@ def sitting_number(day: dict) -> int | None:
     return _felirat_number(day)
 
 
+def _held_bundle(raw_path) -> dict:
+    """The raw bundle already downloaded to ``raw_path`` ({} if none/unreadable)."""
+    try:
+        return json.loads(raw_path.read_text()) or {}
+    except (OSError, ValueError):
+        return {}
+
+
 def held_date(raw_path) -> str | None:
     """The sitting date the raw file at ``raw_path`` already holds, if any."""
-    try:
-        return (json.loads(raw_path.read_text()) or {}).get("date")
-    except (OSError, ValueError):
-        return None
+    return _held_bundle(raw_path).get("date")
 
 
-def renumbered(raw_path, date: str | None) -> str | None:
+def renumbered(raw_path, date: str | None, uuid: str | None = None) -> str | None:
     """The date ``raw_path`` holds when that is NOT ``date`` — i.e. the source now
     gives this session key to a *different* sitting day.
 
     The guard against a repeat of the 2026-07 renumbering outage: writing through
     such a mismatch destroys the day the key used to mean, so callers refuse and
     say so instead, and a genuine renumbering has to be waved through explicitly.
+
+    ``uuid`` is the upstream day id of the sitting about to be written: when it
+    matches the one already on disk this is the *same* sitting whose date moved
+    (parlament.hu re-scheduling an announced day in place), not one day's key
+    being handed to another, so there is nothing to protect and the write goes
+    ahead."""
+    if not raw_path.exists():
+        return None
+    held = _held_bundle(raw_path)
+    if uuid and held.get("day_uuid") == uuid:
+        return None
+    held_on = held.get("date")
+    return held_on if (held_on and date and held_on != date) else None
+
+
+# --- cancelled sittings ----------------------------------------------------
+# parlament.hu announces sittings days ahead, and sometimes CANCELS one before it
+# is held: the day drops out of ``ulesnapok-query`` entirely and the ülésnap
+# ordinals it held move to the days that remain (2026-08: the announced 22./23.
+# ülésnap of 08-03/08-04 disappeared and 08-10/08-11 became 22./23. instead).
+#
+# Nothing else in the pipeline ever removes a sitting — the loader's incremental
+# update only adds and replaces — so without pruning BOTH halves break: the
+# cancelled day is served as an upcoming sitting for ever, and the day that
+# inherited its number can never be scraped either, because :func:`renumbered`
+# (rightly) refuses to write a session key another date already holds. Deleting
+# the vanished day's files fixes both at once: the key is free again, and the
+# loader prunes the DB row whose processed file is gone.
+
+def _held_sessions(paths: Paths, cycle: int):
+    """``(session key, raw bundle)`` for every downloaded day of ``cycle``."""
+    for path in sorted(paths.raw_plenary.glob("raw-*-day.json")):
+        session = path.name[len("raw-"):-len("-day.json")]
+        if session_cycle(session) != int(cycle):
+            continue
+        yield session, _held_bundle(path)
+
+
+def cancelled_sessions(paths: Paths, cycle: int, days: list[dict], start: str,
+                       end: str, *, prune_held: bool = False) -> list[str]:
+    """Session keys held on disk whose sitting day the source no longer lists.
+
+    ``days`` is what upstream currently says about ``[start, end]`` (as returned
+    by :func:`cycle_days`). Deliberately conservative, because the cost of a
+    false positive is deleting real archive:
+
+    * an empty day list is a failed/short answer, never evidence of a deletion;
+    * only a day inside the window actually asked about can be missing from it;
+    * a day whose date OR upstream uuid is still listed is not gone — it merely
+      moved or was renumbered, which :func:`renumbered` already guards;
+    * a day that already has speeches is not something parlament.hu cancels; that
+      is an upstream glitch, so it is reported and kept unless ``prune_held``.
     """
-    held = held_date(raw_path) if raw_path.exists() else None
-    return held if (held and date and held != date) else None
+    if not days:
+        return []
+    live_dates = {d.get("date") for d in days if d.get("date")}
+    live_uuids = {d.get("uuid") for d in days if d.get("uuid")}
+    gone: list[str] = []
+    for session, raw in _held_sessions(paths, cycle):
+        date = raw.get("date") or ""
+        if not (start <= date <= end):
+            continue
+        if date in live_dates or raw.get("day_uuid") in live_uuids:
+            continue
+        if raw.get("speeches") and not prune_held:
+            logger.error("Sitting %s (%s) has vanished from the source day list "
+                         "but holds %d speeches — keeping it. Delete its raw and "
+                         "processed files by hand if the removal is genuine.",
+                         session, date, len(raw["speeches"]))
+            continue
+        gone.append(session)
+    return gone
+
+
+def prune_cancelled(paths: Paths, cycle: int, days: list[dict], start: str,
+                    end: str, *, prune_held: bool = False) -> list[str]:
+    """Delete the local files of every sitting :func:`cancelled_sessions` finds,
+    returning the session keys pruned (the loader drops their rows on its next
+    update, and their ülésnap numbers are free for the days that inherited them).
+    """
+    gone = cancelled_sessions(paths, cycle, days, start, end,
+                              prune_held=prune_held)
+    for session in gone:
+        for path in (paths.raw_day(session), paths.session_file(session),
+                     paths.whisper_cache(session)):
+            path.unlink(missing_ok=True)
+        logger.warning("Pruned sitting %s: the source no longer lists that day "
+                       "(cancelled sitting)", session)
+    return gone
 
 
 def _now_iso() -> str:
@@ -357,7 +448,8 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
                     start: str, end: str, *, force: bool = False,
                     resolve_offsets: bool = True,
                     reuse_text: bool = False,
-                    allow_renumber: bool = False) -> list[str]:
+                    allow_renumber: bool = False,
+                    prune: bool = True) -> list[str]:
     """Download every sitting day of ``cycle`` in ``[start, end]`` to raw files.
 
     Returns the list of session keys that were (re)written this run. Days still
@@ -371,11 +463,18 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
 
     ``allow_renumber`` waves through a day whose session key is already held by a
     *different* date (:func:`renumbered`) — needed to repair a cycle numbered
-    wrongly, refused by default so a source glitch cannot overwrite the archive."""
+    wrongly, refused by default so a source glitch cannot overwrite the archive.
+
+    ``prune`` drops the local files of announced sittings the source has since
+    cancelled (:func:`prune_cancelled`); it runs before anything is downloaded so
+    the day that inherited a cancelled day's ülésnap number is free to be
+    scraped in the same pass."""
     days = cycle_days(felicitas, cycle, start, end)
     if not days:
         logger.info("No session days for cycle %s in [%s, %s]", cycle, start, end)
         return []
+    if prune:
+        prune_cancelled(paths, cycle, days, start, end)
 
     # Most-recent sitting may still be in progress — always refresh it, unless
     # even the latest day is past the publication-lag window (a completed cycle),
@@ -392,7 +491,7 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
         session = session_id(cycle, sitting)
         raw_path = paths.raw_day(session)
         if not allow_renumber:
-            held = renumbered(raw_path, day.get("date"))
+            held = renumbered(raw_path, day.get("date"), day.get("uuid"))
             if held:
                 logger.error("Refusing to renumber %s: it holds %s but the source "
                              "now numbers %s as ülésnap %d. Nothing written — check "

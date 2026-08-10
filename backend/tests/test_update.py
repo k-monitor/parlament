@@ -89,6 +89,36 @@ def test_update_reloads_a_changed_sitting(data_dir, db_path):
     assert _count(db_path, "SELECT COUNT(*) FROM session") == 1
 
 
+def test_update_removes_a_sitting_whose_file_is_gone(data_dir, db_path):
+    """The only way a sitting leaves: parlament.hu cancels an announced day and the
+    scraper deletes its processed file. Loading is otherwise purely additive, so
+    without this the cancelled day is served as an upcoming sitting for ever."""
+    gone = data_dir / "processed" / "43002-session.json"
+    gone.write_text(json.dumps(_session_record(session="43002", sitting=2,
+                                               date="2026-05-16"),
+                               ensure_ascii=False))
+    assert loader.update_database(data_dir, db_path) is True
+    assert _count(db_path, "SELECT COUNT(*) FROM session") == 2
+
+    gone.unlink()
+    # A removal is a change in itself: nothing else is stale, and the update must
+    # still run (and swap) rather than report the DB up to date.
+    assert loader.update_database(data_dir, db_path) is True
+
+    assert _count(db_path, "SELECT COUNT(*) FROM session WHERE id='43002'") == 0
+    assert _count(db_path, "SELECT COUNT(*) FROM speech WHERE session_id='43002'") == 0
+    assert _count(db_path, "SELECT COUNT(*) FROM agenda_item "
+                           "WHERE session_id='43002'") == 0
+    assert _count(db_path, "SELECT COUNT(*) FROM person_session_stats "
+                           "WHERE session_id='43002'") == 0
+    assert "43002-session.json" not in _load_state_names(db_path)
+    # The sitting that is still on record is untouched.
+    assert _count(db_path, "SELECT COUNT(*) FROM session WHERE id='43001'") == 1
+    assert _count(db_path, "SELECT COUNT(*) FROM speech WHERE session_id='43001'") >= 1
+    # …and the next update has nothing left to do.
+    assert loader.update_database(data_dir, db_path) is False
+
+
 def test_update_reloads_changed_bills_only(data_dir, db_path):
     bills = json.loads((data_dir / "processed" / "bills-43.json").read_text())
     bills["data"][0]["title"] = "Módosított cím a frissítés tesztjéhez"

@@ -175,12 +175,25 @@ Primary use cases:
     sitting is **coming** (SIT-1). The probe window reaches a little past today so
     an imminent announced day is captured. When the day is later held and
     populated, re-ingesting it (ING-4) flips it to `published`.
+  - An announced sitting can also be **cancelled**: the day vanishes from the
+    source's day list, and the **ülésnap number** it held moves to the day
+    announced in its place. Ingestion MUST follow that too — **remove** the day
+    that is gone (it will never be held, and nothing else in the pipeline ever
+    removes a sitting) and scrape the day that inherited its number, which the
+    session-key stability guard would otherwise refuse while the cancelled day
+    still held the key. A day that already has **speeches** is never removed on
+    this signal: an existing record disappearing from a listing is an upstream
+    glitch, not a cancellation.
   > **✅ realized.** The sync's proceedings pass carries a per-day `has_text` signal
   > in `sync-state.json`; a day without it is re-listed + text-probed each poll
   > until its jegyzőkönyv lands, then it goes quiet. `scrape_day` returns a
   > placeholder bundle (no speeches) instead of `None`, and `transform_day` stamps
   > `meta.status` (`scheduled` / `published`). The batch `download_period` self-heals
   > the same way (re-scrapes a stored day still `_awaiting_content`).
+  > `prune_cancelled` (run before each download/sync pass) deletes the raw +
+  > processed files of a day no longer listed in the window that was actually
+  > queried, freeing its number in the same pass; the loader drops the DB row whose
+  > processed file is gone (ING-5).
 
 ### 3.3 Ingestion into the database
 
@@ -206,7 +219,10 @@ Primary use cases:
   > scraper's `processed/*.json` via a `load_state` (mtime/size) table, reloading
   > only changed files then atomically renaming the file over the live DB; it is a
   > cheap no-op when nothing is newer, and degrades to a full build when no DB
-  > exists yet. This is the update half of the continuous sync (SCR-7 / OPS-5).
+  > exists yet. Reconciling includes **deletions**: a sitting whose processed file
+  > the scraper has removed (a cancelled announced day, SCR-8) is dropped with its
+  > derived rows, so the update is not merely additive. This is the update half of
+  > the continuous sync (SCR-7 / OPS-5).
 
 ### 3.4 Sentence ↔ video timing (forced alignment, positional fallback)
 

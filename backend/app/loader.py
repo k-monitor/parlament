@@ -2641,6 +2641,28 @@ def _changed_files(processed: Path, pattern: str,
     return out
 
 
+_SESSION_SUFFIX = "-session.json"
+
+
+def _removed_sessions(processed: Path,
+                      prev: dict[str, tuple[float, int]]) -> list[str]:
+    """Session ids whose processed file was loaded before but is now GONE.
+
+    The only way a sitting ever leaves the site: parlament.hu announces sittings
+    days ahead and sometimes cancels one, at which point the scraper deletes its
+    files (``proceedings.scrape.prune_cancelled``). Loading is otherwise purely
+    additive — an unmatched session row would keep being served as an upcoming
+    sitting for ever, and its ülésnap number is by then the day announced in its
+    place, so the site would show the cancelled day *and* miss the real one.
+
+    Scoped to ``load_state`` (what this data dir gave us last time) rather than
+    to the whole ``session`` table, so a partially-populated or differently-rooted
+    processed dir can never be read as "everything else was deleted"."""
+    return sorted(name[:-len(_SESSION_SUFFIX)] for name in prev
+                  if name.endswith(_SESSION_SUFFIX)
+                  and not (processed / name).exists())
+
+
 def _remove_db_side_files(base: Path) -> None:
     for suffix in ("-wal", "-shm"):
         side = base.with_suffix(base.suffix + suffix)
@@ -2686,7 +2708,8 @@ def update_database(data_dir: str | Path, db_path: str | Path, *,
     """Incrementally reconcile the live DB to the scraper's processed JSON.
 
     Compares each ``processed/*.json`` against the ``load_state`` recorded at the
-    last build/update and reloads **only the changed files** into a private
+    last build/update, drops the sittings whose file has since been deleted
+    (:func:`_removed_sessions`), and reloads **only the changed files** into a private
     snapshot of the current DB, rebuilds the (cheap, SQL-only) aggregates, and
     atomically swaps the result over the live file (DB-4) — so the running API
     picks it up on its next request with no restart and no downtime, having
@@ -2729,11 +2752,13 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
         live.close()
 
     changed = {pat: _changed_files(processed, pat, prev) for pat in _PROCESSED_GLOBS}
+    removed = _removed_sessions(processed, prev)
     n_changed = sum(len(v) for v in changed.values())
-    if n_changed == 0:
+    if n_changed == 0 and not removed:
         logger.info("No processed file changed since last load; DB is up to date")
         return False
-    logger.info("Incremental update: %d changed file(s) — %s", n_changed,
+    logger.info("Incremental update: %d changed file(s), %d removed sitting(s) — %s",
+                n_changed, len(removed),
                 {k: len(v) for k, v in changed.items() if v})
 
     # Snapshot the live DB into a temp copy we mutate in place, then swap it in.
@@ -2771,6 +2796,16 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             if sid:
                 loaded_sessions.append(sid)
 
+        # A sitting whose source file disappeared is gone from the site too (a
+        # cancelled announced sitting — see _removed_sessions). _delete_session
+        # takes its speeches/sentences/entities/agenda with it; the aggregates
+        # below are rebuilt from what is left.
+        for sid in removed:
+            _delete_session(conn, sid)
+            conn.execute("DELETE FROM load_state WHERE name = ?",
+                         (f"{sid}{_SESSION_SUFFIX}",))
+            logger.info("Removed sitting %s: its processed file is gone", sid)
+
         # Office terms after the sittings, and also when only a sitting changed: a
         # non-MP minister becomes a `person` row the day their first speech lands,
         # and this registry is the only thing that dates their office (REP-2). It is
@@ -2790,6 +2825,10 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             rebuild_speech_metrics(conn, db_path.parent,
                                    only_sessions=set(loaded_sessions),
                                    lemmas=not skip_wordcloud)
+        # A removal needs no per-sitting pass (its rows are gone) but does need the
+        # corpus-wide aggregates — word document frequencies and the §6C portfolio
+        # links among them — recomputed from what remains.
+        if loaded_sessions or removed:
             rebuild_aggregates(conn)
         # Wire any non-MP speaker portraits the scraper has downloaded since the
         # last load (global, cheap — see wire_nonmp_photos). Also runs for an
@@ -2826,8 +2865,9 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             _remove_db_files(tmp_path)
 
     _swap_in(tmp_path, db_path)
-    logger.info("Updated database at %s (%d sittings, %d rep/bill/vote file(s))",
-                db_path, len(loaded_sessions), n_changed - len(loaded_sessions))
+    logger.info("Updated database at %s (%d sittings, %d removed, "
+                "%d rep/bill/vote file(s))", db_path, len(loaded_sessions),
+                len(removed), n_changed - len(loaded_sessions))
     return True
 
 

@@ -256,9 +256,16 @@ python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
 ```
 
 - **Proceedings:** one `ulesnapok-query` lists the days; a sitting is re-scraped
-  only when it is new, its duration changed, or (for the still-live latest day)
-  its single-request speech listing changed — so finished days are never
-  re-fetched.
+  only when it is new, its date or duration changed, or (for the still-live latest
+  day) its single-request speech listing changed — so finished days are never
+  re-fetched. A day that has **dropped out of the listing** — an announced sitting
+  parlament.hu has since **cancelled** — has its raw + processed files deleted
+  (`--no-prune` on `proceedings` opts out), which both stops the site showing a
+  sitting that will never happen and frees its ülésnap number for the day
+  announced in its place, scraped in the same pass. A day that already holds
+  speeches is never pruned this way: an existing record vanishing from a listing
+  is an upstream glitch, so it is logged and kept. The DB row goes on the loader's
+  next `--update`, which drops sittings whose processed file is gone.
 - **Bills / votes:** the cheap list query runs, but per-item detail reuses the
   detail cache above, and the registry JSON is rewritten only when it differs.
 - **Representatives:** refreshed on a slow cadence (`--reps-max-age`, default 12h,

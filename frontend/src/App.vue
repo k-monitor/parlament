@@ -38,8 +38,8 @@ const NAV_SECTIONS = {
       { name: 'representatives', key: 'representatives', detail: ['profile'] },
       { name: 'lookup', key: 'lookup' },
       { name: 'advocates', key: 'advocates', detail: ['profile'] },
-      { name: 'speakers', key: 'speakers', detail: ['profile'] },
       { name: 'officials', key: 'officials', detail: ['profile'] },
+      { name: 'speakers', key: 'speakers', detail: ['profile'] },
       // Tárcák (§6C): the institution behind those offices. Its own module, so
       // the tab goes when the module is switched off (EXT-6) while the rest of
       // the section stays.

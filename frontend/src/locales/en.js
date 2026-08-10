@@ -286,7 +286,7 @@ export default {
     answeredShort: 'questions',
     submittedShort: 'documents',
     speechesShort: 'speeches',
-    medianDays: 'days — median time to answer',
+    medianDays: 'days — median time to answer a written question',
     holders: 'Who held it',
     holdersMore: '{count} more office holders',
     holdersFewer: 'Show fewer',

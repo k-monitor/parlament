@@ -358,7 +358,7 @@ export default {
     answeredShort: 'kérdés',
     submittedShort: 'iromány',
     speechesShort: 'felszólalás',
-    medianDays: 'nap – a válasz medián ideje',
+    medianDays: 'nap – írásbeli kérdés megválaszolásának medián ideje',
     holders: 'A tárca vezetői',
     holdersMore: 'További {count} tisztségviselő',
     holdersFewer: 'Kevesebb',

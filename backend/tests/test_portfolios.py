@@ -89,26 +89,41 @@ def test_bodies_that_are_not_ministries_keep_their_own_kind():
 # --------------------------------------------------------------------------
 
 def _answered_question(bill_id="q-1", number="I/9", label="belügyminiszter",
-                       submitted="2026-06-01T09:00:00Z", answered="2026-06-10T09:00:00Z"):
+                       submitted="2026-06-01T09:00:00Z", answered="2026-06-10T09:00:00Z",
+                       title="Interpelláció", qtype="interpelláció", main_type="I",
+                       event="interpelláció szóban megválaszolva"):
     return {"billId": bill_id, "billNumber": number, "billNumberSort": 9,
-            "title": "Interpelláció", "type": "interpelláció", "mainType": "I",
+            "title": title, "type": qtype, "mainType": main_type,
             "status": "benyújtva", "submittedDate": submitted,
             "sponsors": [{"personID": "k001", "factionId": 7, "committeeId": None,
                           "label": "Kovács Béla"}],
             "detail": {"events": [
-                {"date": answered, "name": "interpelláció szóban megválaszolva",
+                {"date": answered, "name": event,
                  "personID": None, "committeeId": None, "relatedLabel": label,
                  "speechNumber": None, "speechId": None, "voteId": None,
                  "remark": None}]}}
 
 
-def _load_portfolio_corpus(db_path, conn=None, answer_label="belügyminiszter"):
+def _written_question(bill_id="q-2", number="K/12", label="belügyminiszter",
+                      submitted="2026-06-01T09:00:00Z", answered="2026-06-21T09:00:00Z"):
+    """An `írásbeli kérdés` — the only question type the response-time median is
+    computed over (MIN-8), because its span is the tárca's own rather than the
+    House's sitting calendar."""
+    return _answered_question(bill_id, number, label, submitted, answered,
+                              title="Írásbeli kérdés", qtype="írásbeli kérdés",
+                              main_type="K", event="kérdés írásban megválaszolva")
+
+
+def _load_portfolio_corpus(db_path, conn=None, answer_label="belügyminiszter",
+                           extra=()):
     """Add an answered question to the shared fixture corpus (which already has a
-    government-submitted bill), then derive the §6C tables."""
+    government-submitted bill), then derive the §6C tables. ``extra`` appends
+    further irományok for tests that need more than the one interpelláció."""
     from tests.conftest import _bills_registry
     c = conn or loader.connect(db_path)
     reg = _bills_registry()
     reg["data"].append(_answered_question(label=answer_label))
+    reg["data"].extend(extra)
     loader.load_bills(c, reg)
     loader.rebuild_portfolios(c)
     return c
@@ -213,17 +228,31 @@ def test_listing_matches_the_name_accent_insensitively(client, db_path):
 
 
 def test_detail_reports_holders_response_time_and_the_labels_it_collated(client, db_path):
-    _load_portfolio_corpus(db_path).close()
+    # Two questions answered by the same tárca — an interpelláció and a written
+    # one. Both count as answered; only the written one is in the median (MIN-8).
+    _load_portfolio_corpus(db_path, extra=[_written_question()]).close()
     slug = portfolios.resolve("belügyminiszter").slug
     d = client.get(f"/api/v1/portfolios/{slug}").json()
     assert d["name"] == "Belügyminisztérium"
-    assert d["answered"] == 1
-    # submitted 2026-06-01, answered 2026-06-10
-    assert d["response_time"]["median_days"] == 9.0
+    assert d["answered"] == 2
+    # the written question: submitted 2026-06-01, answered 2026-06-21
+    assert d["response_time"]["median_days"] == 20.0
     assert d["response_time"]["n"] == 1
     assert "k001" in [h["person_id"] for h in d["holders"]]
     # The grouping is checkable by the reader (TRUST-1).
     assert "belügyminiszter" in d["aliases"]
+
+
+def test_the_response_time_median_covers_written_questions_only(client, db_path):
+    """MIN-8: an interpelláció is answered from the floor, so its span records when
+    the House next sat, not how fast the ministry worked. A tárca that answered
+    only in plenary therefore reports no median rather than the sitting calendar's.
+    """
+    _load_portfolio_corpus(db_path).close()      # the corpus holds one interpelláció
+    slug = portfolios.resolve("belügyminiszter").slug
+    d = client.get(f"/api/v1/portfolios/{slug}").json()
+    assert d["answered"] == 1
+    assert d["response_time"] is None
 
 
 def test_detail_404s_for_an_unknown_portfolio(client, db_path):

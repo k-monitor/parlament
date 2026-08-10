@@ -210,10 +210,25 @@ def list_portfolios(
     }
 
 
+# A written question (`írásbeli kérdés`): main_type K whose iromány type says the
+# answer was given in writing rather than from the floor — the same split the
+# Kérdések Sankey draws as its own `W` category (§6A). Folded on both sides so the
+# accented `í` matches however upstream cased it (FOLD-3).
+_WRITTEN_QUESTION_SQL = "b.main_type = 'K' AND fold(b.type) LIKE fold('%írásbeli%')"
+
+
 def _response_days(db: sqlite3.Connection, slug: str,
                    period: Optional[List[int]]) -> Optional[dict]:
-    """How long the tárca took to answer, in days: the median and the count it is
-    computed over (MIN-8).
+    """How long the tárca took to answer a **written question**, in days: the
+    median and the count it is computed over (MIN-8).
+
+    Only written questions count. Their span is the one thing the ministry itself
+    controls: the clock starts when the question is submitted and stops when the
+    tárca sends its reply. An interpelláció or an azonnali kérdés is answered from
+    the floor, so its answer date is set by when the House next sat — measured the
+    same way it would report the sitting calendar, not the ministry, and a
+    plenary-heavy remit would look slower than a written-question one for no
+    reason a reader could act on. Mixing the two into one median measures neither.
 
     Only questions whose **outcome is on record** count — which in this version is
     all of them, since a question enters this table by being answered (MIN-10a):
@@ -227,6 +242,7 @@ def _response_days(db: sqlite3.Connection, slug: str,
                    - julianday(substr(b.submitted_date, 1, 10)) AS days
             FROM portfolio_bill pb JOIN bill b ON b.id = pb.bill_id
             WHERE pb.portfolio_slug = ? AND pb.role = 'answered'
+              AND {_WRITTEN_QUESTION_SQL}
               AND pb.event_date IS NOT NULL AND b.submitted_date IS NOT NULL
               {('AND ' + per) if per else ''}""", (slug,)).fetchall()
     # A negative span means the two dates disagree about which came first — an

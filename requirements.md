@@ -1542,11 +1542,16 @@ speeches its minister and state secretaries gave).
   diagram and the profile can never disagree about who answered what.
 - **MIN-8 (SHOULD).** The profile carries the two figures a tárca is actually
   accountable for: **how many of the questions put to it were answered**, and
-  **how long it took** (submission → answer event, median). Both are computed only
-  over questions whose outcome is on record, both state their method (TRUST-1),
-  and neither is presented as a score or a ranking of ministries against one
-  another (§1.2 — no editorializing). A question still within its statutory answer
-  deadline is **pending, not late**, and is counted as such.
+  **how long it took** (submission → answer event, median). The median MUST be
+  computed over **written questions only** (`írásbeli kérdés`): their span is the
+  tárca's own, whereas an interpelláció or azonnali kérdés is answered from the
+  floor and its date is set by when the House next sat — so a mixed median would
+  report the sitting calendar and make a plenary-heavy remit look slower. Both are
+  computed only over questions whose outcome is on record, both state their method
+  (TRUST-1) — including which questions the median covers — and neither is
+  presented as a score or a ranking of ministries against one another (§1.2 — no
+  editorializing). A question still within its statutory answer deadline is
+  **pending, not late**, and is counted as such.
 - **MIN-9 (MUST).** **Renames are disclosed, never silently merged.** Hungarian
   ministries are renamed, split and merged at nearly every change of government
   (*Nemzeti Erőforrás Minisztérium* → *Emberi Erőforrások Minisztériuma* → carved

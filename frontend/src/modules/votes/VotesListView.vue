@@ -7,6 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
 import { formatDateTime } from '../../format.js'
+import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import Pagination from '../../components/Pagination.vue'
 
@@ -149,23 +150,29 @@ async function loadFacets() {
 // resolve out of order; only the latest may write state.
 let loadSeq = 0
 
+// Anonymous search-quality signal (SEA-12): which vote the reader opens after a
+// keyword search, and how far down the list it sat.
+const clicks = createSearchClicks('votes')
+
 async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
+  const offset = Number(route.query.offset) || 0
+  // `period` comes from the global cycle chooser (store.cycles; empty = all).
+  const args = {
+    q: route.query.q, result: route.query.result, period: store.cycles,
+    voting_mode: route.query.voting_mode,
+    date_from: route.query.date_from, date_to: route.query.date_to,
+    sort: route.query.sort,
+    bill: route.query.bill,
+    person: route.query.person, value: route.query.value,
+  }
   try {
-    // `period` comes from the global cycle chooser (store.cycles; empty = all).
-    const res = await api.votes({
-      q: route.query.q, result: route.query.result, period: store.cycles,
-      voting_mode: route.query.voting_mode,
-      date_from: route.query.date_from, date_to: route.query.date_to,
-      sort: route.query.sort,
-      bill: route.query.bill,
-      person: route.query.person, value: route.query.value,
-      limit: PAGE, offset: route.query.offset || 0,
-    })
+    const res = await api.votes({ ...args, limit: PAGE, offset })
     if (seq === loadSeq) {
       data.value = res
       personName.value = res.person ? res.person.label : ''
+      clicks.arm(args, offset)
     }
   } catch {
     if (seq === loadSeq) error.value = true
@@ -270,9 +277,9 @@ onUnmounted(() => clearTimeout(searchTimer))
         </label>
       </div>
       <ul class="votelist">
-        <li v-for="v in data.votes" :key="v.id" class="card pad votecard">
+        <li v-for="(v, i) in data.votes" :key="v.id" class="card pad votecard">
           <div class="vhead">
-            <router-link :to="{ name: 'vote', params: { id: v.id } }" class="vdate">{{ formatDateTime(v.vote_datetime) }}</router-link>
+            <router-link :to="{ name: 'vote', params: { id: v.id } }" class="vdate" @click="clicks.hit(i)">{{ formatDateTime(v.vote_datetime) }}</router-link>
             <span class="badge" :class="{ ok: v.result === $t('votes.accepted') }">{{ v.result }}</span>
             <span v-if="v.has_per_mp" class="badge rollcall">{{ $t('votes.rollCall') }}</span>
             <!-- How this MP voted (only in the person-scoped list). -->
@@ -280,7 +287,7 @@ onUnmounted(() => clearTimeout(searchTimer))
               {{ v.person_value_code ? $t('votes.' + v.person_value_code) : $t('profile.vbNotPresent') }}
             </span>
           </div>
-          <router-link :to="{ name: 'vote', params: { id: v.id } }" class="vsubject">{{ v.subject }}</router-link>
+          <router-link :to="{ name: 'vote', params: { id: v.id } }" class="vsubject" @click="clicks.hit(i)">{{ v.subject }}</router-link>
           <div v-if="v.subjects.length" class="vbills small">
             <span class="muted">{{ $t('votes.decidedBills') }}:</span>
             <span v-for="(s, i) in v.subjects" :key="i" class="vbill">

@@ -728,16 +728,46 @@ word-cloud and entity caches.
 ## Search analytics (privacy-friendly)
 
 The API keeps a **GDPR-friendly, aggregated log of what people search for** — the
-search *keywords* and the *filters* combined with them — to help improve coverage
-and the search itself (PRIV-1). It is designed to be non-personal by construction:
+search *keywords*, the *filters* combined with them, and whether the results
+answered them — to help improve coverage and the search itself (PRIV-1). It is
+designed to be non-personal by construction:
 
 - **No IP addresses, user agents, cookies or session identifiers** are read or
-  stored. The endpoint never even inspects the request's network metadata.
+  stored. The endpoints never even inspect the request's network metadata.
 - **No exact timestamps.** Events are counted into **whole-hour buckets** (UTC);
   the finest time resolution ever persisted is "term X was searched N times in the
   14:00–15:00 hour".
-- Only the **aggregate count** per `(hour, keyword, filters, zero-result flag)`
-  tuple is written — there is no per-request row to correlate back to anyone.
+- Only the **aggregate counts** per `(hour, search box, keyword, filters,
+  zero-result flag)` tuple are written — there is no per-request row to correlate
+  back to anyone.
+
+**Every search box on the site** is counted, not just the transcript search: the
+`source` column says which one (`proceedings`, `bills`, `representatives`,
+`officials`, `votes`, `portfolios`). The filters several boxes share keep their
+own columns (`date_from`, `date_to`, `period`, `person_id`, `faction_id`,
+`agenda_type`, `sort`); a box's own filters are folded into one canonical
+`filters` string, e.g. `main_type=T;status=elfogadott` — sorted by name, listing
+only what was set to something other than its default, with `=`/`;` inside a
+value percent-escaped. (The bills page and the "egyéb irományok" page are one
+endpoint under different `main_type` filters, so both record as `bills` and are
+told apart by that string.)
+
+Beside the plain count each bucket carries the **search-quality measures**:
+`results` (how many hits the query matched — `NULL` where it was never measured),
+`paged` (how many of those searches asked for a page past the first), `clicks`
+(how many ended with a result being opened) and `click_rank_sum` (the sum of
+those results' 1-based positions). So:
+
+- `clicks / searches` — **click-through rate**;
+- `click_rank_sum / clicks` — **mean first-click rank**: 1.0 means readers take
+  the top hit, higher means they scroll past it.
+
+The click half comes from an anonymous `POST /api/v1/search/click` ping the SPA
+fires when a result is opened (the only write the API accepts). It carries the
+same query + filters the search did — so it lands on that search's bucket — and
+no identifier of any kind; one executed search contributes at most one click.
+Because a search response can be served from the CDN cache while the ping always
+reaches the origin, treat the ratio as indicative, not exact.
 
 It writes to a **separate SQLite file** (never the read-only content DB), flushed
 once an hour. `./deploy.sh` bind-mounts the host directory **`./analytics`** to
@@ -747,7 +777,7 @@ container**:
 ```bash
 # on the host, next to docker-compose.yml
 sqlite3 ./analytics/search-analytics.db \
-  'SELECT hour, query, period, faction_id, zero_results, searches
+  'SELECT hour, source, query, period, filters, zero_results, searches, clicks
      FROM search_query_hourly ORDER BY hour DESC, searches DESC LIMIT 20;'
 ```
 
@@ -762,8 +792,11 @@ host — one file per day, `search-analytics-YYYY-MM-DD.csv`:
 column -t -s, ./analytics/csv/search-analytics-2026-07-21.csv | less
 ```
 
-Each file holds every `(hour, keyword, filters, zero-result flag, count)` bucket
-whose hour falls on that day, with the column header on the first line. A day's
+Each file holds every `(hour, search box, keyword, filters, zero-result flag,
+counts)` bucket whose hour falls on that day, with the column header on the first
+line. Columns are only ever **appended**, and a file whose header predates a new
+column is rewritten once, so every file in the directory always carries the same
+columns and the whole directory can be concatenated. A day's
 file is finalised the run after the day ends (its last hour flushes shortly after
 midnight UTC), so **each completed day's CSV is available by the following day**;
 the in-progress day stays in the live SQLite file until it completes. Files are
@@ -775,24 +808,41 @@ produce the same content, so concurrent writes are safe. Turn the export off wit
 More ways to read the SQLite store directly:
 
 ```bash
-# most-searched keywords overall
+# most-searched keywords overall, per search box
 sqlite3 ./analytics/search-analytics.db \
-  'SELECT query, SUM(searches) AS n FROM search_query_hourly
-     GROUP BY query ORDER BY n DESC LIMIT 20;'
+  'SELECT source, query, SUM(searches) AS n FROM search_query_hourly
+     GROUP BY source, query ORDER BY n DESC LIMIT 20;'
 
 # searches that found nothing (coverage gaps)
 sqlite3 ./analytics/search-analytics.db \
-  'SELECT query, SUM(searches) AS n FROM search_query_hourly
-     WHERE zero_results=1 GROUP BY query ORDER BY n DESC LIMIT 20;'
+  'SELECT source, query, SUM(searches) AS n FROM search_query_hourly
+     WHERE zero_results=1 GROUP BY source, query ORDER BY n DESC LIMIT 20;'
+
+# where the search is doing badly: often searched, rarely clicked, or clicked
+# only far down the list (>=20 searches, worst mean first-click rank first)
+sqlite3 ./analytics/search-analytics.db \
+  'SELECT source, query, SUM(searches) AS n,
+          ROUND(1.0*SUM(clicks)/SUM(searches), 2) AS ctr,
+          ROUND(1.0*SUM(click_rank_sum)/NULLIF(SUM(clicks),0), 1) AS mean_rank,
+          SUM(paged) AS paged
+     FROM search_query_hourly GROUP BY source, query
+    HAVING n >= 20 ORDER BY mean_rank DESC NULLS LAST, ctr LIMIT 20;'
 ```
 
 The table columns are `hour, query, date_from, date_to, period, person_id,
-faction_id, agenda_type, sort, zero_results, searches` (filter columns are `''`
-when the filter was not used). Multiple uvicorn workers and both blue/green
-colors write the same file concurrently; every write is an accumulating UPSERT, so
-their counts add up rather than clobber. Turn the whole thing off with
-`PARLAMONITOR_SEARCH_ANALYTICS=0` in `.env`. The privacy notice on the site's
-"About" page discloses this logging (PRIV-1).
+faction_id, agenda_type, sort, zero_results, searches, source, filters, results,
+paged, clicks, click_rank_sum` (filter columns are `''` when the filter was not
+used). Multiple uvicorn workers and both blue/green colors write the same file
+concurrently; every write is an accumulating UPSERT, so their counts add up rather
+than clobber. Turn the whole thing off with `PARLAMONITOR_SEARCH_ANALYTICS=0` in
+`.env` — the click ping then still answers `204`, it just counts nothing. The
+privacy notice on the site's "About" page discloses this logging (PRIV-1).
+
+A store written by an older build is **migrated in place** on first open: its
+rows keep their counts and read as what they were (transcript searches with no
+module filters), and their `results` stays `NULL` — "never measured" rather than
+a fabricated zero. Nothing to run by hand; the columns are added the first time a
+serving container opens the file.
 
 ## Common operations
 

@@ -8,6 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
 import { store, loadMeta, setCycles, currentCycleLabel, periodLabel } from '../../store.js'
 import { agendaLabel, formatDate, searchExcerptLines } from '../../format.js'
+import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
@@ -106,6 +107,9 @@ let reqSeq = 0
 // the breakdown, and the reqSeq that breakdown was last fetched for.
 let currentArgs = null
 let breakdownLoadedSeq = -1
+// Anonymous search-quality signal (SEA-12): which result the reader opens, and
+// how far down the list it sat. Armed by each executed search, fired once.
+const clicks = createSearchClicks('proceedings')
 
 async function runFromRoute() {
   if (!route.query.q) {
@@ -137,14 +141,17 @@ async function runFromRoute() {
   breakdown.value = null
   breakdownLoadedSeq = -1
   if (showBreakdown.value) loadBreakdown()
+  const offset = Number(route.query.offset) || 0
+  // ordering (SEA-10); trend/breakdown are unaffected by it
+  const searchArgs = { ...filterArgs, sort: route.query.sort }
   try {
-    const res = await api.search({
-      ...filterArgs,
-      sort: route.query.sort, // ordering (SEA-10); trend/breakdown are unaffected
-      limit: PAGE,
-      offset: route.query.offset || 0,
-    })
-    if (seq === reqSeq) data.value = res
+    const res = await api.search({ ...searchArgs, limit: PAGE, offset })
+    if (seq === reqSeq) {
+      data.value = res
+      // Arm the quality ping with the same args the search ran with, so a click
+      // is counted onto this search's own aggregate row.
+      clicks.arm(searchArgs, offset)
+    }
   } catch (e) {
     if (seq === reqSeq) error.value = true
   } finally {
@@ -381,7 +388,7 @@ function onTrendSelect({ from, to }) {
       </section>
 
       <ol class="results">
-        <li v-for="r in resultsView" :key="r.sentence_id" class="card pad result">
+        <li v-for="(r, i) in resultsView" :key="r.sentence_id" class="card pad result">
           <div class="result-meta row">
             <SpeakerLink v-if="r.speaker" :speaker="r.speaker" />
             <FactionBadge :faction="r.faction" />
@@ -389,14 +396,14 @@ function onTrendSelect({ from, to }) {
             <span class="muted small" v-if="r.agenda_title">{{ $t('search.on') }} {{ r.agenda_title }}</span>
             <TimingBadge :timing="r.timing" />
           </div>
-          <router-link :to="viewerLink(r)" class="result-excerpt">
-            <span v-for="(ln, i) in r.lines" :key="i" class="excerpt-line"
+          <router-link :to="viewerLink(r)" class="result-excerpt" @click="clicks.hit(i)">
+            <span v-for="(ln, j) in r.lines" :key="j" class="excerpt-line"
                   :class="{ aside: ln.interjection }">
               <span v-if="ln.speakerLabel" class="ctx-speaker">{{ ln.speakerLabel }}: </span><span v-html="ln.html"></span>
             </span>
           </router-link>
           <div class="result-actions">
-            <router-link :to="viewerLink(r)" class="btn secondary small watch">▶ {{ $t('search.watch') }}</router-link>
+            <router-link :to="viewerLink(r)" class="btn secondary small watch" @click="clicks.hit(i)">▶ {{ $t('search.watch') }}</router-link>
           </div>
         </li>
       </ol>

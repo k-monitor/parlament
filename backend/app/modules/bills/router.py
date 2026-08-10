@@ -16,6 +16,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ... import portfolios as portfolio_map
+from ...analytics import search_analytics
 from ...db import get_db, like_contains, period_key, period_list, period_sql
 from ...media import per_speech_clip
 from ...query_cache import cached_aggregate
@@ -265,6 +266,20 @@ def list_bills(
 
     total = db.execute(f"SELECT COUNT(*) AS c FROM bill b WHERE {where_sql}",
                        params).fetchone()["c"]
+
+    # Privacy-respecting analytics (PRIV-2): count the typed keyword and the
+    # filters it was combined with. A no-keyword browse of the list records
+    # nothing. The bills page and the "egyéb irományok" page are this one
+    # endpoint under different main_type filters — those filters are part of the
+    # key, so the two stay distinguishable in the aggregates.
+    search_analytics.record(
+        source="bills", query=q, period=period_list(period), sort=sort,
+        main_type=main_type, main_type_not=main_type_not,
+        main_type_in=main_type_in, main_type_not_in=main_type_not_in,
+        type=type, status=status, sponsor=sponsor, portfolio=portfolio,
+        portfolio_role=portfolio_role, portfolio_period=portfolio_period,
+        answer_verdict=answer_verdict, results=total, offset=offset)
+
     rows = db.execute(
         f"""SELECT b.id, b.bill_number, b.title, b.type, b.main_type, b.status,
                    b.submitted_date, b.text_url, b.source_url, b.period_number

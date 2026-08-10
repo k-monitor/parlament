@@ -25,6 +25,20 @@ async function get(path, params) {
   return res.json()
 }
 
+// The one write the API accepts: the anonymous search-quality ping (PRIV-2).
+// It must never disturb the page — every failure is swallowed — and `keepalive`
+// lets it complete even if the click that fired it navigates away.
+async function post(path, body) {
+  try {
+    await fetch(BASE + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      keepalive: true,
+    })
+  } catch { /* analytics is best-effort, never a page error */ }
+}
+
 // Interjection speaker names recur across many speeches on a sitting day (the
 // same MPs heckle repeatedly), so resolutions are cached process-wide: a name
 // maps to a person object once resolved, or to `null` once known-unresolvable,
@@ -49,6 +63,10 @@ async function resolveSpeakers(names) {
 export const api = {
   meta: () => get('/meta'),
   resolveSpeakers,
+  // Search analytics (PRIV-2): which result a reader opened and where in the
+  // list it sat, counted onto the search's own aggregate row. Carries no
+  // identifier of any kind — see lib/searchClicks.js.
+  searchClick: (source, params, rank) => post('/search/click', { source, params, rank }),
   // proceedings
   search: (params) => get('/proceedings/search', params),
   searchTrend: (params) => get('/proceedings/search/trend', params),

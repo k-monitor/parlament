@@ -12,6 +12,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, currentCycleLabel } from '../../store.js'
+import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 
 const route = useRoute()
@@ -33,10 +34,16 @@ const scopeText = computed(() => {
 // other → independent bodies); each group keeps the corpus-weight ordering.
 const groups = computed(() => {
   if (!data.value) return []
-  return data.value.kinds.map((kind) => ({
+  const out = data.value.kinds.map((kind) => ({
     kind,
     items: data.value.portfolios.filter((p) => p.kind === kind),
   })).filter((g) => g.items.length)
+  // Carry each tárca's position in the *rendered* order (the list is grouped by
+  // kind rather than paginated), so the search-quality ping can say how far down
+  // an opened tárca actually sat.
+  let n = 0
+  for (const g of out) g.items = g.items.map((p) => ({ ...p, rank: n++ }))
+  return out
 })
 
 // The speeches column is only meaningful for the cycles whose speeches carry the
@@ -61,13 +68,18 @@ function lead(p) {
   return p.holders && p.holders.length ? p.holders[0] : null
 }
 
+// Anonymous search-quality signal (SEA-12): which tárca the reader opens after a
+// keyword search, and how far down the list it sat.
+const clicks = createSearchClicks('portfolios')
+
 let loadSeq = 0
 async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
+  const args = { q: route.query.q, period: store.cycles }
   try {
-    const res = await api.portfolios({ q: route.query.q, period: store.cycles })
-    if (seq === loadSeq) data.value = res
+    const res = await api.portfolios(args)
+    if (seq === loadSeq) { data.value = res; clicks.arm(args) }
   } catch {
     if (seq === loadSeq) error.value = true
   } finally {
@@ -119,7 +131,10 @@ onUnmounted(() => clearTimeout(searchTimer))
         <ul class="plist">
           <li v-for="p in g.items" :key="p.slug" class="card pad prow">
             <div class="pname">
-              <RouterLink :to="{ name: 'portfolio', params: { slug: p.slug }, query: route.query }">
+              <RouterLink
+                :to="{ name: 'portfolio', params: { slug: p.slug }, query: route.query }"
+                @click="clicks.hit(p.rank)"
+              >
                 {{ p.name }}
               </RouterLink>
               <span v-if="lead(p)" class="small muted lead">

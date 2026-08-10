@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, currentCycleLabel } from '../../store.js'
 import { formatSpeakingTime } from '../../format.js'
+import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
@@ -107,18 +108,23 @@ function gotoPage(p) {
 // resolve out of order; only the latest may write state.
 let loadSeq = 0
 
+// Anonymous search-quality signal (SEA-12): which representative the reader
+// opens after a name search, and how far down the list they sat.
+const clicks = createSearchClicks('representatives')
+
 async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
+  const offset = Number(route.query.offset) || 0
+  // `period` comes from the global cycle chooser (store.cycles; empty = all) —
+  // it scopes the list to MPs serving in that cycle.
+  const args = {
+    q: route.query.q, faction_id: route.query.faction_id, period: store.cycles,
+    role: role.value, sort: route.query.sort || 'speaking_time',
+  }
   try {
-    // `period` comes from the global cycle chooser (store.cycles; empty = all) —
-    // it scopes the list to MPs serving in that cycle.
-    const res = await api.representatives({
-      q: route.query.q, faction_id: route.query.faction_id, period: store.cycles,
-      role: role.value,
-      sort: route.query.sort || 'speaking_time', limit: PAGE, offset: route.query.offset || 0,
-    })
-    if (seq === loadSeq) data.value = res
+    const res = await api.representatives({ ...args, limit: PAGE, offset })
+    if (seq === loadSeq) { data.value = res; clicks.arm(args, offset) }
   } catch {
     if (seq === loadSeq) error.value = true
   } finally {
@@ -211,8 +217,11 @@ onUnmounted(() => clearTimeout(searchTimer))
         </label>
       </div>
       <ul class="replist grid">
-        <li v-for="r in data.representatives" :key="r.person_id" class="card pad repcard">
-          <SpeakerLink :speaker="{ person_id: r.person_id, label: r.label, photo_uri: r.photo_uri }" />
+        <li v-for="(r, i) in data.representatives" :key="r.person_id" class="card pad repcard">
+          <SpeakerLink
+            :speaker="{ person_id: r.person_id, label: r.label, photo_uri: r.photo_uri }"
+            @click="clicks.hit(i)"
+          />
           <div class="repmeta">
             <FactionBadge :faction="r.faction" link />
             <!-- An advocate has no faction/constituency; the nationality they

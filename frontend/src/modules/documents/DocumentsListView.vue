@@ -16,6 +16,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
 import { formatDate } from '../../format.js'
+import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import MultiSelect from '../../components/MultiSelect.vue'
@@ -122,20 +123,27 @@ const mainTypeNot = computed(() => (sponsor.value ? undefined : 'T'))
 // resolve out of order; only the latest may write state.
 let loadSeq = 0
 
+// Anonymous search-quality signal (SEA-12): which result the reader opens after
+// a keyword search, and how far down the list it sat. The backend counts this
+// page under the same `bills` source as the törvényjavaslat list — the two are
+// one endpoint, told apart by their main_type filters.
+const clicks = createSearchClicks('bills')
+
 async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
+  const offset = Number(route.query.offset) || 0
+  // `period` comes from the global cycle chooser (store.cycles; empty = all).
+  const args = {
+    q: route.query.q,
+    type: toArray(route.query.type), status: toArray(route.query.status),
+    period: store.cycles, sort: route.query.sort || 'number',
+    sponsor: route.query.sponsor, main_type_not: mainTypeNot.value,
+    answer_verdict: route.query.verdict || undefined,
+  }
   try {
-    // `period` comes from the global cycle chooser (store.cycles; empty = all).
-    const res = await api.bills({
-      q: route.query.q,
-      type: toArray(route.query.type), status: toArray(route.query.status),
-      period: store.cycles, sort: route.query.sort || 'number',
-      sponsor: route.query.sponsor, main_type_not: mainTypeNot.value,
-      answer_verdict: route.query.verdict || undefined,
-      limit: PAGE, offset: route.query.offset || 0,
-    })
-    if (seq === loadSeq) data.value = res
+    const res = await api.bills({ ...args, limit: PAGE, offset })
+    if (seq === loadSeq) { data.value = res; clicks.arm(args, offset) }
   } catch {
     if (seq === loadSeq) error.value = true
   } finally {
@@ -235,14 +243,14 @@ onUnmounted(() => clearTimeout(t))
         </label>
       </div>
       <ul class="billlist">
-        <li v-for="b in data.bills" :key="b.id" class="card pad billcard">
+        <li v-for="(b, i) in data.bills" :key="b.id" class="card pad billcard">
           <div class="billhead">
-            <router-link :to="{ name: 'document', params: { id: b.id } }" class="billnum">{{ b.bill_number }}</router-link>
+            <router-link :to="{ name: 'document', params: { id: b.id } }" class="billnum" @click="clicks.hit(i)">{{ b.bill_number }}</router-link>
             <span class="badge" v-if="b.type">{{ b.type }}</span>
             <span class="badge status" v-if="b.status">{{ b.status }}</span>
             <span class="muted small" v-if="b.submitted_date">{{ formatDate(b.submitted_date) }}</span>
           </div>
-          <router-link :to="{ name: 'document', params: { id: b.id } }" class="billtitle">{{ b.title }}</router-link>
+          <router-link :to="{ name: 'document', params: { id: b.id } }" class="billtitle" @click="clicks.hit(i)">{{ b.title }}</router-link>
           <div class="sponsors small" v-if="b.sponsors.length || b.responder">
             <template v-for="(s, i) in b.sponsors" :key="i">
               <router-link v-if="s.person_id" :to="{ name: 'profile', params: { id: s.person_id } }">{{ s.name }}</router-link>

@@ -539,7 +539,17 @@ site-wide behaviour, not a per-view nicety.
   describe the whole result set regardless of order.
 - **SEA-11.** Each executed search (the canonical `/search` request) is counted
   into the **anonymous, aggregated search analytics** — keyword + active filters,
-  no personal data — see **PRIV-2** (§8.4).
+  no personal data — see **PRIV-2** (§8.4). The site's **other search boxes**
+  (irományok, képviselők, tisztségviselők, szavazások, tárcák) are counted the
+  same way, each under its own source.
+- **SEA-12.** The analytics also record **whether the search worked**: how many
+  hits it found, whether the reader had to page past the first page, and the
+  **position of the first result they opened** (1 = the top hit). Together these
+  give a click-through rate and a **mean first-click rank** per keyword, which is
+  what makes a ranking regression visible. The click signal is an anonymous ping
+  carrying only the search it belongs to and that position — no identifier, and
+  at most one per executed search, so no reader's path can be reconstructed from
+  it (PRIV-2).
 
 ### 5.2 Proceedings viewer (sentence ↔ video sync)
 
@@ -1692,19 +1702,24 @@ rework of existing features.
   analytics; **no third-party ad/marketing trackers**; GDPR-compliant. Any
   analytics disclosed in a privacy notice.
 - **PRIV-2.** **Search analytics** (the one concrete analytics under PRIV-1). The
-  backend logs what people search for — the search **keyword** and the **filters**
+  backend logs what people search for — the search **keyword**, the **filters**
   combined with it (§SEA-3: date range, speaker, faction, agenda type, sort, and a
-  zero-result flag) — to guide coverage and search improvements. It is **anonymous
-  and aggregated by design**: no IP address, user agent, cookie or session
-  identifier is read or stored, and **no exact timestamp** is kept — events are
-  counted into **whole-hour buckets** (UTC), so only a per-hour **count** per
-  `(keyword, filters)` tuple is persisted, never a per-request row that could be
-  correlated to a person. Only the canonical `/search` request is counted (not the
-  trend/breakdown/suggest calls the SPA fires for the same query). Data is written
-  to a **separate SQLite file** — never the read-only content DB — flushed hourly
-  and mounted on a **host-accessible** volume so the aggregates can be inspected or
-  exported from outside the container. Enabled by default, switchable off by config
-  (OPS-4), and **disclosed in the privacy notice** (PRIV-1).
+  zero-result flag) and **which search box** it was typed into (§SEA-11) — to guide
+  coverage and search improvements. It also records how well the search worked
+  (§SEA-12): the **hit count**, whether a page past the first was asked for, and
+  the **position of the first result opened**. It is **anonymous and aggregated by
+  design**: no IP address, user agent, cookie or session identifier is read or
+  stored, and **no exact timestamp** is kept — events are counted into **whole-hour
+  buckets** (UTC), so only per-hour **counts** per `(search box, keyword, filters)`
+  tuple are persisted, never a per-request row that could be correlated to a
+  person. Only the canonical search request of each box is counted (not the
+  trend/breakdown/suggest/facet calls the SPA fires for the same query), and the
+  click signal is a separate ping carrying nothing but that same tuple and a
+  position, at most once per executed search. Data is written to a **separate
+  SQLite file** — never the read-only content DB — flushed hourly and mounted on a
+  **host-accessible** volume so the aggregates can be inspected or exported from
+  outside the container. Enabled by default, switchable off by config (OPS-4), and
+  **disclosed in the privacy notice** (PRIV-1).
 - **TRUST-1.** Provenance and **confidence/timing-precision** indicators (from the
   pipeline `debug` block) are surfaced, not hidden, wherever they affect what the
   user sees (see VIE-6, REP-5).

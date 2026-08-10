@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from ... import valasztas
+from ...analytics import search_analytics
 from ...config import settings
 from ...db import (fold_text, get_db, like_contains, local_instant, period_and,
                    period_bounds, period_list, period_sql)
@@ -212,6 +213,14 @@ def list_representatives(
 
     total = db.execute(f"SELECT COUNT(*) AS c FROM person p WHERE {where_sql}",
                        params).fetchone()["c"]
+
+    # Privacy-respecting analytics (PRIV-2): the typed name/keyword + the filters
+    # it was combined with. A no-keyword browse of the list records nothing.
+    search_analytics.record(
+        source="representatives", query=q, period=period, sort=sort,
+        faction_id=faction_id, role=role, constituency=constituency,
+        nationality=nationality, results=total, offset=offset)
+
     # An advocate has no faction or constituency; their nationality is the
     # affiliation the card shows in its place.
     mandate_cols = ("p.is_advocate, p.nationality," if advocates_known
@@ -472,6 +481,13 @@ def list_officials(
         return {"total": 0, "limit": limit, "offset": offset, "officials": [],
                 "categories": [], "starts": {"all": 0, "in_cycle": None},
                 "methodology": _OFFICE_METHODOLOGY}
+
+    # Privacy-respecting analytics (PRIV-2): the typed name/keyword + the filters
+    # it was combined with. A no-keyword browse of the registry records nothing.
+    search_analytics.record(
+        source="officials", query=q, period=period, sort=sort,
+        category=category, status=status, started=started,
+        results=total, offset=offset)
 
     # Each filter's own options are counted with **that** filter lifted (the others
     # applied), so neither can offer a choice that would land on an empty page.

@@ -11,15 +11,17 @@ from __future__ import annotations
 import os
 import sqlite3
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from . import readability, seo
-from .analytics import search_analytics
+from .analytics import RESERVED_PARAMS, SOURCES, search_analytics
 from .caching import CacheControlMiddleware
 from .config import settings
 from .db import get_db
@@ -58,7 +60,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins or ["*"],
-    allow_methods=["GET"],
+    # The API is read-only; the one POST is the anonymous search-quality ping
+    # below, which writes nothing but a counter.
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -148,6 +152,57 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
             "A felszólalások videóidőzítése a v1-ben pozícióalapú becslés "
             "(karakterarányos), ezért közelítő pontosságú."),
     }
+
+
+class SearchClick(BaseModel):
+    """One search-quality ping: which search box, which search, and where in the
+    result list the opened result sat."""
+
+    source: str = Field(description="Which search box the search ran in: "
+                                    + " | ".join(sorted(SOURCES)))
+    rank: int = Field(description="1-based position of the opened result in the "
+                                  "whole result list — page offset included, so "
+                                  "the first hit on page 2 of 20 is 21")
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="The query (`q`) and filters the search itself ran with, "
+                    "echoed back so the click is counted onto that search's "
+                    "bucket. Parameters the search box does not have are ignored.")
+
+
+# A ping carrying more keys than any search box has is not a search of ours;
+# ignore it rather than walking a hand-crafted dictionary.
+_MAX_CLICK_PARAMS = 40
+
+
+@app.post(f"{API_PREFIX}/search/click", status_code=204, tags=["core"])
+def search_click(click: SearchClick) -> None:
+    """Count the FIRST result a reader opened from a search (SEA-12).
+
+    The quality half of the search analytics (PRIV-2): with the search itself
+    already counted, `clicks / searches` gives the click-through rate and
+    `click_rank_sum / clicks` the mean position of the result readers actually
+    open — 1.0 meaning the top hit answers them. Like every other analytics
+    write it is anonymous and aggregated: no identifier of any kind is read or
+    stored, the ping carries none, and it only ever increments two counters on
+    the `(hour, keyword, filters)` bucket the search was counted into. One
+    executed search contributes at most one click (the SPA disarms its ping on
+    the first result opened).
+
+    Always answers 204: a ping that names an unknown search box, carries no
+    keyword or reports an implausible position is dropped silently — analytics
+    must never argue with the page."""
+    params = dict(click.params or {})
+    if len(params) > _MAX_CLICK_PARAMS:
+        return None
+    query = params.pop("q", None)
+    # Everything that isn't a filter is dropped here: the reserved names would
+    # collide with record_click()'s own arguments, and paging is not part of the
+    # key (`rank` already counts from the top of the whole list).
+    filters = {k: v for k, v in params.items() if k not in RESERVED_PARAMS}
+    search_analytics.record_click(source=click.source, query=query,
+                                  rank=click.rank, **filters)
+    return None
 
 
 @app.get(f"{API_PREFIX}/health", tags=["core"])

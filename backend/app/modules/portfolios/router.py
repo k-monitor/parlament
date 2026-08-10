@@ -21,6 +21,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ...analytics import search_analytics
 from ...db import (get_db, like_contains, period_bounds, period_key, period_list,
                    period_sql)
 from ...query_cache import cached_aggregate
@@ -194,6 +195,12 @@ def list_portfolios(
             "speeches": c.get("speeches", 0),
             "holders": who[:3], "holder_count": len(who),
         })
+    # Privacy-respecting analytics (PRIV-2): the typed keyword + the filters it
+    # was combined with. A no-keyword browse of the list records nothing. The
+    # listing is not paginated, so there is no page depth to record.
+    search_analytics.record(source="portfolios", query=q, period=period,
+                            kind=kind, results=len(out))
+
     return {
         "portfolios": out,
         "kinds": [k for k in ("ministry", "pm", "no-portfolio", "other", "body")

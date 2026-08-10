@@ -15,6 +15,7 @@ import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, currentCycleLabel } from '../../store.js'
 import { formatDateLocal } from '../../format.js'
+import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import Pagination from '../../components/Pagination.vue'
@@ -103,19 +104,24 @@ function term(o) {
 // resolve out of order; only the latest may write state.
 let loadSeq = 0
 
+// Anonymous search-quality signal (SEA-12): which office holder the reader opens
+// after a name search, and how far down the list they sat.
+const clicks = createSearchClicks('officials')
+
 async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
+  const offset = Number(route.query.offset) || 0
+  const args = {
+    q: route.query.q, category: route.query.category,
+    status: route.query.status || 'all',
+    started: route.query.started || 'all',
+    sort: route.query.sort || 'start',
+    period: store.cycles,
+  }
   try {
-    const res = await api.officials({
-      q: route.query.q, category: route.query.category,
-      status: route.query.status || 'all',
-      started: route.query.started || 'all',
-      sort: route.query.sort || 'start',
-      period: store.cycles,
-      limit: PAGE, offset: route.query.offset || 0,
-    })
-    if (seq === loadSeq) data.value = res
+    const res = await api.officials({ ...args, limit: PAGE, offset })
+    if (seq === loadSeq) { data.value = res; clicks.arm(args, offset) }
   } catch {
     if (seq === loadSeq) error.value = true
   } finally {
@@ -250,8 +256,11 @@ onUnmounted(() => clearTimeout(searchTimer))
       </div>
 
       <ul class="olist">
-        <li v-for="o in data.officials" :key="o.id" class="card pad orow">
-          <SpeakerLink :speaker="{ person_id: o.person_id, label: o.label, photo_uri: o.photo_uri }" />
+        <li v-for="(o, i) in data.officials" :key="o.id" class="card pad orow">
+          <SpeakerLink
+            :speaker="{ person_id: o.person_id, label: o.label, photo_uri: o.photo_uri }"
+            @click="clicks.hit(i)"
+          />
           <div class="ooffice">
             <span class="otitle">{{ o.title }}</span>
             <span v-if="o.category" class="badge">{{ $t('officials.categories.' + o.category) }}</span>

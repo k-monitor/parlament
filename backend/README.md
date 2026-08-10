@@ -78,6 +78,10 @@ uvicorn app.main:app --reload                      # http://localhost:8000
 * OpenAPI/Swagger docs: `/api/docs` — ReDoc: `/api/redoc` (NFR-3)
 * Module manifest the SPA registers against: `/api/v1/meta` (EXT-4)
 * MP portraits served from `PARLAMONITOR_PHOTOS_DIR` at `/media/photos/<file>`
+* The API is read-only but for one anonymous counter: `POST /api/v1/search/click`
+  reports which search result was opened, feeding the search-quality half of the
+  aggregated analytics (PRIV-2, `app/analytics.py`). It stores no identifier and
+  always answers `204`
 
 ### Configuration (all environment-driven — OPS-4)
 

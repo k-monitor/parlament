@@ -17,6 +17,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ...analytics import search_analytics
 from ...db import get_db, like_contains, period_key, period_sql
 from ...parlament_links import vote_page_url
 from ...query_cache import cached_aggregate
@@ -229,6 +230,14 @@ def list_votes(
     join = _SORT_JOINS.get(sort, "")
     total = db.execute(f"SELECT COUNT(*) AS c FROM vote v WHERE {where_sql}",
                        params).fetchone()["c"]
+
+    # Privacy-respecting analytics (PRIV-2): the typed keyword + the filters it
+    # was combined with. A no-keyword browse records nothing.
+    search_analytics.record(
+        source="votes", query=q, period=period, sort=sort, result=result,
+        voting_mode=voting_mode, date_from=date_from, date_to=date_to,
+        bill=bill, person=person, value=value, results=total, offset=offset)
+
     rows = db.execute(
         f"""SELECT v.* FROM vote v {join} WHERE {where_sql}
             ORDER BY {_VOTE_SORTS[sort]} LIMIT :limit OFFSET :offset""",

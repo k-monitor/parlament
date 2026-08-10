@@ -210,19 +210,23 @@ def search(
     total = total_row["c"]
     capped = total > settings.max_search_total
 
-    # Privacy-respecting analytics (PRIV-1): count this search — its keyword and
-    # filters — into the current hour's aggregate. No IP / no exact timestamp; the
-    # request's network metadata is never touched. Only `/search` is instrumented
-    # (not trend/breakdown/suggest, which the SPA fires for the same query), so one
-    # user search is one recorded event. Best-effort — never affects the response.
+    # Privacy-respecting analytics (PRIV-1): count this search — its keyword, its
+    # filters, how many hits it found and which page was asked for — into the
+    # current hour's aggregate. No IP / no exact timestamp; the request's network
+    # metadata is never touched. Only `/search` is instrumented (not
+    # trend/breakdown/suggest, which the SPA fires for the same query), so one
+    # user search is one recorded event; the result the reader then opens is
+    # counted onto this same bucket by the click ping (SEA-12, main.py).
+    # Best-effort — never affects the response.
     search_analytics.record(
-        query=q, date_from=date_from, date_to=date_to,
+        source="proceedings", query=q, date_from=date_from, date_to=date_to,
         # Multi-cycle scope is recorded as one canonical "43,44" key, so the same
         # selection always aggregates onto the same row.
-        period=",".join(str(n) for n in period_list(period)) or None,
+        period=period_list(period),
         person_id=person_id, faction_id=faction_id, agenda_type=agenda_type,
         sort=sort if sort in _SEARCH_SORTS else "relevance",
-        zero_results=(total == 0),
+        # The capped figure — the one the reader is shown and pages through.
+        results=min(total, settings.max_search_total), offset=offset,
     )
 
     # Rank + page over the FTS/filter joins ALONE, then join the <=`limit`

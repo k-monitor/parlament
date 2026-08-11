@@ -65,8 +65,35 @@ def period_list(period: Iterable[int] | None) -> list[int]:
     Bounded at ``_MAX_PERIODS`` distinct values — far beyond any real scope (the
     House has had a handful of cycles), but enough of a cap that a hand-crafted
     request can't turn the param into a thousand-term ``IN`` list, or a thousand
-    distinct aggregate-cache keys."""
-    return sorted({int(p) for p in (period or ())})[:_MAX_PERIODS]
+    distinct aggregate-cache keys.
+
+    When the deployment serves a **window** of cycles rather than the whole
+    corpus (``PARLAMONITOR_SITE_CYCLES``, §4A CYC-7), the result is clamped to
+    it here — the one place every period-aware query, aggregate-cache key and
+    date-range derivation passes through, so no endpoint can be forgotten. The
+    clamp only ever narrows: cycles outside the window are dropped, and a
+    request left with none of them — including the empty "all cycles" request —
+    is answered over the whole window instead of over the corpus. It is
+    idempotent (its own output is already inside the window), so applying it
+    again downstream in ``period_sql``/``period_key`` changes nothing."""
+    nums = sorted({int(p) for p in (period or ())})[:_MAX_PERIODS]
+    window = settings.site_periods
+    if not window:
+        return nums
+    return [n for n in nums if n in window] or list(window)
+
+
+def period_in_scope(period_number: int | None) -> bool:
+    """Whether one row's own cycle is inside the served window (§4A CYC-7).
+
+    For the detail pages, which are addressed by id and so carry no ``period``
+    param to clamp: a sitting/speech/bill/vote of a cycle the site does not serve
+    is answered as *not found*, since inside this deployment it does not exist.
+    A row with **no** cycle recorded stays in scope — the window is a statement
+    about cycles, and a missing value places nothing outside it (a data gap must
+    not silently unpublish a page)."""
+    window = settings.site_periods
+    return not window or period_number is None or int(period_number) in window
 
 
 _MAX_PERIODS = 64

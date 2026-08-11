@@ -157,6 +157,21 @@ class Settings:
     # unset the cards fall back to the request's base URL.
     site_url: str | None = field(default_factory=lambda:
         (os.environ.get("PARLAMONITOR_SITE_URL") or "").strip().rstrip("/") or None)
+    # Which electoral cycles the site SERVES (§4A CYC-7). Unset (or "all") means
+    # the whole corpus — every cycle the DB was built with, the default. Set to a
+    # comma-separated list of cycle numbers ("43", "42,43") to run the site as a
+    # window onto those cycles only: the header's cycle chooser offers nothing
+    # else, every period-aware query is clamped to them (a request naming an
+    # out-of-window cycle — or none at all, "all cycles" — is answered over the
+    # window, never wider), a sitting/speech/bill/vote page outside them 404s,
+    # and the sitemaps stop advertising those pages.
+    #
+    # A serving-time window, not a build-time one: the DB keeps every cycle it
+    # was loaded with, so widening or removing the window shows them again with
+    # no re-load. Use it to launch with the current cycle while older ones are
+    # still being checked, or to run a cycle-specific edition of the site.
+    site_cycles: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_SITE_CYCLES", "").strip())
     # Cap on reported search totals so a pathological query can't scan forever.
     max_search_total: int = int(os.environ.get("PARLAMONITOR_MAX_SEARCH_TOTAL", "5000"))
     # Read-path SQLite mmap ceiling in bytes (OPS-4). SQLite memory-maps up to this
@@ -374,6 +389,14 @@ class Settings:
         (STAT-1). Case/whitespace-insensitive."""
         return bool(speech_type) and speech_type.strip().casefold() in self.procedural_speech_types
 
+    @property
+    def site_periods(self) -> tuple[int, ...]:
+        """The electoral cycles the site serves, ascending — ``()`` for "every
+        cycle in the DB" (see ``site_cycles``). A property rather than a stored
+        field so tests (and a reload) can move the window by setting
+        ``site_cycles``, exactly as the environment does."""
+        return parse_site_cycles(self.site_cycles)
+
     def modal_cycle_allowed(self, period: int | None,
                             latest: int | None = None) -> bool:
         """Whether sittings of electoral ``period`` may be dispatched to Modal,
@@ -388,6 +411,24 @@ class Settings:
         if isinstance(spec, frozenset):
             return period in spec
         return period is None or latest is None or period == latest
+
+
+@lru_cache(maxsize=8)
+def parse_site_cycles(raw: str) -> tuple[int, ...]:
+    """Parse a ``PARLAMONITOR_SITE_CYCLES`` value into the ascending tuple of
+    cycle numbers the site serves; ``()`` means "no window, the whole corpus".
+
+    Where ``parse_modal_cycles`` resolves a typo *downwards* (that setting caps
+    spend, so an unreadable value must not open the archive up), this one
+    resolves it upwards to ``()``: this setting decides what the public site
+    shows, and a mistyped value must fall back to the corpus as built rather
+    than to a silently emptied site."""
+    raw = (raw or "").strip().lower()
+    if raw in ("", "all", "*"):
+        return ()
+    cycles = {int(p) for p in raw.replace(";", ",").split(",")
+              if p.strip().lstrip("-").isdigit()}
+    return tuple(sorted(cycles))
 
 
 @lru_cache(maxsize=8)

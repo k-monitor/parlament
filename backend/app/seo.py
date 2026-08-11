@@ -32,7 +32,7 @@ from fastapi import Depends, Request
 from fastapi.responses import PlainTextResponse, Response
 
 from .config import settings
-from .db import get_db
+from .db import get_db, period_and, period_sql
 
 logger = logging.getLogger(__name__)
 
@@ -88,89 +88,130 @@ class _Section:
     sql: str
 
 
-_SECTIONS: tuple[_Section, ...] = (
-    _Section(
+def _sections() -> tuple[_Section, ...]:
+    """The corpus slices, built against the cycles this deployment serves.
+
+    Built per call rather than kept as a constant because that window is config
+    (``PARLAMONITOR_SITE_CYCLES``, §4A CYC-7): with none set every query below is
+    the plain corpus-wide one it has always been, and with one set each grows the
+    same period predicate the API's own queries carry — so the sitemap never
+    offers a crawler a page the site now answers 404 to.
+
+    People are the exception the API makes too: a profile is biography rather
+    than a cycle's record (REP-2), so it stays readable whatever the window, but
+    it is only *advertised* for people who sat or spoke inside it — otherwise a
+    windowed site would submit tens of thousands of profiles whose every page has
+    nothing to show. Portfolios (a fixed ministry list, cycle-scoped inside the
+    page) are advertised unchanged."""
+    window = settings.site_periods
+    ses = period_and(window, "period_number")                       # "" when unwindowed
+    sp_where = f"WHERE {period_sql(window, 'sp.period_number')}" if window else ""
+    votes_where = f" WHERE {period_sql(window, 'period_number')}" if window else ""
+    return (
+      _Section(
         "sessions", "proceedings",
-        "SELECT COUNT(*) FROM session WHERE COALESCE(status,'published')='published'",
-        """SELECT '/sessions/' || id AS path, date AS lastmod
+        "SELECT COUNT(*) FROM session "
+        f"WHERE COALESCE(status,'published')='published'{ses}",
+        f"""SELECT '/sessions/' || id AS path, date AS lastmod
              FROM session
-            WHERE COALESCE(status,'published')='published'
+            WHERE COALESCE(status,'published')='published'{ses}
             ORDER BY date DESC, id DESC
             LIMIT :limit OFFSET :offset""",
-    ),
-    # Speeches are the corpus — everything with enough text to be a page of its
-    # own (MIN_SENTENCES).
-    _Section(
+      ),
+      # Speeches are the corpus — everything with enough text to be a page of its
+      # own (MIN_SENTENCES).
+      _Section(
         "speeches", "proceedings",
         """SELECT COUNT(*) FROM (SELECT speech_id FROM sentence
                                   GROUP BY speech_id
-                                  HAVING COUNT(*) >= :min_sentences)""",
-        """SELECT '/proceedings/' || sp.uid AS path, ss.date AS lastmod
+                                  HAVING COUNT(*) >= :min_sentences)"""
+        if not window else
+        f"""SELECT COUNT(*) FROM speech sp
+              JOIN (SELECT speech_id FROM sentence
+                     GROUP BY speech_id HAVING COUNT(*) >= :min_sentences) t
+                ON t.speech_id = sp.uid
+             {sp_where}""",
+        f"""SELECT '/proceedings/' || sp.uid AS path, ss.date AS lastmod
              FROM speech sp
              JOIN session ss ON ss.id = sp.session_id
              JOIN (SELECT speech_id FROM sentence
                     GROUP BY speech_id HAVING COUNT(*) >= :min_sentences) t
                ON t.speech_id = sp.uid
+            {sp_where}
             ORDER BY sp.session_id DESC, sp.speech_index
             LIMIT :limit OFFSET :offset""",
-    ),
-    # Everyone with a profile page worth reading: MPs, nationality advocates and
-    # anyone who has spoken in the House (REP-12). A bare person row carrying
-    # nothing but a name is not a page.
-    _Section(
+      ),
+      # Everyone with a profile page worth reading: MPs, nationality advocates and
+      # anyone who has spoken in the House (REP-12). A bare person row carrying
+      # nothing but a name is not a page.
+      _Section(
         "representatives", "representatives",
-        """SELECT COUNT(*) FROM person
-            WHERE is_mp=1 OR is_advocate=1
-               OR person_id IN (SELECT person_id FROM speech WHERE person_id IS NOT NULL)""",
-        """SELECT '/representatives/' || person_id AS path, NULL AS lastmod
+        f"SELECT COUNT(*) FROM person WHERE {_people_where(window)}",
+        f"""SELECT '/representatives/' || person_id AS path, NULL AS lastmod
              FROM person
-            WHERE is_mp=1 OR is_advocate=1
-               OR person_id IN (SELECT person_id FROM speech WHERE person_id IS NOT NULL)
+            WHERE {_people_where(window)}
             ORDER BY is_mp DESC, label
             LIMIT :limit OFFSET :offset""",
-    ),
-    # Törvényjavaslatok live under /bills, every other iromány type under
-    # /documents — the same split the two browse pages make (main_type 'T'), and
-    # the one `og.py` canonicalises to.
-    _Section(
+      ),
+      # Törvényjavaslatok live under /bills, every other iromány type under
+      # /documents — the same split the two browse pages make (main_type 'T'), and
+      # the one `og.py` canonicalises to.
+      _Section(
         "bills", "bills",
-        "SELECT COUNT(*) FROM bill WHERE main_type='T'",
-        """SELECT '/bills/' || id AS path, submitted_date AS lastmod
-             FROM bill WHERE main_type='T'
+        f"SELECT COUNT(*) FROM bill WHERE main_type='T'{ses}",
+        f"""SELECT '/bills/' || id AS path, submitted_date AS lastmod
+             FROM bill WHERE main_type='T'{ses}
             ORDER BY submitted_date DESC, id
             LIMIT :limit OFFSET :offset""",
-    ),
-    _Section(
+      ),
+      _Section(
         "documents", "bills",
-        "SELECT COUNT(*) FROM bill WHERE main_type IS NULL OR main_type<>'T'",
-        """SELECT '/documents/' || id AS path, submitted_date AS lastmod
-             FROM bill WHERE main_type IS NULL OR main_type<>'T'
+        "SELECT COUNT(*) FROM bill "
+        f"WHERE (main_type IS NULL OR main_type<>'T'){ses}",
+        f"""SELECT '/documents/' || id AS path, submitted_date AS lastmod
+             FROM bill WHERE (main_type IS NULL OR main_type<>'T'){ses}
             ORDER BY submitted_date DESC, id
             LIMIT :limit OFFSET :offset""",
-    ),
-    # The tárcák (§6C). Few pages, but each is a standing entry point into a
-    # ministry's whole record — the kind of page a search for "Belügyminisztérium
-    # kérdések" should be able to land on.
-    _Section(
+      ),
+      # The tárcák (§6C). Few pages, but each is a standing entry point into a
+      # ministry's whole record — the kind of page a search for "Belügyminisztérium
+      # kérdések" should be able to land on.
+      _Section(
         "portfolios", "portfolios",
         "SELECT COUNT(*) FROM portfolio",
         """SELECT '/representatives/portfolios/' || slug AS path, NULL AS lastmod
              FROM portfolio ORDER BY ord
             LIMIT :limit OFFSET :offset""",
-    ),
-    _Section(
+      ),
+      _Section(
         "votes", "votes",
-        "SELECT COUNT(*) FROM vote",
-        """SELECT '/votes/' || id AS path, substr(vote_datetime, 1, 10) AS lastmod
-             FROM vote
+        f"SELECT COUNT(*) FROM vote{votes_where}",
+        f"""SELECT '/votes/' || id AS path, substr(vote_datetime, 1, 10) AS lastmod
+             FROM vote{votes_where}
             ORDER BY vote_datetime DESC, id
             LIMIT :limit OFFSET :offset""",
-    ),
-)
+      ),
+    )
+
+
+def _people_where(window: tuple[int, ...]) -> str:
+    """Which people get a sitemap entry — corpus-wide, or only those who sat or
+    spoke inside the served window (see `_sections`). Membership covers MPs and
+    nationality advocates alike; the speech arm adds ministers and other
+    non-members who spoke, which is what earns a profile a page (REP-12)."""
+    if not window:
+        return ("is_mp=1 OR is_advocate=1 "
+                "OR person_id IN (SELECT person_id FROM speech "
+                                  "WHERE person_id IS NOT NULL)")
+    return (f"person_id IN (SELECT person_id FROM membership "
+            f"WHERE {period_sql(window, 'period_number')}) "
+            f"OR person_id IN (SELECT person_id FROM speech "
+            f"WHERE person_id IS NOT NULL "
+            f"AND {period_sql(window, 'period_number')})")
 
 
 def _enabled_sections() -> list[_Section]:
-    return [s for s in _SECTIONS if settings.module_enabled(s.module)]
+    return [s for s in _sections() if settings.module_enabled(s.module)]
 
 
 def _enabled_static() -> list[str]:

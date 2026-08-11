@@ -16,7 +16,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...analytics import search_analytics
 from ...config import settings
-from ...db import get_db, like_contains, period_key, period_list, period_sql
+from ...db import (get_db, like_contains, period_in_scope, period_key,
+                   period_list, period_sql)
 from ...media import per_speech_clip
 from ...nlp import LINKABLE_LABELS
 from ...query_cache import cached_aggregate
@@ -708,7 +709,10 @@ def _speech_metrics(db: sqlite3.Connection, uid: str) -> dict | None:
 def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
     """A sitting day: agenda items in order, each with its speeches (use case 2)."""
     s = db.execute("SELECT * FROM session WHERE id = ?", (session_id,)).fetchone()
-    if not s:
+    # A sitting of a cycle this deployment does not serve (CYC-7) is answered as
+    # not found — same answer as an id that isn't in the DB, since within this
+    # window it isn't. The same guard sits on every by-id page below.
+    if not s or not period_in_scope(s["period_number"]):
         raise HTTPException(404, "Session not found")
     agenda = db.execute(
         "SELECT * FROM agenda_item WHERE session_id = ? ORDER BY ord", (session_id,)
@@ -769,7 +773,7 @@ def session_wordcloud(session_id: str, limit: int = Query(80, ge=1, le=200),
     lightweight request so it never slows the sitting-day load (WCLOUD-5)."""
     s = db.execute("SELECT id, date, period_number FROM session WHERE id = ?",
                    (session_id,)).fetchone()
-    if not s:
+    if not s or not period_in_scope(s["period_number"]):
         raise HTTPException(404, "Session not found")
 
     tf, kinds = _session_term_freqs(db, session_id)
@@ -837,9 +841,9 @@ def session_top_speakers(session_id: str, limit: int = Query(10, ge=1, le=50),
     word cloud — and only known representatives (resolved ``person_id``) are
     listed (TOPSPK-2). A separate, lightweight request so it never slows the
     sitting-day load (TOPSPK-5)."""
-    s = db.execute("SELECT id, date FROM session WHERE id = ?",
+    s = db.execute("SELECT id, date, period_number FROM session WHERE id = ?",
                    (session_id,)).fetchone()
-    if not s:
+    if not s or not period_in_scope(s["period_number"]):
         raise HTTPException(404, "Session not found")
     rows = db.execute(
         """SELECT sp.person_id, sp.speaker_status,
@@ -906,9 +910,9 @@ def session_new_words(session_id: str, limit: int = Query(80, ge=1, le=400),
 
     Note the novelty is only ever relative to the transcripts loaded: the very
     earliest sitting in the corpus will show almost all of its words as "new"."""
-    s = db.execute("SELECT id, date FROM session WHERE id = ?",
+    s = db.execute("SELECT id, date, period_number FROM session WHERE id = ?",
                    (session_id,)).fetchone()
-    if not s:
+    if not s or not period_in_scope(s["period_number"]):
         raise HTTPException(404, "Session not found")
     try:
         # Drop named entities here; drop capitalized / punctuated lemmas in Python
@@ -1017,7 +1021,7 @@ def get_speech(uid: str, db: sqlite3.Connection = Depends(get_db)):
            LEFT JOIN faction f ON f.id = sp.faction_id
            LEFT JOIN agenda_item ai ON ai.id = sp.agenda_item_id
            WHERE sp.uid = ?""", (uid,)).fetchone()
-    if not sp:
+    if not sp or not period_in_scope(sp["period_number"]):
         raise HTTPException(404, "Speech not found")
     session = db.execute("SELECT * FROM session WHERE id = ?",
                          (sp["session_id"],)).fetchone()
@@ -1051,8 +1055,9 @@ def get_speech_text(uid: str, db: sqlite3.Connection = Depends(get_db)):
     only needs its text, so this returns just the sentences and never pulls the
     whole viewer payload. `has_text` distinguishes a genuinely empty transcript
     (video-only speech, VIE-8) from one still being read."""
-    sp = db.execute("SELECT uid, has_text FROM speech WHERE uid = ?", (uid,)).fetchone()
-    if not sp:
+    sp = db.execute("SELECT uid, has_text, period_number FROM speech WHERE uid = ?",
+                    (uid,)).fetchone()
+    if not sp or not period_in_scope(sp["period_number"]):
         raise HTTPException(404, "Speech not found")
     # `paragraph` groups the flat sentence list back into the transcript's
     # original paragraphs (NULL on a pre-migration DB → the reader falls back to
@@ -1105,9 +1110,9 @@ def get_speech_clip(
     no scraping and no stored artefact.
     """
     sp = db.execute(
-        "SELECT session_id, video_start, video_end FROM speech WHERE uid = ?",
-        (uid,)).fetchone()
-    if not sp:
+        "SELECT session_id, period_number, video_start, video_end "
+        "FROM speech WHERE uid = ?", (uid,)).fetchone()
+    if not sp or not period_in_scope(sp["period_number"]):
         raise HTTPException(404, "Speech not found")
     session = db.execute("SELECT video_uri, video_playseq FROM session WHERE id = ?",
                          (sp["session_id"],)).fetchone()

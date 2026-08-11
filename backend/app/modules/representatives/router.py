@@ -947,12 +947,17 @@ def get_statistics(person_id: str, period: Optional[List[int]] = Query(
         f"""SELECT COUNT(DISTINCT pss.session_id) AS c FROM person_session_stats pss
             JOIN session s ON s.id=pss.session_id
             WHERE pss.person_id=?{sess_scope}""", (person_id,)).fetchone()["c"]
+    # The per-cycle breakdown deliberately ignores the reader's selection — it is
+    # the "which cycles has this MP been active in" chart — but not the cycles the
+    # site *serves* (§4A CYC-7): a bar for a cycle this deployment doesn't show
+    # would invite a click into pages that answer 404.
     by_period = db.execute(
         """SELECT ep.number AS period, ep.label, ps.speech_count, ps.speaking_seconds,
                   ps.sentence_count
            FROM person_stats ps JOIN electoral_period ep ON ep.number=ps.period_number
-           WHERE ps.person_id=? AND ps.period_number IS NOT NULL
-           ORDER BY ep.number""", (person_id,)).fetchall()
+           WHERE ps.person_id=? AND ps.period_number IS NOT NULL"""
+        + period_and(settings.site_periods, "ps.period_number")
+        + " ORDER BY ep.number", (person_id,)).fetchall()
 
     # REP-3: "bills submitted" stays hidden (not faked) until the Bills module
     # is live (EXT-6). When it is, surface the official parlament.hu own-bill
@@ -964,6 +969,11 @@ def get_statistics(person_id: str, period: Optional[List[int]] = Query(
     if bills_available:
         ext = _loads(p["external_stats_json"]) or {}
         bills_by_cycle = (ext or {}).get("billsSubmitted") or []
+        # Upstream reports this per cycle for the MP's whole career; keep the
+        # served ones (CYC-7), so the breakdown covers the same span as the rest.
+        if settings.site_periods:
+            bills_by_cycle = [e for e in bills_by_cycle
+                              if e.get("cycle") in settings.site_periods]
         bills_submitted = (_own_bills_for_cycles(bills_by_cycle, periods)
                            if periods else _latest_own_bills(bills_by_cycle))
 

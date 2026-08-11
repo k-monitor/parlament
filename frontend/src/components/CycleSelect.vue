@@ -97,7 +97,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-if="periods.length" ref="rootRef" class="cyclesel">
+  <!-- Hidden unless there is a choice to make: a deployment serving a single
+       cycle (CYC-7), or a corpus that only holds one, would otherwise offer a
+       dropdown whose two entries — that cycle and "all cycles" — select exactly
+       the same content. -->
+  <div v-if="periods.length > 1" ref="rootRef" class="cyclesel">
     <button
       type="button" class="cyclebtn" :class="{ open }" @click="open = !open"
       :title="$t('cycle.label')" :aria-label="$t('cycle.label') + ': ' + label"

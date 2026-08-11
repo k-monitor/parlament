@@ -40,7 +40,7 @@ from fastapi import Depends, Request
 from fastapi.responses import HTMLResponse
 
 from .config import settings
-from .db import get_db
+from .db import get_db, period_in_scope
 
 # --- app-shell loading ------------------------------------------------------
 
@@ -611,7 +611,7 @@ def register(app) -> None:
             except ValueError:
                 s_ord = None
             sp = db.execute(
-                """SELECT sp.uid, sp.session_id, sp.speaker_label,
+                """SELECT sp.uid, sp.session_id, sp.speaker_label, sp.period_number,
                           p.label AS person_label, p.photo_uri,
                           f.label AS faction_label,
                           ss.date AS session_date, ss.sitting
@@ -620,7 +620,10 @@ def register(app) -> None:
                    LEFT JOIN faction f ON f.id = sp.faction_id
                    LEFT JOIN session ss ON ss.id = sp.session_id
                    WHERE sp.uid = ?""", (uid,)).fetchone()
-            if not sp:
+            # Outside the served cycles (§4A CYC-7) the page behind this card
+            # answers 404, so the card must too — a share card for a page the
+            # site won't render is exactly the soft 404 `_missing` avoids.
+            if not sp or not period_in_scope(sp["period_number"]):
                 return _missing(request)
 
             speaker = sp["person_label"] or sp["speaker_label"] or "Ismeretlen felszólaló"
@@ -818,9 +821,9 @@ def register(app) -> None:
         """Metadata for a sitting-day page."""
         try:
             ss = db.execute(
-                "SELECT date, sitting FROM session WHERE id = ?",
+                "SELECT date, sitting, period_number FROM session WHERE id = ?",
                 (session_id,)).fetchone()
-            if not ss:
+            if not ss or not period_in_scope(ss["period_number"]):
                 return _missing(request)
             date_hu = _hu_date(ss["date"])
             title = f"Országgyűlési ülésnap – {date_hu}" if date_hu else "Országgyűlési ülésnap"
@@ -867,9 +870,9 @@ def register(app) -> None:
         try:
             b = db.execute(
                 """SELECT id, bill_number, title, type, main_type, status,
-                          submitted_date, text_url
+                          submitted_date, text_url, period_number
                    FROM bill WHERE id = ?""", (bill_id,)).fetchone()
-            if not b:
+            if not b or not period_in_scope(b["period_number"]):
                 return _missing(request)
             url_path = (f"/bills/{bill_id}" if b["main_type"] == "T"
                         else f"/documents/{bill_id}")
@@ -978,9 +981,9 @@ def register(app) -> None:
         try:
             v = db.execute(
                 """SELECT id, vote_datetime, subject, result, yes, no, abstain,
-                          voting_mode
+                          voting_mode, period_number
                      FROM vote WHERE id = ?""", (vote_id,)).fetchone()
-            if not v:
+            if not v or not period_in_scope(v["period_number"]):
                 return _missing(request)
             subjects = [
                 {"bill_id": r["bill_id"],

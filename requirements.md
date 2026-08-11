@@ -388,6 +388,31 @@ selector** that scopes every period-aware view at once.
   redirect to a duplicate of itself, and the site went unindexed (§SEO-2). A
   `?cycle=` that is already in the URL is honoured and left alone, whatever it
   says.
+- **CYC-7 (SHOULD).** A deployment MAY be run as a **window onto part of the
+  corpus** — `PARLAMONITOR_SITE_CYCLES` (OPS-4), empty by default, meaning every
+  cycle in the DB. Named cycles ("43", "42,43") make the site behave as though
+  only those exist: the CYC-1 chooser offers no others, every period-aware query
+  is clamped to them, the homepage totals count only them, a by-id page
+  (sitting, felszólalás, iromány, szavazás) outside them answers **404** — for
+  the API, the share card (§SEO-5) and therefore the SPA alike — and the
+  sitemaps stop advertising those pages, so a crawler is never handed a URL the
+  site refuses.
+  - The clamp **narrows, never widens**: a hand-written `?period=` naming an
+    unserved cycle, and the "all cycles" selection alike, are answered over the
+    window rather than over the corpus or as an empty result.
+  - It is a **serving-time** window, not a build-time one: the DB keeps every
+    cycle it was loaded with, so widening or lifting it is a restart, not a
+    rebuild. (Distinct from `PARLAMONITOR_MODAL_CYCLES`, a spend guard on the NLP
+    offload, and from the scraper's own cycle scope.)
+  - **Profiles stay readable** whichever window is set, matching REP-2's standing
+    exception that a biography is not cycle-scoped; what the window governs there
+    is their *statistics* (already cycle-scoped) and whether the profile is
+    advertised in the sitemap at all.
+  - The **constituency lookup** (REP-10) keeps answering for the cycle its
+    election data elects, the same standing exception to CYC-2 it already is — it
+    states that cycle on the page. Windowing to a cycle *other* than the one the
+    map describes is therefore the one place the window does not reach;
+    `PARLAMONITOR_EVK_LOOKUP=0` turns the page off outright.
 
 ---
 

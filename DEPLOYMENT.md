@@ -686,6 +686,7 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_PORT` | `8000` | host port mapped to the container's 8000 |
 | `PARLAMONITOR_CORS_ORIGINS` | `http://localhost:8000` | allowed SPA origins (only relevant if the SPA is hosted separately; same-origin needs nothing) |
 | `PARLAMONITOR_MODULES` | _(empty → all)_ | comma list of enabled modules (EXT-6) |
+| `PARLAMONITOR_SITE_CYCLES` | _(empty → all)_ | which electoral cycles the site **shows** — `43`, `42,43` (§4A CYC-7; see [Serving one cycle](#serving-only-some-electoral-cycles)) |
 | `REBUILD_DB` | `0` | set to `1` to rebuild the DB from `/data` on next start |
 | `PARLAMONITOR_DB` | `/db/parlamonitor.db` | DB path inside the container |
 | `PARLAMONITOR_DATA_DIR` | `/data` | scraper-output mount (read-only for `app`, read-write for `sync`) |
@@ -749,6 +750,51 @@ need the [re-deploy](#offloading-the-word-cloud-nlp-to-modal-gpucpu) noted above
 since it calls a service method that older images don't carry. Its results land in
 `speech-metrics-cache.json` next to the DB (the mounted volume), alongside the
 word-cloud and entity caches.
+
+## Serving only some electoral cycles
+
+`PARLAMONITOR_SITE_CYCLES` runs the site as a **window onto part of the corpus**
+(§4A CYC-7). Empty — the default — serves every cycle in the DB; name cycles to
+serve only those:
+
+```dotenv
+# .env
+PARLAMONITOR_SITE_CYCLES=43        # only the current cycle
+# PARLAMONITOR_SITE_CYCLES=42,43   # the current one and the previous one
+```
+
+`./deploy.sh` picks it up on the next color swap — no rebuild, no re-load.
+
+Inside the window the site behaves as though the other cycles were never loaded:
+
+- the header's cycle chooser offers only these cycles, and "all cycles" means
+  these cycles;
+- every list, search, chart, ranking and statistic is clamped to them — including
+  a hand-written `?period=` naming a cycle outside the window, which is answered
+  over the window rather than over the corpus;
+- the homepage's headline totals count only them;
+- a sitting, felszólalás, iromány or szavazás outside them answers **404**, in
+  the API and in the shared/crawled share card alike;
+- `sitemap.xml` and its children stop listing those pages, so a crawler is never
+  handed a URL the site refuses.
+
+Two things deliberately stay whole. **Profiles** remain readable whatever the
+window — a biography is not cycle-scoped (REP-2), and an MP's page is often the
+target of an inbound link — though their statistics are the window's and they are
+no longer advertised in the sitemap unless the person sat or spoke inside it. And
+the **DB keeps every cycle it was built with**: this is a serving-time window, so
+widening or removing it brings the rest straight back on the next restart.
+
+One page is outside the window's reach: the **constituency lookup** ("Ki a
+képviselőm?", REP-10) answers for the cycle the election office's map elects and
+says so on the page — which matches the window in the normal case of serving the
+current cycle, but not if you window to an older one. Set
+`PARLAMONITOR_EVK_LOOKUP=0` there to drop the page entirely.
+
+Not to be confused with the two other cycle settings: `PARLAMONITOR_MODAL_CYCLES`
+caps which cycles may spend Modal credit on NLP, and `PARLAMONITOR_SYNC_CYCLE`
+picks which cycle the scraper watches. Both are about *building* the DB; this one
+is only about what is *shown*.
 
 ## Search analytics (privacy-friendly)
 

@@ -36,6 +36,14 @@ x-common-env: &common-env
   PARLAMONITOR_PHOTOS_DIR: /data/media/photos
   # Empty = all modules (proceedings,representatives,bills,votes). EXT-6.
   PARLAMONITOR_MODULES: ${PARLAMONITOR_MODULES:-}
+  # Which electoral cycles the SITE SHOWS (§4A CYC-7). Empty (default) = every
+  # cycle in the DB; name them to serve a window instead ("43" / "42,43"): the
+  # cycle chooser offers only those, every query is clamped to them, and pages
+  # outside them 404 and leave the sitemaps. Serving-time only — the DB keeps
+  # every cycle, so widening it needs a restart, not a rebuild. (Not to be
+  # confused with PARLAMONITOR_MODAL_CYCLES below, which is a spend guard on the
+  # NLP offload, or PARLAMONITOR_SYNC_CYCLE, which is what the scraper fetches.)
+  PARLAMONITOR_SITE_CYCLES: ${PARLAMONITOR_SITE_CYCLES:-}
 
 # Word-cloud NLP config shared by the services that build/update the DB (init,
 # sync). Set PARLAMONITOR_WORDCLOUD_BACKEND=modal + the Modal token to offload the

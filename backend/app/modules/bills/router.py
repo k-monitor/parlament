@@ -17,7 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ... import portfolios as portfolio_map
 from ...analytics import search_analytics
-from ...db import get_db, like_contains, period_key, period_list, period_sql
+from ...db import (get_db, like_contains, period_in_scope, period_key,
+                   period_list, period_sql)
 from ...media import per_speech_clip
 from ...query_cache import cached_aggregate
 from ...vote_stats import (NO_ATTENDANCE, NO_CROSSVOTING, attendance_for,
@@ -856,7 +857,8 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     `defector_share`, `defector_factions`), for the votes the Votes module has
     ingested (`vote_ref`)."""
     b = db.execute("SELECT * FROM bill WHERE id = ?", (bill_id,)).fetchone()
-    if not b:
+    # An iromány of a cycle this deployment does not serve (CYC-7) is not found here.
+    if not b or not period_in_scope(b["period_number"]):
         raise HTTPException(404, "Bill not found")
     sponsors = _sponsors_for(db, [bill_id]).get(bill_id, [])
 

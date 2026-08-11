@@ -18,7 +18,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...analytics import search_analytics
-from ...db import get_db, like_contains, period_key, period_sql
+from ...db import get_db, like_contains, period_in_scope, period_key, period_sql
 from ...parlament_links import vote_page_url
 from ...query_cache import cached_aggregate
 from ...vote_stats import (CAST_SUM, CROSSVOTING_SCOPE, DEFECTORS_SUM,
@@ -425,7 +425,8 @@ def get_vote(vote_id: str, db: sqlite3.Connection = Depends(get_db)):
     """A single vote with its subjects (bill links), per-faction breakdown and
     the full per-MP roll call (each MP linked to their profile, EXT-2)."""
     v = db.execute("SELECT * FROM vote WHERE id = ?", (vote_id,)).fetchone()
-    if not v:
+    # A vote of a cycle this deployment does not serve (CYC-7) is not found here.
+    if not v or not period_in_scope(v["period_number"]):
         raise HTTPException(404, "Vote not found")
 
     subjects = _subjects_for(db, [vote_id]).get(vote_id, [])

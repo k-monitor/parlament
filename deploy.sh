@@ -214,6 +214,10 @@ echo "==> serving network: $NET"
 set -a; [ -f "$ROOT/.env" ] && . "$ROOT/.env" || true; set +a
 color_env=(
   -e "PARLAMONITOR_MODULES=${PARLAMONITOR_MODULES:-}"
+  # Which electoral cycles the site shows (§4A CYC-7). Empty = all of them; set
+  # e.g. PARLAMONITOR_SITE_CYCLES=43 in .env to serve one cycle's edition of the
+  # site off the full DB. Takes effect on the next color swap, no rebuild.
+  -e "PARLAMONITOR_SITE_CYCLES=${PARLAMONITOR_SITE_CYCLES:-}"
   -e "PARLAMONITOR_CORS_ORIGINS=${PARLAMONITOR_CORS_ORIGINS:-http://localhost:${PORT}}"
   -e "PARLAMONITOR_SITE_URL=${PARLAMONITOR_SITE_URL:-}"
   -e "PARLAMONITOR_API_CACHE_CONTROL=${PARLAMONITOR_API_CACHE_CONTROL:-}"

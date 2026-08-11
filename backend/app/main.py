@@ -24,8 +24,9 @@ from . import readability, seo
 from .analytics import RESERVED_PARAMS, SOURCES, search_analytics
 from .caching import CacheControlMiddleware
 from .config import settings
-from .db import get_db
+from .db import get_db, period_and, period_sql
 from .modules.registry import load_modules
+from .query_cache import cached_aggregate
 
 API_PREFIX = "/api/v1"
 
@@ -100,6 +101,43 @@ def _metric_totals(db: sqlite3.Connection) -> dict:
     return {"scored": scored, "with_diversity": diverse}
 
 
+def _corpus_counts(db: sqlite3.Connection) -> dict:
+    """The homepage's headline totals, over the cycles the site serves (CYC-7).
+
+    With no window these are the four corpus-wide counts they have always been;
+    inside one each grows the same period predicate the API's own queries carry —
+    the sentence count through a join on `speech`, since sentences are stamped
+    only by the speech they belong to, and MPs through `membership`, since
+    `person.is_mp` records having *ever* held a seat rather than holding one in
+    these cycles.
+
+    Memoized per DB build (the sentence count alone is a ~1 s scan of the full
+    corpus, and this runs on every cold SPA load); the loader's atomic swap
+    invalidates it via the DB identity folded into the cache key."""
+    window = settings.site_periods
+
+    def compute() -> dict:
+        return {
+            "sessions": db.execute(
+                "SELECT COUNT(*) AS c FROM session WHERE 1=1"
+                + period_and(window, "period_number")).fetchone()["c"],
+            "speeches": db.execute(
+                "SELECT COUNT(*) AS c FROM speech WHERE 1=1"
+                + period_and(window, "period_number")).fetchone()["c"],
+            "sentences": db.execute(
+                "SELECT COUNT(*) AS c FROM sentence" if not window else
+                "SELECT COUNT(*) AS c FROM sentence s "
+                "JOIN speech sp ON sp.uid = s.speech_id "
+                f"WHERE {period_sql(window, 'sp.period_number')}").fetchone()["c"],
+            "representatives": db.execute(
+                "SELECT COUNT(*) AS c FROM person WHERE is_mp=1" if not window else
+                "SELECT COUNT(DISTINCT person_id) AS c FROM membership "
+                f"WHERE {period_sql(window, 'period_number')}").fetchone()["c"],
+        }
+
+    return cached_aggregate("meta_counts", window, compute)
+
+
 @app.get(f"{API_PREFIX}/meta", tags=["core"])
 def meta(db: sqlite3.Connection = Depends(get_db)):
     """Site metadata + the live module manifest the SPA registers against (EXT-4)."""
@@ -108,17 +146,17 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
     # has a bare electoral_period row with NULL date_start/date_end, which the
     # SPA would otherwise show as just the ordinal number ("39"). Hide those
     # until the cycle is set up enough to carry a start–end year label.
+    #
+    # This list is also what the header's cycle chooser offers, so a deployment
+    # serving a window of cycles (CYC-7) hides the rest here: a cycle the site
+    # does not serve is not one the reader can pick, and a saved/`?cycle=`
+    # selection naming one falls back to the default (store.js `parseCycles`).
     periods = [dict(r) for r in db.execute(
         "SELECT number, label, date_start, date_end FROM electoral_period "
-        "WHERE date_start IS NOT NULL "
-        "ORDER BY number DESC")]
-    counts = {
-        "sessions": db.execute("SELECT COUNT(*) AS c FROM session").fetchone()["c"],
-        "speeches": db.execute("SELECT COUNT(*) AS c FROM speech").fetchone()["c"],
-        "sentences": db.execute("SELECT COUNT(*) AS c FROM sentence").fetchone()["c"],
-        "representatives": db.execute(
-            "SELECT COUNT(*) AS c FROM person WHERE is_mp=1").fetchone()["c"],
-    }
+        "WHERE date_start IS NOT NULL"
+        + period_and(settings.site_periods, "number")
+        + " ORDER BY number DESC")]
+    counts = _corpus_counts(db)
     build = {r["key"]: r["value"] for r in db.execute(
         "SELECT key, value FROM build_meta")}
     metric_coverage = _metric_totals(db)
@@ -133,6 +171,11 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
         },
         "modules": [{"name": m.name, "label": m.label_hu} for m in _MODULES],
         "periods": periods,
+        # The cycles this deployment serves (CYC-7), or [] when it serves the
+        # whole corpus. `periods` above is already filtered to them; this states
+        # the window itself, so a client can tell "the corpus has one cycle" from
+        # "the site is showing one cycle of a larger corpus".
+        "site_cycles": list(settings.site_periods),
         "counts": counts,
         "build": build,
         # Optional capabilities the SPA gates a nav entry on, beyond the module

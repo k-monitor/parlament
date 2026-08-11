@@ -379,7 +379,7 @@ export default {
   // "Ki a képviselőm?" — település → egyéni választókerület → képviselő (REP-10).
   lookup: {
     title: 'Ki a képviselőm?',
-    intro: 'Nem tudod melyik képviselő tartozik hozzád? Add meg a települést, ahol laksz és megmutatjuk!',
+    intro: 'Nem tudod melyik képviselő tartozik hozzád? Add meg a települést, ahol laksz és megmutatjuk, hogy a 2026- ciklusban kihez tartozik!',
     searchLabel: 'Település',
     searchPlaceholder: 'Pl. Debrecen, Pécs, Budapest 09. kerület…',
     searchHint: 'Az ékezetek nem számítanak, és a fővárosi kerületeket „V. kerület” '
@@ -389,10 +389,10 @@ export default {
     splitBadge: '{count} választókerület',
     singleAnswer: '{name} egésze a(z) {constituency} része.',
     splitAnswer: '{name} területét {count} egyéni választókerület osztja fel.',
-    splitHelp: 'Válassza ki a térképen azt a részt, ahol lakik – vagy válasszon '
-      + 'közvetlenül a lista alapján.',
+    splitHelp: 'Válaszd ki a térképen azt a részt, ahol laksz! Vagy válassz '
+      + 'közvetlenül a listából!',
     pickerLabel: 'A település választókerületei',
-    pickPrompt: 'Válasszon egy választókerületet a képviselő megjelenítéséhez.',
+    pickPrompt: 'Válassz egy választókerületet a képviselő megjelenítéséhez!',
     mapLabel: 'A település választókerületeinek térképe',
     mapAriaFor: '{name} választókerületeinek térképe – kattintson arra a részre, ahol lakik',
     mapFailed: 'A térkép nem tölthető be. A választókerületet az alábbi listából is kiválaszthatja.',
@@ -417,8 +417,7 @@ export default {
       + 'határok a Nemzeti Választási Iroda adatai; a képviselők és a mandátumaik a '
       + 'parlament.hu adatai. Az egyéni választókerületek határai választásonként '
       + 'változhatnak, ezért a találat arra a ciklusra vonatkozik, amelyet ez a '
-      + 'választás hozott létre – nem a fejlécben kiválasztott ciklusra. A megjelenített '
-      + 'képviselő azt a mandátumot szerezte az adott egyéni választókerületben.',
+      + 'választás hozott létre – nem a fejlécben kiválasztott ciklusra.',
     sourceLine: 'A választókerületi adatok forrása: {name} –',
   },
   profile: {

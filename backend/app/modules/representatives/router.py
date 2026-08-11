@@ -380,7 +380,9 @@ _OFFICE_METHODOLOGY = (
     "származik (parlament.hu, „Tisztségviselők”)."
     "Egy sor egy megbízatás: a kinevezés és a felmentés napja a nyilvántartás "
     "szerinti dátum, a nyitott vég azt jelenti, hogy a tisztséget a lekérdezés "
-    "időpontjában is betöltötte. Ugyanaz a személy több sorban is szerepelhet. "
+    "időpontjában is betöltötte. Ugyanaz a személy több megbízatással is "
+    "szerepelhet – az egymás mellé kerülő megbízatásait a neve mellett, egy "
+    "kártyán soroljuk fel. "
     "A ciklusra szűkített nézet azokat a megbízatásokat mutatja, amelyek a "
     "ciklus idejébe belenyúlnak – nem azokat, amelyek benne kezdődtek."
 )

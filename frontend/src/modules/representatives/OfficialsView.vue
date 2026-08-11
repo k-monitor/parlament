@@ -6,7 +6,9 @@
 // Listed one row per *term*, not per person: a career runs through several
 // offices, and the term (with its real appointment and dismissal dates) is the
 // thing this source records. So the same person legitimately appears more than
-// once, under each office they held.
+// once, under each office they held — the listing merges the terms that land
+// next to each other into one card per person (see `groups`), rather than
+// repeating a name, a photo and a profile link that are identical.
 //
 // Filter/sort state lives in the URL so a filtered listing is shareable.
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
@@ -99,6 +101,42 @@ function term(o) {
   const end = o.end ? formatDateLocal(o.end) : t('profile.present')
   return `${start || '?'} – ${end}`
 }
+
+// One card per person, not per term — where the listing puts their terms next to
+// each other. The registry's rows are (person, office, term), so someone
+// appointed to two offices on the same day lands on two cards that carry the same
+// name, the same photo and the same profile link; the only thing that differs is
+// the office. Merging them writes the name once and stacks the offices beside it.
+//
+// Only *consecutive* rows merge, so the chosen sort still decides the order and
+// nothing is lifted up the page to join a card above it: under "kezdete szerint"
+// two terms merge exactly when they begin on the same day, under "név szerint" a
+// whole career merges, under "tisztség szerint" only repeat appointments to the
+// same office. Terms split across a page boundary stay on separate cards — the
+// page is a window on a term listing, and its 60 rows are counted upstream.
+//
+// A row with no person_id (nobody to link to) never merges: without an id there
+// is nothing that says two identical names are the same person.
+const groups = computed(() => {
+  const out = []
+  const rows = data.value ? data.value.officials : []
+  rows.forEach((o, i) => {
+    const prev = out[out.length - 1]
+    if (prev && o.person_id && prev.person_id === o.person_id) {
+      prev.terms.push(o)
+      return
+    }
+    out.push({
+      key: o.id, person_id: o.person_id, is_mp: o.is_mp,
+      // The click's reported rank stays the term's own position in the listing,
+      // which is what the search count it is divided by counts (SEA-12).
+      index: i,
+      person: { person_id: o.person_id, label: o.label, photo_uri: o.photo_uri },
+      terms: [o],
+    })
+  })
+  return out
+})
 
 // Monotonic load id: overlapping fetches (filter watcher + cycle watcher) can
 // resolve out of order; only the latest may write state.
@@ -256,22 +294,28 @@ onUnmounted(() => clearTimeout(searchTimer))
       </div>
 
       <ul class="olist">
-        <li v-for="(o, i) in data.officials" :key="o.id" class="card pad orow">
-          <SpeakerLink
-            :speaker="{ person_id: o.person_id, label: o.label, photo_uri: o.photo_uri }"
-            @click="clicks.hit(i)"
-          />
-          <div class="ooffice">
-            <span class="otitle">{{ o.title }}</span>
-            <span v-if="o.category" class="badge">{{ $t('officials.categories.' + o.category) }}</span>
+        <li v-for="g in groups" :key="g.key" class="card pad orow">
+          <div class="operson">
+            <SpeakerLink :speaker="g.person" @click="clicks.hit(g.index)" />
             <!-- An MP who also holds an office: worth saying, since most of this
-                 listing is people who never held a mandate. -->
-            <span v-if="o.is_mp" class="badge mp">{{ $t('officials.isMp') }}</span>
+                 listing is people who never held a mandate. It describes the
+                 person, not the term, so it sits with the name — a card holding
+                 three terms would otherwise repeat it three times. -->
+            <span v-if="g.is_mp" class="badge mp">{{ $t('officials.isMp') }}</span>
           </div>
-          <div class="oterm small muted">
-            <span>{{ term(o) }}</span>
-            <span v-if="o.current" class="badge current">{{ $t('officials.inOffice') }}</span>
-          </div>
+          <!-- Their term(s), one line each: what · when. -->
+          <ul class="oterms">
+            <li v-for="o in g.terms" :key="o.id" class="oterm-row">
+              <div class="ooffice">
+                <span class="otitle">{{ o.title }}</span>
+                <span v-if="o.category" class="badge">{{ $t('officials.categories.' + o.category) }}</span>
+              </div>
+              <div class="oterm small muted">
+                <span>{{ term(o) }}</span>
+                <span v-if="o.current" class="badge current">{{ $t('officials.inOffice') }}</span>
+              </div>
+            </li>
+          </ul>
         </li>
       </ul>
 
@@ -289,12 +333,23 @@ onUnmounted(() => clearTimeout(searchTimer))
 /* .filters, .filter-grid, .results-head, .sortctl, .badge are global (styles.css). */
 .intro { margin: -.4rem 0 1rem; max-width: 68ch; }
 .olist { list-style: none; padding: 0; margin: 0; display: grid; gap: .5rem; }
-/* Three columns on wide screens (who · what · when), stacking on narrow ones —
-   the term must never be squeezed onto a second line next to the name. */
+/* Who · (what · when), stacking on narrow screens. The person is named once per
+   card; their terms are the rows of the second column, so a card with three
+   offices is three lines beside one name rather than three copies of it. */
 .orow {
   display: grid; gap: .35rem .9rem; align-items: center;
-  grid-template-columns: minmax(0, 15rem) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
 }
+.operson { display: flex; gap: .35rem .5rem; flex-wrap: wrap; align-items: center; min-width: 0; }
+.oterms { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; min-width: 0; }
+/* One term: what on the left, when hard right — so the dates line up down the
+   card the way they did when every term had a row of its own. */
+.oterm-row {
+  display: grid; gap: .35rem .9rem; align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+/* Without a rule, several terms under one name read as one run-on block. */
+.oterm-row + .oterm-row { border-top: 1px solid var(--line); padding-top: .4rem; }
 .ooffice { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; min-width: 0; }
 .otitle { font-weight: 600; }
 /* The scope line's shortcut: a button, because it changes the query rather than
@@ -310,7 +365,7 @@ onUnmounted(() => clearTimeout(searchTimer))
 .badge.mp { background: var(--accent-soft); color: var(--accent); }
 .badge.current { background: #e4efe4; color: #2c5e2e; }
 @media (max-width: 720px) {
-  .orow { grid-template-columns: 1fr; }
+  .orow, .oterm-row { grid-template-columns: 1fr; }
   .oterm { white-space: normal; }
 }
 .methodology summary { cursor: pointer; font-weight: 600; color: var(--ink-soft); font-size: .85rem; }

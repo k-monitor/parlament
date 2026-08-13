@@ -111,13 +111,35 @@ def _add_seconds(start_iso: str, seconds) -> str:
         return start_iso
 
 
+def _unlinked_agenda_item() -> dict:
+    """The one agenda item a day's **act-less** speeches all share.
+
+    A freshly-held sitting is listed before its agenda acts are: ``ulesnapok-
+    aktusok-query`` returns nothing for it, so every speech arrives from the flat
+    day roster with no act at all, and ``felicitas._merge_roster`` has no
+    neighbour to inherit one from either (2026-08-10 / sitting 43022: all 333
+    speeches).
+
+    The per-speech **type** ("felszólalás oka") must not stand in for the missing
+    act — it is not one, and the loader groups sections by act identity, so using
+    it filed all 147 ``ülésvezetés`` turns of that day into a single section at
+    the very top of the page (ahead of the speeches they actually sit between)
+    and the 41 type-less rows into a second, untitled one. Instead every act-less
+    speech shares this one unnamed item, which keeps the day the single
+    chronological list parlament.hu itself shows until the acts are published (a
+    later re-scrape then rebuilds the day with its real sections). No ``type``
+    either: the item is not classified, so nothing renders a made-up label for
+    it, and the UI titles the section generically.
+    """
+    return {"title": None, "officialTitle": None}
+
+
 def _agenda_item(sp: dict) -> dict:
     aktus = (sp.get("aktus") or "").strip()
+    if not aktus:
+        return _unlinked_agenda_item()
     topic, bills = agenda_mod.split_topic_and_bills(aktus)
-    item = {
-        "title": topic or (sp.get("type") or "").strip(),
-        "officialTitle": aktus or topic,
-    }
+    item = {"title": topic, "officialTitle": aktus}
     if bills or sp.get("bills"):
         # Bill references kept for the future Bills module (EXT-2); deduped.
         item["billReferences"] = sorted(set((sp.get("bills") or []) + bills))

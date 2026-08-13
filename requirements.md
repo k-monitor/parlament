@@ -307,6 +307,16 @@ Primary use cases:
   how `parlament.hu` presents the act. Only when the act name itself carries no
   type signal does classification fall back to the per-speech type, so structural
   sections (e.g. *"Az ülés napirendjének megállapítása"*) keep a meaningful type.
+  A day whose speeches `parlament.hu` has **not linked to any act yet** (the case
+  on a freshly-held sitting, whose speeches all arrive from the flat day roster —
+  SCR-8) gets **one unnamed, unclassified item holding the whole day in join
+  order**, i.e. exactly the single chronological listing the source itself shows;
+  the UI names that section generically. The per-speech **type is never used as a
+  stand-in for the missing act**: it is not one, and keying sections on it splits a
+  day into pseudo-sections that destroy its chronology (all of a chair's turns
+  collected at the top of the page, plus an untitled bucket for the type-less
+  rows). A later re-scrape, once the acts are published, rebuilds the day with its
+  real sections (ING-4).
 - **speech** — `originID`, Felicitas speech UUID (`speech_uuid`, for
   cross-module links such as BILL-8), session, agenda item, order, speaker
   reference, speaker status/context (e.g. `main-speaker`, chair), the upstream
@@ -802,6 +812,16 @@ site-wide behaviour, not a per-view nicety.
 - **SITREAD-3.** Expanding/collapsing a speech is **instant** — a spoiler toggle
   must not re-render or re-fetch the rest of the (potentially very long) list, and
   its text is cached once loaded so re-opening is immediate.
+- **SITREAD-4.** Where a **recording exists, the day page reaches it**. On a day
+  `parlament.hu` has recorded but not yet cut into per-speech clips (`awaiting_media`,
+  SCR-8) the viewer affordance MUST stay — it opens the **whole-day recording**, and
+  says so rather than promising this speech's clip — because the day page is the
+  one place a reader looks for the day's video: the same speech already plays from a
+  representative's profile and from a shared speech link (both go through the
+  viewer's whole-day fallback, VIE-9), so hiding it here alone made the video look
+  unpublished when it was not. It is hidden only when the day has **no recording at
+  all** to open. The day's own notice matches what exists: it does not list the
+  video among the missing pieces once the recording is up.
 
 ### 5.6 Sitting-day list & upcoming sittings
 
@@ -814,6 +834,29 @@ site-wide behaviour, not a per-view nicety.
   clear "recording and transcript coming soon" state, not an empty transcript;
   once the sitting is held and ingested it becomes an ordinary `published` day.
   The list is scoped by the global cycle selector (§4A) like every other view.
+- **SIT-2 (SHOULD).** A held day is often **only partly published**: `parlament.hu`
+  releases a sitting in instalments and in no fixed order — the speech listing
+  first, then the per-speech video windows (in batches), then, days later, the
+  jegyzőkönyv — so a day can be fully browsable while some of its speeches still
+  have no transcript and no clip. Both the **sittings list** and the **day's own
+  page** MUST say so, with a marker **next to** (never instead of) what is already
+  there, so a half-published day is not presented as finished and a visitor
+  understands that what is missing is still coming, not lost. The marker is
+  **time-bounded**: past the publication-lag window the same gap is permanent — a
+  genuinely **video-only** day (VIE-8), e.g. a sitting whose record was never
+  digitised — and marking those "being processed" would be a promise that never
+  resolves, so they carry no marker (their individual speeches already disclose the
+  absence per VIE-8). This is a **narrower** state than `awaiting_media` (SCR-8),
+  where nothing per-speech is available yet and the day's status carries the answer
+  on its own.
+  > **✅ realized.** `/proceedings/sessions` reports `speeches_with_text` /
+  > `speeches_with_video` next to `speeches` and derives
+  > `processing: complete | pending | incomplete` from them (`None` for a day whose
+  > `status` already says it); the day endpoint derives the same field from the
+  > speech rows it already reads. The SPA renders a quiet "Részben feldolgozva"
+  > badge under the card's counts and in the day-page heading for `pending` only.
+  > The window mirrors the scraper's own publication-lag grace, so the site stops
+  > promising exactly when the sync stops chasing.
 
 ### 5.7 Speech readability & lexical diversity
 

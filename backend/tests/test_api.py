@@ -186,6 +186,48 @@ def test_scheduled_upcoming_session_listed_and_flagged(client, data_dir, db_path
     det = client.get("/api/v1/proceedings/sessions/43002").json()
     assert det["session"]["status"] == "scheduled"
     assert det["agenda"] == []
+    # A day with no speeches has no completeness to report — its status says it all.
+    assert top["processing"] is None and det["session"]["processing"] is None
+
+
+def test_partly_processed_session_flagged_while_recent(client, data_dir, db_path):
+    """SIT-2: a held day whose transcript/per-speech video is still incomplete is
+    reported `pending` while parlament.hu may yet publish the rest (the list and
+    the day heading mark it as being processed), and `incomplete` once it is old
+    enough that the gap is permanent — a video-only day, not a pending one."""
+    import json
+    from datetime import date, timedelta
+    from app import loader
+    from tests.conftest import _session_record
+    # Both fixture days hold one speech with a transcript and one without (VIE-8).
+    today = date.today().isoformat()
+    (data_dir / "processed" / "43002-session.json").write_text(
+        json.dumps(_session_record(session="43002", sitting=2, date=today),
+                   ensure_ascii=False))
+    loader.build_database(data_dir, db_path)
+
+    sessions = {s["id"]: s for s in
+                client.get("/api/v1/proceedings/sessions").json()["sessions"]}
+    fresh, old = sessions["43002"], sessions["43001"]
+    assert fresh["speeches"] == 2 and fresh["speeches_with_text"] == 1
+    assert fresh["speeches_with_video"] == 2      # both have per-speech offsets
+    assert fresh["processing"] == "pending"
+    # 43001 is 2026-05-09 — long past the publication-lag window, so its missing
+    # transcript is absent for good and must not be advertised as pending.
+    assert old["processing"] == "incomplete"
+    # The day page derives the same signal from its own speech rows.
+    assert client.get("/api/v1/proceedings/sessions/43002").json()[
+        "session"]["processing"] == "pending"
+
+    # A day inside the window with everything published is simply complete.
+    complete = _session_record(session="43003", sitting=3,
+                               date=(date.today() - timedelta(days=1)).isoformat())
+    complete["data"] = complete["data"][:1]       # keep only the speech with text
+    (data_dir / "processed" / "43003-session.json").write_text(
+        json.dumps(complete, ensure_ascii=False))
+    loader.build_database(data_dir, db_path)
+    assert client.get("/api/v1/proceedings/sessions/43003").json()[
+        "session"]["processing"] == "complete"
 
 
 def test_session_wordcloud(client):

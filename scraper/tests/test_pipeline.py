@@ -1023,6 +1023,36 @@ def test_transform_files_recovered_speech_under_neighbours_agenda_item():
     assert rec["data"][1]["debug"]["agendaItemInferred"] is True
 
 
+def test_transform_files_actless_day_under_one_unnamed_agenda_item():
+    """Regression (sitting 43022, 2026-08-10): a freshly-held day is listed before
+    its agenda acts are, so ``ulesnapok-aktusok-query`` returns nothing and every
+    speech comes from the flat roster with no act. The per-speech type must not
+    stand in for the missing act — keying the loader's sections on it put all 147
+    ``ülésvezetés`` turns of that day in one section at the top of the page (ahead
+    of the speeches they sit between) and the type-less rows in a second, untitled
+    one. Every act-less speech shares ONE unnamed, unclassified item instead, so
+    the day reads in join order like parlament.hu's own flat listing."""
+    from parlamonitor.felicitas import _merge_roster
+
+    roster = [_roster(1, "u1", "ülésvezetés"),
+              _roster(2, "u2", "napirend előtti felszólalás"),
+              _roster(3, "u3", "ülésvezetés"),
+              _roster(4, "u4")]                      # no "felszólalás oka" at all
+    speeches = _merge_roster([], roster)             # no agenda act anywhere
+    rec = transform_day(scrape_day(_FakeFelicitasDay(speeches=speeches), 43,
+                                   _felicitas_day()))
+
+    assert [e["speechIndex"] for e in rec["data"]] == [1, 2, 3, 4]
+    items = {(e["agendaItem"]["title"], e["agendaItem"]["officialTitle"])
+             for e in rec["data"]}
+    assert items == {(None, None)}                   # the loader's grouping key
+    # Unclassified: nothing may render a made-up section label/type for it.
+    assert all("type" not in e["agendaItem"] for e in rec["data"])
+    # The per-speech type is untouched — it is the row's own badge.
+    assert [e["debug"]["felszolalasTipusa"] for e in rec["data"]] == [
+        "ülésvezetés", "napirend előtti felszólalás", "ülésvezetés", None]
+
+
 # --- bills / irományok -----------------------------------------------------
 
 def test_bills_main_type_from_number_prefix():

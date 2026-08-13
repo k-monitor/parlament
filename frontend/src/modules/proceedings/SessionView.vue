@@ -37,6 +37,16 @@ const topMax = computed(() => Math.max(1, ...(topSpeakers.value?.speakers || [])
 // there are no durations or clips, so suppress the (meaningless) toplist and show a
 // not-yet-ready notice instead (the sittings list also renders it disabled).
 const notReady = computed(() => data.value?.session?.status === 'awaiting_media')
+// The whole-day recording, on the other hand, is often already published on such a
+// day — the segmentation into per-speech clips is what is missing. When it is there
+// the speeches stay openable in the viewer (which falls back to the day stream), so
+// the day's video is reachable from the day page and not only from a speaker's
+// profile or a shared speech link.
+const hasDayVideo = computed(() => !!data.value?.session?.video_uri)
+// Held and browsable, but still being published (SIT-2): a transcript or per-speech
+// video is missing from some speech and is still expected. Flagged in the heading
+// exactly as in the sittings list, so a half-published day never looks finished.
+const partial = computed(() => data.value?.session?.processing === 'pending')
 // Title used when sharing this sitting day (mirrors the page heading).
 const shareTitle = computed(() => {
   const s = data.value?.session
@@ -138,6 +148,7 @@ function searchWord(word) {
           {{ formatDate(data.session.date) }} · {{ data.session.sitting }}. {{ $t('sessions.sitting').toLowerCase() }}
           <span class="badge upcoming" v-if="data.session.status === 'scheduled'">⏳ {{ $t('sessions.upcoming') }}</span>
           <span class="badge upcoming" v-else-if="notReady">⏳ {{ $t('sessions.notReady') }}</span>
+          <span class="badge upcoming" v-else-if="partial" :title="$t('sessions.partialNote')">⏳ {{ $t('sessions.partial') }}</span>
         </h1>
         <ShareButton :title="shareTitle" align="right" />
       </div>
@@ -148,9 +159,11 @@ function searchWord(word) {
       <div class="session-body">
         <div class="session-main">
           <!-- Held but not-yet-available sitting: parlament.hu has published no
-               per-speech timings/video/transcript, so there is nothing to browse. -->
+               per-speech timings/transcript. When the day's own recording is
+               already up, say so (and the ▶ on each speech opens it) instead of
+               claiming the video is missing too. -->
           <section v-if="notReady" class="card pad empty-day">
-            <p>{{ $t('sessions.notReadyNote') }}</p>
+            <p>{{ hasDayVideo ? $t('sessions.notReadyVideoNote') : $t('sessions.notReadyNote') }}</p>
           </section>
           <!-- An announced/upcoming sitting (no speeches yet) or one parlament.hu has
                not populated: show it is coming instead of an empty transcript. -->
@@ -212,12 +225,19 @@ function searchWord(word) {
             v-for="a in data.agenda" :key="a.id" class="agenda card"
             :id="'agenda-' + a.id" :data-agenda-id="a.id"
           >
+            <!-- A day parlament.hu has not linked to agenda acts yet has ONE
+                 unnamed item holding every speech in order (see the pipeline's
+                 `_unlinked_agenda_item`); name that section generically rather
+                 than heading the day with a blank line. -->
             <h2 class="pad agenda-title">
-              {{ a.official_title || a.title }}
+              {{ a.official_title || a.title || $t('sessions.unlistedAgenda') }}
               <span class="badge" v-if="a.type">{{ agendaLabel(a.type) }}</span>
             </h2>
             <ul class="speeches">
-              <SpeechRow v-for="sp in a.speeches" :key="sp.uid" :speech="sp" :playable="!notReady" />
+              <SpeechRow
+                v-for="sp in a.speeches" :key="sp.uid" :speech="sp"
+                :playable="!notReady" :viewable="!notReady || hasDayVideo"
+              />
             </ul>
           </section>
 
@@ -260,7 +280,7 @@ function searchWord(word) {
                   @click.prevent="goToAgenda(a.id)"
                 >
                   <span class="toc-num" aria-hidden="true">{{ i + 1 }}</span>
-                  <span class="toc-text">{{ a.official_title || a.title }}</span>
+                  <span class="toc-text">{{ a.official_title || a.title || $t('sessions.unlistedAgenda') }}</span>
                 </a>
               </li>
             </ol>

@@ -185,6 +185,10 @@ export default {
     showTranscript: 'Show transcript',
     hideTranscript: 'Hide transcript',
     openViewer: 'Open video & transcript',
+    // The day has a recording but is not cut into per-speech clips yet, so the
+    // viewer opens the whole-day video rather than this speech — promise that,
+    // not what `openViewer` promises.
+    openDayVideo: 'Open the day\'s full recording',
     transcriptLoading: 'Loading transcript…',
     transcriptLoadError: 'Could not load the transcript.',
     upcoming: 'Upcoming',
@@ -192,6 +196,17 @@ export default {
     notProcessed: 'This sitting has not been processed yet.',
     notReady: 'Being processed',
     notReadyNote: 'The National Assembly has not fully published this sitting day yet: per-speech timings, video and transcript are not available. They will appear here automatically once released.',
+    // Same state, but the whole-day recording is already published — the ▶ on each
+    // speech opens it (there are no per-speech clips and no transcript yet).
+    notReadyVideoNote: 'The National Assembly has not fully published this sitting day yet: per-speech timings and the transcript are not available. The day\'s full recording is already watchable, though — open it with the ▶ icon. The rest will appear here automatically once released.',
+    // Browsable, but the Assembly publishes a day in instalments (the transcript
+    // lands days after the recording, and per-speech video windows arrive in
+    // batches), so mark a day that is not complete yet.
+    partial: 'Partly processed',
+    partialNote: 'The National Assembly has not published the transcript or the video clip of every speech of this sitting day yet. Whatever is missing is picked up automatically as it appears.',
+    // The Assembly has not linked this day's speeches to agenda items yet, so the
+    // day is shown as a single chronological list.
+    unlistedAgenda: 'Speeches of the sitting day',
   },
   reps: {
     title: 'Representatives', searchPlaceholder: 'Search representatives by name…', faction: 'Faction',

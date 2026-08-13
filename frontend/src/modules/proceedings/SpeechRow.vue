@@ -20,11 +20,19 @@ import SpeechMetricsBadge from '../../components/SpeechMetricsBadge.vue'
 import ShareButton from '../../components/ShareButton.vue'
 
 // `playable` is false for a not-yet-processed sitting day: there is no per-speech
-// video window, so the ▶ viewer link (which would just replay the whole day) and
-// the "video only" note are hidden and the row is a plain list entry.
+// video window, so the "video only" note is hidden (every speech of such a day is
+// text-less — the day-level notice says that once, instead of on every row) and the
+// ▶ opens the whole-day recording rather than this speech's clip.
+//
+// `viewable` gates the ▶ itself, and is false only when the day has no recording at
+// all to open. It used to follow `playable`, which left the day page as the one
+// place the video could NOT be reached on a not-yet-segmented day — the same speech
+// played fine from a speaker's profile or a shared link, both of which go through
+// the viewer's whole-day fallback (ViewerView `videoSrc`).
 const props = defineProps({
   speech: { type: Object, required: true },
   playable: { type: Boolean, default: true },
+  viewable: { type: Boolean, default: true },
 })
 
 const router = useRouter()
@@ -124,12 +132,16 @@ function paraText(p) {
             <line x1="8" y1="16" x2="13" y2="16" />
           </svg>
         </button>
-        <!-- Opens the full viewer (video + karaoke transcript). Hidden when the
-             day has no per-speech video yet — it would only replay the whole day. -->
+        <!-- Opens the full viewer (video + karaoke transcript). On a day that has
+             a recording but no per-speech windows yet, it opens the whole-day
+             recording — announced as such, since it does not start at this
+             speech — so the video is reachable here too. Hidden only when there is
+             no recording at all to open. -->
         <router-link
-          v-if="playable"
+          v-if="viewable"
           :to="{ name: 'viewer', params: { uid: speech.uid } }" class="play-affordance"
-          :title="$t('sessions.openViewer')" :aria-label="$t('sessions.openViewer')"
+          :title="playable ? $t('sessions.openViewer') : $t('sessions.openDayVideo')"
+          :aria-label="playable ? $t('sessions.openViewer') : $t('sessions.openDayVideo')"
         >▶</router-link>
         <!-- Share this speech (always available, even before video is ready). -->
         <ShareButton :title="shareTitle" :url="shareUrl" align="right" compact />

@@ -582,6 +582,43 @@ def suggest(q: str = Query(..., min_length=1), limit: int = Query(8, ge=1, le=20
 # Sittings list / browse (use case 2)
 # ---------------------------------------------------------------------------
 
+# parlament.hu publishes a held sitting in instalments and in no fixed order —
+# the speech listing first, then the per-speech video windows (in batches), then,
+# days later, the jegyzőkönyv — so a day can be browsable while still incomplete
+# (2026-07-27: 110 of 166 speeches timed; 2026-07-28: no transcript at all yet).
+# Past this window a still-missing piece is not late but absent for good: a
+# genuinely video-only day (VIE-8), like the 2011-autumn sittings whose record was
+# never digitised. Calling those "being processed" would be a promise that never
+# resolves, so only a recent day is reported as pending. Mirrors the scraper's own
+# publication-lag grace (`proceedings/scrape.py:_TEXT_GRACE`), which stops chasing
+# a day's missing content at the same age.
+_PROCESSING_GRACE_DAYS = 30
+
+
+def _processing_state(status: str, day: str | None, speeches: int,
+                      with_text: int, with_video: int) -> str | None:
+    """How completely a held sitting has been published, as
+    ``complete`` | ``pending`` | ``incomplete`` (SIT-2).
+
+    ``pending`` means a transcript or per-speech video window is still missing but
+    young enough that parlament.hu is expected to publish it (the site marks the
+    day as being processed and the sync keeps chasing it); ``incomplete`` is the
+    same gap on a day old enough that it will not be filled any more. ``None``
+    when the day's own `status` already carries the answer (an announced
+    `scheduled` sitting, or an `awaiting_media` one with nothing to show yet) or it
+    holds no speeches to be complete about."""
+    if status != "published" or not speeches:
+        return None
+    if with_text >= speeches and with_video >= speeches:
+        return "complete"
+    try:
+        held = date.fromisoformat((day or "")[:10])
+    except ValueError:
+        return "incomplete"
+    return ("pending" if (date.today() - held).days <= _PROCESSING_GRACE_DAYS
+            else "incomplete")
+
+
 @router.get("/sessions")
 def list_sessions(period: Optional[List[int]] = Query(
                       None, description="Electoral period number(s)"),
@@ -597,16 +634,28 @@ def list_sessions(period: Optional[List[int]] = Query(
     # one ('published'); COALESCE keeps a pre-migration DB (default column value not
     # yet backfilled) reporting 'published' rather than NULL.
     status_col = "COALESCE(s.status, 'published')" if _has_session_status(db) else "'published'"
+    # The two completeness counts are what `processing` (SIT-2) is derived from, and
+    # are reported alongside it so a client can say *what* is still missing. Three
+    # correlated counts over idx_speech_session cost ~1.5 ms per page of 50 days —
+    # a grouped join over the whole speech table is 30× that.
     rows = db.execute(
         f"""SELECT s.id, s.period_number, s.sitting, s.date, s.date_start,
                    s.date_end, s.video_duration, {status_col} AS status,
                    (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id) AS speeches,
+                   (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id
+                     AND sp.has_text=1) AS speeches_with_text,
+                   (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id
+                     AND sp.video_start IS NOT NULL) AS speeches_with_video,
                    (SELECT COUNT(*) FROM agenda_item ai WHERE ai.session_id=s.id) AS agenda_items
             FROM session s {where} ORDER BY s.date DESC, s.sitting DESC
             LIMIT :limit OFFSET :offset""",
         {**params, "limit": limit, "offset": offset}).fetchall()
     return {"total": total, "limit": limit, "offset": offset,
-            "sessions": [dict(r) for r in rows]}
+            "sessions": [{**dict(r),
+                          "processing": _processing_state(
+                              r["status"], r["date"], r["speeches"],
+                              r["speeches_with_text"], r["speeches_with_video"])}
+                         for r in rows]}
 
 
 def _has_session_status(db: sqlite3.Connection) -> bool:
@@ -725,7 +774,8 @@ def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
         f"""SELECT sp.uid, sp.origin_id, sp.agenda_item_id, sp.speech_index,
                   sp.speaker_label, sp.person_id, sp.speaker_status,
                   sp.felszolalas_tipus, sp.procedural, sp.time_start,
-                  sp.time_end, sp.duration, sp.has_text, sp.confidence,
+                  sp.time_end, sp.duration, sp.has_text, sp.video_start,
+                  sp.confidence,
                   sp.align_method, p.label AS person_label, p.photo_uri,
                   f.label AS faction_label, f.color AS faction_color
                   {(', ' + _METRICS_SELECT) if metrics else ''}
@@ -740,8 +790,15 @@ def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
     for sp in speeches:
         by_agenda.setdefault(sp["agenda_item_id"], []).append(
             _speech_brief(sp, _metrics_dict(_MetricView(sp), cuts) if metrics else None))
+    # Same completeness signal the sittings list carries (SIT-2), counted off the
+    # speech rows already fetched rather than re-queried: the page heading marks a
+    # day whose transcript or per-speech video is still arriving.
+    processing = _processing_state(
+        (s["status"] if "status" in s.keys() else None) or "published", s["date"],
+        len(speeches), sum(1 for sp in speeches if sp["has_text"]),
+        sum(1 for sp in speeches if sp["video_start"] is not None))
     return {
-        "session": _session_dict(s),
+        "session": {**_session_dict(s), "processing": processing},
         "neighbours": _session_neighbours(db, s),
         "agenda": [
             {**_agenda_dict(a), "speeches": by_agenda.get(a["id"], [])}

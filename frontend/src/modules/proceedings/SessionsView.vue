@@ -66,9 +66,13 @@ let hoverTimer = 0
 let hoverId = null               // the card currently under pointer/focus (debounce guard)
 
 // Only days with published, processed content have a word cloud; skip announced and
-// awaiting-media sittings (and any empty day) so a hover there does nothing.
+// awaiting-media sittings, any empty day, and a day whose transcript hasn't landed
+// yet (the cloud is built from text, so it would be empty) — a hover there does
+// nothing. `speeches_with_text` is absent on a pre-SIT-2 API, which reads as "not
+// known to be zero" and keeps the old behaviour.
 function previewable(s) {
-  return s.status !== 'scheduled' && s.status !== 'awaiting_media' && s.speeches > 0
+  return s.status !== 'scheduled' && s.status !== 'awaiting_media'
+    && s.speeches > 0 && s.speeches_with_text !== 0
 }
 
 async function fetchPreview(id) {
@@ -157,6 +161,14 @@ onBeforeUnmount(() => {
           <div class="muted small">
             {{ s.speeches }} {{ $t('sessions.speeches') }} · {{ s.agenda_items }} {{ $t('sessions.agendaItems') }}
           </div>
+          <!-- Held and browsable, but parlament.hu is still publishing it (SIT-2):
+               some speech has no transcript or no per-speech video yet, and the day
+               is recent enough that the rest is expected. Marked so the list says
+               so rather than presenting a half-published day as finished. A day past
+               that window ('incomplete' — permanently video-only, VIE-8) carries no
+               badge: nothing is coming, so nothing is pending. -->
+          <div class="badge partial" v-if="s.processing === 'pending'"
+               :title="$t('sessions.partialNote')">⏳ {{ $t('sessions.partial') }}</div>
         </template>
       </router-link>
     </div>
@@ -199,6 +211,15 @@ onBeforeUnmount(() => {
   display: inline-block; font-size: .78rem; font-weight: 600;
   padding: .12rem .5rem; border-radius: 999px;
   background: var(--accent-soft); color: var(--ink-soft);
+}
+/* Still-being-published day (SIT-2): the same pill, one step quieter and set
+   under the counts — the day IS browsable, so the marker annotates the card
+   rather than replacing what it says. */
+.badge.partial {
+  display: inline-block; margin-top: .35rem;
+  font-size: .72rem; font-weight: 600;
+  padding: .1rem .45rem; border-radius: 999px;
+  background: var(--line); color: var(--ink-soft);
 }
 
 /* Word-cloud hover preview popup (teleported to body; scoped styles still apply

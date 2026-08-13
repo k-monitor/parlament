@@ -249,6 +249,10 @@ export default {
     showTranscript: 'Jegyzőkönyv megjelenítése',
     hideTranscript: 'Jegyzőkönyv elrejtése',
     openViewer: 'Videó és jegyzőkönyv megnyitása',
+    // A napnak van felvétele, de az Országgyűlés még nem vágta felszólalásokra:
+    // a lejátszó a nap teljes videóját nyitja meg, nem ennek a felszólalásnak a
+    // részletét — a súgó ezért mást ígér, mint az `openViewer`.
+    openDayVideo: 'A nap teljes felvételének megnyitása',
     transcriptLoading: 'Jegyzőkönyv betöltése…',
     transcriptLoadError: 'A jegyzőkönyv betöltése nem sikerült.',
     upcoming: 'Hamarosan',
@@ -256,6 +260,17 @@ export default {
     notProcessed: 'Ez az ülésnap még nincs feldolgozva.',
     notReady: 'Feldolgozás alatt',
     notReadyNote: 'Ezt az ülésnapot az Országgyűlés még nem tette teljesen elérhetővé: a felszólalások időpontjai, a videó és a jegyzőkönyv még nem érhetők el. Amint közzéteszik, automatikusan megjelennek itt.',
+    // Ugyanaz az állapot, de a nap teljes felvétele már közzé van téve: a ▶ ikon
+    // ezt nyitja meg (felszólalásokra vágva még nincs, jegyzőkönyv sincs).
+    notReadyVideoNote: 'Ezt az ülésnapot az Országgyűlés még nem tette teljesen elérhetővé: a felszólalások időpontjai és a jegyzőkönyv még nem érhetők el. A nap teljes videófelvétele viszont már megtekinthető – a ▶ ikonnal nyitható meg. A többi adat, amint közzéteszik, automatikusan megjelenik itt.',
+    // Az ülésnap böngészhető, de az Országgyűlés részletekben teszi közzé (a
+    // jegyzőkönyv napokkal késik a felvétel után, a videó felszólalásokra vágása
+    // is szakaszosan készül el), ezért jelöljük, hogy még nem teljes.
+    partial: 'Részben feldolgozva',
+    partialNote: 'Az Országgyűlés még nem tette közzé ennek az ülésnapnak minden felszólaláshoz a jegyzőkönyvét vagy a videórészletét. A hiányzó részek, amint megjelennek, automatikusan bekerülnek.',
+    // Az Országgyűlés még nem kapcsolta napirendi pontokhoz az ülésnap
+    // felszólalásait: ilyenkor egyetlen, időrendi listaként jelenik meg a nap.
+    unlistedAgenda: 'Az ülésnap felszólalásai',
   },
   reps: {
     title: 'Képviselők',

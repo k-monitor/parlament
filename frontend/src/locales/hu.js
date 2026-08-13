@@ -367,6 +367,8 @@ export default {
     holders: 'A tárca vezetői',
     holdersMore: 'További {count} tisztségviselő',
     holdersFewer: 'Kevesebb',
+    // A listában a tárca vezetői közül csak néhány fér ki; a többit a profil mutatja.
+    leadsMore: '+{count} további',
     trendTitle: 'Megválaszolt kérdések évenként',
     trendCaption: 'A tárca által megválaszolt kérdések száma évenként.',
     emptyPanel: 'Ebben a ciklusban nincs ilyen tétel.',

@@ -432,6 +432,94 @@ def test_an_office_still_held_from_an_earlier_cycle_is_kept(client, db_path):
     assert [h["person_id"] for h in holders] == ["k001"]
 
 
+def _earlier_cycles(c) -> None:
+    """The three cycles before the fixture's own (which opens 2026-05-09), so a
+    scope can span several of them — and leave one out."""
+    for number, start, end in ((40, "2014-05-06", "2018-05-07"),
+                               (41, "2018-05-08", "2022-05-01"),
+                               (42, "2022-05-02", "2026-05-08")):
+        c.execute("INSERT OR IGNORE INTO electoral_period(number, date_start, "
+                  "date_end) VALUES (?, ?, ?)", (number, start, end))
+
+
+def _one_minister_per_cycle(c) -> None:
+    """An interior minister for each of those cycles, each sworn in a fortnight
+    into it and serving a fortnight past its end — the handover the office
+    registry actually records."""
+    for person, start, end in (
+            ("n002", "2014-06-05T22:00:00Z", "2018-05-17T21:59:59Z"),
+            ("k001", "2018-05-17T22:00:00Z", "2022-05-24T12:00:00Z"),
+            ("n002", "2022-05-24T12:00:01Z", "2026-05-12T21:59:59Z"),
+            ("zzz9", "2026-05-12T22:00:00Z", None)):
+        c.execute("""INSERT INTO person_office (person_id, title, category,
+                         date_start, date_end, source)
+                     VALUES (?, 'belügyminiszter', 'minister', ?, ?, 'registry')""",
+                  (person, start, end))
+    c.commit()
+    loader.rebuild_portfolios(c)
+
+
+def test_a_row_names_every_minister_of_the_cycles_in_scope(client, db_path):
+    """A scope of several cycles usually means several ministers, and the row
+    names them all. Named by the newest alone it dated the whole tárca to whoever
+    holds the post now: the interior ministry read as the 2026 minister's even for
+    a reader who had asked for 2018–2022 as well."""
+    c = _load_portfolio_corpus(db_path)
+    _earlier_cycles(c)
+    _one_minister_per_cycle(c)
+    c.close()
+
+    slug = portfolios.resolve("belügyminiszter").slug
+    d = client.get("/api/v1/portfolios", params={"period": [40, 41, 42, 43]}).json()
+    row = next(p for p in d["portfolios"] if p["slug"] == slug)
+    assert [h["person_id"] for h in row["holders"]] == ["zzz9", "n002", "k001", "n002"]
+    # Only the top rank: the ranks below it are the profile's business (MIN-6),
+    # so the fixture's state secretary of the same tárca is not on the row.
+    assert {h["category"] for h in row["holders"]} == {"minister"}
+    assert row["holder_count"] > len(row["holders"])
+
+
+def test_a_cycle_left_out_of_the_scope_brings_no_holders_with_it(client, db_path):
+    """The cycle bounds are one span from the earliest start to the latest end, so
+    a scope that **skips** a cycle still contains it: with 2018–2022 and 2026–
+    chosen, the minister of the cycle between them sat inside the span and was
+    listed as though his cycle had been chosen — next to counts that are a
+    per-cycle union, on the same row."""
+    c = _load_portfolio_corpus(db_path)
+    _earlier_cycles(c)
+    _one_minister_per_cycle(c)
+    c.close()
+
+    slug = portfolios.resolve("belügyminiszter").slug
+    d = client.get("/api/v1/portfolios", params={"period": [41, 43]}).json()
+    row = next(p for p in d["portfolios"] if p["slug"] == slug)
+    assert [h["person_id"] for h in row["holders"]] == ["zzz9", "k001"]
+
+
+def test_the_head_of_a_body_is_named_before_its_deputies(client, db_path):
+    """Rank, then date: the row names who *runs* the tárca. The heads of the
+    bodies that are not ministries are filed as `senior`, and ranked with the
+    ordinary `other` offices they sorted by date alone — so the Magyar Nemzeti
+    Bank's row named whichever **deputy** governor was appointed most recently."""
+    c = _load_portfolio_corpus(db_path)
+    c.execute("""INSERT INTO person_office (person_id, title, category, date_start,
+                     date_end, source)
+                 VALUES ('k001', 'a Magyar Nemzeti Bank elnöke', 'senior',
+                         '2026-05-19T22:00:00Z', NULL, 'registry')""")
+    c.execute("""INSERT INTO person_office (person_id, title, category, date_start,
+                     date_end, source)
+                 VALUES ('n002', 'a Magyar Nemzeti Bank alelnöke', 'other',
+                         '2026-06-01T22:00:00Z', NULL, 'registry')""")
+    c.commit()
+    loader.rebuild_portfolios(c)
+    c.close()
+
+    slug = portfolios.resolve("a Magyar Nemzeti Bank elnöke").slug
+    holders = client.get(f"/api/v1/portfolios/{slug}",
+                         params={"period": 43}).json()["holders"]
+    assert [h["person_id"] for h in holders] == ["k001", "n002"]
+
+
 def test_a_carried_over_iromany_counts_in_the_cycle_it_was_submitted_in(client, db_path):
     """parlament.hu re-lists an iromány that is still in progress under the **new**
     cycle, so a bill the government submitted in 2024 comes back as a cycle-43

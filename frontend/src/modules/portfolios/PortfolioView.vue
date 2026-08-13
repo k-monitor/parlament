@@ -52,7 +52,10 @@ const scopeText = computed(() => {
 // state secretaries. Anything the registry files elsewhere keeps its own group.
 const holderGroups = computed(() => {
   const all = (data.value && data.value.holders) || []
-  const order = ['pm', 'minister', 'state-secretary']
+  // `senior` is the head of a body that is not a ministry (the MNB's governor,
+  // the ombudsman, the legfőbb ügyész); left in with the ordinary offices, the
+  // governor and their deputies shared one heading.
+  const order = ['pm', 'minister', 'senior', 'state-secretary']
   const groups = []
   for (const cat of order) {
     const items = all.filter((h) => h.category === cat)

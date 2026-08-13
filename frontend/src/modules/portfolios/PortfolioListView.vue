@@ -42,7 +42,15 @@ const groups = computed(() => {
   // kind rather than paginated), so the search-quality ping can say how far down
   // an opened tárca actually sat.
   let n = 0
-  for (const g of out) g.items = g.items.map((p) => ({ ...p, rank: n++ }))
+  for (const g of out) {
+    g.items = g.items.map((p) => {
+      const all = collapseLeads(p.holders)
+      const leads = all.slice(0, LEADS_SHOWN)
+      return { ...p, rank: n++, leads,
+               leadsHidden: all.length - leads.length,
+               leadTitle: sharedTitle(leads) }
+    })
+  }
   return out
 })
 
@@ -62,10 +70,68 @@ function apply() {
   router.push({ name: 'portfolios', query })
 }
 
-// The most senior office holder in scope, for the card's "who runs it" line —
-// the API already orders them minister-first.
-function lead(p) {
-  return p.holders && p.holders.length ? p.holders[0] : null
+// ---------------------------------------------------------------------------
+// The card's "who ran it" line. The API sends every holder of the tárca's most
+// senior rank in scope (a minister over a state secretary), newest first and one
+// row per term — a scope of several cycles usually means several ministers, and
+// naming only the newest of them dated the whole row to whoever happens to hold
+// the post now. The full bench, with each term's dates, is the profile's job.
+// ---------------------------------------------------------------------------
+const LEADS_SHOWN = 3
+
+// A minister re-appointed at the next election is filed as a **new term**,
+// beginning days after the old one ended (the outgoing government serves until
+// the new one is sworn in). Four such terms are one stint of the same person,
+// not four names in a row, so consecutive terms are merged into one span.
+const HANDOVER_DAYS = 45
+function continuous(olderEnd, newerStart) {
+  if (!olderEnd || !newerStart) return false
+  const gap = (Date.parse(newerStart) - Date.parse(olderEnd)) / 86400000
+  return Number.isFinite(gap) && gap <= HANDOVER_DAYS
+}
+
+// One entry per person, each with the runs they served — a person who came back
+// after someone else (or whose middle cycles are not in scope) keeps both, so
+// the years never claim a stint that was interrupted.
+function collapseLeads(holders) {
+  const byPerson = new Map()
+  const out = []
+  for (const h of holders || []) {
+    let e = byPerson.get(h.person_id)
+    if (!e) {
+      e = { person_id: h.person_id, name: h.name, title: h.title, runs: [] }
+      byPerson.set(h.person_id, e)
+      out.push(e)
+    }
+    const open = e.runs[e.runs.length - 1]   // the newer run this term may extend
+    if (open && continuous(h.date_end, open.start)) open.start = h.date_start
+    else e.runs.push({ start: h.date_start, end: h.date_end })
+  }
+  return out
+}
+
+// "2010–2014" — years, not full dates: the row places a name in time, and the
+// exact days are on the profile. An office still held has no end year, only a
+// trailing dash (REP-2), written as the cycle chooser writes a running cycle.
+function termYears(r) {
+  const start = r.start ? String(r.start).slice(0, 4) : ''
+  const end = r.end ? String(r.end).slice(0, 4) : ''
+  if (!start) return end
+  if (!r.end) return `${start}–`
+  return end === start ? start : `${start}–${end}`
+}
+function leadYears(e) {
+  return e.runs.map(termYears).join(', ')
+}
+
+// The office's own name, shown once in front of the people who held it: for a
+// ministry it merely repeats the tárca ("Belügyminisztérium" → "belügyminiszter"),
+// but for a minister without portfolio or an independent body it is the only
+// place the post is named. Dropped when the shown holders' titles disagree,
+// since one of them would then stand for all.
+function sharedTitle(items) {
+  const title = items.length ? items[0].title : null
+  return title && items.every((e) => e.title === title) ? title : null
 }
 
 // Anonymous search-quality signal (SEA-12): which tárca the reader opens after a
@@ -137,8 +203,19 @@ onUnmounted(() => clearTimeout(searchTimer))
               >
                 {{ p.name }}
               </RouterLink>
-              <span v-if="lead(p)" class="small muted lead">
-                {{ lead(p).name }} · {{ lead(p).title }}
+              <span v-if="p.leads.length" class="small muted lead">
+                <span v-if="p.leadTitle" class="ltitle">{{ p.leadTitle }}:</span>
+                <template v-for="(h, i) in p.leads" :key="h.person_id + '-' + i">
+                  <span v-if="i" class="sep" aria-hidden="true"> · </span>
+                  <RouterLink :to="{ name: 'profile', params: { id: h.person_id } }">
+                    {{ h.name }}
+                  </RouterLink>
+                  <span class="lyears"> ({{ leadYears(h) }})</span>
+                </template>
+                <span v-if="p.leadsHidden" class="sep" aria-hidden="true"> · </span>
+                <span v-if="p.leadsHidden">
+                  {{ $t('portfolios.leadsMore', { count: p.leadsHidden }) }}
+                </span>
               </span>
             </div>
             <!-- Counts carry a word, not only a number: the three are different
@@ -181,8 +258,13 @@ onUnmounted(() => clearTimeout(searchTimer))
   grid-template-columns: minmax(0, 1fr) auto;
 }
 .pname { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
-.pname a { font-weight: 600; }
+.pname > a { font-weight: 600; }        /* the tárca's own link, not the names under it */
 .lead { min-width: 0; overflow-wrap: anywhere; }
+/* The names are links to the people, but the row's own link is the tárca above
+   them — so they read as part of the line and only colour up on hover. */
+.lead a { color: var(--ink-soft); }
+.lead a:hover { color: var(--accent); }
+.ltitle { margin-right: .3rem; }
 .pcounts { display: flex; gap: 1rem; white-space: nowrap; }
 .stat strong { font-variant-numeric: tabular-nums; }
 /* A zero that only means "not measured for these cycles" must not look like a

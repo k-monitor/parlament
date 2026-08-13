@@ -1580,6 +1580,16 @@ speeches its minister and state secretaries gave).
   irományok it submitted, plenary speeches in its name. Its text filter is
   accent-insensitive (§4B FOLD-1). Non-ministry bodies (MIN-3) are grouped apart
   from the ministries so the list reads as what it is.
+- **MIN-5a (MUST).** "Who held it" on that row is **every holder of the tárca's
+  most senior rank in scope** — a minister over a state secretary, the head of a
+  body over its deputies — each with the **years of their term** beside them, and
+  consecutive terms of the same person shown as one span (a minister re-appointed
+  at each election is one stint, not four names). A scope of several cycles
+  usually means several ministers, and named by the newest alone the row dated the
+  whole ministry to whoever holds the post now: Belügyminisztérium read as the
+  2026 minister's even for a reader who had asked for 2010–2014 as well. The ranks
+  below the top, and the exact dates, stay on the profile (MIN-6) — the row places
+  a name in time, it is not the register.
 - **MIN-6 (MUST).** A **portfolio profile** at its own deep-linkable URL, showing:
   - the tárca's **office holders** in scope — minister and state secretaries, each
     with the dates of their term (REP-2a) and a link to their profile. Scoped by
@@ -1592,7 +1602,10 @@ speeches its minister and state secretaries gave).
     the House (the MNB's governor and deputies, the ombudsman, the Állami
     Számvevőszék, the legfőbb ügyész) run six to nine years across cycle
     boundaries, and a start-date-only rule would empty their panels of the very
-    people holding them now;
+    people holding them now. The scope is the **union of the selected cycles, not
+    the span between them**: a selection that skips a cycle must not list the
+    holders of the cycles it skipped, since the counts beside them are a per-cycle
+    union (MIN-4a) and the two would then disagree on the same page;
   - **what was put to it**: the questions/interpellations addressed to it,
     paginated and newest-first, each showing its asker (linked, EXT-2), its
     status — **answered in plenary / answered in writing / still unanswered** —

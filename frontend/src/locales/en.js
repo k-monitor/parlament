@@ -305,6 +305,8 @@ export default {
     holders: 'Who held it',
     holdersMore: '{count} more office holders',
     holdersFewer: 'Show fewer',
+    // Only a few of a tárca's leads fit on a list row; the profile has the rest.
+    leadsMore: '+{count} more',
     trendTitle: 'Questions answered per year',
     trendCaption: 'Questions answered by this portfolio, per year.',
     emptyPanel: 'Nothing of this kind in the selected cycle.',

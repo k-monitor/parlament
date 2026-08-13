@@ -22,8 +22,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...analytics import search_analytics
-from ...db import (get_db, like_contains, period_bounds, period_key, period_list,
-                   period_sql)
+from ...db import (get_db, like_contains, local_instant, period_bounds,
+                   period_key, period_list, period_sql)
 from ...query_cache import cached_aggregate
 
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
@@ -96,6 +96,50 @@ def _counts(db: sqlite3.Connection, period: Optional[List[int]]) -> dict[str, di
     return out
 
 
+# The rank of an office within its tárca — who a reader should see named first.
+# `senior` (the head of a body that is not a ministry: the MNB's governor, the
+# ombudsman, the legfőbb ügyész) outranks a state secretary; left among the
+# ordinary "other" offices it sorted by date alone, and the Magyar Nemzeti Bank's
+# row named whichever *deputy* governor had been appointed most recently.
+_RANK_SQL = ("CASE po.category WHEN 'pm' THEN 0 WHEN 'minister' THEN 1 "
+             "WHEN 'senior' THEN 2 WHEN 'state-secretary' THEN 3 ELSE 4 END")
+
+
+def _period_spans(db: sqlite3.Connection) -> list[tuple[int, str, Optional[str]]]:
+    """Every dated electoral cycle as the UTC instants it spans, oldest first —
+    the same instants ``period_bounds`` compares office terms against (§4A)."""
+    return [(r["number"], local_instant(r["date_start"]),
+             local_instant(r["date_end"], end_of_day=True) if r["date_end"] else None)
+            for r in db.execute(
+                "SELECT number, date_start, date_end FROM electoral_period "
+                "WHERE date_start IS NOT NULL ORDER BY date_start")]
+
+
+def _term_periods(spans: list[tuple[int, str, Optional[str]]],
+                  date_start: Optional[str], date_end: Optional[str]) -> list[int]:
+    """The cycles one office term belongs to: the one it **began** in, plus —
+    while it is still open — every cycle since.
+
+    This is ``_holders``' rule made per-cycle, which matters as soon as the scope
+    **skips** a cycle: ``period_bounds`` collapses the selection into a single
+    span from the earliest start to the latest end, so with 2010–2014 and 2022–
+    selected, the ministers of 2014–2018 and 2018–2022 sit inside that span and
+    were listed as if their cycles had been chosen. The counts beside them are a
+    per-cycle union (``period_sql``), so the two disagreed about what "in scope"
+    meant on the same row."""
+    if not date_start:
+        return []
+    started = next((i for i, (_, s, e) in enumerate(spans)
+                    if s <= date_start and (e is None or date_start <= e)), None)
+    if started is None:
+        # Began before the first cycle this DB can date. Only a term still open
+        # reaches those cycles at all — and then it reaches every one of them.
+        return [] if date_end else [n for n, _, _ in spans]
+    if date_end:
+        return [spans[started][0]]
+    return [n for n, _, _ in spans[started:]]
+
+
 def _holders(db: sqlite3.Connection, period: Optional[List[int]],
              slugs: Optional[list[str]] = None) -> dict[str, list]:
     """Who held each tárca's offices within the cycle scope, newest first.
@@ -116,7 +160,8 @@ def _holders(db: sqlite3.Connection, period: Optional[List[int]],
 
     An office still held keeps an open end — the last day of the data is never
     presented as a departure (REP-2)."""
-    bounds = period_bounds(db, period_list(period))
+    scope = period_list(period)
+    bounds = period_bounds(db, scope)
     if bounds is None:                    # cycles this DB cannot date: say nothing
         return {}
     start, end = bounds
@@ -136,12 +181,16 @@ def _holders(db: sqlite3.Connection, period: Optional[List[int]],
             FROM portfolio_office po
             JOIN person p ON p.person_id = po.person_id
             WHERE {' AND '.join(where)}
-            ORDER BY po.portfolio_slug,
-                     CASE po.category WHEN 'pm' THEN 0 WHEN 'minister' THEN 1
-                                      WHEN 'state-secretary' THEN 2 ELSE 3 END,
+            ORDER BY po.portfolio_slug, {_RANK_SQL},
                      po.date_start DESC""", params).fetchall()
+    # The date range above is one span over the whole selection; the cycles the
+    # term actually belongs to decide whether it is in scope (see _term_periods).
+    spans = _period_spans(db) if scope else []
     out: dict[str, list] = {}
     for r in rows:
+        if scope and not set(scope) & set(
+                _term_periods(spans, r["date_start"], r["date_end"])):
+            continue
         out.setdefault(r["slug"], []).append({
             "person_id": r["person_id"], "name": r["name"], "title": r["title"],
             "category": r["category"],
@@ -186,14 +235,21 @@ def list_portfolios(
     out = []
     for r in listed:
         c = counts.get(r["slug"], {})
-        # The card names the tárca's most senior current office-holder — a
-        # minister over a state secretary — since that is who a reader recognises.
+        # The card names who *ran* the tárca in the cycles in scope: every holder
+        # of its most senior rank — a minister over a state secretary, since that
+        # is who a reader recognises — newest first, and not just the newest of
+        # them. A scope of several cycles usually means several ministers, and one
+        # name stood for all of them: the interior ministry read as the 2026
+        # minister's even when the reader had asked for 2010–2014 as well. The
+        # ranks below the top are the profile's business (MIN-6), not the row's.
         who = holders.get(r["slug"]) or []
+        top = who[0]["category"] if who else None
         out.append({
             "slug": r["slug"], "name": r["name"], "kind": r["kind"],
             "answered": c.get("answered", 0), "submitted": c.get("submitted", 0),
             "speeches": c.get("speeches", 0),
-            "holders": who[:3], "holder_count": len(who),
+            "holders": [h for h in who if h["category"] == top],
+            "holder_count": len(who),
         })
     # Privacy-respecting analytics (PRIV-2): the typed keyword + the filters it
     # was combined with. A no-keyword browse of the list records nothing. The

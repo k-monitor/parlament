@@ -192,6 +192,58 @@ def _load_person_offices(conn: sqlite3.Connection, person_id: str,
     return n
 
 
+def _ensure_person_mandate(conn: sqlite3.Connection) -> None:
+    """Create ``person_mandate`` on a pre-existing DB (REP-14).
+
+    Same reasoning as ``_ensure_person_office``: the incremental ``--update`` path
+    snapshots the live DB rather than re-running ``schema.sql``, so without this the
+    first registry carrying mandates would fail on the missing table — and this is
+    what lets a deployment pick up the departed MPs by dropping in a re-scraped
+    ``representatives-*.json``, with no full rebuild. A no-op on a fresh DB."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS person_mandate (
+            person_id      TEXT NOT NULL REFERENCES person(person_id),
+            period_number  INTEGER,
+            date_start     TEXT,
+            date_end       TEXT,
+            terminated     INTEGER NOT NULL DEFAULT 0,
+            end_reason     TEXT,
+            constituency   TEXT,
+            predecessor_id    TEXT,
+            predecessor_label TEXT,
+            successor_id      TEXT,
+            successor_label   TEXT,
+            PRIMARY KEY (person_id, period_number)
+        )""")
+
+
+def _load_person_mandate(conn: sqlite3.Connection, person_id: str,
+                         period: int | None, mandate) -> None:
+    """Replace ``person_id``'s mandate row for ``period`` (REP-14).
+
+    Period-scoped like the membership row beside it: an MP serving in several cycles
+    holds one mandate per cycle, each loaded from that cycle's own registry, so a
+    blanket delete-by-person would drop the others every time one is reloaded.
+    A registry scraped before mandates existed simply carries none, and the row is
+    then removed rather than left stale."""
+    conn.execute("DELETE FROM person_mandate WHERE person_id = ? AND period_number IS ?",
+                 (person_id, period))
+    if not isinstance(mandate, dict):
+        return
+    pre = mandate.get("predecessor") or {}
+    suc = mandate.get("successor") or {}
+    conn.execute(
+        """INSERT INTO person_mandate(person_id, period_number, date_start, date_end,
+                                      terminated, end_reason, constituency,
+                                      predecessor_id, predecessor_label,
+                                      successor_id, successor_label)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (person_id, period, mandate.get("start"), mandate.get("end"),
+         1 if mandate.get("terminated") else 0, mandate.get("endReason"),
+         mandate.get("constituency"), pre.get("personID"), pre.get("label"),
+         suc.get("personID"), suc.get("label")))
+
+
 def _ensure_person_document_columns(conn: sqlite3.Connection) -> None:
     """Add ``person.cv_url`` / ``person.asset_declarations_json`` to a pre-existing
     DB (REP-13).
@@ -232,6 +284,7 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
     """Upsert the MP registry. Adds bio/enrichment to person rows and faction
     membership history; safe to re-run (replaces each MP's derived rows)."""
     _ensure_person_office(conn)
+    _ensure_person_mandate(conn)
     _ensure_person_document_columns(conn)
     _ensure_person_birth_columns(conn)
     meta = registry.get("meta", {})
@@ -338,17 +391,24 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
         # The MP's own office (tisztség) terms, as term rows the profile can list
         # (REP-2). `offices_json` keeps the same data for older readers.
         _load_person_offices(conn, pid, rec.get("offices"), "roster")
+        # The seat they held in this cycle — its term, whether it ended early and
+        # why, and who stood on either side of the handover (REP-14).
+        _load_person_mandate(conn, pid, period, rec.get("mandate"))
 
         conn.execute("DELETE FROM membership WHERE person_id = ? AND period_number IS ?",
                      (pid, period))
         for h in rec.get("factionHistory") or []:
             _get_or_create_faction(conn, h.get("label"))
-        if fac.get("label"):
-            fid = _get_or_create_faction(conn, fac.get("label"), fac.get("id"))
-            conn.execute(
-                "INSERT INTO membership(person_id, faction_id, period_number, "
-                "position) VALUES (?, ?, ?, ?)",
-                (pid, fid, period, fac.get("position")))
+        # The membership row is what puts this person in the cycle's scope (§4A), so
+        # it is written whether or not the registry knows their faction — an MP with
+        # no faction on record must still appear in the cycle they served in, not
+        # vanish from it. `faction_id` is then simply NULL.
+        fid = (_get_or_create_faction(conn, fac.get("label"), fac.get("id"))
+               if fac.get("label") else None)
+        conn.execute(
+            "INSERT INTO membership(person_id, faction_id, period_number, "
+            "position) VALUES (?, ?, ?, ?)",
+            (pid, fid, period, fac.get("position")))
     conn.commit()
     logger.info("Loaded %d representatives (cycle %s)", len(data), period)
     return len(data)

@@ -6,7 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, currentCycleLabel } from '../../store.js'
-import { formatSpeakingTime } from '../../format.js'
+import { formatDateLocal, formatSpeakingTime } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -75,15 +75,27 @@ const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAG
 const f = reactive({
   q: route.query.q || '',
   faction_id: route.query.faction_id || '',
+  // Mandate state (REP-14): '' = everyone who held a mandate in the cycle, which is
+  // the default because that IS the cycle's membership — a roster is a history, not
+  // a snapshot. 'active'/'terminated' narrow it to either side.
+  mandate: route.query.mandate || '',
   sort: route.query.sort || 'speaking_time',
 })
 // Open the filter panel on load when a filter is already active (e.g. a shared
 // or deep-linked list), so its filters are visible rather than hidden.
-const showFilters = ref(!!route.query.faction_id)
+const showFilters = ref(!!route.query.faction_id || !!route.query.mandate)
 
 function clearFilters() {
   f.faction_id = ''
+  f.mandate = ''
   apply()
+}
+
+// "megszűnt mandátum · 2024-09-30" — a card must say that a seat was given up,
+// or a former MP reads exactly like a sitting one (REP-14).
+function mandateEndedLabel(m) {
+  const end = formatDateLocal(m && m.end)
+  return end ? `${t('reps.mandateEnded')} · ${end}` : t('reps.mandateEnded')
 }
 
 // Faction is the only filter here, and neither an advocate nor a non-MP speaker
@@ -94,6 +106,7 @@ function apply() {
   const query = {}
   if (f.q) query.q = f.q
   if (f.faction_id) query.faction_id = f.faction_id
+  if (f.mandate) query.mandate = f.mandate
   if (f.sort) query.sort = f.sort
   // Changing a filter resets to the first page (offset is intentionally dropped).
   // Stays on the current page (MP list or advocates), since the route is the tab.
@@ -120,7 +133,8 @@ async function load() {
   // it scopes the list to MPs serving in that cycle.
   const args = {
     q: route.query.q, faction_id: route.query.faction_id, period: store.cycles,
-    role: role.value, sort: route.query.sort || 'speaking_time',
+    role: role.value, mandate: route.query.mandate || undefined,
+    sort: route.query.sort || 'speaking_time',
   }
   try {
     const res = await api.representatives({ ...args, limit: PAGE, offset })
@@ -143,6 +157,7 @@ onMounted(async () => {
 watch(() => [route.name, route.query], () => {
   const q = route.query
   f.q = q.q || ''; f.faction_id = q.faction_id || ''
+  f.mandate = q.mandate || ''
   f.sort = q.sort || 'speaking_time'
   load()
 })
@@ -191,6 +206,19 @@ onUnmounted(() => clearTimeout(searchTimer))
             <option v-for="x in factions" :key="x.id" :value="x.id">{{ x.label }}</option>
           </select>
         </div>
+        <!-- Mandate state (REP-14): the list covers everyone who held a mandate in
+             the cycle, so this is what narrows it to those who still held it. What
+             "active" means depends on whether the cycle is over, hence the note. -->
+        <div>
+          <label for="r-mandate">{{ $t('reps.mandateFilter') }}</label>
+          <select id="r-mandate" v-model="f.mandate" @change="apply"
+                  aria-describedby="r-mandate-note">
+            <option value="">{{ $t('reps.mandateAll') }}</option>
+            <option value="active">{{ $t('reps.mandateActive') }}</option>
+            <option value="terminated">{{ $t('reps.mandateTerminated') }}</option>
+          </select>
+          <p id="r-mandate-note" class="muted small hint">{{ $t('reps.mandateFilterNote') }}</p>
+        </div>
       </div>
       <button class="btn secondary small" type="button" style="margin-top:.6rem;" @click="clearFilters">
         {{ $t('search.clearFilters') }}
@@ -237,6 +265,11 @@ onUnmounted(() => clearTimeout(searchTimer))
                  takes the same slot. Scoped to the selected cycle by the API. -->
             <span v-if="r.office" class="chip office">{{ r.office }}</span>
             <span v-if="r.constituency" class="muted small">📍 {{ r.constituency }}</span>
+            <!-- A mandate given up before the term ended (REP-14). Marked on the
+                 card, with the date, so a former MP is never listed as if they
+                 were still sitting. Text, not colour, carries it (A11Y-1). -->
+            <span v-if="r.mandate && r.mandate.terminated" class="chip ended"
+                  :title="r.mandate.end_reason || ''">{{ mandateEndedLabel(r.mandate) }}</span>
           </div>
           <div class="repstats small muted">
             <span>{{ r.speech_count }} {{ $t('reps.speeches') }}</span>
@@ -259,5 +292,9 @@ onUnmounted(() => clearTimeout(searchTimer))
 /* Office titles are long ("Külgazdasági és Külügyminisztérium államtitkára") and
    the cards are narrow, so this chip wraps instead of stretching the grid. */
 .chip.office { font-weight: 600; line-height: 1.25; }
+/* A terminated mandate reads as a quiet annotation, not an alarm — it is a fact
+   about the seat, not a judgement about the person. */
+.chip.ended { font-size: .8rem; opacity: .85; }
+.hint { margin: .35rem 0 0; max-width: 46ch; }
 .repstats { display: flex; gap: .4rem; }
 </style>

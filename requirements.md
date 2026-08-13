@@ -341,6 +341,11 @@ Primary use cases:
   tabulated one) — stored, not yet surfaced.
 - **faction / party** — label, optional Wikidata id, color (for charts).
 - **membership** — person ↔ faction ↔ period (factions change over time).
+- **mandate** — person ↔ period: the term they held a seat for (start/end), whether
+  it **ended early** and the upstream reason it did, the constituency or list it was
+  won on, and the people on either side of the handover — the MP they replaced and
+  the one who replaced them (REP-14). One row per person per cycle; it is what makes
+  a cycle's roster a history rather than a snapshot.
 - **entity** (optional, from NER stage) — in-transcript entities and their
   sentence offsets. **Every** NER label the model emits is stored (person,
   organisation, place, misc), so the corpus carries a complete entity layer for
@@ -942,9 +947,13 @@ site-wide behaviour, not a per-view nicety.
 - **REP-1 (MUST).** A browsable, searchable **list of representatives**, filterable
   by faction and constituency, and scoped to the **electoral period** chosen in
   the global cycle selector (§4A); each links to a profile. The name search is
-  **accent-insensitive** (§4B FOLD-1): `dora` matches *Dóra*.
+  **accent-insensitive** (§4B FOLD-1): `dora` matches *Dóra*. A cycle's list covers
+  **everyone who held a mandate in it**, those whose mandate ended early included,
+  with a filter for the mandate holders alone (REP-14).
 - **REP-2 (MUST).** A **representative profile** shows: name, photo (if available),
-  current/past faction(s) with dates, constituency, Wikidata link, a
+  current/past faction(s) with their **real start/end dates** (REP-14), the
+  **mandate term** and, where it ended early, why (REP-14), constituency, Wikidata
+  link, a
   reverse-chronological **list of their speeches** (each linking into the viewer),
   and — when the Bills module (§6A) is enabled — a **list of the bills they
   submitted**, each linking to the bill (the reciprocal of BILL-3's sponsor links).
@@ -1194,6 +1203,57 @@ site-wide behaviour, not a per-view nicety.
     file is taken down when the mandate ends, so the link MUST only be published
     once its target is **known to resolve** — never derived from the person id and
     hoped for.
+
+- **REP-14 (SHOULD).** **Terminated mandates (*megszűnt mandátumok*).** A cycle is
+  not the fixed set of 199 people it looks like. Over a four-year term a dozen or two
+  mandates **end early** — a death, a resignation, an incompatibility — and each is
+  filled from the same list some weeks later. The roster query upstream offers is
+  **point-in-time**: it answers "who sat on this date", so scraping it once per cycle
+  records only whoever held a seat the day it was asked, and everyone who left
+  before that is **absent from the cycle altogether** — not merely unmarked. Their
+  speeches are in the corpus and their profile is reachable from them, yet the
+  cycle's own list of representatives does not contain them, and nothing on the site
+  says a seat ever changed hands.
+  - **A cycle lists everyone who held a mandate during it** (REP-1) — the departed
+    included — and a **filter narrows the list to the mandate holders**. The
+    unfiltered, complete set is the default, because that is what the cycle's
+    membership *is*: a history, not a snapshot. "Active" is read against the
+    **cycle**, not against today — in the running cycle it means still sitting, in a
+    closed one that the mandate lasted to the end of the term — and the list is
+    explicit about which reading applies. A row whose mandate ended early is
+    **marked with the date it ended**, so the two kinds are never silently mixed.
+  - The source is `parlament.hu`'s own **"Változások az Országgyűlés
+    összetételében"** listing (the composition-changes registry), scraped **per
+    cycle** alongside that cycle's roster. It has two halves: the **mandate changes**
+    — one row per mandate that ended, carrying the term's start and end, the
+    **reason** it ended, the constituency or list it was won on, and the **successor**
+    who took the seat with the date theirs began — and the **faction changes**, one
+    row per mid-cycle switch with its exact date. The mandate half is the only place
+    the reason and the predecessor↔successor pairing exist at all; the faction half
+    repeats what the per-MP faction history already dates, and is kept as a
+    cross-check rather than as a second source of truth.
+  - A departed MP is the **same core `person` entity** as any other (EXT-2), keyed by
+    the same upstream person id, so the change registry names people the per-MP detail
+    queries then answer for exactly as they do for a sitting MP — their mandate,
+    faction, committee and election history all resolve, with no name matching and no
+    re-scrape of the proceedings.
+  - The mandate is shown **dated on the profile** (REP-2), with the reason it ended
+    and a link to the person on the **other side of the handover** — the MP who
+    succeeded them, or the one they replaced. Undated, a former MP's profile is
+    indistinguishable from a sitting one; the mandate term is what makes the
+    difference legible, exactly as the office term does for a minister.
+  - **Faction history is shown with its real dates.** The per-MP history records each
+    faction spell's actual start and end, and a mid-cycle switch is precisely where
+    the reader needs them: labelling every spell with the cycle's year span instead
+    renders an MP who left their faction and later rejoined it as the same span
+    repeated three times, which reads as a bug. Consecutive spells in **one** faction
+    that upstream splits at each cycle boundary are **collapsed into a single run**
+    (as REP-2 already does for office terms), so an unbroken career reads as one
+    line; a genuine gap — a cycle not served — is never bridged. A spell still running
+    keeps an **open end** and never has the last known date filled in for it.
+  - Adding this to an **already-scraped corpus** must not require re-fetching every
+    MP's details: the departed are a handful per cycle, so backfilling them is a
+    handful of requests (cf. REP-9's additive registry, SCR-4's politeness).
 
 - **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
   representative and faction statistics** (speaking time, speech counts, trends —

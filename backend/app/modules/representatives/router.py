@@ -82,6 +82,78 @@ def _person_offices(db: sqlite3.Connection, person_id: str,
     return out
 
 
+# Consecutive spells in ONE faction — which upstream splits at every cycle boundary,
+# so an unbroken career arrives as one row per cycle — read as a single run (REP-14),
+# exactly as REP-2 already treats office terms. A wider gap is a real interruption (a
+# cycle not served, a spell as an independent in between) and is never bridged. The
+# boundary rows meet within a second; two days is slack, not a guess.
+_FACTION_RUN_GAP = timedelta(days=2)
+
+
+def _instant(value) -> Optional[datetime]:
+    """Parse an upstream timestamp (``2018-05-07T22:00:00Z``) or a bare date/year to
+    a naive UTC datetime, so two of them can be compared. ``None`` when it is neither
+    — a history whose dates can't be read is left unmerged rather than guessed at."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        for fmt in ("%Y-%m-%d", "%Y-%m", "%Y"):
+            try:
+                dt = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+        else:
+            return None
+    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+
+
+def _faction_runs(history: list) -> list[dict]:
+    """A faction history as **runs**, newest first: one entry per continuous spell in
+    a faction, with its real start/end dates and the cycles it covers (REP-14).
+
+    An MP who left their faction mid-term and later rejoined it produces three
+    upstream rows all labelled with the same cycle; dating them by that label alone
+    renders the same span three times over, which reads as a bug rather than as the
+    switch it records. So the dates are carried through, and only spells that
+    actually *touch* are merged. A spell still running keeps an open end — a run is
+    never closed with a date invented for it."""
+    rows = [h for h in history or [] if isinstance(h, dict)]
+    runs: list[dict] = []
+    for h in sorted(rows, key=lambda r: str(r.get("start") or "")):
+        prev = runs[-1] if runs else None
+        gap = None
+        if prev is not None and prev["label"] == h.get("label"):
+            prev_end, start = _instant(prev["end"]), _instant(h.get("start"))
+            # An open-ended run absorbs nothing: it has no end to be continuous with.
+            gap = (start - prev_end) if (prev_end and start) else None
+        if gap is not None and timedelta(days=-1) <= gap <= _FACTION_RUN_GAP:
+            prev["end"] = h.get("end")
+            if h.get("cycle") and h["cycle"] not in prev["cycles"]:
+                prev["cycles"].append(h["cycle"])
+            continue
+        runs.append({"label": h.get("label"), "start": h.get("start"),
+                     "end": h.get("end"),
+                     "cycles": [h["cycle"]] if h.get("cycle") else []})
+    runs.reverse()
+    return runs
+
+
+def _handover(db: sqlite3.Connection, person_id, label) -> Optional[dict]:
+    """The MP on the other side of a mandate handover (REP-14). ``has_profile`` says
+    whether they are in this DB at all — a successor seated after the last roster
+    scrape, or anyone from a cycle it was never loaded with, is named but not linked,
+    which beats both hiding the handover and offering a link that 404s."""
+    if not person_id and not label:
+        return None
+    known = bool(person_id) and bool(db.execute(
+        "SELECT 1 FROM person WHERE person_id = ?", (person_id,)).fetchone())
+    return {"person_id": person_id, "label": label, "has_profile": known}
+
+
 def _category_col(db: sqlite3.Connection) -> str:
     """``person_office.category``, or a NULL stand-in on a DB loaded before the
     column existed — so the office pages degrade to "uncategorised" rather than
@@ -108,6 +180,44 @@ def _has_advocate_columns(db: sqlite3.Connection) -> bool:
                for r in db.execute("PRAGMA table_info(person)"))
 
 
+def _has_mandates(db: sqlite3.Connection) -> bool:
+    """Whether the DB carries per-cycle mandates (REP-14) — false on one built
+    before the composition-changes registry was scraped, where the roster is still a
+    snapshot. The list then simply offers no mandate state rather than claiming
+    everyone served their full term."""
+    return bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                           "AND name='person_mandate'").fetchone())
+
+
+def _mandate_out(row) -> Optional[dict]:
+    """One mandate as the API shapes it, or ``None`` when there is no term on record
+    (an advocate, a non-MP speaker, or a DB loaded before REP-14). ``terminated``
+    means the seat was given up before the term ended — the end date is then a real
+    departure, not the close of the electoral cycle. Callers alias the columns to
+    ``mandate_*`` so the list's join and the profile's own row shape alike."""
+    if row is None or (row["mandate_start"] is None and row["mandate_end"] is None
+                       and not row["mandate_terminated"]):
+        return None
+    return {"start": row["mandate_start"], "end": row["mandate_end"],
+            "terminated": bool(row["mandate_terminated"]),
+            "end_reason": row["mandate_end_reason"]}
+
+
+def _latest_mandate_sql(period, alias: str = "mand") -> str:
+    """A joinable sub-select giving each person their mandate in the selected
+    cycle(s) — the most recent one when several are in scope. SQLite's documented
+    bare-column-with-MAX() behaviour makes the other columns come from that same
+    row, so this stays one grouped scan rather than a correlated subquery per field."""
+    scope = period_sql(period, "period_number")
+    return (f"""(SELECT person_id, MAX(period_number) AS period_number,
+                        date_start AS mandate_start, date_end AS mandate_end,
+                        terminated AS mandate_terminated,
+                        end_reason AS mandate_end_reason
+                 FROM person_mandate
+                 {("WHERE " + scope) if scope else ""}
+                 GROUP BY person_id) {alias}""")
+
+
 @router.get("")
 def list_representatives(
     q: Optional[str] = None,
@@ -119,6 +229,9 @@ def list_representatives(
                       description="mp (default) | advocate (nemzetiségi szószólók) "
                                   "| other (non-MP speakers) | all"),
     nationality: Optional[str] = None,
+    mandate: str = Query("all", pattern="^(all|active|terminated)$",
+                         description="all (default) | active (mandate not ended "
+                                     "early) | terminated (ended early) — REP-14"),
     sort: str = Query("name", pattern="^(name|speeches|speaking_time)$"),
     limit: int = Query(60, ge=1, le=300),
     offset: int = Query(0, ge=0),
@@ -137,8 +250,16 @@ def list_representatives(
     Republic, invited guests. It is defined by *having spoken* rather than by "not
     an MP", because `person` also holds office-holders who never spoke a word here
     (the tisztségviselők registry, REP-11) — listing those as speakers would be a
-    lie. Under a cycle scope it means having spoken in those cycles."""
+    lie. Under a cycle scope it means having spoken in those cycles.
+
+    A cycle's list covers **everyone who held a mandate in it** (REP-14), including
+    the MPs whose mandate ended before the term did — ``mandate`` narrows it to
+    either side. "Active" is read against the *cycle in scope*, not against today: in
+    the running cycle it means still sitting, in a closed one that the mandate lasted
+    to the end of the term. Only MPs have mandates, so the filter empties the
+    advocate/other tabs by construction — it is offered on the MP list alone."""
     advocates_known = _has_advocate_columns(db)
+    mandates_known = _has_mandates(db)
     where = []
     params: dict = {}
     # Speakers are counted from `person_stats`, the same precomputed aggregate the
@@ -169,6 +290,16 @@ def list_representatives(
     if nationality and advocates_known:
         where.append("fold(p.nationality) LIKE fold(:nat) ESCAPE '\\'")
         params["nat"] = like_contains(nationality)
+    if mandate != "all" and mandates_known:
+        # Scoped like everything else: a mandate that ended early in one cycle says
+        # nothing about the one the reader is looking at, so the row must be in
+        # scope AND in the asked-for state — two independent EXISTS would list an MP
+        # on the strength of a different cycle's mandate (cf. the faction filter).
+        mand_scope = period_sql(period, "pm.period_number")
+        state = "pm.terminated = 1" if mandate == "terminated" else "pm.terminated = 0"
+        where.append("EXISTS (SELECT 1 FROM person_mandate pm "
+                     f"WHERE pm.person_id = p.person_id AND {state}"
+                     + (f" AND {mand_scope}" if mand_scope else "") + ")")
     mem_sql = period_sql(period, "m.period_number")
     if faction_id is not None:
         # One membership row must match both — two independent EXISTS would
@@ -219,12 +350,12 @@ def list_representatives(
     search_analytics.record(
         source="representatives", query=q, period=period, sort=sort,
         faction_id=faction_id, role=role, constituency=constituency,
-        nationality=nationality, results=total, offset=offset)
+        nationality=nationality, mandate=mandate, results=total, offset=offset)
 
     # An advocate has no faction or constituency; their nationality is the
     # affiliation the card shows in its place.
-    mandate_cols = ("p.is_advocate, p.nationality," if advocates_known
-                    else "0 AS is_advocate, NULL AS nationality,")
+    advocate_cols = ("p.is_advocate, p.nationality," if advocates_known
+                     else "0 AS is_advocate, NULL AS nationality,")
     # ...and an "other" speaker has neither: what identifies a non-MP minister or
     # state secretary is the office they spoke in (REP-2/REP-12), so that goes in
     # the same slot on their card. Their most recently *begun* office in scope wins
@@ -255,14 +386,27 @@ def list_representatives(
                   {period_and(period, "s.period_number")}
                 ORDER BY s.session_id DESC, s.speech_index DESC LIMIT 1)
            )) AS office,"""
+    # The mandate this person held in the cycle(s) in scope (REP-14), so a card can
+    # say a seat was given up rather than presenting a former MP as a sitting one.
+    # A DB predating the registry has no such table: the columns then read as "no
+    # mandate on record", which is honest — not "served the full term".
+    if mandates_known:
+        mandate_join = f"LEFT JOIN {_latest_mandate_sql(period)} ON mand.person_id = p.person_id"
+        mandate_sel = ("mand.mandate_start, mand.mandate_end, "
+                       "mand.mandate_terminated, mand.mandate_end_reason,")
+    else:
+        mandate_join = ""
+        mandate_sel = ("NULL AS mandate_start, NULL AS mandate_end, "
+                       "0 AS mandate_terminated, NULL AS mandate_end_reason,")
     rows = db.execute(
         f"""SELECT p.person_id, p.label, p.firstname, p.lastname, p.photo_uri,
-                   p.constituency, {mandate_cols} {office_col}
+                   p.constituency, {advocate_cols} {office_col} {mandate_sel}
                    COALESCE(stat.speech_count, 0) AS speech_count,
                    COALESCE(stat.speaking_seconds, 0) AS speaking_seconds,
                    f.id AS faction_id, f.label AS faction_label, f.color AS faction_color
             FROM person p
             LEFT JOIN ({stat_sub}) stat ON stat.person_id = p.person_id
+            {mandate_join}
             LEFT JOIN faction f ON f.id = ({faction_sub})
             WHERE {where_sql}
             ORDER BY {order}
@@ -278,6 +422,9 @@ def list_representatives(
                 "is_advocate": bool(r["is_advocate"]),
                 "nationality": r["nationality"],
                 "office": r["office"],
+                # The seat they held in the cycle in scope; `terminated` marks one
+                # given up before the term ended (REP-14). None = no term on record.
+                "mandate": _mandate_out(r),
                 "speech_count": r["speech_count"],
                 "speaking_seconds": r["speaking_seconds"],
                 "faction": {"id": r["faction_id"], "label": r["faction_label"],
@@ -832,7 +979,8 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
     The shown ``current_faction`` is scoped to the selected cycle(s) (§4A): with
     ``period`` set it is the MP's faction in the most recent cycle *in scope*,
     otherwise their most recent faction overall. (``faction_history`` always
-    lists every cycle — it IS the cross-cycle view.)"""
+    lists every cycle — it IS the cross-cycle view.) ``mandate``, by contrast, is
+    cycle-scoped like the statistics: which seat this profile is about."""
     p = db.execute("SELECT * FROM person WHERE person_id = ?", (person_id,)).fetchone()
     if not p:
         raise HTTPException(404, "Representative not found")
@@ -848,12 +996,37 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
     faction_rows = db.execute("SELECT id, label, color FROM faction").fetchall()
     colors = {r["label"]: r["color"] for r in faction_rows}
     faction_ids = {r["label"]: r["id"] for r in faction_rows}
+    # Runs, not raw rows: upstream splits an unbroken faction membership at every
+    # cycle boundary, and dates every spell of a mid-cycle switch with the same cycle
+    # label (REP-14). `start`/`end` are the real ones, an open end meaning "still".
     faction_history = [
-        {"cycle": h.get("cycle"), "start": h.get("start"), "end": h.get("end"),
-         "faction": {"id": faction_ids.get(h.get("label")),
-                     "label": h.get("label"), "color": colors.get(h.get("label"))}
-                    if h.get("label") else None}
-        for h in _loads(p["faction_history_json"])]
+        {"cycle": (h["cycles"][-1] if h["cycles"] else None), "cycles": h["cycles"],
+         "start": h["start"], "end": h["end"],
+         "faction": {"id": faction_ids.get(h["label"]),
+                     "label": h["label"], "color": colors.get(h["label"])}
+                    if h["label"] else None}
+        for h in _faction_runs(_loads(p["faction_history_json"]))]
+    # The mandate held in the cycle(s) in scope, with the handovers on either side
+    # (REP-14) — a former MP's profile is otherwise indistinguishable from a
+    # sitting one. Absent on a DB loaded before the composition-changes registry.
+    mandate = None
+    if _has_mandates(db):
+        row = db.execute(
+            f"""SELECT date_start AS mandate_start, date_end AS mandate_end,
+                       terminated AS mandate_terminated, end_reason AS mandate_end_reason,
+                       period_number, constituency, predecessor_id, predecessor_label,
+                       successor_id, successor_label
+                FROM person_mandate
+                WHERE person_id = ?{period_and(period, "period_number")}
+                ORDER BY period_number DESC LIMIT 1""", (person_id,)).fetchone()
+        mandate = _mandate_out(row)
+        if mandate:
+            mandate.update({
+                "period_number": row["period_number"],
+                "constituency": row["constituency"],
+                "predecessor": _handover(db, row["predecessor_id"], row["predecessor_label"]),
+                "successor": _handover(db, row["successor_id"], row["successor_label"]),
+            })
     offices = _person_offices(db, person_id, _loads(p["offices_json"]))
     office = _current_office(db, person_id, period, offices)
     return {
@@ -901,6 +1074,10 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         "office_term": {k: v for k, v in office.items() if k != "title"} if office else None,
         "current_faction": {"id": current["faction_id"], "label": current["faction_label"],
                             "color": current["faction_color"]} if current and current["faction_label"] else None,
+        # The seat held in the cycle in scope: its term, whether it ended before the
+        # term did (and upstream's reason), and the MPs on either side of the
+        # handover (REP-14). None when there is no mandate on record for that scope.
+        "mandate": mandate,
         "faction_history": faction_history,
         "education": _loads(p["education_json"]),
         "committees": _loads(p["committees_json"]),

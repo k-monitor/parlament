@@ -82,6 +82,31 @@ CREATE TABLE membership (
 );
 CREATE INDEX idx_membership_person ON membership(person_id);
 
+-- person <-> mandate <-> period (REP-14): the seat someone held in ONE cycle. The
+-- upstream roster is a point-in-time listing, so this is what separates a cycle's
+-- roster from its actual membership — the mandates that ended before the term did
+-- (a death, a resignation, an incompatibility) and the handovers that followed.
+CREATE TABLE person_mandate (
+    person_id      TEXT NOT NULL REFERENCES person(person_id),
+    period_number  INTEGER,
+    date_start     TEXT,
+    date_end       TEXT,
+    -- 1 when the mandate ended BEFORE the term did. Upstream's own verdict (the
+    -- person is named by the composition-changes registry), never a date comparison
+    -- of ours; `end_reason` is its wording, e.g. "elhunyt".
+    terminated     INTEGER NOT NULL DEFAULT 0,
+    end_reason     TEXT,
+    constituency   TEXT,               -- the seat or list it was won on
+    -- The two sides of a handover. The label is stored beside the id because the
+    -- other person need not be in `person` at all — a successor seated after the
+    -- last roster scrape, a predecessor from a cycle this DB was never loaded with.
+    predecessor_id    TEXT,
+    predecessor_label TEXT,
+    successor_id      TEXT,
+    successor_label   TEXT,
+    PRIMARY KEY (person_id, period_number)
+);
+
 -- person <-> government/House office (tisztség) <-> term: one row per office a
 -- person held, with the upstream appointment/dismissal dates (`date_end` NULL =
 -- still in office). Two sources feed it, distinguished by `source` so each can be

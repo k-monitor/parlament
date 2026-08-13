@@ -4,7 +4,11 @@ This is a self-contained module (requirements EXT-1) supplying everything the
 Representatives & Statistics module needs (§6) directly from parlament.hu — no
 Wikidata round-trip required:
 
-* the per-cycle MP roster (``kepviselo-lista-idopontban``), and
+* the per-cycle MP roster (``kepviselo-lista-idopontban``),
+* the cycle's **composition changes** (REP-14) — the mandates that ended mid-cycle
+  and the mid-cycle faction switches — which is also what supplies the MPs the
+  roster cannot: it answers "who sat on this date", so anyone who left before it
+  was asked is missing from it entirely, and
 * per-MP detail: bio + contact, faction-membership history, committee
   memberships, constituency / election history, education, offices, the
   **asset declarations** (*vagyonnyilatkozatok*) and CV of REP-13, and the
@@ -226,6 +230,113 @@ def apply_details(rec: dict, details: dict[str, list[dict]]) -> None:
     } for r in details.get("kepviselo-aktivitas-query", [])]
 
 
+# --- mandates & the composition changes (REP-14) ----------------------------
+# `kepviselo-lista-idopontban` is a POINT-IN-TIME roster: it answers "who sat on
+# this date". A cycle scraped once therefore holds only whoever held a seat the day
+# it was asked, and the dozen or two mandates that ended before that — a death, a
+# resignation, an incompatibility — are absent from it altogether, along with the
+# fact that a seat ever changed hands. `FelicitasClient.composition_changes` is what
+# names them; they live in the same person-id space, so from there on they are
+# fetched, keyed and loaded exactly like a sitting MP.
+
+
+def _mandate_in_cycle(rec: dict, start: str, end: str | None) -> dict | None:
+    """The MP's ``electionHistory`` entry for the cycle spanning ``[start, end]``.
+
+    A mandate belongs to this cycle when it **ended on or after the cycle's first
+    day and began before its last one**. Both halves are needed and neither may be a
+    plain date-prefix comparison of the start alone: upstream dates a mandate by the
+    UTC instant of a *local* midnight (9 May 2026 arrives as ``2026-05-08T22:00:00Z``)
+    and a cycle's whole opening cohort begins at the first local midnight of the
+    term — so every one of them carries the calendar date of the day *before* the
+    cycle starts, which is the last day of the previous one (the same trap REP-11
+    documents for office terms). Ending-side dates carry no such offset."""
+    for row in rec.get("electionHistory") or []:
+        began, ended = (row.get("mandateStart") or "")[:10], (row.get("mandateEnd") or "")[:10]
+        if ended and ended < start:
+            continue                      # ended before this cycle opened
+        if end and began and began >= end:
+            continue                      # began on/after its last day — the next cycle's
+        return row
+    return None
+
+
+def _person_ref(pid, label, **extra) -> dict | None:
+    """The other side of a handover: who they are, plus when it happened."""
+    if not pid:
+        return None
+    return {"personID": pid, "label": (label or "").strip(), **extra}
+
+
+def apply_mandates(records: list[dict], mandate_changes: list[dict],
+                   cycle_start: str, cycle_end: str | None) -> None:
+    """Stamp each record's ``mandate`` — the seat it held in *this* cycle (REP-14).
+
+    ``terminated`` is upstream's own verdict rather than a date comparison of ours:
+    being named by the changes registry **is** the fact that the mandate ended early.
+    Someone who served to the end of the term simply is not in it, and their ``end``
+    is the term's own end (or, in the running cycle, nothing at all)."""
+    ended: dict[str, dict] = {}     # person id -> the change row that ended their term
+    succeeded: dict[str, dict] = {}  # person id -> the change row whose seat they took
+    for row in mandate_changes or []:
+        if row.get("kepviseloId"):
+            ended.setdefault(row["kepviseloId"], row)
+        if row.get("kovetkezoKepviseloId"):
+            succeeded.setdefault(row["kovetkezoKepviseloId"], row)
+    for rec in records:
+        pid = rec.get("personID")
+        term = _mandate_in_cycle(rec, cycle_start, cycle_end) or {}
+        left = ended.get(pid) or {}
+        took_over_from = succeeded.get(pid) or {}
+        rec["mandate"] = {
+            # The per-MP election history dates the term to the minute; the change
+            # row only to the day, so it is the fallback (and the whole answer for a
+            # `--no-details` run, which fetches no election history at all).
+            "start": term.get("mandateStart") or left.get("mandatumKezdete")
+                     or took_over_from.get("kovetkezoMandatumKezdete"),
+            "end": term.get("mandateEnd") or left.get("mandatumVege"),
+            "electionDate": term.get("electionDate"),
+            "constituency": term.get("constituency") or left.get("valasztoKeruletNeve"),
+            "terminated": bool(left),
+            "endReason": left.get("mandatumAllapotNeve"),
+            # Named in the plain (sort) form the rest of the site labels people by,
+            # not the titled one — "Budai Gyula", not "Dr. Budai Gyula".
+            "predecessor": _person_ref(
+                took_over_from.get("kepviseloId"),
+                took_over_from.get("kepviseloNeveSorrendezeshez")
+                or took_over_from.get("kepviseloNeve"),
+                mandateEnd=took_over_from.get("mandatumVege"),
+                endReason=took_over_from.get("mandatumAllapotNeve")),
+            "successor": _person_ref(
+                left.get("kovetkezoKepviseloId"),
+                left.get("kovetkezoKepviseloNeveSorrendezeshez")
+                or left.get("kovetkezoKepviseloNeve"),
+                mandateStart=left.get("kovetkezoMandatumKezdete")),
+        }
+
+
+def _base_record_from_change(row: dict) -> dict:
+    """Curated record for an MP the roster no longer lists, from their change row.
+
+    The same shape ``_base_record`` builds from a roster row, so the detail pass, the
+    portrait fetch and the loader treat the two alike. The faction is the one that
+    lost the seat, which is what the roster would have reported while they held it."""
+    label = (row.get("kepviseloNeveSorrendezeshez") or row.get("kepviseloNeve") or "").strip()
+    firstname, lastname = split_name(label)
+    rec = {
+        "personID": row.get("kepviseloId"),
+        "label": label,
+        "labelFull": (row.get("kepviseloNeve") or "").strip(),
+        "firstname": firstname,
+        "lastname": lastname,
+        "faction": {"id": row.get("frakcioId"), "label": row.get("frakcioNeve"),
+                    "position": None},
+    }
+    if rec["personID"]:
+        rec["photoURI"] = f"{PHOTO_RESOURCE}/{rec['personID']}"
+    return rec
+
+
 def apply_cv(felicitas: FelicitasClient, rec: dict) -> None:
     """Note the person's published CV PDF on ``rec``, when they have one (REP-13).
 
@@ -246,16 +357,42 @@ def apply_cv(felicitas: FelicitasClient, rec: dict) -> None:
         rec["cvUrl"] = url
 
 
+# What the per-MP detail pass (and the portrait/CV probes) put on a record — the
+# expensive half. A re-run given a `previous` registry reuses these for people it
+# already holds instead of re-fetching them (REP-14: backfilling the departed must
+# not cost a fresh scrape of all 199 sitting MPs).
+_DETAIL_KEYS = (
+    "seat", "email", "website", "highestEducation", "parliamentaryOffice",
+    "stateOffice", "active", "factionHistory", "committeeMemberships",
+    "electionHistory", "constituency", "education", "offices", "assetDeclarations",
+    "statistics", "cvUrl", "photoFile",
+    # The Wikidata join is one query for the whole roster, so it is always re-run —
+    # but a failed/skipped run must not blank what is already on file either.
+    "wikidataId", "wikipediaUrl", "dateOfBirth", "zodiacSign", "chineseZodiacSign",
+)
+
+
 def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
                           details: bool = True, limit: int | None = None,
-                          photos_dir=None, link_wikidata: bool = True) -> dict:
+                          photos_dir=None, link_wikidata: bool = True,
+                          changes: bool = True, previous: dict | None = None) -> dict:
     """Build the representative registry for ``cycle``.
 
+    Covers **everyone who held a mandate in the cycle** (REP-14): the roster is a
+    point-in-time listing, so the MPs whose mandate ended mid-cycle are added from
+    the composition-changes registry and enriched exactly like the sitting ones.
+    Every record carries a ``mandate`` block for this cycle, and the changes
+    themselves are kept on the registry so the loader can date the handovers.
+
     With ``details`` (default) each MP is enriched via the per-MP detail queries;
-    ``limit`` caps how many MPs are processed (useful for a quick test run);
-    ``photos_dir`` (a Path) downloads each MP's portrait into it when given.
-    With ``link_wikidata`` (default) each MP is joined to its Wikidata item and
-    Wikipedia article via property P4966 (one extra query for the whole roster)."""
+    ``limit`` caps how many MPs are processed from each of the two groups (useful
+    for a quick test run); ``photos_dir`` (a Path) downloads each MP's portrait into
+    it when given. With ``link_wikidata`` (default) each MP is joined to its Wikidata
+    item and Wikipedia article via property P4966 (one extra query for the whole
+    roster). ``changes=False`` skips the composition-changes queries, leaving the
+    old point-in-time roster. Passing ``previous`` (an already-scraped registry for
+    this cycle) **reuses its per-MP details** and spends requests only on people it
+    does not already hold — how the departed are backfilled into a scraped corpus."""
     ranges = felicitas.cycle_ranges()
     rng = ranges.get(cycle)
     if not rng or not rng.get("start"):
@@ -266,15 +403,30 @@ def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
     roster = felicitas.representative_list(cycle, start, end)
     logger.info("Cycle %s roster: %d representatives", cycle, len(roster))
 
+    changed: dict[str, list[dict]] = {"mandate": [], "faction": []}
+    if changes:
+        try:
+            changed = felicitas.composition_changes(cycle, start, end)
+        except Exception as e:  # an old cycle upstream has no changes page for
+            logger.warning("composition changes failed for cycle %s: %s", cycle, e)
+    seated = {r.get("kepviseloId") for r in roster}
+    departed = [r for r in changed.get("mandate") or []
+                if r.get("kepviseloId") and r["kepviseloId"] not in seated]
+    if changed.get("mandate"):
+        logger.info("Cycle %s composition changes: %d mandate, %d faction "
+                    "(%d MP(s) the roster no longer lists)", cycle,
+                    len(changed.get("mandate") or []), len(changed.get("faction") or []),
+                    len(departed))
+
     # One SPARQL query for the whole P4966 -> Wikidata/Wikipedia map; joined to
     # each MP by id below (EXT-2 — never by name). Degrades to {} on failure.
     wd_links = wikidata.fetch_mp_links(felicitas.http) if link_wikidata else {}
+    known = {r["personID"]: r for r in (previous or {}).get("data", []) if r.get("personID")}
+    reused = 0
 
-    records: list[dict] = []
-    for i, row in enumerate(roster):
-        if limit is not None and i >= limit:
-            break
-        rec = _base_record(row)
+    def enrich(rec: dict) -> None:
+        """Fill one curated record: Wikidata link, per-MP details, CV, portrait."""
+        nonlocal reused
         pid = rec["personID"]
         link = wd_links.get(pid) if pid else None
         if link:
@@ -288,7 +440,8 @@ def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
                 rec["dateOfBirth"] = link["dateOfBirth"]
                 rec["zodiacSign"] = link.get("zodiacSign")
                 rec["chineseZodiacSign"] = link.get("chineseZodiacSign")
-        if details and pid:
+        on_file = known.get(pid) if pid else None
+        if details and pid and not on_file:
             fetched: dict[str, list[dict]] = {}
             for q in DETAIL_QUERIES:
                 try:
@@ -298,11 +451,34 @@ def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
                     fetched[q] = []
             apply_details(rec, fetched)
             apply_cv(felicitas, rec)
-        if photos_dir is not None and pid:
+        elif on_file:
+            # Whatever this run did fetch wins; the rest is carried over rather
+            # than re-requested (and rather than lost).
+            for key in _DETAIL_KEYS:
+                if on_file.get(key) is not None:
+                    rec.setdefault(key, on_file[key])
+            reused += 1
+        # A portrait already on file is not re-downloaded for a reused record.
+        if photos_dir is not None and pid and not (on_file and rec.get("photoFile")):
             save_photo(felicitas, photos_dir, pid, rec)
+
+    records: list[dict] = []
+    for i, row in enumerate(roster):
+        if limit is not None and i >= limit:
+            break
+        rec = _base_record(row)
+        enrich(rec)
         records.append(rec)
         if (i + 1) % 25 == 0:
             logger.info("  …%d/%d MPs", i + 1, len(roster))
+    for i, row in enumerate(departed):
+        if limit is not None and i >= limit:
+            break
+        rec = _base_record_from_change(row)
+        enrich(rec)
+        records.append(rec)
+
+    apply_mandates(records, changed.get("mandate") or [], start, rng.get("end"))
 
     return {
         "meta": {
@@ -315,8 +491,19 @@ def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
             "withWikidata": link_wikidata,
             "wikidataLinked": sum(1 for r in records if r.get("wikidataId")),
             "birthDatesLinked": sum(1 for r in records if r.get("dateOfBirth")),
+            "withChanges": changes,
+            # How many of the count are MPs the roster no longer lists (REP-14),
+            # and how many records were served from the previous registry.
+            "departed": sum(1 for r in records if r["mandate"]["terminated"]),
+            "detailsReused": reused,
             "count": len(records),
         },
+        # The cycle's composition changes as upstream reports them: the mandate
+        # handovers (with the reason each ended) and the mid-cycle faction switches.
+        # The faction half repeats what each MP's own faction history already dates
+        # and is kept as a cross-check, not as a second source of truth (REP-14).
+        "changes": {"mandate": changed.get("mandate") or [],
+                    "faction": changed.get("faction") or []},
         "data": records,
     }
 

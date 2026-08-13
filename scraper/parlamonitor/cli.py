@@ -17,6 +17,10 @@ politeness/transport knobs come from the environment or flags, never hard-coded
     # Full representative registry with per-MP detail + photos
     python -m parlamonitor representatives --cycle 43 --photos ./data
 
+    # Backfill an already-scraped cycle with the MPs whose mandate ended mid-cycle
+    # (REP-14) — reuses the details on file, so it costs a handful of requests
+    python -m parlamonitor representatives --cycle 42 --only-new ./data
+
     # Bills (irományok) of the current cycle
     python -m parlamonitor bills --cycle 43 ./data
 
@@ -243,12 +247,25 @@ def cmd_representatives(args) -> None:
     felicitas = _client(args)
     photos_dir = (paths.data / "media" / "photos") if args.photos else None
 
+    # `--only-new` reuses the per-MP details already on file and spends requests
+    # only on people the stored registry does not hold — how the MPs whose mandate
+    # ended mid-cycle (REP-14) are backfilled into an already-scraped cycle without
+    # re-fetching ~2 600 detail queries for the 199 sitting ones (SCR-4).
+    previous = None
+    if args.only_new:
+        try:
+            previous = json.loads(paths.representatives_file(args.cycle).read_text())
+        except (OSError, ValueError) as e:
+            sys.exit(f"representatives --only-new: no readable registry on file "
+                     f"for cycle {args.cycle} ({e}); run a full scrape first")
+
     try:
         with acquire(paths.lockfile, force=args.force_lock):
             registry = fetch_representatives(
                 felicitas, args.cycle,
                 details=not args.no_details, limit=args.limit,
-                photos_dir=photos_dir, link_wikidata=not args.no_wikidata)
+                photos_dir=photos_dir, link_wikidata=not args.no_wikidata,
+                changes=not args.no_changes, previous=previous)
             save_representatives(paths, args.cycle, registry)
     finally:
         felicitas.close()
@@ -258,6 +275,8 @@ def cmd_representatives(args) -> None:
         "cycle": args.cycle,
         "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "count": registry["meta"]["count"],
+        "departed": registry["meta"]["departed"],
+        "detailsReused": registry["meta"]["detailsReused"],
         "withDetails": registry["meta"]["withDetails"],
     })
 
@@ -553,6 +572,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--photos", action="store_true", help="download MP portraits")
     sp.add_argument("--limit", type=int, default=None,
                     help="cap number of MPs (for testing)")
+    sp.add_argument("--no-changes", action="store_true",
+                    help="skip the composition-changes queries — the roster alone, "
+                         "without the MPs whose mandate ended mid-cycle")
+    sp.add_argument("--only-new", action="store_true",
+                    help="reuse the details already on file and fetch only people "
+                         "the stored registry lacks (backfill, e.g. the departed)")
     sp.set_defaults(func=cmd_representatives)
 
     sp = sub.add_parser("advocates",

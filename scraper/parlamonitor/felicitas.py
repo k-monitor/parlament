@@ -95,6 +95,18 @@ SZAVAZAS_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
 KEPVISELO_REBIND = (f"{BASE}/web/guest/felicitas/api/query/parameter/rebind/"
                    "kepviseloadatok-kepviselo-kepviselolista-idopont/"
                    "kepviselo-lista-idopontban-query")
+# The composition-changes registry (*Változások az Országgyűlés összetételében*,
+# `/web/guest/valtozasok-az-orszaggyules-osszeteteleben`) — the two listings behind
+# that page, served by the same provider as the roster (verified 2026-08):
+#   mandate — one row per mandate that ENDED mid-cycle, with the term's dates, the
+#     reason it ended (`mandatumAllapotNeve`) and the successor who took the seat;
+#   faction — one row per mid-cycle faction switch, with its exact date.
+# The page's third query (`ossz-valtozasok-query`) returns only the distinct people
+# these two name, which is nothing they don't already carry, so it isn't fetched.
+MANDATE_CHANGES_QUERY = "mandatum-valtozasok-query"
+FACTION_CHANGES_QUERY = "frakcio-valtozasok-query"
+# ~40 rows in the busiest cycle on record, so one request each instead of two.
+_CHANGES_PAGE_SIZE = 400
 # Office holders (*tisztségviselők*): every recorded term of government / House
 # office with its real start and end date, for MPs and non-MPs alike. Its one
 # query is named ``tisztsegviselo`` (no ``-query`` suffix — that spelling 404s).
@@ -426,6 +438,31 @@ class FelicitasClient:
     def representative_detail(self, query: str, person_id: str) -> list[dict]:
         """Run one per-MP detail query (e.g. ``kepviselo-adatok-query``)."""
         return self.select_all(KEPVISELO_PROVIDER, query, {"pId": person_id})
+
+    def composition_changes(self, cycle: int, start: str, end: str) -> dict:
+        """How the House's composition changed during ``cycle`` (REP-14) —
+        ``{"mandate": [...], "faction": [...]}``, the two halves of parlament.hu's
+        *Változások az Országgyűlés összetételében* listing.
+
+        The **mandate** rows are the ones the roster cannot give: ``kepviselo-lista-
+        idopontban`` answers only "who sat on this date", so an MP whose mandate ended
+        mid-cycle is missing from every roster taken after they left. Each row names
+        one such mandate — ``kepviseloId`` (the same person-id space as everywhere
+        else, so the per-MP detail queries answer for them), ``mandatumKezdete`` /
+        ``mandatumVege``, the reason (``mandatumAllapotNeve``: *elhunyt*, *képviselői
+        megbízatásról lemondott*, *összeférhetetlenség*) and the successor
+        (``kovetkezoKepviselo*``, absent when the seat was never filled).
+
+        Two requests for the whole cycle: a dozen or two mandates change in a term."""
+        body = {"pCiklus": int(cycle), "hCiklusElejeLimit": start,
+                "hCiklusVegeLimit": end, "pIdoszakEleje": start,
+                "pIdoszakVege": end, "pIdopont": end}
+        return {
+            "mandate": self.select_all(KEPVISELO_PROVIDER, MANDATE_CHANGES_QUERY,
+                                       body, _CHANGES_PAGE_SIZE),
+            "faction": self.select_all(KEPVISELO_PROVIDER, FACTION_CHANGES_QUERY,
+                                       body, _CHANGES_PAGE_SIZE),
+        }
 
     def advocate_list(self, cycle: int) -> list[dict]:
         """The nationality-advocate (*nemzetiségi szószóló*) roster of ``cycle``.

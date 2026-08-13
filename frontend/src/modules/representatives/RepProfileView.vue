@@ -128,6 +128,12 @@ function termRange(c) {
   return `${start || '?'} – ${end || t('profile.present')}`
 }
 
+// A faction spell's span. The dates are the point (REP-14) — the cycle label is
+// only the fallback for a history with no usable ones (an old registry).
+function factionRange(h) {
+  return termRange(h) || h.cycle || ''
+}
+
 // When the shown office (tisztség) applies — "2022-05-24 – 2026-05-12" plus the
 // cycle(s) it falls in. The title on its own reads as the person's *current* post
 // even when it is one they held cycles ago (a state secretary promoted since, or a
@@ -162,6 +168,35 @@ const officeTerm = computed(() => {
     note: t(exact ? 'profile.officeTermNote' : 'profile.officeTermSpeechesNote')
       + (cycles ? ` · ${cycles}` : ''),
   }
+})
+
+// The mandate this profile is about, in the cycle in scope (REP-14): when it ran
+// and — when it ended before the term did — upstream's own reason. Undated, a former
+// MP's profile is indistinguishable from a sitting one, which is exactly the case a
+// reader needs to see; the reason is source text, so it is shown verbatim.
+const mandateTerm = computed(() => {
+  const m = profile.value && profile.value.mandate
+  if (!m) return null
+  const label = termRange(m)
+  if (!label) return null
+  return {
+    label,
+    terminated: !!m.terminated,
+    reason: m.terminated ? m.end_reason : null,
+    note: t(m.terminated ? 'profile.mandateEndedNote' : 'profile.mandateTermNote'),
+  }
+})
+
+// Who handed the seat over, and who took it on. Linked only when that person is in
+// this corpus at all — a successor seated after the last roster scrape is named
+// rather than linked, which beats a link that 404s.
+const handovers = computed(() => {
+  const m = profile.value && profile.value.mandate
+  if (!m) return []
+  return [
+    { key: 'profile.predecessor', who: m.predecessor },
+    { key: 'profile.successor', who: m.successor },
+  ].filter((h) => h.who && h.who.label)
 })
 
 const PLACEHOLDER =
@@ -349,6 +384,25 @@ watch(() => store.cycles.join(','), load)
                 <FactionBadge :faction="profile.current_faction" link />
                 <span v-if="profile.constituency" class="muted">📍 {{ profile.constituency }}</span>
               </div>
+              <!-- The mandate held in the cycle in scope, always dated (REP-14). A
+                   mandate that ended before the term did says so, with parlament.hu's
+                   own reason — that is the whole difference between a former and a
+                   sitting MP, and it is invisible without this line. -->
+              <div v-if="mandateTerm" class="office mandate" :class="{ ended: mandateTerm.terminated }">
+                <span class="office-label">{{ $t('profile.mandate') }}</span>
+                <span class="office-val">{{ mandateTerm.label }}</span>
+                <span v-if="mandateTerm.reason" class="office-when" :title="mandateTerm.note">{{ mandateTerm.reason }}</span>
+              </div>
+              <!-- Who held the seat before, and who after: a mandate that ends
+                   mid-term is filled from the same list within weeks. -->
+              <div v-if="handovers.length" class="row small links handover" style="gap:1rem;">
+                <span v-for="h in handovers" :key="h.key">
+                  <span class="muted">{{ $t(h.key) }}:</span>
+                  <router-link v-if="h.who.has_profile"
+                               :to="{ name: 'profile', params: { id: h.who.person_id } }">{{ h.who.label }}</router-link>
+                  <span v-else>{{ h.who.label }}</span>
+                </span>
+              </div>
               <div class="row small links" style="gap:1rem;margin-top:.5rem;">
                 <a v-if="profile.website" :href="profile.website" target="_blank" rel="noopener">🌐 {{ $t('profile.website') }}</a>
                 <a v-if="profile.email" :href="'mailto:' + profile.email">✉ {{ profile.email }}</a>
@@ -453,10 +507,16 @@ watch(() => store.cycles.join(','), load)
 
           <section class="card pad" v-if="profile.faction_history && profile.faction_history.length">
             <h2>{{ $t('profile.factionHistory') }}</h2>
+            <!-- Real dates, not the cycle label (REP-14): an MP who left their
+                 faction mid-term and later rejoined it has three spells all falling
+                 in one cycle, and labelling each with the cycle's year span renders
+                 the same line three times over. Consecutive spells in one faction
+                 arrive already merged into a single run; the cycles it covers stay
+                 available as the row's tooltip. -->
             <ul class="timeline">
               <li v-for="(h, i) in profile.faction_history" :key="i">
                 <FactionBadge :faction="h.faction" link />
-                <span class="muted small">{{ h.cycle }}</span>
+                <span class="muted small" :title="(h.cycles || []).join(' · ')">{{ factionRange(h) }}</span>
               </li>
             </ul>
           </section>
@@ -660,6 +720,11 @@ watch(() => store.cycles.join(','), load)
    never shown undated (REP-2). Muted and small: it qualifies the title, not
    competing with it. */
 .office-when { display: block; font-size: .8rem; color: var(--ink-soft); }
+/* The mandate sits under the faction badge, so it leads with a little air; its
+   term is a plain fact rather than the headline the office is. */
+.office.mandate { margin-top: .55rem; }
+.office.mandate .office-val { font-size: .95rem; font-weight: 600; }
+.handover { margin-top: -.25rem; }
 /* Brand marks in the header links row (Wikipedia serif "W", K-Monitor logo) —
    small "logo chips" matching the inline transcript entity badges. */
 .link-badge { display: inline-flex; align-items: center; justify-content: center;

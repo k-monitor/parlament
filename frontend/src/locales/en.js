@@ -213,6 +213,16 @@ export default {
     constituency: 'Constituency', speeches: 'speeches', speakingTime: 'speaking time', sortName: 'By name',
     sortSpeeches: 'By speeches', sortSpeakingTime: 'By speaking time', noResults: 'No matching representatives.', profile: 'Profile',
     filterByFaction: 'Filter representatives of {faction}',
+    // Terminated mandates (REP-14). A cycle lists everyone who held a mandate in it;
+    // "active" is read against that cycle, not against today.
+    mandateFilter: 'Mandate',
+    mandateAll: 'All',
+    mandateActive: 'Active',
+    mandateTerminated: 'Terminated',
+    mandateFilterNote: '"Active" is read against the selected cycle: in the running '
+      + 'cycle it means still sitting, in a closed one that the mandate lasted to the '
+      + 'end of the term.',
+    mandateEnded: 'mandate terminated',
     // Nationality advocates (szószólók): they sit and speak without a mandate (REP-9).
     mandate: 'Mandate',
     advocateFor: '{nationality} nationality advocate',
@@ -382,6 +392,13 @@ export default {
     bills: 'Submitted bills & resolution proposals',
     otherDocuments: 'Other submitted documents',
     statistics: 'Statistics', biography: 'Details', office: 'Office', mandate: 'Mandate',
+    // Terminated mandate (REP-14): a seat given up before the term ended, with
+    // parlament.hu's own reason and the MPs on either side of the handover. The
+    // reason itself is upstream's Hungarian wording, shown verbatim.
+    mandateEndedNote: 'The mandate ended before the term did.',
+    mandateTermNote: 'How long the mandate was held in this cycle.',
+    predecessor: 'Predecessor in the seat',
+    successor: 'Successor in the seat',
     officeHistory: 'Offices held',
     officeTermApprox: 'at least {range}',
     officeTermSince: 'since at least {date}',

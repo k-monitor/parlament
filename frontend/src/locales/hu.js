@@ -285,6 +285,16 @@ export default {
     noResults: 'Nincs a feltételeknek megfelelő képviselő.',
     profile: 'Profil',
     filterByFaction: '{faction} képviselőinek szűrése',
+    // Megszűnt mandátumok (REP-14). A ciklus listája mindenkit tartalmaz, aki
+    // mandátumot viselt benne; az „aktív” a ciklushoz képest értendő.
+    mandateFilter: 'Mandátum',
+    mandateAll: 'Mind',
+    mandateActive: 'Aktív',
+    mandateTerminated: 'Megszűnt',
+    mandateFilterNote: 'Az „aktív” a kiválasztott ciklushoz képest értendő: a folyó '
+      + 'ciklusban a ma is hivatalban lévőket, lezárt ciklusban azokat jelenti, '
+      + 'akiknek a mandátuma kitartott a ciklus végéig.',
+    mandateEnded: 'megszűnt mandátum',
     // Nemzetiségi szószólók: mandátum nélkül üléseznek és felszólalnak (REP-9).
     mandate: 'Mandátum',
     advocateFor: '{nationality} nemzetiségi szószóló',
@@ -451,6 +461,12 @@ export default {
     officeTermNote: 'A tisztség betöltésének ideje.',
     officeTermSpeechesNote: 'A tisztség betöltésének pontos ideje nem ismert; a dátumok a felszólalásaiból származnak: ekkor szólalt fel ezzel a tisztséggel.',
     mandate: 'Mandátum',
+    // Megszűnt mandátum (REP-14): a ciklus vége előtt véget ért képviselői megbízatás,
+    // a parlament.hu szerinti indokkal, és a mandátumot átadó/átvevő képviselővel.
+    mandateEndedNote: 'A mandátum a ciklus vége előtt megszűnt.',
+    mandateTermNote: 'A képviselői megbízatás időtartama ebben a ciklusban.',
+    predecessor: 'Elődje a mandátumban',
+    successor: 'Utódja a mandátumban',
     constituency: 'Választókerület',
     education: 'Legmagasabb végzettség',
     email: 'E-mail',

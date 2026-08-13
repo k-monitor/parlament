@@ -127,6 +127,10 @@ def fetch_advocates(felicitas: FelicitasClient, cycle: int, *,
             rec["wikidataId"] = link.get("wikidataId")
             if link.get("wikipediaUrl"):
                 rec["wikipediaUrl"] = link["wikipediaUrl"]
+            if link.get("dateOfBirth"):
+                rec["dateOfBirth"] = link["dateOfBirth"]
+                rec["zodiacSign"] = link.get("zodiacSign")
+                rec["chineseZodiacSign"] = link.get("chineseZodiacSign")
         if details and pid:
             fetched: dict[str, list[dict]] = {}
             for q in DETAIL_QUERIES:
@@ -153,6 +157,7 @@ def fetch_advocates(felicitas: FelicitasClient, cycle: int, *,
             "withDetails": details,
             "withWikidata": link_wikidata,
             "wikidataLinked": sum(1 for r in records if r.get("wikidataId")),
+            "birthDatesLinked": sum(1 for r in records if r.get("dateOfBirth")),
             "count": len(records),
         },
         "data": records,

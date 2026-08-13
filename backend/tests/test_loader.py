@@ -240,6 +240,39 @@ def test_faction_colors_assigned(conn):
     assert rows["TISZA"] == "#00A6A6"
 
 
+def test_birth_date_and_signs_stored(conn):
+    """The Wikidata birth date and both derived signs land on the person row.
+    Stored only — no endpoint surfaces them yet."""
+    row = conn.execute("SELECT date_of_birth, zodiac_sign, chinese_zodiac_sign "
+                       "FROM person WHERE person_id='k001'").fetchone()
+    assert row["date_of_birth"] == "1968-08-30"
+    assert row["zodiac_sign"] == "virgo" and row["chinese_zodiac_sign"] == "monkey"
+    # Nobody without a date gets a sign.
+    undated = conn.execute("SELECT date_of_birth, zodiac_sign, chinese_zodiac_sign "
+                           "FROM person WHERE person_id='n002'").fetchone()
+    assert undated["date_of_birth"] is None and undated["zodiac_sign"] is None
+    assert undated["chinese_zodiac_sign"] is None
+
+
+def test_birth_columns_added_to_a_pre_existing_db(db_path):
+    """The incremental `--update` path snapshots the live DB instead of re-running
+    schema.sql, so a deployment built before the columns existed must gain them
+    (and get filled) from a re-loaded registry alone — no rebuild."""
+    c = loader.connect(db_path)
+    for col in ("date_of_birth", "zodiac_sign", "chinese_zodiac_sign"):
+        c.execute(f"ALTER TABLE person DROP COLUMN {col}")
+    c.commit()
+    loader.load_representatives(c, {
+        "meta": {"cycle": 43, "cycleStart": "2026-05-09"},
+        "data": [{"personID": "k001", "label": "Kovács Béla",
+                  "dateOfBirth": "1968-08-30", "zodiacSign": "virgo",
+                  "chineseZodiacSign": "monkey"}]})
+    row = c.execute("SELECT zodiac_sign, chinese_zodiac_sign FROM person "
+                    "WHERE person_id='k001'").fetchone()
+    assert row["zodiac_sign"] == "virgo" and row["chinese_zodiac_sign"] == "monkey"
+    c.close()
+
+
 def test_membership_kept_per_cycle_for_returning_mp(db_path):
     """Loading a later cycle's registry must NOT wipe an MP's earlier-cycle
     membership: a returning MP needs a row per cycle so the per-cycle list and

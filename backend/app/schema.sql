@@ -37,6 +37,11 @@ CREATE TABLE person (
     lastname          TEXT,
     wikidata_id       TEXT,              -- Wikidata QID, joined via P4966 (EXT-2)
     wikipedia_url     TEXT,              -- preferred (hu, else en) Wikipedia article
+    -- Birth date from Wikidata (P569, day-precision only) and the two signs the
+    -- scraper derives from it. Stored, not yet surfaced by any endpoint.
+    date_of_birth     TEXT,              -- YYYY-MM-DD
+    zodiac_sign       TEXT,              -- sun sign, lowercase Latin, e.g. "taurus"
+    chinese_zodiac_sign TEXT,            -- lunar-year animal, e.g. "dragon"
     kmonitor_url      TEXT,              -- K-Monitor adatbázis tag page (matched by name)
     cv_url            TEXT,              -- the CV PDF they had published (REP-13)
     photo_uri         TEXT,

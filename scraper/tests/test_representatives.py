@@ -152,3 +152,28 @@ def test_registry_carries_declarations_and_cv():
     assert len(rec["assetDeclarations"]) == 1
     assert rec["cvUrl"].endswith("k001.pdf")
     assert fake.cv_probes == ["k001"]
+
+
+def test_registry_carries_the_wikidata_birth_date_and_sign(monkeypatch):
+    """The roster has no birth date of its own, so it comes from the same P4966
+    join as the links, sign already derived (a display-time recompute would have
+    to re-answer the same question for every reader)."""
+    monkeypatch.setattr(reps.wikidata, "fetch_mp_links", lambda http: {
+        "k001": {"wikidataId": "Q42",
+                 "wikipediaUrl": "https://hu.wikipedia.org/wiki/K",
+                 "dateOfBirth": "1968-08-30", "zodiacSign": "virgo"}})
+    reg = reps.fetch_representatives(FakeFelicitas(), 43, details=False)
+    rec = reg["data"][0]
+    assert rec["dateOfBirth"] == "1968-08-30" and rec["zodiacSign"] == "virgo"
+    assert reg["meta"]["birthDatesLinked"] == 1
+
+
+def test_an_mp_wikidata_knows_no_birth_date_for_gets_no_date_key(monkeypatch):
+    """Absent, not null-and-signed: an undated MP must not acquire a sign."""
+    monkeypatch.setattr(reps.wikidata, "fetch_mp_links", lambda http: {
+        "k001": {"wikidataId": "Q42", "wikipediaUrl": None,
+                 "dateOfBirth": None, "zodiacSign": None}})
+    reg = reps.fetch_representatives(FakeFelicitas(), 43, details=False)
+    assert "dateOfBirth" not in reg["data"][0]
+    assert "zodiacSign" not in reg["data"][0]
+    assert reg["meta"]["birthDatesLinked"] == 0

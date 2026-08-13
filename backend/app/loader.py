@@ -209,11 +209,31 @@ def _ensure_person_document_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE person ADD COLUMN asset_declarations_json TEXT")
 
 
+def _ensure_person_birth_columns(conn: sqlite3.Connection) -> None:
+    """Add ``person.date_of_birth`` / ``zodiac_sign`` / ``chinese_zodiac_sign`` to a
+    pre-existing DB.
+
+    Same reasoning as ``_ensure_person_document_columns``: the incremental
+    ``--update`` path snapshots the live DB instead of re-running ``schema.sql``,
+    so a freshly-scraped registry carrying the Wikidata birth date lands on an
+    already-built deployment without a full rebuild. A no-op on a fresh DB."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(person)")]
+    if not cols:
+        return
+    if "date_of_birth" not in cols:
+        conn.execute("ALTER TABLE person ADD COLUMN date_of_birth TEXT")
+    if "zodiac_sign" not in cols:
+        conn.execute("ALTER TABLE person ADD COLUMN zodiac_sign TEXT")
+    if "chinese_zodiac_sign" not in cols:
+        conn.execute("ALTER TABLE person ADD COLUMN chinese_zodiac_sign TEXT")
+
+
 def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
     """Upsert the MP registry. Adds bio/enrichment to person rows and faction
     membership history; safe to re-run (replaces each MP's derived rows)."""
     _ensure_person_office(conn)
     _ensure_person_document_columns(conn)
+    _ensure_person_birth_columns(conn)
     meta = registry.get("meta", {})
     period = meta.get("cycle")
     data = registry.get("data", [])
@@ -237,14 +257,16 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
         conn.execute(
             """
             INSERT INTO person(person_id, label, label_full, firstname, lastname,
-                               wikidata_id, wikipedia_url,
+                               wikidata_id, wikipedia_url, date_of_birth, zodiac_sign,
+                               chinese_zodiac_sign,
                                photo_uri, photo_file, constituency, seat, email,
                                website, highest_education, active, is_mp, cv_url,
                                education_json, committees_json, offices_json,
                                faction_history_json, election_history_json,
                                external_stats_json, asset_declarations_json)
             VALUES (:pid, :label, :label_full, :firstname, :lastname,
-                    :wikidata_id, :wikipedia_url, :photo_uri,
+                    :wikidata_id, :wikipedia_url, :date_of_birth, :zodiac_sign,
+                    :chinese_zodiac_sign, :photo_uri,
                     :photo_file, :constituency, :seat, :email, :website,
                     :highest_education, :active, 1, :cv_url, :education, :committees,
                     :offices, :faction_history, :election_history, :external_stats,
@@ -253,6 +275,8 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
                 label=excluded.label, label_full=excluded.label_full,
                 firstname=excluded.firstname, lastname=excluded.lastname,
                 wikidata_id=excluded.wikidata_id, wikipedia_url=excluded.wikipedia_url,
+                date_of_birth=excluded.date_of_birth, zodiac_sign=excluded.zodiac_sign,
+                chinese_zodiac_sign=excluded.chinese_zodiac_sign,
                 photo_uri=excluded.photo_uri, photo_file=excluded.photo_file,
                 constituency=excluded.constituency, seat=excluded.seat,
                 email=excluded.email, website=excluded.website,
@@ -274,6 +298,9 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
                 "lastname": rec.get("lastname"),
                 "wikidata_id": rec.get("wikidataId"),
                 "wikipedia_url": rec.get("wikipediaUrl"),
+                "date_of_birth": rec.get("dateOfBirth"),
+                "zodiac_sign": rec.get("zodiacSign"),
+                "chinese_zodiac_sign": rec.get("chineseZodiacSign"),
                 "photo_uri": photo_uri,
                 "photo_file": rec.get("photoFile"),
                 "constituency": rec.get("constituency"),
@@ -397,6 +424,7 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
     _ensure_advocate_columns(conn)
     _ensure_person_office(conn)
     _ensure_person_document_columns(conn)
+    _ensure_person_birth_columns(conn)
     meta = registry.get("meta", {})
     period = meta.get("cycle")
     data = registry.get("data", [])
@@ -425,13 +453,15 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
         conn.execute(
             """
             INSERT INTO person(person_id, label, label_full, firstname, lastname,
-                               wikidata_id, wikipedia_url, photo_uri, photo_file,
+                               wikidata_id, wikipedia_url, date_of_birth, zodiac_sign,
+                               chinese_zodiac_sign, photo_uri, photo_file,
                                seat, email, website, highest_education, active,
                                is_advocate, nationality, cv_url,
                                education_json, committees_json, offices_json,
                                external_stats_json, asset_declarations_json)
             VALUES (:pid, :label, :label_full, :firstname, :lastname,
-                    :wikidata_id, :wikipedia_url, :photo_uri, :photo_file,
+                    :wikidata_id, :wikipedia_url, :date_of_birth, :zodiac_sign,
+                    :chinese_zodiac_sign, :photo_uri, :photo_file,
                     :seat, :email, :website, :highest_education, :active,
                     1, :nationality, :cv_url, :education, :committees, :offices,
                     :external_stats, :asset_declarations)
@@ -442,6 +472,10 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
                 lastname=COALESCE(excluded.lastname, person.lastname),
                 wikidata_id=COALESCE(excluded.wikidata_id, person.wikidata_id),
                 wikipedia_url=COALESCE(excluded.wikipedia_url, person.wikipedia_url),
+                date_of_birth=COALESCE(excluded.date_of_birth, person.date_of_birth),
+                zodiac_sign=COALESCE(excluded.zodiac_sign, person.zodiac_sign),
+                chinese_zodiac_sign=COALESCE(excluded.chinese_zodiac_sign,
+                                             person.chinese_zodiac_sign),
                 photo_uri=COALESCE(excluded.photo_uri, person.photo_uri),
                 photo_file=COALESCE(excluded.photo_file, person.photo_file),
                 seat=COALESCE(excluded.seat, person.seat),
@@ -468,6 +502,9 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
                 "lastname": rec.get("lastname"),
                 "wikidata_id": rec.get("wikidataId"),
                 "wikipedia_url": rec.get("wikipediaUrl"),
+                "date_of_birth": rec.get("dateOfBirth"),
+                "zodiac_sign": rec.get("zodiacSign"),
+                "chinese_zodiac_sign": rec.get("chineseZodiacSign"),
                 "photo_uri": photo_uri,
                 "photo_file": photo_file,
                 "seat": rec.get("seat"),

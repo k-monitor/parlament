@@ -109,6 +109,10 @@ def _registry():
             {"personID": "k001", "label": "Kovács Béla", "firstname": "Béla",
              "lastname": "Kovács", "faction": {"label": "Fidesz", "id": 7, "position": "tag"},
              "wikidataId": "Q42", "wikipediaUrl": "https://hu.wikipedia.org/wiki/Kov%C3%A1cs_B%C3%A9la",
+             # Birth date from Wikidata (P569) with the signs the scraper derived
+             # from it; Nagy Anna has neither, as most non-linked people won't.
+             "dateOfBirth": "1968-08-30", "zodiacSign": "virgo",
+             "chineseZodiacSign": "monkey",
              "constituency": "Budapest 1. OEVK", "highestEducation": "egyetem",
              # Published parliamentary address; the constituency lookup offers it as
              # a mailto/copy action (REP-10). Nagy Anna deliberately has none, so the

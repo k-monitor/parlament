@@ -334,7 +334,11 @@ Primary use cases:
   plus enrichable bio fields (party, constituency, term memberships, photo URL),
   and which mandate they hold: an MP, a **nationality advocate** (with the
   `nationality` they speak for — REP-9), or neither (a minister or invited guest
-  who spoke). One person can be both across different cycles.
+  who spoke). One person can be both across different cycles. The Wikidata join
+  also carries a **date of birth** (P569, day-precision statements only) and the
+  two astrological signs derived from it at scrape time — the **sun sign** and the
+  **Chinese zodiac animal** (which turns over at the lunar new year, so it needs a
+  tabulated one) — stored, not yet surfaced.
 - **faction / party** — label, optional Wikidata id, color (for charts).
 - **membership** — person ↔ faction ↔ period (factions change over time).
 - **entity** (optional, from NER stage) — in-transcript entities and their

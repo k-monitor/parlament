@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from parlamonitor import agenda, magyarkozlony, wikidata
+from parlamonitor import agenda, magyarkozlony, wikidata, zodiac
 from parlamonitor.http_client import HttpError
 from parlamonitor.names import build_person, split_name, split_speaker
 from parlamonitor.segment import html_to_text, split_sentences
@@ -174,7 +174,8 @@ _WD_JSON = {
         {"p4966": {"value": "g056"},
          "item": {"value": "http://www.wikidata.org/entity/Q172301"},
          "huArticle": {"value": "https://hu.wikipedia.org/wiki/Gy%C5%91ngy%C3%B6si_M%C3%A1rton"},
-         "enArticle": {"value": "https://en.wikipedia.org/wiki/M%C3%A1rton_Gy%C5%91ngy%C3%B6si"}},
+         "enArticle": {"value": "https://en.wikipedia.org/wiki/M%C3%A1rton_Gy%C5%91ngy%C3%B6si"},
+         "dob": {"value": "1977-05-13T00:00:00Z"}},
         {"p4966": {"value": "n026"},
          "item": {"value": "http://www.wikidata.org/entity/Q832221"},
          "enArticle": {"value": "https://en.wikipedia.org/wiki/Tibor_Navracsics"}},
@@ -209,15 +210,139 @@ def test_wikidata_links_keyed_by_p4966_and_prefer_hu():
     # only English available → use it
     assert links["n026"]["wikipediaUrl"].startswith("https://en.wikipedia.org/")
     # linked on Wikidata but no article anywhere → id kept, url is None
-    assert links["x999"] == {"wikidataId": "Q1", "wikipediaUrl": None}
+    assert links["x999"] == {"wikidataId": "Q1", "wikipediaUrl": None,
+                             "dateOfBirth": None, "zodiacSign": None,
+                             "chineseZodiacSign": None}
     # one query for the whole roster, preceded by a politeness sleep
     assert len(http.calls) == 1 and http.slept == 1
     assert http.calls[0][0] == wikidata.ENDPOINT
 
 
+def test_wikidata_links_carry_birth_date_and_sign():
+    """P569 rides along on the same query; the sun sign is derived at scrape time."""
+    links = wikidata.fetch_mp_links(_FakeJsonHttp(data=_WD_JSON))
+    # the timestamp is stored as a plain day, and the sign comes from that day
+    assert links["g056"]["dateOfBirth"] == "1977-05-13"
+    assert links["g056"]["zodiacSign"] == "taurus"
+    assert links["g056"]["chineseZodiacSign"] == "snake"
+    # nobody gets an invented date (or an invented sign) for want of a statement
+    assert links["n026"]["dateOfBirth"] is None
+    assert links["n026"]["zodiacSign"] is None
+    assert links["n026"]["chineseZodiacSign"] is None
+    # only day-precision dates are asked for at all, so a year-only P569 value
+    # never reaches us as a spurious January 1st
+    assert "wikibase:timePrecision" in wikidata._QUERY and ">= 11" in wikidata._QUERY
+
+
+def test_wikidata_duplicate_id_keeps_the_richest_row():
+    """A reused P4966 (or a second birth-date statement) keeps whichever row fills
+    in the most, so a bare duplicate can't blank an already-linked person."""
+    data = {"results": {"bindings": [
+        {"p4966": {"value": "d001"}, "item": {"value": "http://www.wikidata.org/entity/Q2"}},
+        {"p4966": {"value": "d001"}, "item": {"value": "http://www.wikidata.org/entity/Q3"},
+         "huArticle": {"value": "https://hu.wikipedia.org/wiki/X"},
+         "dob": {"value": "1980-11-30T00:00:00Z"}},
+        {"p4966": {"value": "d001"}, "item": {"value": "http://www.wikidata.org/entity/Q4"}},
+    ]}}
+    entry = wikidata.fetch_mp_links(_FakeJsonHttp(data=data))["d001"]
+    assert entry == {"wikidataId": "Q3", "wikipediaUrl": "https://hu.wikipedia.org/wiki/X",
+                     "dateOfBirth": "1980-11-30", "zodiacSign": "sagittarius",
+                     "chineseZodiacSign": "monkey"}
+
+
 def test_wikidata_links_degrade_to_empty_on_failure():
     """A failed query never raises — the roster still loads, just without links."""
     assert wikidata.fetch_mp_links(_FakeJsonHttp(fail=True)) == {}
+
+
+# --- zodiac (birth date -> sun sign) ---------------------------------------
+
+def test_zodiac_sign_boundaries():
+    """Both ends of a sign, and the December→January wrap that spans the year."""
+    assert zodiac.sign_for("1965-04-19") == "aries"     # last day of Aries
+    assert zodiac.sign_for("1965-04-20") == "taurus"    # first day of Taurus
+    assert zodiac.sign_for("1965-05-20") == "taurus"
+    assert zodiac.sign_for("1965-05-21") == "gemini"
+    # Capricorn runs across the new year: December start, January end.
+    assert zodiac.sign_for("1965-12-22") == "capricorn"
+    assert zodiac.sign_for("1965-12-31") == "capricorn"
+    assert zodiac.sign_for("1965-01-01") == "capricorn"
+    assert zodiac.sign_for("1965-01-19") == "capricorn"
+    assert zodiac.sign_for("1965-01-20") == "aquarius"
+
+
+def test_zodiac_covers_every_day_of_the_year_with_twelve_signs():
+    import datetime
+    day = datetime.date(2024, 1, 1)  # a leap year, so 02-29 is covered too
+    seen = set()
+    while day.year == 2024:
+        sign = zodiac.sign_for(day.isoformat())
+        assert sign in zodiac.SIGNS, day
+        seen.add(sign)
+        day += datetime.timedelta(days=1)
+    assert seen == set(zodiac.SIGNS) and len(zodiac.SIGNS) == 12
+
+
+def test_chinese_sign_turns_over_at_the_lunar_new_year():
+    """The animal changes at Chinese New Year, not on 1 January — so late-January
+    and early-February birthdays belong to the PREVIOUS animal."""
+    # 1965's new year was 2 February, so a birthday before it still falls in the
+    # Dragon year that began on 13 February 1964.
+    assert zodiac.chinese_sign_for("1965-01-01") == "dragon"
+    assert zodiac.chinese_sign_for("1965-02-01") == "dragon"
+    assert zodiac.chinese_sign_for("1965-02-02") == "snake"   # new year's day itself
+    assert zodiac.chinese_sign_for("1965-12-31") == "snake"
+    # The extremes of the whole tabulated range: the earliest new year (1966-01-21)
+    # and the latest (1985-02-20).
+    assert zodiac.chinese_sign_for("1966-01-20") == "snake"
+    assert zodiac.chinese_sign_for("1966-01-21") == "horse"
+    assert zodiac.chinese_sign_for("1985-02-19") == "rat"
+    assert zodiac.chinese_sign_for("1985-02-20") == "ox"
+
+
+def test_lunar_new_year_dates_match_the_published_tables():
+    """Spot-checks against the Hong Kong Observatory's official Gregorian-Lunar
+    conversion tables, which the whole table was verified against year by year."""
+    for year, expected in ((1930, "1930-01-30"), (1943, "1943-02-05"),
+                           (1957, "1957-01-31"), (1972, "1972-02-15"),
+                           (1996, "1996-02-19"), (2000, "2000-02-05"),
+                           (2005, "2005-02-09"), (2024, "2024-02-10")):
+        assert zodiac.lunar_new_year(year).isoformat() == expected, year
+
+
+def test_chinese_signs_cycle_through_all_twelve_animals():
+    # One birthday safely past any new year, twelve years running.
+    signs = [zodiac.chinese_sign_for(f"{y}-06-15") for y in range(1960, 1972)]
+    assert set(signs) == set(zodiac.CHINESE_SIGNS) and len(zodiac.CHINESE_SIGNS) == 12
+    assert signs[0] == "rat"  # 1960 was a Rat year
+
+
+def test_chinese_sign_is_none_outside_the_tabulated_years():
+    """No lunar-new-year date on record → no animal. The Gregorian year alone
+    can't place a January or February birthday, and a wrong animal is worse than
+    none."""
+    assert zodiac.lunar_new_year(1900) is None and zodiac.lunar_new_year(2044) is None
+    assert zodiac.chinese_sign_for("1900-06-15") is None
+    assert zodiac.chinese_sign_for("2044-06-15") is None
+    # …while the Western sign, which needs no such table, still works.
+    assert zodiac.sign_for("1900-06-15") == "gemini"
+    # The tabulated range covers every birth date the corpus can plausibly hold —
+    # the oldest MP on record was born in 1921.
+    assert zodiac.chinese_sign_for("1921-11-07") == "rooster"
+
+
+def test_zodiac_accepts_the_date_forms_upstream_actually_sends():
+    assert zodiac.iso_day("1977-05-13T00:00:00Z") == "1977-05-13"
+    assert zodiac.iso_day("+1977-05-13T00:00:00Z") == "1977-05-13"  # Wikidata's sign
+    assert zodiac.iso_day("1977-05-13") == "1977-05-13"
+
+
+def test_zodiac_refuses_to_guess_from_an_unusable_date():
+    """No date, a partial one, or a BCE one yields no sign — never a default."""
+    for bad in (None, "", "1977", "1977-05", "not a date", "-0500-05-13T00:00:00Z"):
+        assert zodiac.iso_day(bad) is None
+        assert zodiac.sign_for(bad) is None
+        assert zodiac.chinese_sign_for(bad) is None
 
 
 # --- agenda ----------------------------------------------------------------

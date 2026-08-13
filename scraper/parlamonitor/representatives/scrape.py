@@ -281,6 +281,13 @@ def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
             rec["wikidataId"] = link.get("wikidataId")
             if link.get("wikipediaUrl"):
                 rec["wikipediaUrl"] = link["wikipediaUrl"]
+            # Birth date + the signs derived from it (Wikidata P569). The roster
+            # carries no birth date of its own, and both signs are pure functions
+            # of the day, so all three are stamped here once.
+            if link.get("dateOfBirth"):
+                rec["dateOfBirth"] = link["dateOfBirth"]
+                rec["zodiacSign"] = link.get("zodiacSign")
+                rec["chineseZodiacSign"] = link.get("chineseZodiacSign")
         if details and pid:
             fetched: dict[str, list[dict]] = {}
             for q in DETAIL_QUERIES:
@@ -307,6 +314,7 @@ def fetch_representatives(felicitas: FelicitasClient, cycle: int, *,
             "withDetails": details,
             "withWikidata": link_wikidata,
             "wikidataLinked": sum(1 for r in records if r.get("wikidataId")),
+            "birthDatesLinked": sum(1 for r in records if r.get("dateOfBirth")),
             "count": len(records),
         },
         "data": records,

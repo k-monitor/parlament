@@ -169,6 +169,8 @@ const PLACEHOLDER =
     '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="110"><rect width="110" height="110" fill="#e7e5df"/><circle cx="55" cy="44" r="22" fill="#bdb9af"/><rect x="18" y="74" width="74" height="40" rx="20" fill="#bdb9af"/></svg>')
 function onImgErr(e) { e.target.src = PLACEHOLDER }
 
+// Newest sitting day first, matching the reading order of every other list on
+// the profile — the backend returns `over_time` oldest → newest.
 const overTimeItems = computed(() => {
   if (!stats.value) return []
   return stats.value.over_time.map((p) => ({
@@ -177,16 +179,14 @@ const overTimeItems = computed(() => {
     sub: p.session_id,
     // Each bar is a sitting day the MP spoke on — link it to that day's page.
     to: p.session_id ? { name: 'session', params: { id: p.session_id } } : undefined,
-  }))
+  })).reverse()
 })
 
 // An MP with a long career speaks on hundreds of sitting days, and one bar each
 // makes the card taller than the rest of the page put together. Collapsed, the
-// chart keeps its chronological (oldest → newest) reading but starts at the last
-// COLLAPSE_LIMIT days, so the preview is the recent activity — the same
-// newest-first bias as the lists below.
+// chart shows only the first COLLAPSE_LIMIT — the most recent days.
 const shownOverTimeItems = computed(() =>
-  expanded.overtime ? overTimeItems.value : overTimeItems.value.slice(-COLLAPSE_LIMIT))
+  expanded.overtime ? overTimeItems.value : overTimeItems.value.slice(0, COLLAPSE_LIMIT))
 
 // Vote-value chip colour by normalized code, matching the Votes module palette.
 const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote', absent: 'absent' }

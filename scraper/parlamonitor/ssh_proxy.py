@@ -29,7 +29,7 @@ import logging
 import select
 import socket
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,8 @@ class SSHProxy:
     _local_port: int = 0
     _thread: threading.Thread | None = None
     _closing: threading.Event | None = None
+    # Serialises reconnects so a burst of failing connections re-dials once.
+    _reconnect_lock: threading.Lock = field(default_factory=threading.Lock)
 
     @classmethod
     def from_config(cls, config) -> "SSHProxy | None":
@@ -87,6 +89,17 @@ class SSHProxy:
 
     def start(self) -> None:
         """Open the SSH connection and start the local proxy listener."""
+        self._connect_transport()
+        self._start_listener()
+        logger.info("SSH proxy up: 127.0.0.1:%d -> %s@%s:%d",
+                    self._local_port, self.user, self.host, self.port)
+
+    def _connect_transport(self) -> None:
+        """(Re)establish the authenticated SSH transport.
+
+        Split out of :meth:`start` so :meth:`_reconnect` can run it again on a
+        transport that died mid-run.
+        """
         try:
             import paramiko
         except ImportError as e:  # pragma: no cover - dependency hint
@@ -120,9 +133,37 @@ class SSHProxy:
         # The Transport owns the socket; close() closes it via _client.
         self._client = transport
         self._transport = transport
-        self._start_listener()
-        logger.info("SSH proxy up: 127.0.0.1:%d -> %s@%s:%d",
-                    self._local_port, self.user, self.host, self.port)
+
+    def _reconnect(self) -> str:
+        """Re-establish a dropped SSH transport. ``""`` on success, else why.
+
+        The transport can die under a long run — the SSH host reboots, sshd is
+        restarted, a NAT/firewall drops the link. Without this, every request
+        after that point opens a channel on a corpse and 502s until the whole
+        sync process is restarted; the scraper's own retries can never get past
+        it because they all reuse the same dead tunnel.
+        """
+        with self._reconnect_lock:
+            transport = self._transport
+            if transport is not None and transport.is_active():
+                return ""                  # another thread already healed it
+            if self._closing is not None and self._closing.is_set():
+                return "ssh proxy shutting down"
+            logger.warning("SSH transport to %s@%s:%d is down; reconnecting",
+                           self.user, self.host, self.port)
+            old, self._client, self._transport = self._client, None, None
+            if old is not None:
+                try:
+                    old.close()
+                except Exception:  # pragma: no cover - best-effort teardown
+                    pass
+            try:
+                self._connect_transport()
+            except SSHProxyError as e:
+                logger.error("SSH reconnect failed: %s", e)
+                return f"ssh reconnect failed: {e}"
+            logger.info("SSH transport reconnected")
+            return ""
 
     def _load_key(self, paramiko):
         """Load the private key, trying each key type until one parses.
@@ -311,6 +352,7 @@ class SSHProxy:
                 target=self._handle, args=(conn,), daemon=True).start()
 
     def _handle(self, conn: socket.socket) -> None:
+        channel = None
         try:
             head = self._read_head(conn)
             if head is None:
@@ -319,10 +361,9 @@ class SSHProxy:
             method, target, _ = request_line.split(" ", 2)
             if method.upper() == "CONNECT":
                 dest_host, dest_port = self._parse_authority(target)
-                channel = self._open_channel(dest_host, dest_port)
+                channel, reason = self._open_channel(dest_host, dest_port)
                 if channel is None:
-                    conn.sendall(
-                        b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+                    conn.sendall(self._bad_gateway(reason))
                     return
                 conn.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
             else:
@@ -330,9 +371,9 @@ class SSHProxy:
                 parts = urlsplit(target)
                 dest_host = parts.hostname or ""
                 dest_port = parts.port or 80
-                channel = self._open_channel(dest_host, dest_port)
+                channel, reason = self._open_channel(dest_host, dest_port)
                 if channel is None:
-                    conn.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+                    conn.sendall(self._bad_gateway(reason))
                     return
                 path = parts.path or "/"
                 if parts.query:
@@ -344,10 +385,32 @@ class SSHProxy:
         except Exception as e:  # pragma: no cover - per-connection isolation
             logger.debug("proxy connection error: %s", e)
         finally:
+            # Every exit path closes the channel: one abandoned here leaks both
+            # an SSH window and the local pipe fds select() made for it, and a
+            # long sync would eventually run out of the latter.
+            if channel is not None:
+                try:
+                    channel.close()
+                except Exception:  # pragma: no cover - best-effort teardown
+                    pass
             try:
                 conn.close()
             except OSError:
                 pass
+
+    @staticmethod
+    def _bad_gateway(reason: str) -> bytes:
+        """A 502 whose *reason phrase* says why the tunnel could not open.
+
+        ``http.client`` turns a failed CONNECT into ``OSError("Tunnel
+        connection failed: <code> <phrase>")``, which requests re-raises and the
+        scraper logs — so whatever goes here is what the operator reads at 3am.
+        A bare "Bad Gateway" sends them looking at parlament.hu for a fault that
+        is on this side of the tunnel.
+        """
+        phrase = " ".join((reason or "Bad Gateway").split())[:150]
+        phrase = phrase.encode("ascii", "replace").decode("ascii")
+        return f"HTTP/1.1 502 {phrase}\r\n\r\n".encode("ascii")
 
     @staticmethod
     def _read_head(conn: socket.socket) -> tuple[str, bytes] | None:
@@ -376,15 +439,33 @@ class SSHProxy:
         return authority, 443
 
     def _open_channel(self, dest_host: str, dest_port: int):
-        if self._transport is None:
-            return None
-        try:
-            return self._transport.open_channel(
-                "direct-tcpip", (dest_host, dest_port), ("127.0.0.1", 0))
-        except Exception as e:
-            logger.warning("SSH channel to %s:%d failed: %s",
-                           dest_host, dest_port, e)
-            return None
+        """Open a ``direct-tcpip`` channel; returns ``(channel, reason)``.
+
+        ``channel`` is ``None`` on failure and ``reason`` says why, for the 502
+        status line. A dead transport is re-dialled once and the open retried,
+        because that failure is ours to fix; a channel *refused* by a live
+        server is its answer (the SSH host cannot reach the target, or
+        forwarding is disabled) and re-dialling would only ask again.
+        """
+        for attempt in (1, 2):
+            transport = self._transport
+            if transport is None or not transport.is_active():
+                reason = self._reconnect()
+                if reason:
+                    return None, reason
+                transport = self._transport
+                if transport is None:      # closed underneath us
+                    return None, "ssh transport down"
+            try:
+                return transport.open_channel(
+                    "direct-tcpip", (dest_host, dest_port),
+                    ("127.0.0.1", 0)), ""
+            except Exception as e:
+                logger.warning("SSH channel to %s:%d failed: %s",
+                               dest_host, dest_port, e)
+                if attempt == 2 or transport.is_active():
+                    return None, f"ssh channel open failed: {e}"
+        return None, "ssh channel open failed"  # pragma: no cover - unreachable
 
     def _relay(self, conn: socket.socket, channel) -> None:
         """Pump bytes between the local client socket and the SSH channel."""

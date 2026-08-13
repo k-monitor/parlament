@@ -17,7 +17,7 @@ import pytest
 import requests
 
 from parlamonitor.config import RuntimeConfig
-from parlamonitor.ssh_proxy import SSHProxy
+from parlamonitor.ssh_proxy import SSHProxy, SSHProxyError
 
 
 # --- fakes standing in for paramiko transport/channel ----------------------
@@ -60,10 +60,19 @@ class _SockChannel:
 class _FakeTransport:
     """Opens a real socket to ``target`` for every ``open_channel`` call."""
 
-    def __init__(self, target: tuple[str, int]):
+    def __init__(self, target: tuple[str, int], active: bool = True):
         self.target = target
+        self.active = active
+        self.opened = 0
+
+    def is_active(self) -> bool:
+        return self.active
+
+    def close(self) -> None:
+        self.active = False
 
     def open_channel(self, kind, dest, src):  # noqa: ARG002 - signature parity
+        self.opened += 1
         s = socket.create_connection(self.target, timeout=5)
         return _SockChannel(s)
 
@@ -182,3 +191,62 @@ def test_connect_to_dead_target_returns_502(proxy):
     reply = s.recv(4096)
     s.close()
     assert b"502" in reply
+    # The status line must name the cause: it is all the operator gets, since
+    # requests only surfaces "Tunnel connection failed: 502 <reason phrase>".
+    status = reply.split(b"\r\n", 1)[0]
+    assert b"ssh channel open failed" in status
+    assert b"Connection refused" in status or b"refused" in status.lower()
+
+
+# --- reconnect on a dead transport -----------------------------------------
+
+def test_dead_transport_is_redialled(proxy, origin, monkeypatch):
+    """A transport that died mid-run is re-dialled, not 502'd forever."""
+    dead = _FakeTransport(origin, active=False)
+    proxy._transport = proxy._client = dead
+    fresh = _FakeTransport(origin)
+
+    def _reconnect():
+        proxy._transport = proxy._client = fresh
+
+    monkeypatch.setattr(proxy, "_connect_transport", _reconnect)
+
+    r = requests.get(f"http://{origin[0]}:{origin[1]}/again",
+                     proxies=proxy.requests_proxies(), timeout=5)
+    assert r.status_code == 200
+    assert r.text == "hello /again"
+    assert dead.opened == 0 and fresh.opened == 1
+
+
+def test_failed_reconnect_reports_reason(proxy, monkeypatch):
+    """When the re-dial itself fails, the 502 says so."""
+    proxy._transport = proxy._client = _FakeTransport(("127.0.0.1", 1),
+                                                      active=False)
+
+    def _boom():
+        raise SSHProxyError("connection refused")
+
+    monkeypatch.setattr(proxy, "_connect_transport", _boom)
+
+    s = socket.create_connection(("127.0.0.1", proxy._local_port), timeout=5)
+    s.sendall(b"CONNECT www.parlament.hu:443 HTTP/1.1\r\n\r\n")
+    reply = s.recv(4096)
+    s.close()
+    assert b"502" in reply
+    assert b"ssh reconnect failed: connection refused" in reply
+
+
+def test_live_transport_refusal_is_not_redialled(proxy, monkeypatch):
+    """A refusal from a *live* server is its answer; don't re-dial on it."""
+    live = _FakeTransport(("127.0.0.1", 1))    # active, but target is closed
+    proxy._transport = proxy._client = live
+    calls = []
+    monkeypatch.setattr(proxy, "_connect_transport",
+                        lambda: calls.append(1))
+
+    s = socket.create_connection(("127.0.0.1", proxy._local_port), timeout=5)
+    s.sendall(b"CONNECT 127.0.0.1:1 HTTP/1.1\r\n\r\n")
+    s.recv(4096)
+    s.close()
+    assert calls == []
+    assert live.opened == 1                    # tried once, no blind retry

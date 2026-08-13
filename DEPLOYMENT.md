@@ -645,6 +645,31 @@ Verify a one-shot pass egresses through the host:
 podman-compose run --rm sync sync        # watch the log for "SSH proxy up: …"
 ```
 
+**Reading a tunnel failure.** A log line like
+
+```text
+POST https://www.parlament.hu/… failed (… ProxyError('Unable to connect to proxy',
+OSError('Tunnel connection failed: 502 ssh channel open failed: …')))
+```
+
+comes from the scraper's *own* local proxy, not from `parlament.hu` — the site was
+never reached. The text after `502` is the reason:
+
+| Reason phrase | What it means |
+| --- | --- |
+| `ssh channel open failed: … Connect failed` | the SSH host itself could not reach `parlament.hu:443` (blocked/dropped egress IP, or DNS on that host) |
+| `ssh channel open failed: … administratively prohibited` | sshd on that host has `AllowTcpForwarding no` |
+| `ssh reconnect failed: …` | the SSH connection dropped **and** could not be re-established (host down, key/auth broken) |
+
+A transport that merely dropped is re-dialled automatically (`SSH transport … is
+down; reconnecting` → `SSH transport reconnected`) and the request retried, so a
+rebooted SSH host no longer poisons the rest of the run. Reproduce the first case
+by hand from the SSH host itself:
+
+```bash
+ssh -p 2267 user@host 'curl -sS -o /dev/null -w "%{http_code}\n" https://www.parlament.hu/'
+```
+
 ### Alternative: external cron instead of the sidecar
 
 If you'd rather schedule from the host, comment out the `sync` service and run

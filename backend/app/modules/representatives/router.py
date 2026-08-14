@@ -257,7 +257,7 @@ def list_representatives(
     either side. "Active" is read against the *cycle in scope*, not against today: in
     the running cycle it means still sitting, in a closed one that the mandate lasted
     to the end of the term. Only MPs have mandates, so the filter empties the
-    advocate/other tabs by construction — it is offered on the MP list alone."""
+    advocate/other lists by construction — the site offers it on the MP list alone."""
     advocates_known = _has_advocate_columns(db)
     mandates_known = _has_mandates(db)
     where = []
@@ -362,9 +362,9 @@ def list_representatives(
     # (someone promoted mid-cycle is shown in the post they moved to), and an office
     # the registry dates wins over one their speeches merely carry — which is all
     # there is for a speaker the registry never lists: a guest, a commissioner.
-    # Only computed for that list, so the MP list's query is untouched.
+    # Only computed where a card would show it, so the MP list's query is untouched.
     office_col = "NULL AS office,"
-    if role == "other":
+    if role == "other" or (role == "all" and advocates_known):
         # Scoped like everything else (§4A): the office they held *in these cycles*,
         # not the one they hold now — a state secretary in the cycle you are looking
         # at may since have moved on. Office terms are dated, not cycle-numbered, so
@@ -377,7 +377,7 @@ def list_representatives(
         if oend:
             overlap += " AND po.date_start <= :oend"
             params["oend"] = oend
-        office_col = f"""(SELECT COALESCE(
+        office_sql = f"""(SELECT COALESCE(
               (SELECT po.title FROM person_office po
                 WHERE po.person_id = p.person_id{overlap}
                 ORDER BY po.date_start DESC, po.date_end IS NULL DESC LIMIT 1),
@@ -385,7 +385,21 @@ def list_representatives(
                 WHERE s.person_id = p.person_id AND s.speaker_office IS NOT NULL
                   {period_and(period, "s.period_number")}
                 ORDER BY s.session_id DESC, s.speech_index DESC LIMIT 1)
-           )) AS office,"""
+           ))"""
+        if role == "all":
+            # The merged list (the "all" chip of the Felszólalók page) mixes the
+            # three, and a card must read the same there as under its own chip: an
+            # MP is identified by their faction and an advocate by their
+            # nationality, so the office fills the slot **only where those leave it
+            # empty** — which is what it is there for (REP-2/REP-12). Asking the
+            # faction subquery itself, rather than `is_mp`, is what keeps the two
+            # in step: `is_mp` is a lifetime flag, so a former MP who spoke in this
+            # cycle as a minister is neither shown a faction (they hold no
+            # membership in scope) nor counted as a non-MP — and would otherwise
+            # end up on a card carrying nothing but their name.
+            office_sql = (f"CASE WHEN COALESCE(p.is_advocate, 0) = 0 "
+                          f"AND ({faction_sub}) IS NULL THEN {office_sql} END")
+        office_col = f"{office_sql} AS office,"
     # The mandate this person held in the cycle(s) in scope (REP-14), so a card can
     # say a seat was given up rather than presenting a former MP as a sitting one.
     # A DB predating the registry has no such table: the columns then read as "no

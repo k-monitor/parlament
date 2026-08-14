@@ -290,6 +290,21 @@ def test_other_speakers_carry_the_office_that_identifies_them(client, db_path):
     assert [r["office"] for r in scoped["representatives"]] == ["igazságügyi miniszter"]
 
 
+def test_merged_list_identifies_a_speaker_by_office_but_not_an_mp(client, db_path):
+    """`role=all` backs the "Összes" chip of the Felszólalók page, which mixes the
+    three categories into one list of cards. A card there must read exactly as it
+    does under its own chip: an MP is identified by their faction and an advocate
+    by their nationality, so the office slot is filled in only for the speakers
+    who have neither — even though the MP in this fixture holds registry offices
+    of their own."""
+    _load_minister(db_path)
+    d = client.get("/api/v1/representatives",
+                   params={"role": "all", "period": []}).json()
+    offices = {r["person_id"]: r["office"] for r in d["representatives"]}
+    assert offices["0052"] == "igazságügyi miniszter"   # the non-MP minister
+    assert offices["k001"] is None                      # an MP, though on the registry
+
+
 def test_office_holder_stubs_never_leak_into_the_mp_list(client):
     """The 500-odd registry people added to `person` hold no mandate, so no
     mandate-scoped list may grow by one of them."""

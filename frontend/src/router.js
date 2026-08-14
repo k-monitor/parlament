@@ -45,11 +45,14 @@ const routes = [
     component: () => import('./modules/representatives/FactionsView.vue'),
   },
   {
-    // Nationality advocates (nemzetiségi szószólók, REP-9) — a sibling page of the
-    // MP list rather than a filter of it: they hold a different mandate (no
-    // faction, no constituency, no vote). Same list component, which reads which
-    // mandate to show from the route name. Declared before `/representatives/:id`
-    // so the static segment is never taken for a person id.
+    // Nationality advocates (nemzetiségi szószólók, REP-9) — a **category chip**
+    // of the Felszólalók page above, not a page of its own: they hold a different
+    // mandate (no faction, no constituency, no vote), so the list still shows one
+    // group at a time, but the chip row switches between them in place. Each chip
+    // keeps its own URL so a chosen category stays linkable, citable and
+    // separately indexable, and the same list component serves them all, reading
+    // which mandate to show from the route name. Declared before
+    // `/representatives/:id` so the static segment is never taken for a person id.
     path: '/representatives/advocates', name: 'advocates',
     meta: { module: 'representatives' },
     component: () => import('./modules/representatives/RepListView.vue'),
@@ -57,9 +60,18 @@ const routes = [
   {
     // Other speakers (REP-12) — everyone who spoke in the House holding neither an
     // MP's mandate nor an advocacy: non-MP ministers and state secretaries, the
-    // President of the Republic, invited guests. Same list component again, keyed
-    // off the route name. Declared before `/representatives/:id`.
+    // President of the Republic, invited guests. The third chip, same list
+    // component again. Declared before `/representatives/:id`.
     path: '/representatives/speakers', name: 'speakers',
+    meta: { module: 'representatives' },
+    component: () => import('./modules/representatives/RepListView.vue'),
+  },
+  {
+    // ...and the fourth chip: everyone above in one list, for a reader who does
+    // not know which of the three a name belongs to. Declared before
+    // `/representatives/:id` like the other static segments, so "all" is never
+    // taken for a person id.
+    path: '/representatives/all', name: 'allSpeakers',
     meta: { module: 'representatives' },
     component: () => import('./modules/representatives/RepListView.vue'),
   },

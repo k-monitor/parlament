@@ -31,43 +31,48 @@ const loading = ref(false)
 const error = ref(false)
 const factions = ref([])
 
-// This one component serves three sibling pages of the Representatives section
-// (its sub-nav tabs): the MP list, the nationality advocates (szószólók, REP-9)
-// and the other speakers (REP-12) — everyone who spoke in the House holding
-// neither mandate: non-MP ministers and state secretaries, the President of the
-// Republic, invited guests. Which one is decided by the route, so each is its own
-// URL — no query state. They differ only in the mandate they cover, which is
-// exactly what the list endpoint's `role` selects.
-const isAdvocates = computed(() => route.name === 'advocates')
-const isOthers = computed(() => route.name === 'speakers')
-const role = computed(() =>
-  (isAdvocates.value ? 'advocate' : isOthers.value ? 'other' : 'mp'))
+// Everyone who takes the floor lives on this one page — Felszólalók — shown a
+// category at a time through the chip row under the search box: the MPs (the
+// default, so the list still means "representatives" unless you ask otherwise),
+// the nationality advocates (szószólók, REP-9), the other speakers (REP-12 —
+// those who spoke holding neither mandate: non-MP ministers and state
+// secretaries, the President of the Republic, invited guests), and all of them
+// at once. They differ only in the mandate they cover, which is exactly what the
+// list endpoint's `role` selects.
+//
+// The selected category is carried by the **route**, not a query param: each
+// chip keeps the URL it has always had, so existing links, the sitemap and the
+// per-page share cards all survive the merge, and a category stays citable.
+const ROLE_TABS = [
+  { role: 'mp', name: 'representatives' },
+  { role: 'advocate', name: 'advocates' },
+  { role: 'other', name: 'speakers' },
+  { role: 'all', name: 'allSpeakers' },
+]
+const ROLE_OF_ROUTE = Object.fromEntries(ROLE_TABS.map((x) => [x.name, x.role]))
+const role = computed(() => ROLE_OF_ROUTE[route.name] || 'mp')
 
-// The unit the result count is counted in, so neither tab reports "N képviselő"
-// for people who are not representatives.
-const countUnit = computed(() => (
-  isAdvocates.value ? t('reps.advocatesUnit')
-  : isOthers.value ? t('reps.othersUnit')
-  : t('home.stats.representatives')))
-
-// Per-page wording, so each tab says what it is about rather than sharing one
-// generic phrasing.
-const pageTitle = computed(() => (
-  isAdvocates.value ? t('nav.advocates')
-  : isOthers.value ? t('nav.speakers')
-  : t('reps.title')))
-const searchPlaceholder = computed(() => (
-  isAdvocates.value ? t('reps.searchAdvocatePlaceholder')
-  : isOthers.value ? t('reps.searchOtherPlaceholder')
-  : t('reps.searchPlaceholder')))
-const emptyText = computed(() => (
-  isAdvocates.value ? t('reps.noAdvocateResults')
-  : isOthers.value ? t('reps.noOtherResults')
-  : t('reps.noResults')))
-const note = computed(() => (
-  isAdvocates.value ? t('reps.advocateNote')
-  : isOthers.value ? t('reps.otherNote')
-  : ''))
+// Wording that follows the selected category, so the page never reports "N
+// képviselő" for people who are not representatives, and each category explains
+// itself. `all` speaks of felszólalók: the one word true of every row in it.
+function byRole(map) {
+  return computed(() => (map[role.value] === undefined ? '' : t(map[role.value])))
+}
+const countUnit = byRole({
+  mp: 'home.stats.representatives', advocate: 'reps.advocatesUnit',
+  other: 'reps.othersUnit', all: 'reps.othersUnit',
+})
+const searchPlaceholder = byRole({
+  mp: 'reps.searchPlaceholder', advocate: 'reps.searchAdvocatePlaceholder',
+  other: 'reps.searchOtherPlaceholder', all: 'reps.searchOtherPlaceholder',
+})
+const emptyText = byRole({
+  mp: 'reps.noResults', advocate: 'reps.noAdvocateResults',
+  other: 'reps.noOtherResults', all: 'reps.noOtherResults',
+})
+const note = byRole({
+  advocate: 'reps.advocateNote', other: 'reps.otherNote', all: 'reps.allNote',
+})
 
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
@@ -98,9 +103,11 @@ function mandateEndedLabel(m) {
   return end ? `${t('reps.mandateEnded')} · ${end}` : t('reps.mandateEnded')
 }
 
-// Faction is the only filter here, and neither an advocate nor a non-MP speaker
-// has one — so the panel is offered on the MP tab alone.
-const hasFilters = computed(() => !isAdvocates.value && !isOthers.value)
+// Faction and mandate are MP-only notions — neither an advocate nor a non-MP
+// speaker has either — so the filter panel is offered on the Képviselők chip
+// alone. On "all" it would silently reduce the list to MPs, which is the one
+// thing that chip exists not to do.
+const hasFilters = computed(() => role.value === 'mp')
 
 function apply() {
   const query = {}
@@ -109,8 +116,23 @@ function apply() {
   if (f.mandate) query.mandate = f.mandate
   if (f.sort) query.sort = f.sort
   // Changing a filter resets to the first page (offset is intentionally dropped).
-  // Stays on the current page (MP list or advocates), since the route is the tab.
+  // Stays on the current category, since the route is what selects the chip.
   router.push({ name: route.name, query })
+}
+
+// Switching category keeps what still applies — the typed name and a chosen sort
+// order — and drops the rest: the offset (the new list is a different one, so
+// page 4 of it is not where the reader was), and the MP-only filters whenever the
+// target chip has no filter panel to show them in.
+function chipTo(tab) {
+  const query = {}
+  if (f.q) query.q = f.q
+  if (f.sort && f.sort !== 'speaking_time') query.sort = f.sort
+  if (tab.role === 'mp') {
+    if (f.faction_id) query.faction_id = f.faction_id
+    if (f.mandate) query.mandate = f.mandate
+  }
+  return { name: tab.name, query }
 }
 
 function gotoPage(p) {
@@ -151,9 +173,9 @@ onMounted(async () => {
   try { factions.value = (await api.factions()).factions } catch {}
   load()
 })
-// Watches the route *name* as well as the query: the MP list and the advocates
-// page share this component, so switching sub-tab may reuse the instance — with
-// only the query watched, the list would keep showing the other mandate.
+// Watches the route *name* as well as the query: every category chip shares this
+// component, so switching chip reuses the instance — with only the query watched,
+// the list would keep showing the previous category's mandate.
 watch(() => [route.name, route.query], () => {
   const q = route.query
   f.q = q.q || ''; f.faction_id = q.faction_id || ''
@@ -174,12 +196,7 @@ onUnmounted(() => clearTimeout(searchTimer))
 </script>
 
 <template>
-  <h1>{{ pageTitle }}</h1>
-
-  <!-- What a szószóló / a non-MP speaker is, since both are easily mistaken for
-       representatives: they speak in the House but hold no mandate
-       (REP-9 / REP-12 / TRUST-1). -->
-  <p v-if="note" class="muted small advocate-note">{{ note }}</p>
+  <h1>{{ $t('reps.title') }}</h1>
 
   <form class="card pad searchform" role="search" @submit.prevent="apply">
     <div class="row" style="gap:.5rem;">
@@ -195,6 +212,19 @@ onUnmounted(() => clearTimeout(searchTimer))
         {{ $t('search.filters') }}
       </button>
     </div>
+
+    <!-- Which of the House's speakers the list covers. Links rather than
+         buttons, because each category is a page in its own right: middle-click
+         opens one in a tab, Back returns to the previous one, and the address is
+         worth sharing. The selected one is marked by `aria-current`, not by its
+         fill alone (A11Y-1). -->
+    <nav class="rolechips" :aria-label="$t('reps.category')">
+      <router-link
+        v-for="tab in ROLE_TABS" :key="tab.role" :to="chipTo(tab)"
+        class="rolechip" :class="{ active: role === tab.role }"
+        :aria-current="role === tab.role ? 'page' : undefined"
+      >{{ $t('reps.role.' + tab.role) }}</router-link>
+    </nav>
 
     <fieldset v-show="showFilters && hasFilters" class="filters">
       <legend class="visually-hidden">{{ $t('search.filters') }}</legend>
@@ -225,6 +255,12 @@ onUnmounted(() => clearTimeout(searchTimer))
       </button>
     </fieldset>
   </form>
+
+  <!-- What the selected category is, since a szószóló and a non-MP minister are
+       both easily mistaken for representatives: they speak in the House but hold
+       no mandate (REP-9 / REP-12 / TRUST-1). The Képviselők chip needs no such
+       note, so it has none. -->
+  <p v-if="note" class="muted small rolenote">{{ note }}</p>
 
   <StateBlock
     :loading="loading" :error="error"
@@ -285,7 +321,24 @@ onUnmounted(() => clearTimeout(searchTimer))
 
 <style scoped>
 /* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
-.advocate-note { margin: -.4rem 0 1rem; max-width: 62ch; }
+
+/* Category chips. Pills rather than another tab strip: the section already has a
+   tab bar one row above, and a second one would read as more navigation instead
+   of a filter of the list below it. */
+.rolechips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .7rem; }
+.rolechip {
+  display: inline-flex; align-items: center; padding: .32rem .8rem;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  font-size: .85rem; font-weight: 600; line-height: 1.45; color: var(--ink-soft);
+}
+.rolechip:hover {
+  color: var(--accent); border-color: var(--accent);
+  background: var(--accent-soft); text-decoration: none;
+}
+.rolechip.active, .rolechip.active:hover {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
+}
+.rolenote { margin: .8rem 0 -.2rem; max-width: 62ch; }
 .replist { list-style: none; padding: 0; margin: 0; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
 .repcard { display: flex; flex-direction: column; gap: .5rem; }
 .repmeta { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }

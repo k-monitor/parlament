@@ -950,6 +950,23 @@ site-wide behaviour, not a per-view nicety.
   **accent-insensitive** (§4B FOLD-1): `dora` matches *Dóra*. A cycle's list covers
   **everyone who held a mandate in it**, those whose mandate ended early included,
   with a filter for the mandate holders alone (REP-14).
+  - It is **one page — *Felszólalók* — for everyone who takes the floor**, shown a
+    **category at a time** through a chip row under the search box: the
+    representatives (**the default**, so the list still means "representatives"
+    unless the reader asks otherwise), the **nationality advocates** (REP-9), the
+    **other speakers** (REP-12), and — for a reader who does not know which of the
+    three a name belongs to — **all of them at once**. A reader looking for a
+    person should not have to know the constitutional category they fall in before
+    they can find them; the categories stay visible and distinct, but as a filter
+    of one list rather than as separate pages to hunt through.
+  - Each chip keeps **its own URL**, so a category stays linkable, citable and
+    separately indexable, and the mandate-less categories' pages keep the
+    addresses they were published under. Switching chip keeps the typed name and
+    the chosen sort order, and drops what cannot survive: the page offset, and the
+    faction/mandate filters wherever they do not apply.
+  - A card must read **the same under every chip**: in the mixed list an MP is
+    still identified by their faction and an advocate by their nationality, so the
+    office slot is filled in only for the speakers who have neither (REP-12).
 - **REP-2 (MUST).** A **representative profile** shows: name, photo (if available),
   current/past faction(s) with their **real start/end dates** (REP-14), the
   **mandate term** and, where it ended early, why (REP-14), constituency, Wikidata
@@ -1051,11 +1068,12 @@ site-wide behaviour, not a per-view nicety.
     toplist contributions need no re-scrape and no name matching. They are
     **marked** as advocates and carry the **nationality** they speak for, which
     stands in for the faction and constituency they do not have.
-  - Advocates are presented as **their own page in the Representatives section's
-    tab bar** (between the MP list and the factions page), not as a filter of the
-    MP list — they hold a different mandate, and the MP list must keep meaning
-    "representatives". The page has its own URL, so it is linkable and citable, and
-    it honours the global cycle scope (§4A) like every other view. An
+  - Advocates are presented as **their own category of the *Felszólalók* page**
+    (REP-1), selected by a chip — never merged into the representatives: they hold
+    a different mandate, and the MP list, which is what that page opens on, must
+    keep meaning "representatives". The category has its own URL, so it is
+    linkable and citable, and it honours the global cycle scope (§4A) like every
+    other view. An
     advocate's profile (REP-2) shows their mandate + nationality where an MP's
     faction badge goes, and their speech/document statistics (REP-3) are computed
     exactly as an MP's; the **vote-participation metrics are omitted** (not
@@ -1070,7 +1088,7 @@ site-wide behaviour, not a per-view nicety.
   and nothing in the corpus answers it: `parlament.hu` records the single-member
   constituency an MP won (*"Budapest 12. OEVK"*, REP-2) but never says **where** that
   constituency is, nor how to get from a place to it. The site therefore carries its
-  own **page in the Representatives section's tab bar** (§REP-9's precedent) that
+  own **page in the Representatives section's tab bar** (§REP-1's precedent) that
   takes a **settlement** and returns the constituency it belongs to and the MP who
   holds it, each linking to their profile (REP-1/REP-2).
   - The mapping and the boundaries come from the **National Election Office**'s
@@ -1131,7 +1149,7 @@ site-wide behaviour, not a per-view nicety.
   offices on their profile (REP-2), but it is only reachable one profile at a time
   — while the question it answers best is the cross-cutting one: *who holds (or
   held) this office, and when*. The section therefore carries its **own page in the
-  Representatives tab bar** (§REP-9's precedent), mirroring the parliament's own
+  Representatives tab bar** (§REP-1's precedent), mirroring the parliament's own
   listing (`/web/guest/tisztsegviselok`).
   - Listed **one row per term**, not per person: a career runs through several
     offices, and the (person, office, from–to) term is what the source records.
@@ -1166,8 +1184,9 @@ site-wide behaviour, not a per-view nicety.
   representatives speak in the House: ministers and state secretaries (often not
   MPs), the President of the Republic, the heads of independent bodies and invited
   guests do — and they are otherwise reachable only by stumbling on a speech.
-  A sibling page of the MP list (REP-1) and the advocates (REP-9) lists them, with
-  the same filters, sorting, statistics and cycle scope.
+  They are the third category of the *Felszólalók* page (REP-1), alongside the MP
+  list and the advocates (REP-9), with the same search, sorting, statistics and
+  cycle scope.
   - Membership is defined by **having spoken**, in the cycles in scope — never by
     "not an MP". `person` also holds the office-holder registry's people (REP-11),
     most of whom never spoke here; listing them as speakers would be false.
@@ -1632,7 +1651,7 @@ speeches its minister and state secretaries gave).
   can never disagree (cf. VOTE-6); a link whose date resolves to no known cycle
   keeps its iromány's, so the date rule can never drop it out of every scope.
 - **MIN-5 (MUST).** A **browsable list of portfolios**, carried as its **own page
-  in the Representatives section's tab bar** (§REP-9's precedent, beside the
+  in the Representatives section's tab bar** (§REP-1's precedent, beside the
   office holders of REP-11 — the tárca is the institution those offices belong to,
   so the two are read together), scoped by the global cycle selector (§4A) and
   ordered by activity: each row names the tárca, **who held it in scope** (linked

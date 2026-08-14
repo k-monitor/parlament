@@ -348,9 +348,9 @@ watch(() => store.cycles.join(','), load)
   <StateBlock :loading="loading" :error="error" @retry="load">
     <div v-if="profile" class="profile">
       <!-- Back to the list this person belongs to: an advocate came from the
-           Nemzetiségi szószólók page, a non-MP minister from Egyéb felszólalók
-           and an office holder who never spoke from Tisztségviselők — not the
-           MP list (see `profileTabFor`). -->
+           Nemzetiségi szószólók chip of the Felszólalók page, a non-MP minister
+           from its Egyéb felszólalók chip and an office holder who never spoke
+           from Tisztségviselők — not the MP list (see `profileTabFor`). -->
       <router-link :to="{ name: backTab }" class="small">
         ‹ {{ backTab === 'representatives' ? $t('reps.title') : $t('nav.' + backTab) }}
       </router-link>

@@ -250,6 +250,19 @@ def test_share_representatives_index_is_not_hijacked(og_client):
     assert m["og:url"] == "https://parlamonitor.k-monitor.hu/representatives/factions"
 
 
+def test_share_merged_speaker_list_card(og_client):
+    """Same for `/representatives/all`, the "Összes" chip of the Felszólalók page:
+    a browse page under the person-profile prefix, so without a card of its own it
+    would be looked up as a person id and answer a real page with a 404 shell."""
+    r = og_client.get("/representatives/all")
+    assert r.status_code == 200
+    m = _meta(r.text)
+    assert m["og:type"] == "website"
+    assert m["og:title"] == "Felszólalók · Parlamonitor"
+    assert "robots" not in m  # indexable, just not advertised in the sitemap
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/representatives/all"
+
+
 def test_share_session_card(og_client):
     r = og_client.get("/sessions/43001")
     m = _meta(r.text)

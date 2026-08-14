@@ -28,8 +28,12 @@ export default {
     submenu: 'almenü',
     search: 'Keresés',
     sessions: 'Ülésnapok',
-    representatives: 'Képviselők',
+    // A Felszólalók oldal a képviselőket, a nemzetiségi szószólókat és az egyéb
+    // felszólalókat egy listában mutatja, kategóriacsipekkel (REP-1).
+    representatives: 'Felszólalók',
     lookup: 'Ki a képviselőm?',
+    // A két mandátum nélküli kategória neve: a csipeken és a profilról visszavezető
+    // linken is ez áll.
     advocates: 'Nemzetiségi szószólók',
     speakers: 'Egyéb felszólalók',
     officials: 'Tisztségviselők',
@@ -273,7 +277,19 @@ export default {
     unlistedAgenda: 'Az ülésnap felszólalásai',
   },
   reps: {
-    title: 'Képviselők',
+    title: 'Felszólalók',
+    // Kategóriacsipek a keresőmező alatt: alapból a képviselők (REP-1).
+    category: 'Kategória',
+    role: {
+      mp: 'Képviselők',
+      advocate: 'Nemzetiségi szószólók',
+      other: 'Egyéb felszólalók',
+      all: 'Összes',
+    },
+    allNote: 'Egy listában mindenki, aki az Országgyűlésben szerepet kap: a '
+      + 'képviselők, a nemzetiségi szószólók, valamint a mandátum nélküli '
+      + 'felszólalók – miniszterek, államtitkárok, a köztársasági elnök és '
+      + 'meghívott vendégek.',
     searchPlaceholder: 'Képviselő keresése név szerint…',
     faction: 'Frakció',
     constituency: 'Választókerület',

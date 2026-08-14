@@ -30,16 +30,19 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 // routes (a profile / a single bill or document) keep their parent tab active.
 const NAV_SECTIONS = {
   reps: {
-    match: ['representatives', 'lookup', 'advocates', 'speakers', 'officials',
-            'portfolios', 'portfolio', 'factions', 'profile'],
+    match: ['representatives', 'lookup', 'advocates', 'speakers', 'allSpeakers',
+            'officials', 'portfolios', 'portfolio', 'factions', 'profile'],
     // `profile` is a detail page of every person tab — which one is decided at
     // runtime by the kind of person the profile is (see `tabActive`).
     tabs: [
-      { name: 'representatives', key: 'representatives', detail: ['profile'] },
+      // Felszólalók (REP-1/REP-9/REP-12): one page for everyone who takes the
+      // floor. `advocates` / `speakers` / `allSpeakers` are its category chips,
+      // not tabs of their own — they keep their URLs, so the tab has to claim
+      // them the way it claims a detail page.
+      { name: 'representatives', key: 'representatives',
+        detail: ['advocates', 'speakers', 'allSpeakers', 'profile'] },
       { name: 'lookup', key: 'lookup' },
-      { name: 'advocates', key: 'advocates', detail: ['profile'] },
       { name: 'officials', key: 'officials', detail: ['profile'] },
-      { name: 'speakers', key: 'speakers', detail: ['profile'] },
       // Tárcák (§6C): the institution behind those offices. Its own module, so
       // the tab goes when the module is switched off (EXT-6) while the rest of
       // the section stays.
@@ -82,15 +85,20 @@ const sectionTabs = computed(() =>
     if (t.name === 'portfolios') return store.moduleEnabled('portfolios')
     return true
   }))
+// The person lists that are chips of the Felszólalók page rather than tabs of
+// their own: a profile opened from one of them highlights that page's tab.
+const CHIP_OF_REPS = { advocates: 'representatives', speakers: 'representatives' }
+
 function tabActive(tab) {
-  // A person profile is a detail page of four different tabs: an MP's belongs
-  // under Képviselők, a nationality advocate's under Nemzetiségi szószólók
-  // (REP-9), a non-MP minister's under Egyéb felszólalók (REP-12), and an office
-  // holder who never spoke here under Tisztségviselők (REP-11). They share one
-  // route, so the open profile itself reports which (store.profileTab); until it
-  // has loaded, treat it as an MP.
+  // A person profile is a detail page of two different tabs: an MP's, a
+  // nationality advocate's (REP-9) and a non-MP minister's (REP-12) all belong
+  // under Felszólalók, while an office holder who never spoke here belongs under
+  // Tisztségviselők (REP-11). They share one route, so the open profile itself
+  // reports which list it came from (store.profileTab); until it has loaded,
+  // treat it as an MP.
   if (route.name === 'profile') {
-    return tab.name === (store.profileTab || 'representatives')
+    const from = store.profileTab || 'representatives'
+    return tab.name === (CHIP_OF_REPS[from] || from)
   }
   return route.name === tab.name || (tab.detail || []).includes(route.name)
 }

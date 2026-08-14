@@ -19,13 +19,16 @@ export const store = reactive({
   loaded: false,
   failed: false,
   cycles: [], // [] = all cycles; otherwise the electoral-period numbers in scope
-  // Which list the currently-open person profile belongs to, as the route name of
-  // that sub-tab: 'representatives' (MPs), 'advocates' (nemzetiségi szószólók,
-  // REP-9), 'speakers' (the other speakers, REP-12) or 'officials' (an office
-  // holder who never spoke here, REP-11). One `/representatives/:id` route serves
-  // all four, and only the profile response says which — so the profile view
-  // publishes it here for the app shell, which cannot know it, to highlight the
-  // right sub-tab. Null while nothing (or nothing yet loaded) is open.
+  // Which list the currently-open person profile belongs to, as that list's route
+  // name: 'representatives' (MPs), 'advocates' (nemzetiségi szószólók, REP-9),
+  // 'speakers' (the other speakers, REP-12) or 'officials' (an office holder who
+  // never spoke here, REP-11). One `/representatives/:id` route serves all four,
+  // and only the profile response says which — so the profile view publishes it
+  // here for the app shell, which cannot know it, to highlight the right sub-tab.
+  // The first three are category chips of one tab (Felszólalók), so they all
+  // highlight it; the value stays this precise because it is also the list the
+  // profile's back link returns to — chip and all. Null while nothing (or nothing
+  // yet loaded) is open.
   profileTab: null,
   moduleEnabled(name) {
     if (!this.meta) return true // optimistic before load

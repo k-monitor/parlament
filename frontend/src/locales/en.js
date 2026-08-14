@@ -22,7 +22,10 @@ export default {
       status: 'Page {page} of {total}',
     },
   },
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Representatives', lookup: 'Find your MP', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
+  // `representatives` is the merged Felszólalók page: representatives, nationality
+  // advocates and the other speakers in one list, picked apart by category chips
+  // (REP-1). `advocates` / `speakers` name two of those chips.
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', lookup: 'Find your MP', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -209,7 +212,20 @@ export default {
     unlistedAgenda: 'Speeches of the sitting day',
   },
   reps: {
-    title: 'Representatives', searchPlaceholder: 'Search representatives by name…', faction: 'Faction',
+    title: 'Speakers',
+    // Category chips under the search box; representatives by default (REP-1).
+    category: 'Category',
+    role: {
+      mp: 'Representatives',
+      advocate: 'Nationality advocates',
+      other: 'Other speakers',
+      all: 'All',
+    },
+    allNote: 'Everyone with a part in the National Assembly, in one list: the '
+      + 'representatives, the nationality advocates, and those who speak without '
+      + 'a mandate — ministers, state secretaries, the President of the Republic '
+      + 'and invited guests.',
+    searchPlaceholder: 'Search representatives by name…', faction: 'Faction',
     constituency: 'Constituency', speeches: 'speeches', speakingTime: 'speaking time', sortName: 'By name',
     sortSpeeches: 'By speeches', sortSpeakingTime: 'By speaking time', noResults: 'No matching representatives.', profile: 'Profile',
     filterByFaction: 'Filter representatives of {faction}',

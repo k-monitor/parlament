@@ -63,6 +63,11 @@ STATIC_PATHS: tuple[tuple[str, str | None], ...] = (
     ("/sessions", "proceedings"),
     ("/representatives", "representatives"),
     ("/representatives/factions", "representatives"),
+    # The two mandate-less categories of the Felszólalók page. Its "all" chip
+    # (`/representatives/all`) is deliberately absent: it is the union of these
+    # three, so listing it would offer a crawler a fourth URL with nothing on it
+    # the other three don't already have. It stays reachable and indexable — just
+    # not advertised as an entry point of its own.
     ("/representatives/advocates", "representatives"),
     ("/representatives/speakers", "representatives"),
     ("/representatives/officials", "representatives"),

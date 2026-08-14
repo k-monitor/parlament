@@ -252,6 +252,13 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
         "Egyéb felszólalók",
         "Akik képviselői mandátum nélkül szólaltak fel a Házban: miniszterek, "
         "államtitkárok, meghívott vendégek felszólalásai."),
+    # The "all" chip of the Felszólalók page: the three lists above at once. It
+    # needs a card of its own — without one this path falls through to the person
+    # profile route, which would answer a real page with a 404 shell.
+    "/representatives/all": (
+        "Felszólalók",
+        "Mindenki, aki szót kap az Országgyűlésben: képviselők, nemzetiségi "
+        "szószólók, miniszterek és meghívott vendégek egy listában."),
     "/representatives/officials": (
         "Tisztségviselők",
         "Az Országgyűlés tisztségviselői ciklusról ciklusra: házelnökök, "

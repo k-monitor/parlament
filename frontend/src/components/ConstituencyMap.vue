@@ -264,6 +264,11 @@ onBeforeUnmount(() => {
      Capping the width keeps the settlement filling the frame it's fitted to. */
   width: 100%; max-width: 820px; height: 480px;
   border-radius: var(--radius); border: 1px solid var(--line);
+  /* Leaflet's panes (z-index 400) and controls (1000) carry z-indices of their own.
+     Without a stacking context here they compete in the root context with the
+     sticky site header (20) and paint over it as the page scrolls; isolating the
+     box keeps them inside it, so the header always covers the map. */
+  isolation: isolate;
   /* Leaflet paints its own tile pane; a background keeps the box from flashing
      white-on-white while the first tiles load. */
   background: var(--bg);

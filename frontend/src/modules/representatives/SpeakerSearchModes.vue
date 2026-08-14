@@ -42,7 +42,7 @@ const nameTo = computed(() => (props.mode === 'name'
     <router-link
       :to="{ name: 'lookup' }" class="mode" :class="{ active: mode === 'place' }"
       :aria-current="mode === 'place' ? 'page' : undefined"
-    ><span aria-hidden="true">📍</span> {{ $t('lookup.title') }}</router-link>
+    >{{ $t('lookup.title') }}</router-link>
   </nav>
 </template>
 

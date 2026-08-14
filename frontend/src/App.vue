@@ -43,14 +43,17 @@ const NAV_SECTIONS = {
       // the same question keyed by place rather than by name — reached from the
       // switch in its search card rather than from a tab of its own, which put
       // the two ways of finding an MP in two different places.
-      { name: 'representatives', key: 'representatives',
+      // `group` splits the bar in two with a rule (see `visibleTabs`): the first
+      // two tabs list *people*, the last two the *bodies* they act in, and four
+      // equal-looking tabs in a row hid that.
+      { name: 'representatives', key: 'representatives', group: 'people',
         detail: ['advocates', 'speakers', 'allSpeakers', 'lookup', 'profile'] },
-      { name: 'officials', key: 'officials', detail: ['profile'] },
+      { name: 'officials', key: 'officials', group: 'people', detail: ['profile'] },
       // Tárcák (§6C): the institution behind those offices. Its own module, so
       // the tab goes when the module is switched off (EXT-6) while the rest of
       // the section stays.
-      { name: 'portfolios', key: 'portfolios', detail: ['portfolio'] },
-      { name: 'factions', key: 'factions' },
+      { name: 'portfolios', key: 'portfolios', group: 'bodies', detail: ['portfolio'] },
+      { name: 'factions', key: 'factions', group: 'bodies' },
     ],
   },
   bills: {
@@ -88,6 +91,12 @@ const sectionTabs = computed(() =>
     if (t.name === 'portfolios') return store.moduleEnabled('portfolios')
     return true
   }))
+// The rule between two `group`s is carried by the first tab of the later group,
+// and only once both sides survived the filter above — a group left empty (the
+// Tárcák module off) must not leave a rule hanging at the edge of the bar.
+const visibleTabs = computed(() => sectionTabs.value.map((t, i, all) => ({
+  ...t, sep: i > 0 && t.group !== all[i - 1].group,
+})))
 // The person lists that are chips of the Felszólalók page rather than tabs of
 // their own: a profile opened from one of them highlights that page's tab.
 const CHIP_OF_REPS = { advocates: 'representatives', speakers: 'representatives' }
@@ -178,12 +187,14 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 
   </div>
 
-  <nav v-if="!isEmbed && sectionTabs.length > 1" class="subheader" :aria-label="$t('nav.submenu')">
+  <nav v-if="!isEmbed && visibleTabs.length > 1" class="subheader" :aria-label="$t('nav.submenu')">
     <div class="container subnav">
-      <router-link
-        v-for="t in sectionTabs" :key="t.name" :to="{ name: t.name }"
-        class="subtab" :class="{ active: tabActive(t) }"
-      >{{ $t('nav.' + t.key) }}</router-link>
+      <template v-for="t in visibleTabs" :key="t.name">
+        <span v-if="t.sep" class="subnav-sep" aria-hidden="true"></span>
+        <router-link
+          :to="{ name: t.name }" class="subtab" :class="{ active: tabActive(t) }"
+        >{{ $t('nav.' + t.key) }}</router-link>
+      </template>
     </div>
   </nav>
 
@@ -294,6 +305,12 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 }
 .subtab:hover { color: var(--accent); background: var(--accent-soft); text-decoration: none; }
 .subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+/* Groups the tabs without adding a second row: the rule sits inside the bar's own
+   line, short enough to stay under the underline of an active tab beside it. */
+.subnav-sep {
+  align-self: center; flex: 0 0 auto; width: 1px; height: 1.15rem;
+  margin: 0 .45rem; background: var(--line);
+}
 
 /* The header controls share one height + box model so they line up (the cycle
    chooser next to them matches it from its own scoped styles). */

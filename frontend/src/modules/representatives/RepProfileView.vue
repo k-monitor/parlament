@@ -9,7 +9,6 @@ import { store, loadMeta, cycleLabel } from '../../store.js'
 import { formatDate, formatDateLocal, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
-import BarChart from '../../components/BarChart.vue'
 import PieChart from '../../components/PieChart.vue'
 import ActivityBoard from '../../components/ActivityBoard.vue'
 import HelpTip from '../../components/HelpTip.vue'
@@ -63,7 +62,7 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 // Long lists (bills, votes, speeches) are collapsed to a preview so the profile
 // stays scannable; a per-section toggle reveals the rest of what's loaded.
 const COLLAPSE_LIMIT = 8
-const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false, declarations: false, overtime: false })
+const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false, declarations: false })
 function shown(list, key) {
   return expanded[key] ? list : list.slice(0, COLLAPSE_LIMIT)
 }
@@ -204,24 +203,13 @@ const PLACEHOLDER =
     '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="110"><rect width="110" height="110" fill="#e7e5df"/><circle cx="55" cy="44" r="22" fill="#bdb9af"/><rect x="18" y="74" width="74" height="40" rx="20" fill="#bdb9af"/></svg>')
 function onImgErr(e) { e.target.src = PLACEHOLDER }
 
-// Newest sitting day first, matching the reading order of every other list on
-// the profile — the backend returns `over_time` oldest → newest.
-const overTimeItems = computed(() => {
-  if (!stats.value) return []
-  return stats.value.over_time.map((p) => ({
-    label: `${formatDate(p.date)}`,
-    value: p.speech_count,
-    sub: p.session_id,
-    // Each bar is a sitting day the MP spoke on — link it to that day's page.
-    to: p.session_id ? { name: 'session', params: { id: p.session_id } } : undefined,
-  })).reverse()
+// Busiest sitting day in scope, so each day row's mini bar reads as a share of
+// it. Taken over every day (not just the shown ones) so the scale doesn't shift
+// under the reader when the list is expanded.
+const maxDayCount = computed(() => {
+  if (!speechDays.value) return 0
+  return Math.max(0, ...speechDays.value.days.map((d) => d.count || 0))
 })
-
-// An MP with a long career speaks on hundreds of sitting days, and one bar each
-// makes the card taller than the rest of the page put together. Collapsed, the
-// chart shows only the first COLLAPSE_LIMIT — the most recent days.
-const shownOverTimeItems = computed(() =>
-  expanded.overtime ? overTimeItems.value : overTimeItems.value.slice(0, COLLAPSE_LIMIT))
 
 // Vote-value chip colour by normalized code, matching the Votes module palette.
 const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote', absent: 'absent' }
@@ -287,7 +275,7 @@ async function load() {
   for (const m of [dayCache, openDays, voteDayCache, openVoteDays])
     for (const k of Object.keys(m)) delete m[k]
   expanded.questions = expanded.lawbills = expanded.other = expanded.votes
-    = expanded.days = expanded.declarations = expanded.overtime = false
+    = expanded.days = expanded.declarations = false
   try {
     // Everything on the profile is scoped to the global cycle scope
     // (store.cycles; empty = all cycles), so the page never mixes in an
@@ -492,17 +480,6 @@ watch(() => store.cycles.join(','), load)
               </div>
             </div>
 
-            <div v-if="overTimeItems.length" style="margin-top:1rem;">
-              <BarChart
-                :items="shownOverTimeItems"
-                :caption="$t('profile.speechesOverTime')"
-                :unit="$t('reps.speeches')"
-              />
-              <button v-if="overTimeItems.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
-                :aria-expanded="expanded.overtime" @click="expanded.overtime = !expanded.overtime">
-                {{ expanded.overtime ? $t('profile.showLess') : $t('profile.showMore') }}
-              </button>
-            </div>
           </section>
 
           <section class="card pad" v-if="profile.faction_history && profile.faction_history.length">
@@ -664,13 +641,22 @@ watch(() => store.cycles.join(','), load)
           <section class="card pad" ref="speechesSection">
             <h2>{{ $t('profile.speeches') }} <span class="muted small" v-if="speechDays">({{ speechDays.total }})</span></h2>
             <p v-if="speechDays && speechDays.total === 0" class="muted">{{ $t('profile.noSpeeches') }}</p>
-            <ul v-else-if="speechDays" class="daylist">
+            <ul v-else-if="speechDays" class="daylist speechdays">
               <li v-for="d in shown(speechDays.days, 'days')" :key="d.session_id" class="dayitem">
                 <button type="button" class="dayhead" :aria-expanded="!!openDays[d.session_id]" @click="toggleDay(d)">
                   <span class="caret" aria-hidden="true">{{ openDays[d.session_id] ? '▾' : '▸' }}</span>
                   <strong>{{ formatDate(d.date) }}</strong>
                   <span class="muted small daycount">{{ d.count }} {{ $t('profile.speechesDayCount') }}</span>
-                  <span class="muted small" v-if="d.seconds">⏱ {{ formatSpeakingTime(d.seconds) }}</span>
+                  <!-- Mini bar: this day's speech count as a share of the MP's
+                       busiest day, so the list itself carries the shape the
+                       separate per-day chart used to show. Decorative — the
+                       count beside it is the accessible reading. With a single
+                       day there is nothing to compare against, so it's left out
+                       rather than drawn as a full-width slab. -->
+                  <span class="daybar" v-if="maxDayCount && speechDays.days.length > 1" aria-hidden="true">
+                    <span class="daybar-fill" :style="{ width: Math.round((d.count / maxDayCount) * 100) + '%' }"></span>
+                  </span>
+                  <span class="muted small daytime" v-if="d.seconds">⏱ {{ formatSpeakingTime(d.seconds) }}</span>
                 </button>
                 <div v-if="openDays[d.session_id]" class="daybody">
                   <p v-if="dayCache[d.session_id] && dayCache[d.session_id].loading" class="muted small">…</p>
@@ -784,6 +770,16 @@ watch(() => store.cycles.join(','), load)
 .dayhead:hover { background: var(--accent-soft); }
 .dayhead .caret { color: var(--ink-faint); font-size: .8rem; }
 .dayhead .daycount { margin-right: auto; }
+/* speech days carry a proportional mini bar, so the count no longer has to push
+   the rest of the row apart — the bar takes the free space next to it, and the
+   speaking time keeps its right edge whether or not a bar is drawn */
+.speechdays .dayhead .daycount { margin-right: 0; white-space: nowrap; }
+.speechdays .dayhead .daytime { margin-left: auto; white-space: nowrap; }
+.daybar {
+  flex: 1 1 40px; max-width: 170px; min-width: 32px;
+  height: 8px; border-radius: 999px; background: #eceae4; overflow: hidden;
+}
+.daybar-fill { display: block; height: 100%; border-radius: 999px; background: var(--accent); min-width: 3px; }
 .daybody { padding: 0 .7rem .6rem; }
 .daybody .speechlist { margin-top: .2rem; }
 .daybody .speechitem { border-color: var(--line); }

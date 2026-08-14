@@ -445,7 +445,6 @@ export default {
     vbNotMp: 'Not an MP at the time',
     vbNotMpNote: 'These votes took place before (or after) their mandate, so they are not counted in the participation total.',
     billsUnavailable: 'Bills-submitted data will be available once the Bills module ships.',
-    speechesOverTime: 'Speeches per sitting',
     activity: 'Activity',
     activityHelp: 'Daily activity: the number of speeches given and documents submitted on that day. Darker means more activity. We got the idea from GitHub\'s similar chart.',
     activityAriaLabel: 'Activity calendar: {days} active days',

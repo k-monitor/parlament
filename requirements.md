@@ -431,7 +431,7 @@ selector** that scopes every period-aware view at once.
     election data elects, the same standing exception to CYC-2 it already is — it
     states that cycle on the page. Windowing to a cycle *other* than the one the
     map describes is therefore the one place the window does not reach;
-    `PARLAMONITOR_EVK_LOOKUP=0` turns the page off outright.
+    `PARLAMONITOR_EVK_LOOKUP=0` turns the lookup off outright.
 
 ---
 
@@ -967,6 +967,9 @@ site-wide behaviour, not a per-view nicety.
   - A card must read **the same under every chip**: in the mixed list an MP is
     still identified by their faction and an advocate by their nationality, so the
     office slot is filled in only for the speakers who have neither (REP-12).
+  - The page's search box also has a **second mode**, keyed by place instead of by
+    name: *"Ki a képviselőm?"* (REP-10), which answers the same question for a
+    reader who knows where they live but not who represents them.
 - **REP-2 (MUST).** A **representative profile** shows: name, photo (if available),
   current/past faction(s) with their **real start/end dates** (REP-14), the
   **mandate term** and, where it ended early, why (REP-14), constituency, Wikidata
@@ -1087,10 +1090,28 @@ site-wide behaviour, not a per-view nicety.
   basic question a citizen has about the House is *which of these people is mine*,
   and nothing in the corpus answers it: `parlament.hu` records the single-member
   constituency an MP won (*"Budapest 12. OEVK"*, REP-2) but never says **where** that
-  constituency is, nor how to get from a place to it. The site therefore carries its
-  own **page in the Representatives section's tab bar** (§REP-1's precedent) that
-  takes a **settlement** and returns the constituency it belongs to and the MP who
-  holds it, each linking to their profile (REP-1/REP-2).
+  constituency is, nor how to get from a place to it. The site therefore answers it as
+  the **place mode of the *Felszólalók* page** (REP-1): the same question that page
+  answers by name, keyed by a **settlement** instead, returning the constituency it
+  belongs to and the MP who holds it, each linking to their profile (REP-1/REP-2).
+  - **A mode of that page, not a page beside it.** Finding an MP by name and finding
+    one by place are the same errand, so both live in the one search card, switched
+    by a two-way control at its top. A reader who does not know their MP's name —
+    the reader this feature exists for — should not have to discover that a separate
+    page exists for their case, and one who does should not have to leave the list to
+    check where a constituency is.
+  - Each mode is a **route**, so the lookup **keeps the URL it was published under**
+    (`/representatives/lookup`, with its own share card): a resolved answer stays
+    linkable and citable (SEA-6 in spirit), Back moves between the modes as between
+    pages, and an inbound link still lands on the lookup and nothing else. The page
+    heading stays *Felszólalók* — as it does under the category chips — and the card
+    carries the question as its own heading.
+  - The place mode **replaces** the name field, the category chips, the filters and
+    the rows; it does not filter them. The answer is **one MP, not a list**, and what
+    makes it an answer — the constituency, its boundaries, the MP's contact details,
+    the provenance note and the cycle it holds for — does not fit a list row. Nor can
+    the two modes share their state: both search boxes take a `q`, but there it means
+    a person's name and here a place, so switching mode carries nothing across.
   - The mapping and the boundaries come from the **National Election Office**'s
     published election data (`valasztas.hu`), the only source that has them: the
     per-settlement constituency list, the constituency boundary polygons, and each
@@ -1142,7 +1163,8 @@ site-wide behaviour, not a per-view nicety.
     boundary geometry is fetched **only when a split settlement is actually opened**,
     and a total outage surfaces as an honest "unavailable" — never an empty or
     invented answer (cf. SCR-5). The whole feature is **switchable off** (OPS-4), in
-    which case its tab and endpoints disappear like a disabled module's (EXT-6).
+    which case its mode switch, its route and its endpoints disappear like a disabled
+    module's (EXT-6).
 
 - **REP-11 (SHOULD).** **The office holders (*tisztségviselők*) are browsable as a
   listing of their own.** The office-holder registry already dates each person's

@@ -31,7 +31,6 @@ export default {
     // A Felszólalók oldal a képviselőket, a nemzetiségi szószólókat és az egyéb
     // felszólalókat egy listában mutatja, kategóriacsipekkel (REP-1).
     representatives: 'Felszólalók',
-    lookup: 'Ki a képviselőm?',
     // A két mandátum nélküli kategória neve: a csipeken és a profilról visszavezető
     // linken is ez áll.
     advocates: 'Nemzetiségi szószólók',
@@ -278,6 +277,11 @@ export default {
   },
   reps: {
     title: 'Felszólalók',
+    // A keresőkártya tetején álló váltó: ugyanaz a kérdés név szerint (a lista,
+    // REP-1) vagy település szerint („Ki a képviselőm?”, REP-10). A hely szerinti
+    // ág címkéje a lookup.title, hogy a kérdés egy helyen legyen megírva.
+    searchMode: 'Keresés módja',
+    modeName: 'Név szerint',
     // Kategóriacsipek a keresőmező alatt: alapból a képviselők (REP-1).
     category: 'Kategória',
     role: {

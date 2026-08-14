@@ -99,13 +99,19 @@ const routes = [
     component: () => import('./modules/portfolios/PortfolioView.vue'), props: true,
   },
   {
-    // "Who represents me?" — find your own constituency and its MP (REP-10). Also
-    // declared before `/representatives/:id`. The guard below leaves its `?cycle=`
-    // alone like every other page, but the view ignores the scope: it answers for
-    // the cycle the constituency boundaries belong to (see the view).
+    // "Who represents me?" — find your own constituency and its MP (REP-10). Not a
+    // page of its own but the **place mode of the Felszólalók page**: the same
+    // question ("which of these people is mine") keyed by a settlement instead of
+    // a name, so the same component serves it and swaps its search card and list
+    // for the lookup panel. It keeps this URL — the address it was published
+    // under, with its own share card (og.py) — so existing links, and a resolved
+    // answer's own address, stay valid. Declared before `/representatives/:id`
+    // like the other static segments. The guard below leaves its `?cycle=` alone
+    // like every other page, but the panel ignores the scope: it answers for the
+    // cycle the constituency boundaries belong to (see the panel).
     path: '/representatives/lookup', name: 'lookup',
     meta: { module: 'representatives' },
-    component: () => import('./modules/representatives/ConstituencyLookupView.vue'),
+    component: () => import('./modules/representatives/RepListView.vue'),
   },
   {
     path: '/representatives/:id', name: 'profile', meta: { module: 'representatives' },

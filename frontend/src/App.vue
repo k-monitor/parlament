@@ -38,10 +38,13 @@ const NAV_SECTIONS = {
       // Felszólalók (REP-1/REP-9/REP-12): one page for everyone who takes the
       // floor. `advocates` / `speakers` / `allSpeakers` are its category chips,
       // not tabs of their own — they keep their URLs, so the tab has to claim
-      // them the way it claims a detail page.
+      // them the way it claims a detail page. `lookup` ("Ki a képviselőm?",
+      // REP-10) is claimed the same way: it is that page's second search mode —
+      // the same question keyed by place rather than by name — reached from the
+      // switch in its search card rather than from a tab of its own, which put
+      // the two ways of finding an MP in two different places.
       { name: 'representatives', key: 'representatives',
-        detail: ['advocates', 'speakers', 'allSpeakers', 'profile'] },
-      { name: 'lookup', key: 'lookup' },
+        detail: ['advocates', 'speakers', 'allSpeakers', 'lookup', 'profile'] },
       { name: 'officials', key: 'officials', detail: ['profile'] },
       // Tárcák (§6C): the institution behind those offices. Its own module, so
       // the tab goes when the module is switched off (EXT-6) while the rest of
@@ -74,14 +77,14 @@ function sectionActive(id) { return NAV_SECTIONS[id].match.includes(route.name) 
 // cycles in scope; across the whole corpus that comparison is meaningless, so
 // it's hidden while the global scope is "all cycles" (router.js bounces the
 // route to match). It is also hidden outright while COHESION_ENABLED is off
-// (features.js). The constituency lookup likewise disappears when the backend
-// reports the feature off (its external source is unconfigured). Either way a
-// section can be left with a single tab, in which case the sub-tab bar is
-// redundant with the top nav and hidden entirely (see the `v-if` below).
+// (features.js). Either way a section can be left with a single tab, in which
+// case the sub-tab bar is redundant with the top nav and hidden entirely (see the
+// `v-if` below). (The constituency lookup switches off the same way — its
+// external source can be unconfigured — but it is a mode of the Felszólalók page
+// now, so its own search card hides the switch, not this bar.)
 const sectionTabs = computed(() =>
   (currentSection.value ? currentSection.value.tabs : []).filter((t) => {
     if (t.name === 'cohesion') return COHESION_ENABLED && store.cycles.length > 0
-    if (t.name === 'lookup') return store.featureEnabled('constituency_lookup')
     if (t.name === 'portfolios') return store.moduleEnabled('portfolios')
     return true
   }))

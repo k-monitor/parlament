@@ -2,18 +2,25 @@
 // "Who represents me?" — find your own single-member constituency and its MP
 // (REP-10).
 //
+// The **place mode of the Felszólalók page**: it replaces that page's name search
+// and its list with the question this panel answers, and is reached from the mode
+// switch in the same card (SpeakerSearchModes). It keeps its own route —
+// `/representatives/lookup`, rendered by RepListView — so the address, the share
+// card and inbound links are exactly what they were when it was a tab of its own.
+// Hence a panel rather than a view: the page heading is the host's ("Felszólalók"),
+// and this card carries the question as its own heading.
+//
 // Two steps, because the data supports exactly two cases. Almost every settlement
 // lies wholly inside one constituency, so naming the place *is* the answer and the
-// page shows the MP straight away. The 23 that are split — 15 Budapest districts
-// and 8 large cities — cannot be resolved from a place name at all, so the page
-// hands the reader the boundaries on a map and lets them pick the part they live
-// in.
+// panel shows the MP straight away. The 23 that are split — 15 Budapest districts
+// and 8 large cities — cannot be resolved from a place name at all, so it hands
+// the reader the boundaries on a map and lets them pick the part they live in.
 //
 // The chosen settlement (and constituency) live in the URL, so a resolved answer
-// is shareable and citable like every other view (SEA-6 in spirit). This page is
+// is shareable and citable like every other view (SEA-6 in spirit). This panel is
 // deliberately NOT scoped by the global cycle selector: constituency boundaries
 // are redrawn between elections, so the map answers for exactly one cycle, which
-// the page names rather than infers from the reader's scope.
+// it names rather than infers from the reader's scope.
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -23,6 +30,7 @@ import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import ConstituencyMap from '../../components/ConstituencyMap.vue'
+import SpeakerSearchModes from './SpeakerSearchModes.vue'
 import { copyText } from '../../lib/clipboard.js'
 
 const route = useRoute()
@@ -209,10 +217,15 @@ onUnmounted(() => clearTimeout(copyTimer))
 </script>
 
 <template>
-  <h1>{{ $t('lookup.title') }}</h1>
-  <p class="muted intro">{{ $t('lookup.intro') }}</p>
-
   <form class="card pad searchform" role="search" @submit.prevent="runSearch">
+    <!-- The selected mode's own label is the question ("Ki a képviselőm?"), so the
+         card does not repeat it as a heading two lines below itself; the lede says
+         what to type instead. The page's h1 stays "Felszólalók" (this is one mode
+         of it, as the category chips are one state of its list) and the title
+         `/representatives/lookup` is indexed under is og.py's. -->
+    <SpeakerSearchModes mode="place" />
+    <p class="lede">{{ $t('lookup.intro') }}</p>
+
     <label for="lk-q">{{ $t('lookup.searchLabel') }}</label>
     <div class="row" style="gap:.5rem;">
       <input
@@ -373,7 +386,9 @@ onUnmounted(() => clearTimeout(copyTimer))
 </template>
 
 <style scoped>
-.intro { max-width: 62ch; margin-top: -.4rem; }
+/* Stands in for a heading: it is the first thing read in the card, so it carries
+   the card's colour rather than the muted grey of a footnote. */
+.lede { max-width: 62ch; margin: 0 0 .9rem; color: var(--ink-soft); }
 .searchform label { display: block; font-weight: 600; font-size: .9rem; margin-bottom: .3rem; }
 .hint { margin: .4rem 0 0; }
 

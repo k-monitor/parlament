@@ -1,7 +1,9 @@
 <script setup>
 // Browsable, filterable representative list (REP-1). Filter/sort state is in the
 // URL so a filtered list is shareable.
-import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+import {
+  defineAsyncComponent, ref, reactive, computed, watch, onMounted, onUnmounted,
+} from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
@@ -12,6 +14,15 @@ import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import Pagination from '../../components/Pagination.vue'
+import SpeakerSearchModes from './SpeakerSearchModes.vue'
+
+// "Ki a képviselőm?" (REP-10) is this page's other search mode: the same question
+// — which of these people is mine — keyed by place instead of by name. It answers
+// with one MP rather than a list, so it takes over the card and everything below
+// it instead of filtering the rows. Loaded on demand: it brings a map (and, in
+// turn, Leaflet) that no reader browsing the list should pay for.
+const ConstituencyLookupPanel = defineAsyncComponent(
+  () => import('./ConstituencyLookupPanel.vue'))
 
 const route = useRoute()
 const router = useRouter()
@@ -51,6 +62,12 @@ const ROLE_TABS = [
 ]
 const ROLE_OF_ROUTE = Object.fromEntries(ROLE_TABS.map((x) => [x.name, x.role]))
 const role = computed(() => ROLE_OF_ROUTE[route.name] || 'mp')
+
+// The place mode (the `lookup` route): the panel replaces the search field, the
+// category chips, the filters and the list, so none of the list machinery below
+// runs while it is open — no rows to fetch, and the settlement in `?q=` is not a
+// person's name to search for.
+const place = computed(() => route.name === 'lookup')
 
 // Wording that follows the selected category, so the page never reports "N
 // képviselő" for people who are not representatives, and each category explains
@@ -168,23 +185,39 @@ async function load() {
   }
 }
 
+// The faction filter's options. Fetched when a list is actually shown — the place
+// mode has no filter panel to put them in — and only once per visit.
+async function ensureFactions() {
+  if (factions.value.length) return
+  try { factions.value = (await api.factions()).factions } catch {}
+}
+
 onMounted(async () => {
   await loadMeta().catch(() => {})
-  try { factions.value = (await api.factions()).factions } catch {}
+  if (place.value) return
+  ensureFactions()
   load()
 })
-// Watches the route *name* as well as the query: every category chip shares this
-// component, so switching chip reuses the instance — with only the query watched,
-// the list would keep showing the previous category's mandate.
+// Watches the route *name* as well as the query: every category chip — and the
+// place mode — shares this component, so switching chip reuses the instance
+// instead of remounting it. With only the query watched, the list would keep
+// showing the previous category's mandate.
 watch(() => [route.name, route.query], () => {
+  if (place.value) return
   const q = route.query
   f.q = q.q || ''; f.faction_id = q.faction_id || ''
   f.mandate = q.mandate || ''
   f.sort = q.sort || 'speaking_time'
+  // Coming back from the place mode the options may still be missing: nothing
+  // fetched them on mount, since there was no filter panel to show them in.
+  ensureFactions()
   load()
 })
-// Changing the cycle resets to the first page; the offset reset triggers load via the query watcher.
+// Changing the cycle resets to the first page; the offset reset triggers load via
+// the query watcher. The lookup answers for the cycle its constituency boundaries
+// belong to, so the header's scope is not its business (see the panel).
 watch(() => store.cycles.join(','), () => {
+  if (place.value) return
   if (route.query.offset) router.push({ name: route.name, query: { ...route.query, offset: undefined } })
   else load()
 })
@@ -198,7 +231,14 @@ onUnmounted(() => clearTimeout(searchTimer))
 <template>
   <h1>{{ $t('reps.title') }}</h1>
 
-  <form class="card pad searchform" role="search" @submit.prevent="apply">
+  <!-- Place mode (REP-10): the same question keyed by a settlement instead of a
+       name, so it takes the search card's place — and, since it answers with one
+       MP rather than a list, everything below it too. Its own route, hence its own
+       share card and address (see SpeakerSearchModes). -->
+  <ConstituencyLookupPanel v-if="place" />
+
+  <form v-else class="card pad searchform" role="search" @submit.prevent="apply">
+    <SpeakerSearchModes mode="name" />
     <div class="row" style="gap:.5rem;">
       <input
         id="r-q" type="search" v-model="f.q"
@@ -263,6 +303,7 @@ onUnmounted(() => clearTimeout(searchTimer))
   <p v-if="note" class="muted small rolenote">{{ note }}</p>
 
   <StateBlock
+    v-if="!place"
     :loading="loading" :error="error"
     :empty="!!data && data.representatives.length === 0"
     :empty-text="emptyText"

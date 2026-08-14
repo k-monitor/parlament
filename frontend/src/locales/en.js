@@ -25,7 +25,7 @@ export default {
   // `representatives` is the merged Felszólalók page: representatives, nationality
   // advocates and the other speakers in one list, picked apart by category chips
   // (REP-1). `advocates` / `speakers` name two of those chips.
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', lookup: 'Find your MP', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -213,6 +213,11 @@ export default {
   },
   reps: {
     title: 'Speakers',
+    // The switch at the top of the search card: the same question asked by name
+    // (the list, REP-1) or by place ("Find your MP", REP-10). The place branch is
+    // labelled with lookup.title, so the question is worded in one place only.
+    searchMode: 'Search by',
+    modeName: 'By name',
     // Category chips under the search box; representatives by default (REP-1).
     category: 'Category',
     role: {

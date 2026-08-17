@@ -2362,6 +2362,70 @@ get *one* address for it, and find *content* on it without running the app.
   internal link graph. It MUST be the same content the app renders; a
   crawler-only variant is cloaking.
 
+### 8.7 Social announcements (Bluesky)
+
+Nobody watches a corpus for changes. The site is only useful to someone who
+already thought to open it, so the two things that are genuinely *new* — a sitting
+day becoming readable in full, and the occasional accident worth a smile — are
+pushed to where people already are. The bot is deliberately narrow: it reports what
+the database now holds, in the site's own words, and never editorialises about
+what was said.
+
+- **SOC-1 (SHOULD).** The site MAY post to a **Bluesky** account. Credentials are
+  **environment-only** (OPS-4) — one variable carrying handle + **app password** —
+  and their presence is the feature's on switch: an unconfigured deployment runs
+  the same code path as a no-op. No account secret is ever written to disk, logged,
+  or stored in the database.
+- **SOC-2 (MUST).** A sitting day is announced when it is **fully processed**, and
+  that MUST mean what the site itself means by it (§5.6 SIT-2): every speech has
+  both a transcript and a per-speech video window. `parlament.hu` publishes a day in
+  instalments over days, so this is the one moment at which "you can now read and
+  watch all of it" is a *true* statement — announcing on first ingest would promise
+  a day that is still half-empty.
+- **SOC-3 (SHOULD).** A day post carries **only figures the site can back up** and
+  shows on the page it links to: how many speeches, by how many speakers, over how
+  many agenda items, and the total speaking time as the day's own toplist (§5.4)
+  sums it. Where the stored data is not what it appears to be — `video_duration`
+  holds a *per-speech* clip length, and a day whose speeches carry whole-day offsets
+  starts at midnight — the figure is **omitted rather than approximated**: a made-up
+  number in a public post is worse than a missing one (TRUST-1).
+- **SOC-4 (MAY).** A **haiku** said by accident — a whole transcript sentence that
+  happens to be 5-7-5 in Hungarian syllables, from a mandate-holding member's
+  substantive speech (never the chair's procedural boilerplate, whose formulas
+  land on 17 syllables by coincidence of the formula, not of anybody's speech) —
+  MAY be posted, quoted verbatim and linked to the sentence in the transcript so
+  anyone can check it. It MUST be framed as **accidental**: the speaker wrote no
+  poem, and saying so is the difference between a joke the reader is in on and a
+  claim about somebody's intent.
+- **SOC-5 (MUST).** **Nothing is ever posted twice.** What has been announced is
+  remembered **outside** the content database — which is regenerable by design
+  (DB-3) and gets rebuilt from scratch, so a memory kept inside it would
+  re-announce the entire corpus on the next rebuild.
+- **SOC-6 (MUST).** A **first run announces nothing**: with no memory yet it adopts
+  the current state of the world as already-said. A fresh deployment, a wiped
+  volume or an unreadable state file therefore cannot dump a backlog into the feed
+  — the failure mode of a naive bot, and the one that would get the account muted.
+  Posting that window instead is an explicit opt-in.
+- **SOC-7 (MUST).** The pass is **bounded and resumable**: only days inside a
+  recency window are considered at all (a day that completes months late is not
+  news), at most a handful of posts go out per pass, and a poem quota is counted
+  per sitting day rather than per pass — so a transcript arriving in five
+  instalments still yields one poem, not five. Whatever a failure prevents from
+  going out stays unrecorded and is retried; whatever went out is never repeated.
+- **SOC-8 (SHOULD).** Announcing MUST NOT be able to break the pipeline it rides
+  on. It reads the database **read-only**, holds no lock, writes nothing the site
+  serves, and runs *after* the DB has been updated and swapped in — a failed post
+  leaves a correctly updated site and an entry to retry. A **dry run** (decide,
+  print, send nothing, remember nothing) is available for trying a deployment out
+  before letting it speak.
+
+  > **✅ realized.** `app/social.py` decides and posts, `app/bluesky.py` speaks AT
+  > Protocol over the stdlib (no SDK dependency), `app/haiku.py` holds the syllable
+  > rules — shared with the `find_haikus.py` exploration CLI — and
+  > `app/publication.py` holds the one definition of "fully processed" that the API,
+  > the share cards and the bot all read. The sync pass (`docker/sync-once.sh`) runs
+  > it after each incremental update; `announce [--dry-run]` runs it by hand.
+
 ---
 
 ## 9. Suggested Technology Stack (non-binding)

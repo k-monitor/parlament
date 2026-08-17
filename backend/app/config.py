@@ -389,6 +389,83 @@ class Settings:
     oevk_tolerance: float = float(
         os.environ.get("PARLAMONITOR_OEVK_TOLERANCE", "0.002"))
 
+    # --- Bluesky announcements (§8.7, app/social.py + app/bluesky.py) --------
+    # The bot posts when a sitting day becomes fully processed (SOC-2) and when a
+    # representative accidentally spoke a haiku (SOC-4). Off unless credentials are
+    # configured: `bluesky_auth` is both the secret and the switch.
+    #
+    # ONE variable carries the authentication: handle + app password, colon-
+    # separated — `PARLAMONITOR_BLUESKY_AUTH=parlamonitor.bsky.social:abcd-efgh-ijkl-mnop`.
+    # Create the app password on bsky.app (Settings → Privacy and security → App
+    # passwords); never put the account password here. Nothing is written to disk
+    # but the state file, which holds no credentials.
+    bluesky_auth: str = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_BLUESKY_AUTH") or "").strip())
+    # Alternative to the combined form, for secret stores that inject one value per
+    # key. Ignored when `bluesky_auth` is set.
+    bluesky_handle: str = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_BLUESKY_HANDLE") or "").strip())
+    bluesky_password: str = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_BLUESKY_APP_PASSWORD") or "").strip())
+    # The PDS to post to. bsky.social is the hosted default; point it at a
+    # self-hosted PDS if the account lives there.
+    bluesky_service: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_BLUESKY_SERVICE", "https://bsky.social").strip())
+    bluesky_timeout: int = int(os.environ.get("PARLAMONITOR_BLUESKY_TIMEOUT", "20"))
+    bluesky_user_agent: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_BLUESKY_USER_AGENT",
+                       "Parlamonitor/1.0 (+https://github.com/k-monitor; info@k-monitor.hu)").strip())
+    # Declared post language (app.bsky.feed.post `langs`), so clients don't offer to
+    # translate Hungarian into Hungarian.
+    bluesky_lang: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_BLUESKY_LANG", "hu").strip())
+    # Master switch, independent of the credentials: set to 0 to keep the account
+    # configured but stop the bot (an embargo, a debugging pass) without removing
+    # the secret from the environment.
+    bluesky_announce: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_BLUESKY_ANNOUNCE", "1").strip().lower()
+         not in ("0", "false", "no", "")))
+    # Decide and log the posts, send nothing, record nothing — what to run a new
+    # deployment on for a few days before letting it speak.
+    bluesky_dry_run: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_BLUESKY_DRY_RUN", "0").strip().lower()
+         in ("1", "true", "yes", "on")))
+    # Where the "what has been announced already" file lives. Unset → beside the DB
+    # (the mounted volume on the standard deploy), so it survives restarts and DB
+    # rebuilds. It is the bot's ONLY memory: the content DB is regenerable, so
+    # anything remembered there would re-announce the corpus after a rebuild.
+    bluesky_state: str | None = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_BLUESKY_STATE") or None)
+    # The public origin the posts link to. Defaults to `site_url` — the same
+    # canonical base the share cards use — and exists separately only for a deploy
+    # whose bot should point at a different front (a staging origin, a vanity host).
+    bluesky_base_url: str | None = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_BLUESKY_BASE_URL") or "").strip().rstrip("/") or None)
+    # How far back a sitting day may be and still be announced. A day that only
+    # completes months late is not news, and this also bounds the work: only days
+    # inside the window are ever queried or scanned for haikus. Mirrors the SIT-2
+    # publication-lag grace (app/publication.py), past which a gap is permanent
+    # rather than pending, so nothing outside it is expected to complete anyway.
+    bluesky_max_age_days: int = int(
+        os.environ.get("PARLAMONITOR_BLUESKY_MAX_AGE_DAYS", "30"))
+    # Hard cap on posts per pass. The backstop against a feed flood from an
+    # unexpected backlog (a wiped state file plus --backfill, a re-scrape that
+    # completes twenty days at once): the rest simply waits for the next pass.
+    bluesky_max_posts: int = int(os.environ.get("PARLAMONITOR_BLUESKY_MAX_POSTS", "4"))
+    # Haiku announcements (SOC-4) and their per-sitting-day quota. One a day keeps
+    # them a curiosity rather than the account's whole output; the quota counts
+    # POSTED poems per day, so a transcript arriving in instalments cannot multiply
+    # it. `mps_only` keeps it to mandate-holding members — "a representative said a
+    # haiku" — rather than every minister and advocate who spoke.
+    bluesky_haikus: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_BLUESKY_HAIKUS", "1").strip().lower()
+         not in ("0", "false", "no", "")))
+    bluesky_haiku_per_day: int = int(
+        os.environ.get("PARLAMONITOR_BLUESKY_HAIKU_PER_DAY", "1"))
+    bluesky_haiku_mps_only: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_BLUESKY_HAIKU_MPS_ONLY", "1").strip().lower()
+         not in ("0", "false", "no", "")))
+
     def module_enabled(self, name: str) -> bool:
         return name in self.enabled_modules
 

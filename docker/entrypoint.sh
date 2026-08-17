@@ -45,6 +45,13 @@
 #                    /data; the one-off backfill for the earlier cycles, e.g.
 #                      podman-compose run --rm sync advocates --all-cycles
 #                    (the sync sidecar keeps the latest cycle fresh on its own)
+#   announce         post to Bluesky what the DB now holds (§8.7): a sitting day
+#                    that has become fully processed, and the haikus said on it.
+#                    The `sync` pass already runs this after each update; use it by
+#                    hand to try the configuration out first, e.g.
+#                      podman-compose run --rm init announce --dry-run
+#                    Reads the DB read-only and remembers what it posted beside it,
+#                    so a first run announces nothing (it adopts the current state).
 #   migrate-procedural  re-apply the procedural speech-type rule (STAT-1) to the
 #                    EXISTING DB in place and rebuild the aggregates — needed
 #                    after changing DEFAULT_PROCEDURAL_SPEECH_TYPES, which a
@@ -115,6 +122,14 @@ case "${1:-serve}" in
         shift
         echo "[entrypoint] re-measuring speech readability + diversity in: $DB"
         exec python -m app.loader --remeasure-speeches "$DATA_DIR" "$DB" -v "$@"
+        ;;
+    announce)
+        # Reads the DB (read-only) and its own state file beside it; writes nothing
+        # to /data. Safe to run while the sync sidecar works — it takes no lock
+        # because it changes neither the DB nor the scraper output.
+        shift
+        echo "[entrypoint] announcing new sitting days / haikus from: $DB"
+        exec python -m app.social "$@"
         ;;
     migrate-procedural)
         # Operates on the DB in the volume, NOT on /data — no scrape, no rebuild.

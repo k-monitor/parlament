@@ -36,7 +36,10 @@ one **external** network (`parlamonitor`) and one **external** DB volume
   `parlament.hu` (see [Continuous sync](#continuous-sync-keeping-in-step-with-parlamenthu)).
   It cheaply checks the latest cycle for changes, re-scrapes **only what
   changed**, and updates the DB **incrementally**, swapping the new file in
-  atomically. Optional — drive it from an external cron instead if you prefer.
+  atomically. Each pass then optionally
+  [announces on Bluesky](#announcing-on-bluesky) what it just made available — a
+  sitting day that is now fully processed, and the haikus said on it. Optional —
+  drive it from an external cron instead if you prefer.
 
 ```
                         ┌── parlamonitor_app_blue (uvicorn → FastAPI) ──┐
@@ -544,7 +547,8 @@ future `whisper-*.json` is picked up on the next sync instead of being ignored.
 
 The bundled **`sync`** service keeps the deployment current without a full
 rebuild and without downtime. Every `PARLAMONITOR_SYNC_INTERVAL` seconds it runs
-[`docker/sync-once.sh`](docker/sync-once.sh), which does two cheap steps:
+[`docker/sync-once.sh`](docker/sync-once.sh), which does two cheap steps (plus an
+optional third):
 
 1. **`parlamonitor sync`** — probes the **latest cycle** with a couple of
    list-level Felicitas queries and re-scrapes **only what changed**: a sitting
@@ -559,6 +563,11 @@ rebuild and without downtime. Every `PARLAMONITOR_SYNC_INTERVAL` seconds it runs
    files** into a private snapshot of the live DB, rebuilds the (SQL-only)
    aggregates, and **atomically swaps** the result in (DB-4). It is a fast no-op
    when nothing is newer.
+3. **`app.social`** — [announces on Bluesky](#announcing-on-bluesky) what step 2
+   just made available: a sitting day that has become **fully processed**, and the
+   haikus said on it. A no-op unless `PARLAMONITOR_BLUESKY_AUTH` is set, and never
+   fatal — the DB is already updated and serving, so a failed post is logged and
+   retried on the next pass.
 
 Because the API re-stats the **read-only** DB per request, the swap is picked up on
 the next request — **no restart, no downtime, and only the changed sittings are
@@ -688,7 +697,14 @@ container — the two halves are decoupled by the `processed/*.json` files:
 python -m parlamonitor sync ./data
 # container: reconcile the DB (fast, atomic, zero-downtime)
 podman-compose run --rm init update
+# optional: announce what that made available (a no-op without _BLUESKY_AUTH)
+podman-compose run --rm init announce
 ```
+
+Note the second form runs `update`, not the full `sync` pass, so the
+[Bluesky announcement](#announcing-on-bluesky) step is **not** included — add the
+`announce` line above if you use it. The first form (`run --rm sync sync`) runs
+`sync-once.sh` and therefore announces on its own.
 
 The `sync-once.sh` guard is an `flock`, so overlapping cron runs simply skip.
 
@@ -770,6 +786,19 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_LIX_LENGTH_POLICY` | `nfc` | `nfc`/`graphemes`/`codepoints`/`hu-letters` word-length counting |
 | `PARLAMONITOR_MATTR_WINDOW` | `100` | MATTR sliding window in lemmas; shorter speeches report no MATTR |
 | `PARLAMONITOR_READABILITY_MIN_WORDS` | `50` | speeches shorter than this are not scored at all |
+| **Bluesky announcements** (§8.7) | | posted by the `sync` pass; see [Announcing on Bluesky](#announcing-on-bluesky) |
+| `PARLAMONITOR_BLUESKY_AUTH` | — | `handle:app-password` — the credential **and** the on switch; unset = the bot never runs. Use an [app password](https://bsky.app/settings/app-passwords), never the account password |
+| `PARLAMONITOR_SITE_URL` | _(request's own origin)_ | required for posting: the canonical origin the posts link to (shared with the OG share cards) |
+| `PARLAMONITOR_BLUESKY_ANNOUNCE` | `1` | `0` keeps the account configured but stops posting (embargo, debugging) |
+| `PARLAMONITOR_BLUESKY_DRY_RUN` | `0` | `1` decides + logs the posts, sends nothing, remembers nothing |
+| `PARLAMONITOR_BLUESKY_HAIKUS` | `1` | post accidental 5-7-5 haikus from MPs' speeches (SOC-4); `0` for sitting-day posts only |
+| `PARLAMONITOR_BLUESKY_HAIKU_PER_DAY` | `1` | poems posted per sitting **day** (not per pass, so an instalment-by-instalment transcript can't multiply it) |
+| `PARLAMONITOR_BLUESKY_HAIKU_MPS_ONLY` | `1` | require a mandate-holding member; `0` also includes ministers/advocates who spoke |
+| `PARLAMONITOR_BLUESKY_MAX_AGE_DAYS` | `30` | how far back a day may be and still count as news; also bounds the work (only these days are queried/scanned) |
+| `PARLAMONITOR_BLUESKY_MAX_POSTS` | `4` | hard cap per pass — the flood backstop; the rest waits for the next pass |
+| `PARLAMONITOR_BLUESKY_STATE` | _(`bluesky-state.json` beside the DB)_ | the bot's memory of what it already said. On the `/db` volume by default, so it survives restarts **and** `REBUILD_DB` |
+| `PARLAMONITOR_BLUESKY_SERVICE` | `https://bsky.social` | the PDS to post to (change only for a self-hosted PDS) |
+| `PARLAMONITOR_BLUESKY_LANG` | `hu` | declared post language, so clients don't offer to translate Hungarian into Hungarian |
 
 The diversity half rides the **same Modal deployment, model routing and cycle
 scope** as the word cloud, so it needs no separate credit budget — but it does
@@ -941,6 +970,80 @@ rows keep their counts and read as what they were (transcript searches with no
 module filters), and their `results` stays `NULL` — "never measured" rather than
 a fabricated zero. Nothing to run by hand; the columns are added the first time a
 serving container opens the file.
+
+## Announcing on Bluesky
+
+The `sync` pass can post to a **Bluesky** account when it has something genuinely
+new to report (§8.7):
+
+- a **sitting day that is now fully processed** — every speech has both its
+  transcript and its per-speech video window, which is exactly when the site stops
+  badging the day "Részben feldolgozva". `parlament.hu` publishes a day in
+  instalments over several days, so this is the one moment at which "you can now
+  read and watch all of it" is true;
+- an **accidental haiku** — a transcript sentence of an MP's speech that happens to
+  be 5-7-5 in Hungarian syllables, quoted verbatim and linked to the sentence.
+
+### Setting it up
+
+Create an **app password** on bsky.app (Settings → Privacy and security → App
+passwords) — never use the account password; an app password is scoped and
+revocable. Then one variable carries the credential, and its presence is the
+feature's on switch:
+
+```dotenv
+# .env
+PARLAMONITOR_BLUESKY_AUTH=parlamonitor.bsky.social:abcd-efgh-ijkl-mnop
+# Posts link to the site, so the canonical public origin is required (the OG
+# share cards already use it):
+PARLAMONITOR_SITE_URL=https://parlamonitor.example.org
+```
+
+Try it before letting it speak — this decides what it *would* post, prints it, and
+touches neither the network nor its state file:
+
+```bash
+podman-compose run --rm init announce --dry-run
+```
+
+Then let the sidecar pick it up (`./deploy.sh` refreshes `sync` onto the new
+image), or run one pass by hand:
+
+```bash
+podman-compose run --rm init announce
+podman-compose logs -f sync | grep -i bluesky   # watch it in the sidecar
+```
+
+### What keeps it from flooding the feed
+
+The first run **posts nothing**: with no state file yet it records the recent days
+as already-announced, so a fresh deploy — or a wiped volume — cannot dump a backlog
+into the feed. To announce that window instead, run once with `--backfill`.
+
+Beyond that: only days inside `PARLAMONITOR_BLUESKY_MAX_AGE_DAYS` (30) are
+considered at all, at most `PARLAMONITOR_BLUESKY_MAX_POSTS` (4) go out per pass with
+the rest deferred to the next one, and the haiku quota is counted **per sitting
+day**, so a transcript arriving in five instalments still yields one poem.
+
+### The state file
+
+`bluesky-state.json` lives beside the DB — on the `/db` volume, so it survives
+restarts, code deploys **and** `REBUILD_DB=1`. That is the point: the content DB is
+regenerable (DB-3), so a memory kept inside it would re-announce the whole corpus
+after a rebuild. It records the announced day ids and a hash per posted poem, and no
+credentials. Deleting it is safe but means the next pass re-seeds (and so stays
+quiet about anything already published).
+
+```bash
+# what has been announced so far
+podman exec parlamonitor_sync cat /db/bluesky-state.json | head -40
+```
+
+Posting can never break the pipeline it rides on: the announcer reads the DB
+read-only, holds no lock, and runs *after* the incremental update has been swapped
+in, so a failed post leaves a correctly updated site and an entry to retry on the
+next pass. To stop it while keeping the account configured, set
+`PARLAMONITOR_BLUESKY_ANNOUNCE=0`.
 
 ## Common operations
 

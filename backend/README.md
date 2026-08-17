@@ -11,6 +11,11 @@ app/
   db.py               read-only per-request connection (ING-2, NFR-2)
   search.py           Hungarian FTS5 query builder (SEA-1/SEA-2)
   readability.py      per-speech LIX/RIX + TTR/MATTR via `saphes` (§5.7, READ-1..7)
+  publication.py      is a sitting day fully published? + the Hungarian long date —
+                      shared by the API, the share cards and the announcer (SIT-2)
+  haiku.py            accidental 5-7-5 sentences in the transcript (SOC-4)
+  bluesky.py          minimal AT Protocol client, stdlib-only (§8.7 SOC-1)
+  social.py           what to announce and when, remembered outside the DB (SOC-2..8)
   config.py           env-driven settings + enabled-module set (OPS-4, EXT-6)
   main.py             app factory, /api/v1, OpenAPI docs, /meta manifest (EXT-3/EXT-4, NFR-3)
   modules/
@@ -99,6 +104,25 @@ uvicorn app.main:app --reload                      # http://localhost:8000
 | `PARLAMONITOR_LIX_LENGTH_POLICY` | `nfc` | how a word's letters are counted: `nfc` / `graphemes` / `codepoints` / `hu-letters` (collapses the Hungarian digraphs — a sensitivity check, and it shifts the calibrated share) |
 | `PARLAMONITOR_MATTR_WINDOW` | `100` | MATTR sliding window, in lemmas. A speech shorter than this reports no MATTR (plain TTR is not comparable across lengths) |
 | `PARLAMONITOR_READABILITY_MIN_WORDS` | `50` | speeches shorter than this are not scored at all |
+| `PARLAMONITOR_BLUESKY_AUTH` | — | `handle:app-password` for the announcement bot (§8.7) — the credential **and** the on switch. See [`../DEPLOYMENT.md`](../DEPLOYMENT.md#announcing-on-bluesky) for the rest of the knobs |
+| `PARLAMONITOR_SITE_URL` | — | canonical public origin; required for posting (the posts link to it) and used by the OG share cards |
+
+## Announcements (§8.7)
+
+`python -m app.social` posts on Bluesky when a sitting day has become **fully
+processed** and when a representative accidentally spoke a haiku. It reads the DB
+read-only and remembers what it said in `bluesky-state.json` beside it, so it is
+safe to run repeatedly and from anywhere:
+
+```bash
+python -m app.social --dry-run          # decide + print; send nothing, remember nothing
+python -m app.social                    # one real pass (needs PARLAMONITOR_BLUESKY_AUTH)
+python find_haikus.py --period 43       # the corpus-wide haiku exploration CLI
+```
+
+A first run announces nothing — it adopts the current state of the world as
+already-said, so a fresh checkout cannot post a backlog. The container runs it
+after each sync pass; see [`../DEPLOYMENT.md`](../DEPLOYMENT.md#announcing-on-bluesky).
 
 ## Tests
 

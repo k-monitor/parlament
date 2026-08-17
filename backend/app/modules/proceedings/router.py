@@ -20,6 +20,9 @@ from ...db import (get_db, like_contains, period_in_scope, period_key,
                    period_list, period_sql)
 from ...media import per_speech_clip
 from ...nlp import LINKABLE_LABELS
+# How completely a held day is published (SIT-2). Shared with the Bluesky
+# announcer, whose "fully processed" MUST mean what the site's badge means.
+from ...publication import processing_state
 from ...query_cache import cached_aggregate
 from ... import readability
 from ...search import build_match
@@ -582,43 +585,6 @@ def suggest(q: str = Query(..., min_length=1), limit: int = Query(8, ge=1, le=20
 # Sittings list / browse (use case 2)
 # ---------------------------------------------------------------------------
 
-# parlament.hu publishes a held sitting in instalments and in no fixed order —
-# the speech listing first, then the per-speech video windows (in batches), then,
-# days later, the jegyzőkönyv — so a day can be browsable while still incomplete
-# (2026-07-27: 110 of 166 speeches timed; 2026-07-28: no transcript at all yet).
-# Past this window a still-missing piece is not late but absent for good: a
-# genuinely video-only day (VIE-8), like the 2011-autumn sittings whose record was
-# never digitised. Calling those "being processed" would be a promise that never
-# resolves, so only a recent day is reported as pending. Mirrors the scraper's own
-# publication-lag grace (`proceedings/scrape.py:_TEXT_GRACE`), which stops chasing
-# a day's missing content at the same age.
-_PROCESSING_GRACE_DAYS = 30
-
-
-def _processing_state(status: str, day: str | None, speeches: int,
-                      with_text: int, with_video: int) -> str | None:
-    """How completely a held sitting has been published, as
-    ``complete`` | ``pending`` | ``incomplete`` (SIT-2).
-
-    ``pending`` means a transcript or per-speech video window is still missing but
-    young enough that parlament.hu is expected to publish it (the site marks the
-    day as being processed and the sync keeps chasing it); ``incomplete`` is the
-    same gap on a day old enough that it will not be filled any more. ``None``
-    when the day's own `status` already carries the answer (an announced
-    `scheduled` sitting, or an `awaiting_media` one with nothing to show yet) or it
-    holds no speeches to be complete about."""
-    if status != "published" or not speeches:
-        return None
-    if with_text >= speeches and with_video >= speeches:
-        return "complete"
-    try:
-        held = date.fromisoformat((day or "")[:10])
-    except ValueError:
-        return "incomplete"
-    return ("pending" if (date.today() - held).days <= _PROCESSING_GRACE_DAYS
-            else "incomplete")
-
-
 @router.get("/sessions")
 def list_sessions(period: Optional[List[int]] = Query(
                       None, description="Electoral period number(s)"),
@@ -652,7 +618,7 @@ def list_sessions(period: Optional[List[int]] = Query(
         {**params, "limit": limit, "offset": offset}).fetchall()
     return {"total": total, "limit": limit, "offset": offset,
             "sessions": [{**dict(r),
-                          "processing": _processing_state(
+                          "processing": processing_state(
                               r["status"], r["date"], r["speeches"],
                               r["speeches_with_text"], r["speeches_with_video"])}
                          for r in rows]}
@@ -793,7 +759,7 @@ def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
     # Same completeness signal the sittings list carries (SIT-2), counted off the
     # speech rows already fetched rather than re-queried: the page heading marks a
     # day whose transcript or per-speech video is still arriving.
-    processing = _processing_state(
+    processing = processing_state(
         (s["status"] if "status" in s.keys() else None) or "published", s["date"],
         len(speeches), sum(1 for sp in speeches if sp["has_text"]),
         sum(1 for sp in speeches if sp["video_start"] is not None))

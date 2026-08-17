@@ -41,6 +41,9 @@ from fastapi.responses import HTMLResponse
 
 from .config import settings
 from .db import get_db, period_in_scope
+# The Hungarian long date is shared with the API and the Bluesky announcer, so the
+# three describe the same day the same way (app/publication.py).
+from .publication import hu_date as _hu_date
 
 # --- app-shell loading ------------------------------------------------------
 
@@ -556,27 +559,6 @@ def _vote_body(v, subjects: list, title: str) -> str:
                       else _esc(s["label"])) + "</li>"
             for s in subjects) + "</ul>"
     return _wrap(body)
-
-
-# --- Hungarian date formatting (matches the frontend's locale) --------------
-
-_HU_MONTHS = ("", "január", "február", "március", "április", "május", "június",
-              "július", "augusztus", "szeptember", "október", "november",
-              "december")
-
-
-def _hu_date(iso: str | None) -> str:
-    """`2026-06-18` → `2026. június 18.` (best-effort; passes through on a
-    non-ISO value)."""
-    if not iso:
-        return ""
-    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", iso)
-    if not m:
-        return iso
-    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-    if 1 <= mo <= 12:
-        return f"{y}. {_HU_MONTHS[mo]} {d}."
-    return iso
 
 
 # --- route registration -----------------------------------------------------

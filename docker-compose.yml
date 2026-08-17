@@ -84,6 +84,42 @@ x-timing-env: &timing-env
   PARLAMONITOR_TIMING_BACKEND: ${PARLAMONITOR_TIMING_BACKEND:-auto}
   PARLAMONITOR_WHISPER_MODAL_APP: ${PARLAMONITOR_WHISPER_MODAL_APP:-parlamonitor-whisper}
 
+# Bluesky announcements (§8.7). The sync pass posts when a sitting day becomes
+# FULLY processed (every speech has its transcript and its video window — the same
+# state the site stops badging "Részben feldolgozva") and when a representative
+# accidentally spoke a haiku. Entirely off until _BLUESKY_AUTH is set: that one
+# variable is both the credential and the switch.
+#
+#   .env
+#   PARLAMONITOR_BLUESKY_AUTH=parlamonitor.bsky.social:abcd-efgh-ijkl-mnop
+#
+# Use an APP password (bsky.app → Settings → Privacy and security → App passwords),
+# never the account password. A first run posts nothing: it records the recent days
+# as already-announced, so a fresh deploy or a wiped volume cannot dump a backlog
+# into the feed. Try it out first with:
+#   podman-compose run --rm init announce --dry-run
+x-bluesky-env: &bluesky-env
+  PARLAMONITOR_BLUESKY_AUTH: ${PARLAMONITOR_BLUESKY_AUTH:-}
+  # Posts link to the site, so the bot needs the canonical public origin. Shares
+  # PARLAMONITOR_SITE_URL with the OG share cards; nothing is posted without it.
+  PARLAMONITOR_SITE_URL: ${PARLAMONITOR_SITE_URL:-}
+  # Keep the account configured but stop posting (embargo/debugging), or decide and
+  # log the posts without sending them.
+  PARLAMONITOR_BLUESKY_ANNOUNCE: ${PARLAMONITOR_BLUESKY_ANNOUNCE:-1}
+  PARLAMONITOR_BLUESKY_DRY_RUN: ${PARLAMONITOR_BLUESKY_DRY_RUN:-0}
+  # Haiku posts (SOC-4) and their per-sitting-day quota.
+  PARLAMONITOR_BLUESKY_HAIKUS: ${PARLAMONITOR_BLUESKY_HAIKUS:-1}
+  PARLAMONITOR_BLUESKY_HAIKU_PER_DAY: ${PARLAMONITOR_BLUESKY_HAIKU_PER_DAY:-1}
+  # Flood guards: how far back a day may be to still count as news, and the hard
+  # cap on posts per pass (the rest waits for the next one).
+  PARLAMONITOR_BLUESKY_MAX_AGE_DAYS: ${PARLAMONITOR_BLUESKY_MAX_AGE_DAYS:-30}
+  PARLAMONITOR_BLUESKY_MAX_POSTS: ${PARLAMONITOR_BLUESKY_MAX_POSTS:-4}
+  # The bot's memory of what it has already said. Defaults to `bluesky-state.json`
+  # beside the DB — i.e. on the /db volume, so it survives restarts AND a
+  # REBUILD_DB, which is the point: the content DB is regenerable, so remembering
+  # this inside it would re-announce the whole corpus after a rebuild.
+  PARLAMONITOR_BLUESKY_STATE: ${PARLAMONITOR_BLUESKY_STATE:-}
+
 services:
   # The stable front (see docker/Caddyfile). Owns the published port and load-
   # balances across the two colors with active health checks + request retries,
@@ -115,7 +151,9 @@ services:
     image: parlamonitor:latest
     command: ["ensure-db"]
     environment:
-      <<: [*common-env, *nlp-env]
+      # *bluesky-env so `compose run --rm init announce [--dry-run]` works here too;
+      # `ensure-db` itself never posts (only the sync pass and that verb do).
+      <<: [*common-env, *nlp-env, *bluesky-env]
       # Set to 1 to rebuild the DB from /data on the next run.
       REBUILD_DB: ${REBUILD_DB:-0}
     volumes:
@@ -134,7 +172,7 @@ services:
     image: parlamonitor:latest
     command: ["sync-loop"]
     environment:
-      <<: [*common-env, *nlp-env, *timing-env]
+      <<: [*common-env, *nlp-env, *timing-env, *bluesky-env]
       # How often to poll parlament.hu (seconds). An idle poll is a handful of
       # requests; a change triggers a scoped re-scrape + incremental DB update.
       PARLAMONITOR_SYNC_INTERVAL: ${PARLAMONITOR_SYNC_INTERVAL:-1800}

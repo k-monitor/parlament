@@ -43,4 +43,11 @@ echo "[sync-once] reconciling DB incrementally…"
 cd /app/backend
 python -m app.loader --update "$DATA_DIR" "$DB" -v
 
+# Announce on Bluesky what the reconcile just made available (§8.7): a sitting day
+# that is now fully processed, and the haikus said on it. A no-op without
+# PARLAMONITOR_BLUESKY_AUTH, and never fatal — the DB is already updated and
+# serving, so a failed post must not fail the pass (it retries next time).
+echo "[sync-once] checking for anything to announce…"
+python -m app.social || echo "[sync-once] announcer exited $? — will retry next pass"
+
 echo "[sync-once] $(date -u +%FT%TZ) done."

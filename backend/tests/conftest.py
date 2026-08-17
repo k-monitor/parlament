@@ -30,6 +30,12 @@ os.environ.setdefault("PARLAMONITOR_KMONITOR_LINKS", "0")
 # spawns no flush thread. The `/search` endpoint's record() call becomes a no-op;
 # test_analytics.py exercises the aggregator directly with its own temp DB.
 os.environ.setdefault("PARLAMONITOR_SEARCH_ANALYTICS", "0")
+# And likewise the election-office geography (REP-10's source), which the settlement
+# module's loader pass fetches over HTTP: with it enabled, *every* fixture that builds
+# a DB would pull the national settlement register off valasztas.hu. The two suites
+# that need it — test_constituency_lookup and test_settlements — turn it back on in
+# their own fixtures, over an injected fake fetcher, so no test touches the network.
+os.environ.setdefault("PARLAMONITOR_EVK_LOOKUP", "0")
 
 import pytest
 from fastapi.testclient import TestClient

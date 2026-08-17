@@ -167,6 +167,28 @@ const routes = [
     component: () => import('./modules/votes/VoteView.vue'), props: true,
   },
 
+  // --- settlements module (§6D) ---
+  {
+    path: '/settlements', name: 'settlements', meta: { module: 'settlements' },
+    component: () => import('./modules/settlements/SettlementsView.vue'),
+  },
+  {
+    // The own-constituency measures (TEL-9). **Not linked from anywhere for now** —
+    // the route stays so the page is reachable and citable, but no tab advertises it
+    // (see NAV_SECTIONS in App.vue). Declared before the two-segment settlement route
+    // so "representatives" is never taken for a county code.
+    path: '/settlements/representatives', name: 'settlementReps',
+    meta: { module: 'settlements' },
+    component: () => import('./modules/settlements/SettlementRepsView.vue'),
+  },
+  {
+    // A settlement is identified by the register's own "<maz>/<taz>" key, kept as
+    // two path segments so the URL carries the same id the API does.
+    path: '/settlements/:maz(\\d{2})/:taz(\\d{3})', name: 'settlement',
+    meta: { module: 'settlements' },
+    component: () => import('./modules/settlements/SettlementView.vue'), props: true,
+  },
+
   // --- embeddable figures ---
   // Chrome-free single-chart views meant to be dropped into a third-party page
   // via <iframe> (see EmbedButton). `meta.embed` tells App.vue to render the bare

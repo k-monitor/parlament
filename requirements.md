@@ -1798,6 +1798,350 @@ speeches its minister and state secretaries gave).
 
 ---
 
+## 6D. Functional Requirements — Module: Settlement mentions (Települések)
+
+Parliament is national; almost everything it argues about is local. A road, a
+hospital, a factory, a flood, a closed school — each belongs to a **place**, and
+the transcript names that place. Yet the corpus records places only as words
+inside sentences, so the questions a citizen and a local journalist ask first
+cannot be asked at all today: *has anyone in the House ever mentioned my town —
+and if so, who, when, and in what?*
+
+The inverse question is the sharper one. Hungary has **3 177 settlements**, and a
+plenary term names a few hundred of them. The places that are **never** named are
+not a gap in the data; they are the finding. This module therefore makes the
+settlement a browsable dimension of the corpus — mapped, counted, and
+deliberately showing its **blind spots** — and closes the loop back to the
+representative: whether an MP elected by one constituency actually talks about the
+places in it.
+
+- **TEL-1 (MUST).** The unit is the **settlement as an entity**, not a place-name
+  string: one row per settlement of the official register, carrying its name, its
+  county, its coordinates and the constituency it belongs to. A mention resolves to
+  that entity or it is not a mention — so *„Kaposváron”*, *„Kaposvár”* and
+  *„kaposvári”* are three surface forms of one place, and counting them is counting
+  a place rather than a word (which the word cloud already does, WCLOUD-6).
+- **TEL-2 (MUST).** Extraction is **gazetteer-driven and deterministic**, run at
+  **load time**, never on the request path (cf. WCLOUD-6). The register of
+  settlements is a **closed list of known answers**, which is a fundamentally
+  easier and more auditable problem than open-vocabulary place recognition: the
+  matcher asks "is this token one of these 3 177 names, in one of Hungarian's
+  case forms", not "is this a place". Consequently:
+  - It needs **no model, no GPU and no network at scan time**, so it runs in every
+    install (SCR-6) and every rebuild, and is fully unit-testable — the same
+    property that makes the alignment step testable (TIM-4).
+  - Morphology is handled explicitly, because Hungarian never names a place in the
+    bare nominative when it can inflect it: the **case suffixes** a place takes
+    (*-ban/-ben, -on/-en/-ön, -ra/-re, -ról/-ről, -ból/-ből, -tól/-től, -hoz/-hez,
+    -ig, -ott/-ett/-ött, …*, with the stem lengthening *Kalocsa → Kalocsán* and the
+    *-val/-vel* assimilation *Szeged → Szegeddel*), and the **adjectival/demonym
+    form** (*szegedi*, *nyíregyházi*, *a szegediek*), which is how a speaker most
+    often refers to a place at all (*"a kaposvári kórház"*).
+  - **Procedural/chairing speeches are excluded** (STAT-1), as they are from the
+    word cloud, the toplist and every statistic. This is not only consistency: the
+    printed record's own boilerplate lives there, and the printer's colophon
+    (*„Nyomda: … Bt., Vác”*) closes almost every sitting day — counted, it would
+    have made Vác one of the most-discussed towns in Hungary.
+- **TEL-3 (MUST).** **Precision is the requirement, not recall**, and the module
+  MUST be explicit about why. This feature's headline claim is a claim about
+  **silence** — "the House has never mentioned this village" — and a single false
+  positive does not merely add noise, it *erases* a blind spot and asserts
+  something untrue about a real place. Settlement names collide with ordinary
+  Hungarian on a scale that makes naïve matching worthless: *Baj* (trouble),
+  *Alap* (fund), *Hét* (seven/week), *Bár* (although), *Nyúl* (rabbit), *Pápa*
+  (the Pope), with *Varga*, *Gyula* and *Szabolcs* also being the names of sitting
+  MPs, and *Balaton*, *Velence*, *Zala* and *Hernád* naming a lake, a city, a river
+  and a county far more often than the villages that share those names. The policy
+  is therefore **graded, evidence-based and auditable**:
+  1. **The existing entity layer vetoes.** A candidate whose characters fall inside
+     a recognized **PER or ORG** mention (§4.1's NER layer) is rejected — this is
+     what separates *Varga Mihály* from the village of Varga, and the *Nemzeti
+     Foglalkoztatási Alap* from the village of Alap, without a hand-written rule
+     per name.
+  2. **Ambiguity is measured against the corpus itself**, not guessed: a name whose
+     lower-case form is a frequent lemma in the corpus's own word statistics
+     (`word_doc_freq`, already built), a Hungarian stop-word, or the name of a
+     person in the register, is **ambiguous by derivation** — so the list maintains
+     itself as the corpus grows rather than rotting in code.
+  3. An ambiguous name must **earn** its match: the strongly ambiguous ones require
+     an explicit **place cue** in the sentence (*község, város, település,
+     polgármester, önkormányzat, határában, lakossága, …*), the weakly ambiguous
+     ones a **place-marking case suffix** — a bare capitalized token is not
+     evidence, least of all at the start of a sentence, where capitalization says
+     nothing at all.
+  4. A **small hand-reviewed table** carries only what derivation cannot see — the
+     lake, the river, the world city — each entry naming the homonym it exists for
+     (the pattern §6C/MIN-3 already established: a checked-in table seeded from the
+     data beats a runtime guess).
+  5. Names that are also **county** names are rejected when the sentence goes on to
+     say *megye/vármegye* (*"Veszprém megyére"* is not the town of Veszprém).
+  Rejections are **counted by reason** in the load log, so the policy's effect is
+  observable rather than a matter of faith, and tightening it is a measurable change.
+- **TEL-4 (MUST).** A mention is stored **per sentence**, which makes it a
+  **citation**: from any count on any of this module's pages a reader reaches the
+  sentence that produced it, and from there the speech, the speaker and the moment
+  in the video (VIE-3/VIE-5). A number that cannot be opened is not evidence, and
+  every other aggregate on this site already honours that (WCLOUD-4, SEA-4).
+- **TEL-5 (MUST).** Resolving a settlement to a **real place on the earth** reuses
+  the **National Election Office** data the constituency lookup already depends on
+  (REP-10): the settlement register, each settlement's published **centre point**,
+  and the constituency it belongs to. This adds **no new external dependency** —
+  the same cached, version-resolved, gracefully-degrading source, named on the page
+  as the one thing here that is not from `parlament.hu` (TRUST-1).
+  - **Budapest is handled as what it is**: the register knows only its 23
+    districts, while speakers say *"Budapest"* — by a wide margin the most-named
+    place in the corpus. The capital is therefore its own entity **alongside** its
+    districts, and a district mention is never silently promoted into it (nor a
+    *"Budapest"* mention distributed across 23 districts it says nothing about).
+- **TEL-6 (SHOULD).** The module's front page is a **map of Hungary** showing how
+  often each settlement is named, over the active cycle scope (§4A). Mention
+  frequency spans four orders of magnitude (Budapest against a village named once),
+  so the scale MUST be **compressed and legend-stated**, never raw-linear — a
+  linear scale renders every place except the capital identical and the map says
+  nothing. Intensity is **not the only carrier of meaning** (A11Y-1): every
+  settlement is reachable by name through a folded text search (§4B) and a ranked
+  list beside the map, and the figure is **embeddable** (§4C).
+- **TEL-7 (SHOULD).** **Blind spots are a first-class view, not an absence.** The
+  map can be switched to show the settlements with **no mention at all** in scope,
+  and the module reports the plain numbers — how many of the 3 177 were named, how
+  many were not, and how that breaks down by county — because "1 800 named, 1 300
+  never" is the finding a reader came for. Two honesty rules bind this view:
+  - It states that it measures **plenary mentions in the transcript corpus**, not
+    attention in any wider sense: a village can be well served and never named on
+    the floor of the House.
+  - It states the **cycle scope** it was computed for, since "never mentioned" over
+    one term is a different claim from "never mentioned in the corpus".
+- **TEL-8 (SHOULD).** Each settlement has its **own page**: how often it was named
+  and when (the same over-time histogram shape as SEA-8), **who named it** (ranked
+  speakers, each linking to their profile), the **constituency** it belongs to and
+  the **MP who holds it** (REP-10's join, so the reader lands on the person
+  responsible for the place), and a link into **proceedings search** scoped to it
+  (WCLOUD-4's pattern) plus the citable mentions themselves (TEL-4). A settlement
+  with **no** mentions still has its page, saying so plainly — that page *is* the
+  blind spot, and it is deep-linkable so it can be cited.
+  - **"Who represents it" MUST be answered for one named cycle** — the **latest cycle
+    in the reader's scope** — and the page MUST state which. A seat has one holder at a
+    time but several across the corpus, and `person.constituency` records the seat *a
+    person held*, not who holds it: 95 of its 138 seat labels belong to more than one
+    person, one of them to five. Matched on the label alone the page answered with
+    whichever row came back first — neither current, nor the same on two identical
+    requests, nor visibly wrong. So a candidate must be shown to have **sat in that
+    cycle** (`person_mandate` where the DB has it, else the stored seat corroborated by
+    a `membership` row), and a seat with no holder on record for it is **left
+    unanswered** rather than back-filled from a neighbouring cycle: the labels come from
+    the register of the *current* map, so reaching past a redistricting names the member
+    of a differently drawn constituency that merely shares a name. The same resolver
+    answers the constituency map's cells (TEL-16), so the two cannot disagree.
+- **TEL-9 (SHOULD).** **Does an MP talk about their own constituency?** For every
+  representative elected in a single-member constituency, the module reports two
+  distinct measures over the cycle scope, and MUST NOT conflate them:
+  - **Focus** — what share of their settlement mentions fall on settlements inside
+    **their own** constituency;
+  - **Coverage** — what share of the settlements **in** their constituency they have
+    ever named, which is the local-newspaper question ("has our member ever said
+    the name of our village out loud?") and the one that surfaces a blind spot
+    *inside* a constituency.
+  The rules that keep this fair:
+  - A **list MP** (*országos/területi lista*) has no constituency, so both measures
+    are **omitted, never zeroed** — exactly as an advocate's vote statistics are
+    (REP-9). Absence of a denominator is not a score of nought.
+  - The **electoral map belongs to one cycle** (REP-10's standing exception to
+    CYC-2): boundaries are redrawn between elections, so the measure is computed
+    against the constituency the MP actually held, and the page says which map it
+    used rather than inferring one from the reader's scope.
+  - It is presented as a **neutral fact, never a ranking of diligence** (§1.2): a
+    minister speaks to the nation, a member of an urban list has no village to
+    name, and a low share is not a dereliction. The page says this where the number
+    is shown, and the measure appears on the representative's profile (REP-3) as
+    well as in the module.
+- **TEL-10.** Everything here is **cycle-scoped** (§4A CYC-2) — counts, the map,
+  the blind spots and both TEL-9 measures — with the single, stated exception of
+  the geography itself (TEL-5/REP-10), which answers for the cycle its election
+  produced.
+- **TEL-11.** Every count is a **precomputed aggregate** rebuilt by the loader with
+  the other statistics (REP-7): per settlement per cycle, per settlement per
+  speaker, and the two TEL-9 measures per representative. The request path reads
+  rows and never scans transcript text, so this module's pages meet the same
+  performance budget as the rest of the site (§8.2), and the map is one aggregate
+  request independent of the list beside it (cf. WCLOUD-5).
+- **TEL-12.** The module **states its method** wherever it states a number
+  (TRUST-1/REP-5): that mentions are found by matching the official settlement
+  register against the transcript with Hungarian morphology, that procedural
+  speeches are excluded, that ambiguous names require corroboration, and — the part
+  a reader most needs — that the extraction is **conservative by design**, so a
+  count is a lower bound and a blind spot is "not found", not "provably never said".
+- **TEL-13.** The module is a self-contained vertical slice per EXT-1..6: its own
+  loader step and `settlement` / `settlement_mention` / aggregate tables derived
+  from the shared `sentence`, `speech`, `person` and `entity` rows (EXT-2 — it
+  duplicates none of them), its own `/api/v1/settlements` routes, and its own
+  lazily-loaded frontend views. Its **pages sit in the Felszólalók tab bar**, not in a
+  section of their own (the precedent is Tárcák, MIN-5): the question the module
+  actually answers — whose places get named, and by whom — is a question about members,
+  and a top-level entry beside *Keresés* and *Szavazások* claimed a prominence the
+  reader's own path does not. It **owns no scraping of its own**. Disabling it via
+  `PARLAMONITOR_MODULES` removes its nav entry, routes and the profile panel with no
+  errors (EXT-6), and because its geography comes from the constituency lookup's
+  source, `PARLAMONITOR_EVK_LOOKUP=0` (or an upstream outage) leaves the mentions
+  intact and only the map unavailable — the feature degrades a layer at a time
+  rather than failing whole (cf. REP-10, SCR-5).
+- **TEL-15 (SHOULD).** The map can also be read **in segments** — the settlements
+  binned into **equal-area H3 hexagons** and the bin shaded instead of the places —
+  as an option beside the per-settlement points, not a replacement for them. The two
+  answer different questions and the reader chooses which they are asking:
+  - A point map answers *which places*, and is the right default: the unit of the
+    data is a settlement, and a reader looking for their own town needs to find it.
+  - It is, however, a poor picture of **where** attention falls, for two reasons a
+    hexagon fixes. Point maps encode a quantity as area and then let it overlap, so
+    the dense middle of the country reads as loud whatever the numbers say; and
+    3 178 marks, most of them small, leave the eye no regional pattern. Binning
+    aggregates the overlap away, and **equal-area** bins mean a cell is never loud
+    merely for being large — the flaw that would make a county choropleth of this
+    data useless, since Hungary's counties differ several-fold in area and hold from
+    60 to 358 settlements each.
+  - H3 specifically, rather than a square grid or an administrative unit: its cells
+    are near-equal-area and near-equal-shape at a given resolution, they nest
+    hierarchically so a coarser reading is the same data re-binned rather than
+    recomputed, and hexagons have uniform adjacency — a square grid's diagonal
+    neighbours are 1.41× further than its edge ones, which quietly distorts every
+    visual cluster the reader thinks they see.
+  - **The cell size is deployment config, not a reader-facing control** (OPS-4). It
+    matters, and the trade-off is real — at H3 resolution 4 (≈1 770 km² a cell) Hungary
+    is about 70 cells and the reading is regional; at 5 (≈253 km²) about 400, roughly a
+    district each; at 6 (≈36 km²) about 1 800, finer than the settlement pattern itself
+    and approaching the point map with hexagons drawn round it — but it is a *calibration*
+    of one view, not a question the reader came with. Offered as a control it competed
+    for attention with the two choices that are genuinely theirs (which binning, and
+    which reading), and three knobs over one map is how a figure stops being read at
+    all. So the deployment picks the size, precomputes it, and the endpoint names which
+    one it served.
+  - Both readings of the map (TEL-6 mentions, TEL-7 blind spots) survive the
+    binning, and MUST stay visually distinct: a segment's **mention total** is shaded
+    on the same sequential ramp as the points, while its **share of never-named
+    settlements** is shaded on a neutral one — silence is not a low quantity of
+    speech, and reusing the speech hue for it would say that it is.
+  - **The denominator MUST be disclosed.** A share over one settlement is not a
+    share, and at any workable cell size some cells hold exactly one — so every segment
+    reports the counts behind its shading (`n named of m`), and the caveat under the map
+    says so. This is the same obligation the per-MP ratios carry (TEL-9), for the same
+    reason.
+  - Binning is a **precomputed, cycle-scoped aggregate** like every other count here
+    (TEL-11): each settlement's cell per offered resolution is derived at load time
+    from its coordinates (which never change between register versions), so the
+    request path groups stored rows and never geocodes. Note that a segment payload is
+    **not automatically the cheaper one** — a hexagon costs seven coordinate pairs
+    where a point costs one, so a coarse resolution is smaller than the point map and
+    the finest is larger than it. One more thing the deployment is choosing when it
+    picks a cell size.
+  - It **degrades to the point map**: the H3 library is an ordinary dependency, but
+    where it is absent the loader skips the cell table, the endpoint reports the
+    segmented view unavailable and the UI offers no such option — the map itself is
+    unaffected (EXT-6, and the same posture as every other optional layer here).
+- **TEL-16 (SHOULD).** The map can also be binned into the **106 single-member
+  constituencies** (OEVK), as a third option beside the points and the hexagons. This
+  does **not** contradict TEL-15's argument against an administrative choropleth, and
+  the distinction is the whole point of offering it:
+  - A **county** choropleth is misleading because a county is arbitrary as a
+    denominator — Hungary's counties differ several-fold in area *and* hold from 60 to
+    358 settlements. A **constituency** is near-equal in **electorate** by law, so
+    "the places of these ~75 000 voters were named N times" is comparable from one cell
+    to the next in a way no other Hungarian territorial unit offers. Where the hexagon
+    is the geographically honest unit, this is the *politically* honest one.
+  - It is also the only binning with a **member**. A hexagon cannot be asked why the
+    places inside it are never named; a constituency can, which closes the loop back to
+    TEL-9 on the map itself: each cell reports who holds it and how much of it they have
+    named.
+  - **Its own distortion MUST be disclosed**, because it is exactly the one the hexagons
+    do not have: constituencies are equal in voters but not in area, so a rural cell
+    paints far more of the map than an urban one at the same number. The two segmented
+    views therefore cover each other's weakness, and neither is presented as *the*
+    segmented map.
+  - **The cells overlap, and the payload MUST say so.** 23 settlements — Debrecen,
+    Szeged, Pécs and the split Budapest districts among them — lie in more than one
+    constituency, and a mention names the *place*, never the part of it that falls in
+    one seat. Their mentions are therefore counted in **each** constituency the place
+    belongs to: for the question "are my constituency's places talked about" that is the
+    true answer, and it is already what TEL-9 does for the members who share such a
+    city. Dividing the count between the parts would fabricate a precision the text does
+    not carry. The consequence — that the cells do **not** sum to the national total —
+    is stated under the map with the number of doubly-counted mentions, and each cell
+    reports how many of its settlements it shares.
+  - **The capital is in no cell, and that MUST be stated too.** *Budapest* is its own
+    entity beside its districts (TEL-5) and spans sixteen constituencies, so its
+    mentions — the single largest figure in the corpus, near a quarter of all of them —
+    are attributed to none. Left unsaid, a quiet capital would be the map's most visible
+    and most wrong claim. (Its districts still count, in the constituencies that hold
+    them.)
+  - The **ramp is stretched over the observed range**, not anchored at zero: every
+    constituency holds twenty-odd settlements, so the quietest still counts in the
+    dozens, and anchored at zero two of the four steps would fall where no cell lives —
+    103 of the 106 sharing two colours. The legend states the numeric edges it lands on,
+    so what is drawn is still readable back into a count.
+  - Like TEL-15 it is a **precomputed, cycle-scoped aggregate** (TEL-11) served as
+    GeoJSON, and the boundaries are **generalised at load time**: the office draws them
+    for a street-level map — 99 000 vertices over the 106 — where this view shows the
+    whole country at once, so a Douglas–Peucker pass (tolerance in deployment config,
+    OPS-4) reduces them by roughly seven-eighths for a payload comparable to the point
+    map's. It **degrades a layer at a time**: the names, seats and electorates come from
+    a different upstream file than the geometry, so unreachable boundaries cost this
+    binning alone — not offered rather than drawn as a country with holes in it.
+- **TEL-14 (v1 scope).** v1 is built **entirely from data already in the database**
+  plus the election office's register, so it ships with **no scraper change and no
+  re-scrape**: the matcher, the derived tables, the API, the three pages and the
+  profile panel all read rows the loader already writes. Two things are deliberately
+  **deferred, and named here rather than implied**:
+  - **The map is not yet an embeddable figure** (§4C EMBED-1). It is a strong
+    candidate — a map of who gets talked about is exactly what an article wants — but
+    the embed view is a per-figure registration, and the map is the one figure here
+    whose payload is large enough to want its own thought about caching in a
+    third-party page.
+  - **The TEL-9 table is built but not yet linked.** *Saját körzet* — the
+    per-representative focus/coverage ranking — is complete and its route is live, but
+    no tab advertises it for now: it is the most easily misread page in the module (a
+    ranking of members by a ratio, however carefully caveated, §1.2), and it is held
+    back until that framing has been settled. The same measures remain visible where
+    they carry their own context: on each MP's profile panel, and per cell on the
+    constituency map (TEL-16).
+  - **Colloquial place names beyond Budapest's districts** are not resolved. Within
+    the capital the district names people actually use are recognised
+    (*Zugló, Csepel, Józsefváros*, …), because without them all 23 districts would
+    have been permanent blind spots; elsewhere a settlement is found by its register
+    name and its inflections only. Historic or informal names for other places
+    (a merged village still called by its old name, a district of a county town) are
+    therefore missed — which is a **recall** gap, consistent with TEL-12's statement
+    that a count is a lower bound, not a precision one.
+  > **✅ realized.** `app/settlements.py` holds the matcher — morphology, the four
+  > gates and the reviewed table — and is pure, so it is unit-tested on plain
+  > sentences. The loader's `rebuild_settlements` / `rebuild_settlement_mentions` /
+  > `rebuild_settlement_stats` run after the aggregates (the ambiguity policy derives
+  > from `word_doc_freq`) and are scoped to the changed sittings on an incremental
+  > update; `migrate_settlements.py` builds them into a live DB with no re-scrape and
+  > no full rebuild. Over cycles 39–43 the pass finds **59 545 mentions of 2 019
+  > settlements, leaving 1 159 never named** — and rejects 49 000 candidates, counted
+  > by reason in the load log (24 919 vetoed by the entity layer, 12 590 for want of a
+  > cue, 6 326 for want of a place ending, 3 631 as county readings, 1 513 as
+  > sentence-initial bare names). `/api/v1/settlements` serves the listing, the map,
+  > the coverage summary, a settlement's page with its citations and its MP, and the
+  > TEL-9 measures; the frontend adds *Települések* as the last tab of the Felszólalók
+  > section, with the map + the blind-spot mode and a settlement page, plus a panel on
+  > every MP's profile. A ratio ordering carries a **five-mention floor**, stated on
+  > the page: ranked without one, the top of the list was whoever named exactly one
+  > place that happened to be theirs.
+  >
+  > The map ships in **three binnings** (TEL-6, TEL-15, TEL-16), each a separate cached
+  > aggregate over the same rows: 3 178 points, 398 hexagons at the configured ≈253 km²
+  > (the loader precomputes 70 / 398 / 1 813 for the three sizes an operator may pick
+  > from), and the 106 constituencies. Gzipped that is 66 KB, 33 KB and 79 KB, so no
+  > binning is uniformly the cheap one. The constituency boundaries generalise from **98 858
+  > vertices to 14 046** at the default 220 m tolerance (250 KB stored) in 0.6 s at load
+  > time. Building it surfaced a **pre-existing** join gap worth recording: the county
+  > was renamed *Csongrád → Csongrád-Csanád* in 2020 and parlament.hu never relabelled
+  > the seats, so all four constituencies around Szeged had silently been matching no
+  > member at all — in the TEL-9 table as much as on the map. `valasztas.COUNTY_ALIASES`
+  > reconciles the two spellings at the join while the current name stays the one stored
+  > and shown; the own-constituency measures went from 94 to 98 of the 106 seats.
+
+---
+
 ## 7. Extensibility — Module Architecture
 
 The site must accommodate new data domains (next likely: **Bills/irományok**,

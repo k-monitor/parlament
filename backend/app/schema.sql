@@ -766,3 +766,149 @@ CREATE TABLE portfolio_office (
 );
 CREATE INDEX idx_portfolio_office_slug ON portfolio_office(portfolio_slug);
 CREATE INDEX idx_portfolio_office_person ON portfolio_office(person_id);
+
+-- ---------------------------------------------------------------------------
+-- Settlement mentions — the Települések module (§6D)
+--
+-- The gazetteer itself is a **snapshot of the official register** (Nemzeti
+-- Választási Iroda, the same source as the constituency lookup — TEL-5), stored
+-- rather than fetched per request so the map, the blind-spot counts and the search
+-- are all one indexed read (TEL-11). It is a cache like the rest of the DB (DB-3):
+-- the loader rebuilds it from the source whenever it can reach it, and keeps the
+-- rows it already has when it cannot.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE settlement (
+    id          TEXT PRIMARY KEY,   -- "<maz>/<taz>" — the register's own key
+    name        TEXT NOT NULL,      -- register spelling, e.g. "Kaposvár"
+    name_en     TEXT,
+    name_fold   TEXT NOT NULL,      -- accent/case-folded, for the search box (FOLD-1)
+    county      TEXT,
+    lat         REAL,               -- the register's published centre point; NULL
+    lon         REAL,               -- when its county's geometry was unreachable
+    electorate  INTEGER,            -- registered voters, the register's own figure
+    -- Why this name needs corroboration before a match counts, or NULL when it is
+    -- unambiguous (TEL-3). Stored so the policy is auditable in the database and
+    -- the methodology note can show it, not only in the code (cf. portfolio_alias).
+    ambiguity   TEXT,               -- 'cue' | 'suffix' | NULL
+    ambiguity_reason TEXT
+);
+CREATE INDEX idx_settlement_fold ON settlement(name_fold);
+CREATE INDEX idx_settlement_county ON settlement(county);
+
+-- Which single-member constituency (or, for the 23 split settlements, which
+-- several) a settlement belongs to. `label` is in the form parlament.hu's MP
+-- records use ("Baranya 4. OEVK"), which is what joins to person_mandate /
+-- person.constituency — the same join REP-10 makes (EXT-2).
+CREATE TABLE settlement_constituency (
+    settlement_id TEXT NOT NULL REFERENCES settlement(id),
+    label         TEXT NOT NULL,
+    number        INTEGER,
+    PRIMARY KEY (settlement_id, label)
+) WITHOUT ROWID;
+CREATE INDEX idx_settlement_constituency_label ON settlement_constituency(label);
+
+-- The 106 single-member constituencies as **territory** — the second binning of the
+-- settlement map (§6D TEL-16). `label` is the join key everywhere (the same form
+-- parlament.hu's MP records use, so `settlement_constituency`, `person_mandate` and
+-- `person.constituency` all meet here), and `boundary` is the office's own polygon
+-- generalised for a national view, stored as a GeoJSON ring so the endpoint serves it
+-- without touching geometry. NULL boundary = the names are known but the geometry was
+-- unreachable, which the endpoint reports as "no constituency binning" rather than as
+-- a country with holes in it.
+CREATE TABLE constituency (
+    id            TEXT PRIMARY KEY,   -- "<maz>/<evk>" — the register's own key
+    label         TEXT NOT NULL,      -- "Baranya 4. OEVK"
+    number        INTEGER,
+    county        TEXT,
+    official_name TEXT,               -- the office's name for it, e.g. "Pécs"
+    seat          TEXT,
+    electorate    INTEGER,            -- registered voters; near-equal by design
+    lat           REAL,               -- the office's published centre point
+    lon           REAL,
+    boundary      TEXT                -- JSON [[lon,lat],…], closed, or NULL
+);
+CREATE INDEX idx_constituency_label ON constituency(label);
+
+-- Which H3 cell each settlement's centre falls in, one row per offered resolution
+-- (§6D TEL-15). Derived from the coordinates, which change only when the register
+-- version does, so it is built with the register and never on a request. Absent
+-- entirely when the h3 library is not installed, which is what makes the segmented
+-- map report itself unavailable rather than fail.
+CREATE TABLE settlement_h3 (
+    settlement_id TEXT NOT NULL REFERENCES settlement(id),
+    resolution    INTEGER NOT NULL,
+    cell          TEXT NOT NULL,
+    PRIMARY KEY (settlement_id, resolution)
+) WITHOUT ROWID;
+CREATE INDEX idx_settlement_h3_cell ON settlement_h3(resolution, cell);
+
+-- One row per mention, at **sentence** granularity, so every count on the module's
+-- pages opens onto the sentence that produced it — and from there the speech, the
+-- speaker and the video moment (TEL-4). `form` distinguishes the inflected proper
+-- noun ("Kaposváron") from the demonym ("kaposvári"), which is worth keeping: the
+-- two carry slightly different confidence and the methodology note reports the mix.
+CREATE TABLE settlement_mention (
+    settlement_id TEXT NOT NULL REFERENCES settlement(id),
+    sentence_id   INTEGER NOT NULL REFERENCES sentence(id),
+    speech_uid    TEXT NOT NULL REFERENCES speech(uid),
+    session_id    TEXT NOT NULL REFERENCES session(id),
+    period_number INTEGER,
+    person_id     TEXT REFERENCES person(person_id),
+    surface       TEXT NOT NULL,
+    char_start    INTEGER,
+    char_end      INTEGER,
+    form          TEXT NOT NULL DEFAULT 'name'   -- 'name' | 'demonym'
+);
+CREATE INDEX idx_settlement_mention_settlement
+    ON settlement_mention(settlement_id, period_number);
+CREATE INDEX idx_settlement_mention_sentence ON settlement_mention(sentence_id);
+CREATE INDEX idx_settlement_mention_session ON settlement_mention(session_id);
+CREATE INDEX idx_settlement_mention_person
+    ON settlement_mention(person_id, period_number);
+
+-- Precomputed per settlement per cycle (TEL-11). A NULL period row is the
+-- all-cycles total, matching person_stats/faction_stats' convention. A settlement
+-- with no mentions has **no row**: absence means "never named in scope", which is
+-- exactly the blind spot, and the queries left-join so it reads as zero.
+CREATE TABLE settlement_stats (
+    settlement_id TEXT NOT NULL REFERENCES settlement(id),
+    period_number INTEGER,
+    mention_count INTEGER DEFAULT 0,
+    speech_count  INTEGER DEFAULT 0,
+    speaker_count INTEGER DEFAULT 0,
+    session_count INTEGER DEFAULT 0,
+    first_date    TEXT,
+    last_date     TEXT,
+    PRIMARY KEY (settlement_id, period_number)
+);
+
+-- Who named which settlement, per cycle — the settlement page's speaker ranking
+-- and the raw material for TEL-9's two measures.
+CREATE TABLE settlement_speaker_stats (
+    settlement_id TEXT NOT NULL REFERENCES settlement(id),
+    person_id     TEXT NOT NULL REFERENCES person(person_id),
+    period_number INTEGER,
+    mention_count INTEGER DEFAULT 0,
+    PRIMARY KEY (settlement_id, person_id, period_number)
+);
+CREATE INDEX idx_settlement_speaker_person
+    ON settlement_speaker_stats(person_id, period_number);
+
+-- TEL-9: does a representative talk about their own constituency? Two measures,
+-- deliberately separate — `own_mentions / mention_count` is **focus** (what share
+-- of the places they name are theirs) and `own_named / own_total` is **coverage**
+-- (what share of their own settlements they have ever named). A list MP has no
+-- constituency and therefore **no row at all**: the measure is omitted, never
+-- zeroed (TEL-9), and a missing row is what the API reports as "not applicable".
+CREATE TABLE person_settlement_stats (
+    person_id     TEXT NOT NULL REFERENCES person(person_id),
+    period_number INTEGER NOT NULL,
+    constituency  TEXT NOT NULL,     -- the seat the measure is computed against
+    mention_count INTEGER DEFAULT 0, -- all settlement mentions by this MP in scope
+    own_mentions  INTEGER DEFAULT 0, -- ...of which fall inside their constituency
+    own_named     INTEGER DEFAULT 0, -- distinct settlements of theirs ever named
+    own_total     INTEGER DEFAULT 0, -- settlements in their constituency
+    PRIMARY KEY (person_id, period_number)
+);
+CREATE INDEX idx_person_settlement_period ON person_settlement_stats(period_number);

@@ -40,10 +40,11 @@ try:                                    # POSIX only; the writer lock degrades t
 except ImportError:                     # pragma: no cover - non-POSIX
     fcntl = None
 
-from . import kmonitor, nlp, nlp_modal, portfolios, readability, wikidata
+from . import (kmonitor, nlp, nlp_modal, portfolios, readability, settlements,
+               valasztas, wikidata)
 from .config import settings
 from .parlament_links import bill_page_url
-from .wordfreq import count_words
+from .wordfreq import STOPWORDS, count_words
 
 logger = logging.getLogger("parlamonitor.loader")
 
@@ -2164,6 +2165,499 @@ def rebuild_word_first_seen(conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Settlement mentions — the Települések module (§6D)
+#
+# Three passes, all at load time and none of them needing a model (TEL-2):
+#   1. `rebuild_settlements`        — the register snapshot + the ambiguity policy
+#      (with it, `rebuild_constituencies` and `rebuild_settlement_cells` — the two
+#      geographies the map can be binned on, both functions of the register version)
+#   2. `rebuild_settlement_mentions` — scan transcript text for mentions
+#   3. `rebuild_settlement_stats`   — the aggregates the request path reads
+# They run AFTER `rebuild_aggregates`, because the ambiguity policy is derived from
+# `word_doc_freq` (TEL-3 gate 2), which that pass builds.
+# ---------------------------------------------------------------------------
+
+
+def _ensure_settlement_tables(conn: sqlite3.Connection) -> None:
+    """Create the §6D tables in place if they are missing, so the module also lands
+    on an existing DB through the incremental ``--update`` path (which snapshots the
+    live DB rather than re-running ``schema.sql``) — the same reasoning as
+    ``_ensure_portfolio_tables``."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS settlement (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            name_en     TEXT,
+            name_fold   TEXT NOT NULL,
+            county      TEXT,
+            lat         REAL,
+            lon         REAL,
+            electorate  INTEGER,
+            ambiguity   TEXT,
+            ambiguity_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_settlement_fold ON settlement(name_fold);
+        CREATE INDEX IF NOT EXISTS idx_settlement_county ON settlement(county);
+        CREATE TABLE IF NOT EXISTS settlement_constituency (
+            settlement_id TEXT NOT NULL REFERENCES settlement(id),
+            label         TEXT NOT NULL,
+            number        INTEGER,
+            PRIMARY KEY (settlement_id, label)
+        ) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS idx_settlement_constituency_label
+            ON settlement_constituency(label);
+        CREATE TABLE IF NOT EXISTS constituency (
+            id            TEXT PRIMARY KEY,
+            label         TEXT NOT NULL,
+            number        INTEGER,
+            county        TEXT,
+            official_name TEXT,
+            seat          TEXT,
+            electorate    INTEGER,
+            lat           REAL,
+            lon           REAL,
+            boundary      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_constituency_label ON constituency(label);
+        CREATE TABLE IF NOT EXISTS settlement_h3 (
+            settlement_id TEXT NOT NULL REFERENCES settlement(id),
+            resolution    INTEGER NOT NULL,
+            cell          TEXT NOT NULL,
+            PRIMARY KEY (settlement_id, resolution)
+        ) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS idx_settlement_h3_cell
+            ON settlement_h3(resolution, cell);
+        CREATE TABLE IF NOT EXISTS settlement_mention (
+            settlement_id TEXT NOT NULL REFERENCES settlement(id),
+            sentence_id   INTEGER NOT NULL REFERENCES sentence(id),
+            speech_uid    TEXT NOT NULL REFERENCES speech(uid),
+            session_id    TEXT NOT NULL REFERENCES session(id),
+            period_number INTEGER,
+            person_id     TEXT REFERENCES person(person_id),
+            surface       TEXT NOT NULL,
+            char_start    INTEGER,
+            char_end      INTEGER,
+            form          TEXT NOT NULL DEFAULT 'name'
+        );
+        CREATE INDEX IF NOT EXISTS idx_settlement_mention_settlement
+            ON settlement_mention(settlement_id, period_number);
+        CREATE INDEX IF NOT EXISTS idx_settlement_mention_sentence
+            ON settlement_mention(sentence_id);
+        CREATE INDEX IF NOT EXISTS idx_settlement_mention_session
+            ON settlement_mention(session_id);
+        CREATE INDEX IF NOT EXISTS idx_settlement_mention_person
+            ON settlement_mention(person_id, period_number);
+        CREATE TABLE IF NOT EXISTS settlement_stats (
+            settlement_id TEXT NOT NULL REFERENCES settlement(id),
+            period_number INTEGER,
+            mention_count INTEGER DEFAULT 0,
+            speech_count  INTEGER DEFAULT 0,
+            speaker_count INTEGER DEFAULT 0,
+            session_count INTEGER DEFAULT 0,
+            first_date    TEXT,
+            last_date     TEXT,
+            PRIMARY KEY (settlement_id, period_number)
+        );
+        CREATE TABLE IF NOT EXISTS settlement_speaker_stats (
+            settlement_id TEXT NOT NULL REFERENCES settlement(id),
+            person_id     TEXT NOT NULL REFERENCES person(person_id),
+            period_number INTEGER,
+            mention_count INTEGER DEFAULT 0,
+            PRIMARY KEY (settlement_id, person_id, period_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_settlement_speaker_person
+            ON settlement_speaker_stats(person_id, period_number);
+        CREATE TABLE IF NOT EXISTS person_settlement_stats (
+            person_id     TEXT NOT NULL REFERENCES person(person_id),
+            period_number INTEGER NOT NULL,
+            constituency  TEXT NOT NULL,
+            mention_count INTEGER DEFAULT 0,
+            own_mentions  INTEGER DEFAULT 0,
+            own_named     INTEGER DEFAULT 0,
+            own_total     INTEGER DEFAULT 0,
+            PRIMARY KEY (person_id, period_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_person_settlement_period
+            ON person_settlement_stats(period_number);
+    """)
+    conn.commit()
+
+
+def rebuild_settlements(conn: sqlite3.Connection) -> int:
+    """Refresh the settlement register snapshot from the National Election Office
+    (TEL-5) and re-derive the ambiguity policy over it (TEL-3).
+
+    Degrades a layer at a time rather than failing whole (cf. REP-10): an
+    unreachable source leaves whatever rows the DB already has — the electoral map
+    is static between elections, so a stale register is a fine register — and only a
+    first build with no source at all leaves the module empty, which the API reports
+    as "not built" rather than as an empty Hungary (EXT-6).
+    """
+    _ensure_settlement_tables(conn)
+    try:
+        data = valasztas.register()
+    except valasztas.LookupUnavailable as exc:
+        have = conn.execute("SELECT COUNT(*) FROM settlement").fetchone()[0]
+        logger.warning("Settlement register unavailable (%s); keeping the %d "
+                       "settlements already stored", exc, have)
+        return have
+
+    rows = data["settlements"]
+    # The capital as its own entity beside its districts (TEL-5): the register knows
+    # only "Budapest 05. kerület", speakers say "Budapest", and it is the most-named
+    # place in the corpus by a factor of four.
+    rows = rows + [{
+        "id": settlements.BUDAPEST_ID, "name": settlements.BUDAPEST_NAME,
+        "name_en": "Budapest", "county": "Budapest", "electorate": None,
+        "lat": settlements.BUDAPEST_POINT[0], "lon": settlements.BUDAPEST_POINT[1],
+        # Deliberately no constituency: the capital spans 16 of them, and naming
+        # any one of them here would answer REP-10's question wrongly.
+        "constituencies": [],
+    }]
+
+    conn.execute("DELETE FROM settlement_constituency")
+    conn.executemany(
+        """INSERT INTO settlement(id, name, name_en, name_fold, county, lat, lon,
+                                  electorate)
+           VALUES (?,?,?,?,?,?,?,?)
+           ON CONFLICT(id) DO UPDATE SET
+               name=excluded.name, name_en=excluded.name_en,
+               name_fold=excluded.name_fold, county=excluded.county,
+               lat=excluded.lat, lon=excluded.lon,
+               electorate=excluded.electorate""",
+        [(r["id"], r["name"], r.get("name_en"), settlements.fold(r["name"]),
+          r.get("county"), r.get("lat"), r.get("lon"), r.get("electorate"))
+         for r in rows])
+    conn.executemany(
+        "INSERT OR REPLACE INTO settlement_constituency(settlement_id, label, number) "
+        "VALUES (?,?,?)",
+        [(r["id"], c["label"], c["number"])
+         for r in rows for c in (r.get("constituencies") or [])])
+
+    rebuild_constituencies(conn)
+    rebuild_settlement_cells(conn)
+    gazetteer = _settlement_gazetteer(conn)
+    conn.execute("UPDATE settlement SET ambiguity = NULL, ambiguity_reason = NULL")
+    # Keyed on the register spelling, which is the name the reader sees: a district's
+    # colloquial aliases carry their own (stricter) tier inside the matcher, but the
+    # row's note is about "Budapest 09. kerület", not about "Csepel".
+    conn.executemany(
+        "UPDATE settlement SET ambiguity = ?, ambiguity_reason = ? WHERE name = ?",
+        [("cue" if name in gazetteer.need_cue else "suffix",
+          gazetteer.reasons.get(name), name)
+         for name in sorted(gazetteer.need_cue | gazetteer.need_suffix)])
+    conn.commit()
+    logger.info("Settlement register: %d settlements (%d need a place cue, %d a "
+                "place suffix), NVI data version %s", len(rows),
+                len(gazetteer.need_cue), len(gazetteer.need_suffix), data["version"])
+    return len(rows)
+
+
+def rebuild_constituencies(conn: sqlite3.Connection) -> int:
+    """Store the 106 constituencies as territory — labels, seats, electorates and a
+    generalised boundary — for the map's constituency binning (TEL-16).
+
+    The boundary is generalised **here**, at load time, and not per request: it is a
+    function of the register version alone, the source rings are two megabytes, and
+    Douglas–Peucker over 99 000 vertices has no business on a request path (TEL-11).
+
+    Degrades like the register beside it: an unreachable source leaves whatever rows
+    are already stored, and a reachable index with unreachable geometry stores the
+    constituencies **without** boundaries — which is what makes the endpoint offer no
+    constituency binning at all instead of an incomplete country (EXT-6, SCR-5).
+    """
+    try:
+        data = valasztas.constituencies()
+    except valasztas.LookupUnavailable as exc:
+        have = conn.execute("SELECT COUNT(*) FROM constituency").fetchone()[0]
+        logger.warning("Constituency register unavailable (%s); keeping the %d "
+                       "already stored", exc, have)
+        return have
+    rows = data["constituencies"]
+    conn.executemany(
+        """INSERT INTO constituency(id, label, number, county, official_name, seat,
+                                    electorate, lat, lon, boundary)
+           VALUES (?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(id) DO UPDATE SET
+               label=excluded.label, number=excluded.number, county=excluded.county,
+               official_name=excluded.official_name, seat=excluded.seat,
+               electorate=excluded.electorate, lat=excluded.lat, lon=excluded.lon,
+               boundary=excluded.boundary""",
+        [(r["id"], r["label"], r["number"], r["county"], r["official_name"],
+          r["seat"], r["electorate"], r["lat"], r["lon"],
+          json.dumps(r["boundary"], separators=(",", ":")) if r["boundary"] else None)
+         for r in rows])
+    conn.commit()
+    drawn = sum(1 for r in rows if r["boundary"])
+    logger.info("Constituencies: %d stored, %d with a boundary", len(rows), drawn)
+    return len(rows)
+
+
+def rebuild_settlement_cells(conn: sqlite3.Connection) -> int:
+    """Bin every settlement into its H3 cell, once per offered resolution (TEL-15).
+
+    A cell is a function of the settlement's centre point alone, so this belongs with
+    the register refresh and never with a request: the endpoint groups stored rows.
+    Rebuilt wholesale, which also drops the rows of a resolution no longer offered.
+
+    Without the h3 library the table is left **empty** rather than half-filled, which
+    is what the endpoint reads as "the segmented view is unavailable" (EXT-6).
+    """
+    conn.execute("DELETE FROM settlement_h3")
+    if not settlements.h3_available():
+        logger.info("h3 not installed; the segmented settlement map is unavailable")
+        return 0
+    rows = conn.execute(
+        "SELECT id, lat, lon FROM settlement WHERE lat IS NOT NULL AND lon IS NOT NULL"
+    ).fetchall()
+    cells = [(sid, res, cell)
+             for sid, lat, lon in rows
+             for res in settlements.H3_RESOLUTIONS
+             if (cell := settlements.h3_cell(lat, lon, res))]
+    conn.executemany(
+        "INSERT OR REPLACE INTO settlement_h3(settlement_id, resolution, cell) "
+        "VALUES (?,?,?)", cells)
+    conn.commit()
+    distinct = conn.execute(
+        "SELECT resolution, COUNT(DISTINCT cell) FROM settlement_h3 "
+        "GROUP BY resolution ORDER BY resolution").fetchall()
+    logger.info("Settlement H3 cells: %d rows over %s (%s)", len(cells),
+                ", ".join(f"r{r}" for r in settlements.H3_RESOLUTIONS),
+                ", ".join(f"r{r}: {n} cells" for r, n in distinct) or "none")
+    return len(cells)
+
+
+def _settlement_gazetteer(conn: sqlite3.Connection):
+    """The matcher, built from the stored register plus the corpus's own statistics.
+
+    The ambiguity policy is *measured*, not written down (TEL-3 gate 2): the lemma
+    document frequencies are the word cloud's ``word_doc_freq`` — which is why this
+    runs after ``rebuild_aggregates`` — and the person names are the register's own
+    plus every resolved PER entity key. With no word statistics (a ``--skip-wordcloud``
+    build) the derivation falls back to the stop-word list, the person names and the
+    reviewed table alone, which is weaker but never wrong in the other direction.
+    """
+    names = {r[1]: r[0] for r in conn.execute("SELECT id, name FROM settlement")}
+    freq: dict[str, int] = {}
+    if _table_exists(conn, "word_doc_freq"):
+        freq = {w: n for w, n in conn.execute(
+            "SELECT word, SUM(doc_count) FROM word_doc_freq GROUP BY word")}
+    people: set[str] = set()
+    for row in conn.execute("SELECT lastname, firstname, label FROM person"):
+        for part in ((row[0] or "").split() + (row[1] or "").split()
+                     + (row[2] or "").split()):
+            people.add(part.strip(".,"))
+    if _table_exists(conn, "entity_link"):
+        for (key,) in conn.execute("SELECT entity_key FROM entity_link WHERE kind='PER'"):
+            people.update((key or "").split())
+    return settlements.build(names, lemma_doc_freq=freq,
+                             stopwords=STOPWORDS, person_names=people)
+
+
+def rebuild_settlement_mentions(conn: sqlite3.Connection, *,
+                                only_sessions: set[str] | None = None) -> int:
+    """Extract settlement mentions from transcript sentences into
+    ``settlement_mention`` (TEL-2/TEL-4).
+
+    Procedural/chairing speeches are skipped, as they are by every other statistic
+    (STAT-1) — and here it also removes the printed record's own boilerplate, whose
+    printer colophon ("Nyomda: … Bt., Vác") closes nearly every sitting day and would
+    otherwise have made Vác one of the most-discussed towns in the country.
+
+    The NER layer's PER/ORG spans are passed in as vetoes (TEL-3 gate 1), which is
+    what keeps *Varga Mihály* out of the village of Varga.
+
+    ``only_sessions`` scopes the pass to those sittings (the ``--update`` path);
+    everything else keeps its rows. There is no on-disk cache and none is needed:
+    the scan is a dictionary lookup per capitalized token, ~90 s for the whole
+    4.4-million-sentence corpus, and it is deterministic — nothing to memoize that
+    the DB does not already hold.
+    """
+    _ensure_settlement_tables(conn)
+    gazetteer = _settlement_gazetteer(conn)
+    if not gazetteer.by_name:
+        logger.info("No settlement register loaded; skipping the mention pass")
+        return 0
+
+    if only_sessions:
+        sids = sorted(only_sessions)
+        conn.executemany("DELETE FROM settlement_mention WHERE session_id = ?",
+                         [(s,) for s in sids])
+    else:
+        sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id")]
+        conn.execute("DELETE FROM settlement_mention")
+
+    rejected: dict[str, int] = {}
+    total = 0
+    for sid in sids:
+        rows = conn.execute(
+            """SELECT se.id, se.text, sp.uid, sp.period_number, sp.person_id
+               FROM sentence se
+               JOIN speech sp ON sp.uid = se.speech_id
+               WHERE sp.session_id = ? AND sp.procedural = 0
+                 AND se.text IS NOT NULL AND se.text <> ''""", (sid,)).fetchall()
+        if not rows:
+            continue
+        spans: dict[int, list[tuple[int, int]]] = {}
+        for ent_sid, start, end in conn.execute(
+                """SELECT e.sentence_id, e.char_start, e.char_end
+                   FROM entity e JOIN sentence se ON se.id = e.sentence_id
+                   JOIN speech sp ON sp.uid = se.speech_id
+                   WHERE sp.session_id = ? AND e.char_start IS NOT NULL""", (sid,)):
+            spans.setdefault(ent_sid, []).append((start, end))
+
+        batch = []
+        for sentence_id, text, speech_uid, period, person_id in rows:
+            for m in gazetteer.scan(text, spans.get(sentence_id, ()), rejected):
+                batch.append((m.settlement_id, sentence_id, speech_uid, sid, period,
+                              person_id, m.surface, m.start, m.end, m.form))
+        if batch:
+            conn.executemany(
+                """INSERT INTO settlement_mention(settlement_id, sentence_id,
+                       speech_uid, session_id, period_number, person_id, surface,
+                       char_start, char_end, form)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""", batch)
+            total += len(batch)
+    conn.commit()
+    logger.info("Settlement mentions: %d in %d sitting%s (rejected: %s)", total,
+                len(sids), "" if len(sids) == 1 else "s",
+                ", ".join(f"{k} {v}" for k, v in sorted(rejected.items())) or "none")
+    return total
+
+
+def rebuild_settlement_stats(conn: sqlite3.Connection) -> None:
+    """The aggregates the module's pages read (TEL-11): per settlement, per
+    settlement+speaker, and the two per-representative measures of TEL-9.
+
+    Rebuilt wholesale from ``settlement_mention``, which is cheap (tens of thousands
+    of rows) and keeps the per-cycle and all-cycles rows consistent with each other
+    after an incremental update touched one sitting.
+    """
+    _ensure_settlement_tables(conn)
+    conn.execute("DELETE FROM settlement_stats")
+    conn.execute("DELETE FROM settlement_speaker_stats")
+
+    # Per cycle, then the all-cycles row (period_number IS NULL) — person_stats'
+    # convention, so a multi-cycle scope sums rows and "all cycles" reads one (CYC-4).
+    for group, period in (("sm.period_number", "sm.period_number"), ("NULL", "NULL")):
+        conn.execute(
+            f"""INSERT INTO settlement_stats(settlement_id, period_number,
+                    mention_count, speech_count, speaker_count, session_count,
+                    first_date, last_date)
+                SELECT sm.settlement_id, {period}, COUNT(*),
+                       COUNT(DISTINCT sm.speech_uid),
+                       COUNT(DISTINCT sm.person_id),
+                       COUNT(DISTINCT sm.session_id),
+                       MIN(ss.date), MAX(ss.date)
+                FROM settlement_mention sm
+                JOIN session ss ON ss.id = sm.session_id
+                GROUP BY sm.settlement_id, {group}""")
+        conn.execute(
+            f"""INSERT INTO settlement_speaker_stats(settlement_id, person_id,
+                    period_number, mention_count)
+                SELECT sm.settlement_id, sm.person_id, {period}, COUNT(*)
+                FROM settlement_mention sm
+                WHERE sm.person_id IS NOT NULL
+                GROUP BY sm.settlement_id, sm.person_id, {group}""")
+    conn.commit()
+    _rebuild_person_settlement_stats(conn)
+
+
+def _rebuild_person_settlement_stats(conn: sqlite3.Connection) -> None:
+    """TEL-9: per representative per cycle, how much of their settlement talk is
+    about their **own** constituency, and how much of it they have ever named.
+
+    Two separate measures, never conflated: *focus* (``own_mentions`` of
+    ``mention_count``) and *coverage* (``own_named`` of ``own_total``). A **list MP
+    gets no row at all** — no constituency means no denominator, and a missing row is
+    what the API turns into "not applicable" rather than into a score of nought.
+
+    The seat comes from the per-cycle ``person_mandate`` (REP-14) when the DB has it,
+    falling back to ``person.constituency`` — a point-in-time field that names only
+    the person's latest seat, so on an older DB the measure is attributed to the
+    cycles that seat was actually held in and no other.
+
+    Clears its own table rather than relying on the caller to, so it is safe to run on
+    its own — which it is whenever only the roster changed.
+    """
+    conn.execute("DELETE FROM person_settlement_stats")
+    seats: dict[tuple[str, int], str] = {}
+    if _table_exists(conn, "person_mandate"):
+        for person_id, period, seat in conn.execute(
+                """SELECT person_id, period_number, constituency FROM person_mandate
+                   WHERE constituency IS NOT NULL AND constituency <> ''
+                     AND period_number IS NOT NULL"""):
+            seats[(person_id, period)] = seat
+    # Fill the gaps rather than falling back wholesale: the mandate history is per
+    # cycle but not always complete (a cycle scraped before REP-14 existed, an MP
+    # whose election history upstream never published), and skipping those people
+    # entirely would silently shrink the measure to whoever happens to be well
+    # recorded. Where a mandate row exists it wins; where none does, the person's
+    # single stored seat is attributed to the cycles they actually spoke in, which is
+    # the most this data supports.
+    for person_id, seat, period in conn.execute(
+            """SELECT p.person_id, p.constituency, s.period_number
+               FROM person p JOIN speech s ON s.person_id = p.person_id
+               WHERE p.constituency IS NOT NULL AND p.constituency <> ''
+                 AND s.period_number IS NOT NULL
+               GROUP BY p.person_id, s.period_number"""):
+        seats.setdefault((person_id, period), seat)
+
+    # Which settlements each constituency holds, and how many. Only the seats that
+    # are actual single-member constituencies join here at all: a list seat
+    # ("Országos lista") matches no constituency, so it drops out and its holder
+    # gets no row — which is exactly TEL-9's rule.
+    own: dict[str, set[str]] = {}
+    for label, settlement_id in conn.execute(
+            "SELECT label, settlement_id FROM settlement_constituency"):
+        own.setdefault(label, set()).add(settlement_id)
+    # A seat can be spelled differently in the MP records than in the register — the
+    # county rename behind `valasztas.COUNTY_ALIASES` — so every spelling is a key and
+    # the register's current one is what gets stored. Without this the four seats around
+    # Szeged matched no constituency and their members silently got no row.
+    canonical = {variant: label
+                 for label in own for variant in valasztas.label_variants(label)}
+
+    mentions: dict[tuple[str, int], list[int]] = {}
+    named: dict[tuple[str, int], set[str]] = {}
+    # The capital-as-a-whole is excluded from BOTH sides of the focus ratio. It names
+    # a city of 1.7 million spanning sixteen constituencies, so it is evidence neither
+    # way about whether an MP talks about their own patch — and counted as "somewhere
+    # else" it punished precisely the members it should not: every Budapest MP came out
+    # at 0 % focus, having talked about Budapest. Its districts still count normally,
+    # for the same reason: a district *is* somebody's constituency.
+    for person_id, period, settlement_id, count in conn.execute(
+            """SELECT person_id, period_number, settlement_id, COUNT(*)
+               FROM settlement_mention
+               WHERE person_id IS NOT NULL AND period_number IS NOT NULL
+                 AND settlement_id <> ?
+               GROUP BY person_id, period_number, settlement_id""",
+            (settlements.BUDAPEST_ID,)):
+        key = (person_id, period)
+        seat = canonical.get(seats.get(key))
+        if seat is None:
+            continue
+        total, inside = mentions.setdefault(key, [0, 0])
+        is_own = settlement_id in own[seat]
+        mentions[key] = [total + count, inside + (count if is_own else 0)]
+        if is_own:
+            named.setdefault(key, set()).add(settlement_id)
+
+    conn.executemany(
+        """INSERT INTO person_settlement_stats(person_id, period_number,
+               constituency, mention_count, own_mentions, own_named, own_total)
+           VALUES (?,?,?,?,?,?,?)""",
+        # Stored under the register's current spelling of the seat, not the MP record's
+        # older one, so everything downstream joins on one name.
+        [(person_id, period, canonical[seats[(person_id, period)]], total, inside,
+          len(named.get((person_id, period), ())),
+          len(own[canonical[seats[(person_id, period)]]]))
+         for (person_id, period), (total, inside) in mentions.items()])
+    conn.commit()
+    logger.info("Own-constituency settlement measures for %d MP-cycles", len(mentions))
+
+
+# ---------------------------------------------------------------------------
 # Per-speech readability + lexical diversity (READ-1..7)
 # ---------------------------------------------------------------------------
 
@@ -2658,6 +3152,12 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         # even under --skip-wordcloud (which only drops the lemma pass).
         rebuild_speech_metrics(conn, db_path.parent, lemmas=not skip_wordcloud)
         rebuild_aggregates(conn)
+        # Settlement mentions (§6D) come after the aggregates, not with them: the
+        # ambiguity policy is derived from the word document frequencies that pass
+        # builds (TEL-3). Needs no model — only the register, which is cached.
+        rebuild_settlements(conn)
+        rebuild_settlement_mentions(conn)
+        rebuild_settlement_stats(conn)
         wire_nonmp_photos(conn, Path(data_dir) / "media" / "photos")
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("sessions_loaded", str(loaded)))
@@ -2927,6 +3427,15 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
         # links among them — recomputed from what remains.
         if loaded_sessions or removed:
             rebuild_aggregates(conn)
+            # §6D, after the aggregates for the same reason as in the full build.
+            # The register refresh is cheap (a cached, version-scoped fetch) and the
+            # mention pass is scoped to the sittings that changed; the stats are
+            # rebuilt wholesale so the per-cycle and all-cycles rows stay in step.
+            rebuild_settlements(conn)
+            if loaded_sessions:
+                rebuild_settlement_mentions(conn,
+                                            only_sessions=set(loaded_sessions))
+            rebuild_settlement_stats(conn)
         # Wire any non-MP speaker portraits the scraper has downloaded since the
         # last load (global, cheap — see wire_nonmp_photos). Also runs for an
         # advocates-only update: advocates are non-MP rows, so this is what gives

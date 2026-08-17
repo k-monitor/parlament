@@ -107,6 +107,26 @@ export const api = {
   settlementSearch: (q, limit) => get('/representatives/constituencies/settlements', { q, limit }),
   settlementConstituencies: (maz, taz) =>
     get(`/representatives/constituencies/settlements/${maz}/${taz}`),
+  // Települések (§6D) — settlement mentions, the map and the blind spots. Distinct
+  // from the two `settlement*` helpers above, which belong to REP-10's constituency
+  // lookup: those answer "which constituency is this place in", these answer "how
+  // often does the House name it".
+  settlements: (params) => get('/settlements', params),
+  settlement: (maz, taz, period) => get(`/settlements/${maz}/${taz}`, { period }),
+  settlementMap: (period) => get('/settlements/map', { period }),
+  settlementSummary: (period) => get('/settlements/summary', { period }),
+  // The same map binned into an area instead of drawn per place: equal-area H3
+  // hexagons (TEL-15) or the single-member constituencies (TEL-16). Asked for only
+  // when a reader switches to it, and 503s for a binning the deployment cannot build.
+  // The hexagons' cell size is the deployment's choice, not the reader's, so no
+  // resolution is sent — the endpoint serves the configured one and names it.
+  settlementSegments: (bins, period) =>
+    get('/settlements/map/segments', { bins, period }),
+  settlementTrend: (maz, taz, period) => get(`/settlements/${maz}/${taz}/trend`, { period }),
+  settlementMentions: (maz, taz, params) =>
+    get(`/settlements/${maz}/${taz}/mentions`, params),
+  settlementReps: (params) => get('/settlements/representatives', params),
+  repSettlements: (id, period) => get(`/settlements/representative/${id}`, { period }),
   // bills
   bills: (params) => get('/bills', params),
   bill: (id) => get(`/bills/${id}`),

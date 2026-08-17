@@ -701,7 +701,7 @@ or, more simply, via a `.env` file next to it:
 # .env
 PARLAMONITOR_PORT=8000
 PARLAMONITOR_CORS_ORIGINS=https://parlamonitor.example.org
-PARLAMONITOR_MODULES=                 # empty = all (proceedings,representatives,bills,votes)
+PARLAMONITOR_MODULES=                 # empty = all (proceedings,representatives,bills,votes,portfolios,settlements)
 REBUILD_DB=0
 PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 ```
@@ -730,12 +730,14 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_QUERY_CACHE_TTL` | `300` | seconds to memoize the expensive read-only aggregates (search trend/breakdown, module `/facets`); `0` disables the in-process cache |
 | `PARLAMONITOR_QUERY_CACHE_SIZE` | `256` | max distinct (query+filters) entries kept per cached aggregate endpoint |
 | **Constituency lookup** (REP-10) | | the "Ki a képviselőm?" page; the only feature reading a source other than `parlament.hu` |
-| `PARLAMONITOR_EVK_LOOKUP` | `1` | `0` hides the page and 404s its endpoints |
+| `PARLAMONITOR_EVK_LOOKUP` | `1` | `0` hides the page and 404s its endpoints. It also governs the **settlement-mention module's** geography (§6D TEL-5), which reads the same source: with the lookup off, the loader keeps whatever register it already stored and, on a first build, the Települések pages report "not built" instead of an empty country — the mentions themselves are unaffected |
 | `PARLAMONITOR_VTR_BASE_URL` | `https://vtr.valasztas.hu/ogy2026/data` | National Election Office data tree; its own `config.json` names the current data version, so only this base changes for the next election |
 | `PARLAMONITOR_VTR_CACHE_TTL` | `604800` (7 days) | how long a downloaded file is trusted; the electoral map is fixed between elections, and a *stale* copy is still served when a re-fetch fails |
 | `PARLAMONITOR_VTR_CACHE_DIR` | _(`vtr-cache/` beside the DB)_ | on the standard deploy this lands on the `/db` volume, so a restart costs no re-fetch |
 | `PARLAMONITOR_VTR_TIMEOUT` | `20` | seconds per upstream request |
 | `PARLAMONITOR_VTR_USER_AGENT` | `Parlamonitor/1.0 (…)` | descriptive UA sent upstream |
+| `PARLAMONITOR_H3_RESOLUTIONS` | `4,5,6` | which H3 cell sizes the **segmented** settlement map is precomputed for (§6D TEL-15) — over Hungary 4 ≈ 70 cells, 5 ≈ 400, 6 ≈ 1 800. Readers are **not** offered the choice: the page uses the middle of this set, so a single value here (`5`) pins the served size and skips the rest. Needs the `h3` package; without it the loader skips the cell table and the segmented option never appears |
+| `PARLAMONITOR_OEVK_TOLERANCE` | `0.002` (≈220 m) | how coarsely constituency boundaries are generalised for the settlement map's **constituency** binning (§6D TEL-16), in degrees. The office draws them for a street-level map — 99 000 vertices over the 106 of them — where that view shows the whole country at once; the default is a third of a pixel at a national zoom and stores ~250 KB. Raise it to trade fidelity for payload, `0` to serve them verbatim (~2 MB). Needs no extra package: without reachable geometry the binning is simply not offered |
 | `PARLAMONITOR_MAP_TILE_URL` | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` | basemap for the constituency picker. **Check the provider's usage policy against your traffic** — point this at your own tile server or a paid provider if OSM's doesn't fit |
 | `PARLAMONITOR_MAP_TILE_ATTRIBUTION` | `© OpenStreetMap` (linked) | attribution rendered on the map; must match whatever `MAP_TILE_URL` serves |
 | `PARLAMONITOR_MAP_MAX_ZOOM` | `18` | maximum zoom offered by the tile layer |

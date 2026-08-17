@@ -96,6 +96,28 @@ def constituency_label(county: str, number: int) -> str:
     return f"{county} {number}. OEVK"
 
 
+# Counties whose name parlament.hu still writes in an older form than the election
+# office does. **Csongrád** became *Csongrád-Csanád* in June 2020, but the seats there
+# were never relabelled in the MP records — so the register's "Csongrád-Csanád 2. OEVK"
+# and parlament.hu's "Csongrád 2. OEVK" are one seat, and matching on the string alone
+# leaves all four constituencies around Szeged with no member at all (REP-10, TEL-9).
+# The current name stays the one that is *stored and shown*; the old one is only ever a
+# key to join on.
+COUNTY_ALIASES: dict[str, tuple[str, ...]] = {
+    "Csongrád-Csanád": ("Csongrád",),
+}
+
+
+def label_variants(label: str) -> list[str]:
+    """Every spelling a constituency label may carry in the MP records, the current
+    one first. Anything not covered by `COUNTY_ALIASES` is its own only spelling."""
+    out = [label]
+    for current, older in COUNTY_ALIASES.items():
+        if label.startswith(current + " "):
+            out += [label.replace(current, alt, 1) for alt in older]
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Fetching + caching
 # ---------------------------------------------------------------------------
@@ -285,6 +307,63 @@ def _signed_area(ring: list[list[float]]) -> float:
 def _polygon(ring: list[list[float]]) -> dict | None:
     """A GeoJSON ``Polygon`` geometry around one exterior ring."""
     return {"type": "Polygon", "coordinates": [ring]} if ring else None
+
+
+def simplify(ring: list[list[float]], tolerance: float) -> list[list[float]]:
+    """Douglas–Peucker generalisation of a closed linear ring.
+
+    The upstream constituency boundaries are drawn for a street-level map — 99 000
+    vertices over the 106 of them, some two megabytes of GeoJSON. The segmented map
+    (§6D TEL-16) draws all 106 at once at the scale of the whole country, where that
+    detail is invisible and only the payload is real.
+
+    Recursion is anchored on the ring as an open sequence, so the closing point is
+    stripped first and restored after. A ring that would collapse below a triangle is
+    returned **unsimplified** rather than as a degenerate shape: a boundary is either
+    drawn or it is not, and half of one is worse than the original's weight.
+
+    Each ring is generalised independently, so two neighbours' shared boundary can
+    diverge by up to the tolerance on either side. That is why the segments are drawn
+    with a seam in the surface colour: at the scale this view is for, the gap is a
+    fraction of a pixel and hides inside the seam. Preserving the shared edge exactly
+    would mean carrying the topology, which is a great deal of machinery for a
+    difference nobody can see.
+    """
+    if tolerance <= 0 or len(ring) < 5:
+        return ring
+    closed = ring[0] == ring[-1]
+    pts = ring[:-1] if closed else list(ring)
+    keep = [False] * len(pts)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(pts) - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        x1, y1 = pts[i]
+        x2, y2 = pts[j]
+        dx, dy = x2 - x1, y2 - y1
+        span = (dx * dx + dy * dy) ** 0.5
+        worst, at = -1.0, -1
+        for k in range(i + 1, j):
+            x, y = pts[k]
+            # A zero-length base is the normal case at the top of a ring (its two
+            # anchors are neighbours), so distance falls back to the anchor itself —
+            # which keeps the vertex furthest from it and lets the recursion proceed.
+            dist = (((x - x1) ** 2 + (y - y1) ** 2) ** 0.5 if span == 0
+                    else abs(dx * (y1 - y) - dy * (x1 - x)) / span)
+            if dist > worst:
+                worst, at = dist, k
+        if worst > tolerance:
+            keep[at] = True
+            stack.append((i, at))
+            stack.append((at, j))
+    out = [p for p, k in zip(pts, keep) if k]
+    if len(out) < 3:
+        return ring
+    if closed:
+        out.append(list(out[0]))
+    return out
 
 
 def _bbox(ring: list[list[float]]) -> tuple[float, float, float, float]:
@@ -491,16 +570,179 @@ def _outlines(maz: str, version: str, *,
             for rec in (payload.get("list") or []) if rec.get("taz")}
 
 
+def _oevk_geometry(version: str, *,
+                   fetch: Callable[[str], bytes] | None = None) -> dict[str, dict]:
+    """Every constituency's boundary **and** published centre point, keyed
+    ``"<maz>/<evk>"``. One parse of the one file that holds both, so the split-settlement
+    map (REP-10) and the segmented map (TEL-16) do not each pay for it."""
+    payload = _get_json("OevkPoligonok.json", version, fetch=fetch)
+    out: dict[str, dict] = {}
+    for rec in payload.get("list") or []:
+        maz, evk = rec.get("maz"), rec.get("evk")
+        if not (maz and evk):
+            continue
+        centre = (rec.get("centrum") or "").split()
+        point = None
+        if len(centre) == 2:
+            try:
+                point = [float(centre[1]), float(centre[0])]     # [lon, lat]
+            except ValueError:
+                point = None
+        out[f"{maz}/{evk}"] = {"ring": _ring(rec.get("poligon")), "centre": point}
+    return out
+
+
 def _polygons(version: str, *,
               fetch: Callable[[str], bytes] | None = None) -> dict[str, list[list[float]]]:
     """Every constituency boundary, keyed ``"<maz>/<evk>"``."""
-    payload = _get_json("OevkPoligonok.json", version, fetch=fetch)
-    out: dict[str, list[list[float]]] = {}
+    return {key: geo["ring"]
+            for key, geo in _oevk_geometry(version, fetch=fetch).items()}
+
+
+def _centres_for_county(maz: str, version: str, *,
+                        fetch: Callable[[str], bytes] | None = None) -> dict[str, list[float]]:
+    """Every settlement's published **centre point** in one county, keyed by ``taz``.
+
+    The same per-county topology file the split-settlement map reads (``_outlines``),
+    but taking only its ``centrum`` field — so the settlement-mention map (§6D TEL-5)
+    needs no polygon parsing and no geometry of its own. Returned ``[lon, lat]``,
+    GeoJSON's order, like everything else this module hands out.
+    """
+    payload = _get_json(f"{maz}/Telep-Topo-{maz}.json", version, fetch=fetch)
+    out: dict[str, list[float]] = {}
     for rec in payload.get("list") or []:
-        maz, evk = rec.get("maz"), rec.get("evk")
-        if maz and evk:
-            out[f"{maz}/{evk}"] = _ring(rec.get("poligon"))
+        taz, centre = rec.get("taz"), (rec.get("centrum") or "").split()
+        if not taz or len(centre) != 2:
+            continue
+        try:
+            lat, lon = float(centre[0]), float(centre[1])
+        except ValueError:
+            continue
+        out[taz] = [lon, lat]
     return out
+
+
+def register(*, fetch: Callable[[str], bytes] | None = None) -> dict:
+    """The whole settlement register with coordinates — the gazetteer the Települések
+    module is built from (§6D TEL-5).
+
+    One row per settlement: its register spelling, county, centre point, electorate
+    and the constituency (or constituencies) it belongs to. This is the **only** place
+    the settlement module gets geography from, so it inherits REP-10's source, cache,
+    version resolution and degradation wholesale — including that a merely *stale*
+    copy is preferred to failing.
+
+    Unlike the lookup's per-settlement path this needs **every** county's centre
+    points, so it fetches all 20 topology files once (≈4 MB, then cached). That is
+    why it is called by the **loader**, never on a request: the mention counts it
+    feeds are precomputed (TEL-11). A county whose file cannot be fetched simply
+    yields settlements without coordinates — they stay countable and searchable and
+    only drop off the map (SCR-5).
+    """
+    data = index(fetch=fetch)
+    version = data["version"]
+    counties = sorted({s["maz"] for s in data["settlements"]})
+    points: dict[str, list[float]] = {}
+    for maz in counties:
+        try:
+            for taz, point in _memoized(
+                    ("centres", settings.vtr_base_url, version, maz),
+                    lambda maz=maz: _centres_for_county(maz, version, fetch=fetch)).items():
+                points[f"{maz}/{taz}"] = point
+        except (LookupUnavailable, urllib.error.URLError, OSError, ValueError) as exc:
+            logger.warning("No centre points for county %s (%s); its settlements "
+                           "will have no coordinates", maz, exc)
+
+    rows = []
+    for s in data["settlements"]:
+        sid = f"{s['maz']}/{s['taz']}"
+        point = points.get(sid)
+        rows.append({
+            "id": sid, "name": s["name"], "name_en": s["name_en"],
+            "county": s["county"], "electorate": s["electorate"],
+            "lon": point[0] if point else None,
+            "lat": point[1] if point else None,
+            "constituencies": [
+                {"label": data["constituencies"][f"{s['maz']}/{e}"]["label"],
+                 "number": data["constituencies"][f"{s['maz']}/{e}"]["number"],
+                 "evk": e}
+                for e in s["evks"]],
+        })
+    header = data["header"]
+    return {
+        "version": version,
+        "settlements": rows,
+        "source": {
+            "name": "Nemzeti Választási Iroda",
+            "url": settings.vtr_base_url.rstrip("/"),
+            "version": version,
+            "generated": header.get("generated"),
+            "election_date": header.get("val_dat"),
+        },
+    }
+
+
+def constituencies(*, fetch: Callable[[str], bytes] | None = None,
+                   tolerance: float | None = None) -> dict:
+    """All 106 single-member constituencies with a **generalised boundary** — the
+    territory the settlement map's second binning is drawn on (§6D TEL-16).
+
+    One row per constituency: the label parlament.hu's MP records use (so it joins to
+    `person_mandate` exactly as REP-10 does), the office's own name and seat for it,
+    its electorate, its centre point and its boundary as a GeoJSON ring, generalised
+    to `tolerance` degrees.
+
+    The boundary is **optional**, and a constituency without one is still returned:
+    the names, the seats and the electorates come from a different upstream file than
+    the geometry, so an unreachable polygon file costs the map and not the rest (the
+    endpoint then offers no constituency binning at all rather than a partial country).
+    Called by the **loader**, never on a request — like `register()`, whose caching,
+    version resolution and degradation it inherits wholesale.
+    """
+    data = index(fetch=fetch)
+    version = data["version"]
+    tol = settings.oevk_tolerance if tolerance is None else tolerance
+    geometry: dict[str, dict] = {}
+    try:
+        geometry = _memoized(("oevk-geometry", settings.vtr_base_url, version),
+                             lambda: _oevk_geometry(version, fetch=fetch))
+    except (LookupUnavailable, urllib.error.URLError, OSError, ValueError) as exc:
+        logger.warning("No constituency boundaries (%s); the settlement map's "
+                       "constituency binning will be unavailable", exc)
+
+    rows = []
+    vertices = kept = 0
+    for key, info in sorted(data["constituencies"].items()):
+        geo = geometry.get(key) or {}
+        ring = geo.get("ring") or []
+        vertices += len(ring)
+        boundary = simplify(ring, tol) if ring else []
+        kept += len(boundary)
+        centre = geo.get("centre")
+        rows.append({
+            "id": key, "label": info["label"], "number": info["number"],
+            "county": info["county"], "official_name": info["official_name"],
+            "official_name_en": info["official_name_en"], "seat": info["seat"],
+            "electorate": info["electorate"],
+            "lon": centre[0] if centre else None,
+            "lat": centre[1] if centre else None,
+            "boundary": boundary or None,
+        })
+    if vertices:
+        logger.info("Constituency boundaries: %d vertices generalised to %d at "
+                    "tolerance %g°", vertices, kept, tol)
+    header = data["header"]
+    return {
+        "version": version,
+        "constituencies": rows,
+        "source": {
+            "name": "Nemzeti Választási Iroda",
+            "url": settings.vtr_base_url.rstrip("/"),
+            "version": version,
+            "generated": header.get("generated"),
+            "election_date": header.get("val_dat"),
+        },
+    }
 
 
 def settlement(maz: str, taz: str, *,

@@ -14,7 +14,8 @@ from pathlib import Path
 # Every module the backend knows how to mount. A module absent from
 # PARLAMONITOR_MODULES is never registered: its API routes 404 and the frontend,
 # which reads /api/v1/meta, hides its nav entry (EXT-6).
-ALL_MODULES = ("proceedings", "representatives", "bills", "votes", "portfolios")
+ALL_MODULES = ("proceedings", "representatives", "bills", "votes", "portfolios",
+               "settlements")
 
 # Per-speech types (felszólalás típusa) whose speeches are procedural/chairing
 # and therefore excluded from representative/faction statistics (STAT-1). Kept
@@ -380,6 +381,13 @@ class Settings:
                        '© <a href="https://www.openstreetmap.org/copyright" '
                        'target="_blank" rel="noopener">OpenStreetMap</a>').strip())
     map_max_zoom: int = int(os.environ.get("PARLAMONITOR_MAP_MAX_ZOOM", "18"))
+    # How coarsely constituency boundaries are generalised for the settlement map's
+    # constituency binning (§6D TEL-16), in degrees. The office draws them for a
+    # street-level map — 99 000 vertices over the 106 of them — where that view shows
+    # the whole country at once. 0.002° ≈ 220 m, a third of a pixel at a national
+    # zoom. Raise it to trade fidelity for payload, or set 0 to send them verbatim.
+    oevk_tolerance: float = float(
+        os.environ.get("PARLAMONITOR_OEVK_TOLERANCE", "0.002"))
 
     def module_enabled(self, name: str) -> bool:
         return name in self.enabled_modules

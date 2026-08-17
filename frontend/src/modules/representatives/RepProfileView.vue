@@ -58,6 +58,10 @@ const error = ref(false)
 // a disabled module simply means no section, not an error.
 const showBills = computed(() => store.moduleEnabled('bills'))
 const showVotes = computed(() => store.moduleEnabled('votes'))
+// Települések (§6D). Its own module, so the panel goes when it is switched off
+// (EXT-6) and its failure never touches the rest of the profile.
+const showSettlements = computed(() => store.moduleEnabled('settlements'))
+const settlements = ref(null)
 
 // Long lists (bills, votes, speeches) are collapsed to a preview so the profile
 // stays scannable; a per-section toggle reveals the rest of what's loaded.
@@ -297,7 +301,10 @@ async function load() {
     // The activity board is part of the representatives module (always on); a
     // failure must not break the profile, so it resolves to null on error.
     const activityReq = api.repActivity(props.id, period).catch(() => null)
-    const [p, s, act, days, qd, lb, od, v] = await Promise.all([
+    const settlementsReq = showSettlements.value
+      ? api.repSettlements(props.id, period).catch(() => null)
+      : Promise.resolve(null)
+    const [p, s, act, days, qd, lb, od, v, tel] = await Promise.all([
       api.representative(props.id, period),
       api.repStatistics(props.id, period),
       activityReq,
@@ -306,11 +313,13 @@ async function load() {
       lawBillsReq,
       otherReq,
       votesReq,
+      settlementsReq,
     ])
     if (seq !== loadSeq) return  // superseded by a newer navigation
     profile.value = p; stats.value = s; activity.value = act
     speechDays.value = days; voteDays.value = v
     questions.value = qd; lawBills.value = lb; otherDocs.value = od
+    settlements.value = tel
     // Tell the app shell which person tab this profile belongs under: only the
     // profile response knows which of the four kinds of person this is (one route
     // serves them all), and the sub-tab highlight follows it.
@@ -636,6 +645,55 @@ watch(() => store.cycles.join(','), load)
             </button>
           </section>
 
+          <!-- Which places this member talks about, and whether they are their own
+               (§6D TEL-9). Two measures kept apart, and omitted rather than zeroed
+               for a list MP: absence of a constituency is not a score of nought. -->
+          <section class="card pad" v-if="showSettlements && settlements
+                                          && (settlements.settlements.length || settlements.own)">
+            <div class="sechead">
+              <h2>{{ $t('settlements.profileTitle') }}</h2>
+              <HelpTip :label="$t('settlements.profileTitle')">
+                <p>{{ $t('settlements.repsMethodology') }}</p>
+                <p>{{ $t('settlements.repsCaveat') }}</p>
+              </HelpTip>
+            </div>
+            <div v-if="settlements.own" class="telown">
+              <div class="telstat">
+                <strong>{{ settlements.own.focus == null
+                             ? '—' : Math.round(settlements.own.focus * 100) + '%' }}</strong>
+                <span class="muted small">{{ $t('settlements.profileFocus') }}</span>
+              </div>
+              <div class="telstat">
+                <strong>{{ settlements.own.coverage == null
+                             ? '—' : Math.round(settlements.own.coverage * 100) + '%' }}</strong>
+                <span class="muted small">
+                  {{ $t('settlements.profileCoverage') }}
+                  ({{ settlements.own.own_named }}/{{ settlements.own.own_total }})
+                </span>
+              </div>
+              <p class="muted small telseat">{{ settlements.own.constituency }}</p>
+            </div>
+            <p v-else class="muted small">{{ $t('settlements.profileNoOwn') }}</p>
+
+            <p v-if="!settlements.settlements.length" class="muted small">
+              {{ $t('settlements.profileEmpty') }}
+            </p>
+            <template v-else>
+              <h3 class="telhead">{{ $t('settlements.profileTop') }}</h3>
+              <ul class="tellist">
+                <li v-for="tl in settlements.settlements" :key="tl.id">
+                  <router-link :to="{ name: 'settlement',
+                                      params: { maz: tl.id.split('/')[0],
+                                                taz: tl.id.split('/')[1] } }">
+                    {{ tl.name }}
+                  </router-link>
+                  <span v-if="tl.own" class="ownchip">{{ $t('settlements.profileOwnTag') }}</span>
+                  <span class="muted small telnum">{{ tl.mentions }}</span>
+                </li>
+              </ul>
+            </template>
+          </section>
+
           <!-- Speeches grouped by sitting day; each day is a spoiler that lazily
                loads its speeches on first expand (REP-2). -->
           <section class="card pad" ref="speechesSection">
@@ -795,4 +853,18 @@ watch(() => store.cycles.join(','), load)
 }
 .showmore:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-soft); }
 @media (max-width: 820px) { .pgrid { grid-template-columns: 1fr; } }
+/* §6D settlement panel */
+.telown { display: flex; flex-wrap: wrap; gap: .3rem 1.6rem; align-items: baseline; }
+.telstat { display: flex; flex-direction: column; gap: .05rem; }
+.telstat strong { font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+.telseat { flex: 1 1 100%; margin: .1rem 0 0; }
+.telhead { font-size: .9rem; margin: .8rem 0 .3rem; color: var(--ink-soft); }
+.tellist { list-style: none; padding: 0; margin: 0; display: grid; gap: .1rem; }
+.tellist li { display: flex; align-items: center; gap: .4rem; }
+.tellist .telnum { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* The "own seat" marker is a word, never colour alone (A11Y-1). */
+.ownchip {
+  font-size: .68rem; padding: .05rem .3rem; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); white-space: nowrap;
+}
 </style>

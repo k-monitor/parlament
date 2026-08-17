@@ -43,6 +43,10 @@ export default {
     questions: 'Kérdések',
     votes: 'Szavazások',
     cohesion: 'Frakcióelemzés',
+    // Települések (§6D): a térkép és — második fülként — a saját körzetre
+    // vonatkozó mutatók (TEL-9).
+    settlements: 'Települések',
+    settlementReps: 'Saját körzet',
     about: 'A projektről',
   },
   share: {
@@ -755,6 +759,160 @@ export default {
   // The About copy carries inline links and emphasis, so these paragraphs are
   // rendered with v-html (static, author-written markup — no user input).
   // NB: a literal '@' would be parsed as vue-i18n link syntax; use &#64;.
+  // Települések (§6D) — mely helységeket említi a Ház, és melyeket soha.
+  settlements: {
+    title: 'Települések',
+    intro: 'A parlament országos, de amiről vitázik, az szinte mindig helyi. '
+      + 'Itt az látszik, mely magyar településeket említik a plenáris ülésen, '
+      + 'milyen gyakran és kik — és mely településekről nem esett szó soha.',
+    scope: '{cycle} adatai',
+    unit: 'település',
+    // A két főszám: a lefedettség és a vakfoltok (TEL-7).
+    namedOf: 'említett település ({total}-ból)',
+    neverNamed: 'egyszer sem került szóba',
+    mentionsTotal: 'említés',
+    modeLabel: 'Térkép nézete',
+    modeAll: 'Amiről szó van',
+    modeBlind: 'Vakfoltok',
+    mapLabel: 'Településemlítések térképe',
+    mapFailed: 'A térkép nem tölthető be.',
+    // A térkép melletti figyelmeztetés: mit mér és mit nem (TEL-7/TEL-12).
+    mapCaveat: 'A térkép a plenáris jegyzőkönyvben szereplő említéseket mutatja a '
+      + 'kiválasztott ciklus(ok)ra, nem a településre fordított figyelmet: egy '
+      + 'falut jól szolgálhatnak úgy is, hogy a Ház ülésén nem hangzik el a neve. '
+      + 'A felismerés szándékosan óvatos, ezért minden szám alsó becslés.',
+    noGeometry: 'Ehhez a nézethez nincs elérhető térképi adat.',
+    legendBlind: 'nincs említés',
+    legendBlindOnly: 'egyszer sem említett település',
+    legendScale: 'A körök mérete és színe az említések számát követi, '
+      + 'logaritmikus skálán.',
+    searchPlaceholder: 'Település keresése…',
+    noResults: 'Nincs a szűrésnek megfelelő település.',
+    sortBy: 'Rendezés:',
+    sortMentions: 'Említés szerint',
+    sortName: 'Név szerint',
+    sortElectorate: 'Választók száma szerint',
+    sortFocus: 'Saját körzet aránya',
+    sortCoverage: 'Körzeti lefedettség',
+    clearCounty: '{county} szűrő törlése',
+    binsLabel: 'Térkép felbontása',
+    bins: {
+      points: 'Települések',
+      oevk: 'Választókerületek',
+      h3: 'Szegmensek',
+    },
+    segmentsUnavailable: 'A szegmentált nézet ezen a kiszolgálón nem érhető el. '
+      + 'A települések térképe változatlanul működik.',
+    segmentBlindShare: 'nem került szóba',
+    segmentCounts: '{named} / {total} település került szóba',
+    segmentShared: 'ebből {n} települést más választókerülettel oszt meg',
+    segmentOwn: 'saját körzetéből {named} / {total} települést nevezett meg',
+    legendSegmentScale: 'Egy-egy szegmens egyenlő területű hatszög; a szín a benne '
+      + 'lévő települések összes említését követi, logaritmikus skálán.',
+    legendSegmentBlind: 'A szín a szegmens azon településeinek aránya, amelyek egyszer '
+      + 'sem kerültek szóba. Az arány mögötti darabszám a szegmensre mutatva látszik.',
+    legendOevkScale: 'Egy-egy szín egy egyéni választókerület: a benne lévő '
+      + 'települések összes említése, logaritmikus skálán. A kerületek választói '
+      + 'létszáma közel egyenlő, a területük nem.',
+    legendOevkBlind: 'A szín a választókerület azon településeinek aránya, amelyek '
+      + 'egyszer sem kerültek szóba. A darabszám és a képviselő a kerületre mutatva '
+      + 'látszik.',
+    segmentCaveat: 'Egy szegmensbe néhány település esik, néhányba csak egy — '
+      + 'egy-két település fölött az arány már nem arány, ezért minden szegmens '
+      + 'megmutatja a mögötte lévő darabszámot is.',
+    oevkCaveat: 'A választókerületek választói létszáma közel egyenlő, a területük '
+      + 'nem: egy vidéki kerület ugyanannál a számnál sokkal nagyobb felületet fest a '
+      + 'térképen, mint egy budapesti. Öt kerületben egyetlen település van, '
+      + 'tizenkilencben legfeljebb három — ott az arány mögötti darabszám a lényeg.',
+    oevkUnattributed: 'A „{names}” mint egész ({mentions} említés) egyetlen '
+      + 'választókerülethez sem tartozik — a főváros tizenhat kerületet fed le —, '
+      + 'ezért egyik szín sem tartalmazza; a budapesti kerületek említései igen.',
+    oevkOverlap: '{settlements} település (Debrecen, Szeged, Pécs és a megosztott '
+      + 'budapesti kerületek) egynél több választókerületbe esik. Egy említés a '
+      + 'helyet nevezi meg, nem a kerületrészt, ezért mindegyik érintett kerületnél '
+      + 'számoljuk: {mentions} említés szerepel így többször, a színek összege tehát '
+      + 'nem az országos összeg.',
+    mentionsShort: 'említés',
+    neverShort: 'nem került szóba',
+    blindByCounty: 'Hol van a legtöbb vakfolt?',
+    blindOfTotal: '{blind} / {total} település',
+    methodology: 'Az említéseket a Nemzeti Választási Iroda hivatalos '
+      + 'településjegyzékét a jegyzőkönyv szövegéhez illesztve keressük, a magyar '
+      + 'toldalékokat (Kaposváron, Kaposvárra, kaposvári) is felismerve. Az '
+      + 'ülésvezetői és eljárási felszólalások — mint minden statisztikánkból — '
+      + 'kimaradnak. A köznyelvi szavakkal vagy személynevekkel egyező '
+      + 'településnevek (Baj, Alap, Varga) csak megerősítés mellett számítanak: '
+      + 'ha a mondat helyre utaló toldalékot vagy szót tartalmaz, illetve ha a '
+      + 'név nem egy felismert személy- vagy szervezetnév része. Ezért a számok '
+      + 'alsó becslések, a vakfolt pedig azt jelenti: „nem találtunk említést”, '
+      + 'nem azt, hogy biztosan nem hangzott el.',
+    sourceNote: 'A települések listája, koordinátái és választókerületi beosztása: '
+      + '{source}. Az említések a parlament.hu jegyzőkönyveiből származnak.',
+    // Egy település lapja (TEL-8)
+    notFound: 'Nincs ilyen település.',
+    electorate: '{n} választó',
+    inSpeeches: 'felszólalásban',
+    bySpeakers: 'felszólalótól',
+    between: 'Először {first}, utoljára {last}',
+    neverInScope: 'A kiválasztott ciklusban nem került szóba.',
+    neverExplain: 'Ez a lap maga a vakfolt: a település létezik, csak a plenáris '
+      + 'jegyzőkönyvben nem találtunk rá utalást. Más ciklust választva '
+      + 'változhat az eredmény.',
+    ambiguousCue: 'Ez a településnév köznyelvi szóval vagy személynévvel esik '
+      + 'egybe, ezért csak akkor számoljuk említésnek, ha a mondat egyértelműen '
+      + 'helyről beszél. Az itt látható szám ezért különösen óvatos.',
+    ambiguousSuffix: 'Ez a településnév más szóval is egybeeshet, ezért csak '
+      + 'helyre utaló toldalék vagy szó mellett számoljuk említésnek.',
+    representedBy: 'Ki képviseli?',
+    repUnknownForCycle: 'A(z) {list} képviselőjéről erre a ciklusra nincs adatunk. '
+      + 'Korábbi ciklus képviselőjét nem írjuk ide: a kerületi határokat '
+      + 'választásonként újrarajzolják, így az már nem ugyanaz a terület.',
+    constituencyNote: 'Az egyéni választókerületi beosztás annak a választásnak '
+      + 'az adata, amely a jelenlegi térképet létrehozta; a kerületi határokat '
+      + 'választásonként újrarajzolják. Országos listán bejutott képviselők is '
+      + 'képviselik a települést.',
+    constituencyOnly: 'Választókerülete: {list}.',
+    trendCaption: 'Említések évenként',
+    whoNamedIt: 'Kik említették?',
+    citations: 'Elhangzott mondatok',
+    watch: 'megnézem',
+    searchFor: '„{name}” keresése a jegyzőkönyvben',
+    // Saját körzet (TEL-9)
+    repsTitle: 'Beszélnek a saját körzetükről?',
+    repsIntro: 'Két külön mutató minden egyéni választókerületben megválasztott '
+      + 'képviselőre: mennyire a saját körzetéről beszél, és a körzete '
+      + 'településeiből mennyit említett egyáltalán.',
+    repsCaveat: 'Ez tény, nem szorgalmi rangsor. Egy miniszter az egész országhoz '
+      + 'szól, egy belvárosi képviselőnek nincs faluja, amit említhetne, és az '
+      + 'alacsony arány nem hanyagság. Országos vagy területi listán bejutott '
+      + 'képviselő nem szerepel a listában — nincs körzete, amihez mérni lehetne, '
+      + 'és a nulla nem ugyanaz, mint a „nem értelmezhető”.',
+    repsFloor: 'legalább {n} településemlítéssel',
+    repsUnit: 'képviselő',
+    repsEmpty: 'Ehhez a ciklushoz nincs ilyen adat.',
+    repsMethodology: 'A „saját körzet aránya” a képviselő településemlítéseiből az, '
+      + 'amely a saját választókerületébe esik; a „körzeti lefedettség” a körzete '
+      + 'településeiből az, amelyet valaha említett. A kettő szándékosan külön áll: '
+      + 'a magas arány + alacsony lefedettség azt jelenti, hogy egy településéről '
+      + 'beszél sokat. Budapest mint egész egyik mutatóba sem számít bele (16 '
+      + 'választókerületet fed le, így semmit nem mond a saját körzetről), a '
+      + 'kerületek viszont igen. A körzet ahhoz a ciklushoz tartozik, amelyben a '
+      + 'képviselő a mandátumát viselte.',
+    colRep: 'Képviselő',
+    colConstituency: 'Választókerület',
+    colFocus: 'Saját körzet',
+    colCoverage: 'Lefedettség',
+    colMentions: 'Említés',
+    // A képviselői profil paneljén (TEL-9/REP-3)
+    profileTitle: 'Települések',
+    profileFocus: 'említése a saját körzetéről',
+    profileCoverage: 'körzete településeiből említette',
+    profileNoOwn: 'Nincs egyéni választókerülete, ezért a saját körzetre vonatkozó '
+      + 'mutatók nem értelmezhetők.',
+    profileTop: 'Leggyakrabban említett települések',
+    profileOwnTag: 'saját körzet',
+    profileEmpty: 'A kiválasztott ciklusban nem említett települést.',
+  },
   about: {
     title: 'A projektről',
     body1: 'A <strong>Parlamonitor</strong> a K-Monitor alkalmazása, amely egyszerűen mutatja be az Országgyűlés működését az <a href="https://www.parlament.hu/" target="_blank" rel="noopener">Országgyűlés honlapján</a> közölt adatokon keresztül. Az oldal könnyen áttekinthető és kereshető formában teszi elérhetővé a képviselőkkel, a szavazásokkal és a benyújtott indítványokkal kapcsolatos legfontosabb információkat, illetve ezekből származtatott adatokat, kimutatásokat közöl.',

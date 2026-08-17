@@ -25,7 +25,7 @@ export default {
   // `representatives` is the merged Felszólalók page: representatives, nationality
   // advocates and the other speakers in one list, picked apart by category chips
   // (REP-1). `advocates` / `speakers` name two of those chips.
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', settlements: 'Settlements', settlementReps: 'Own constituency', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -651,6 +651,152 @@ export default {
   // Paragraphs carry inline links / emphasis and are rendered with v-html
   // (static, author-written markup). A literal '@' breaks the vue-i18n
   // message parser — write it as &#64;.
+  // Settlements (§6D) — which places the House names, and which it never does.
+  settlements: {
+    title: 'Settlements',
+    intro: 'Parliament is national, but almost everything it argues about is local. '
+      + 'This is which Hungarian settlements are named in plenary, how often and by '
+      + 'whom — and which have never been mentioned at all.',
+    scope: '{cycle}',
+    unit: 'settlements',
+    namedOf: 'settlements named (of {total})',
+    neverNamed: 'never mentioned once',
+    mentionsTotal: 'mentions',
+    modeLabel: 'Map view',
+    modeAll: 'What is discussed',
+    modeBlind: 'Blind spots',
+    mapLabel: 'Map of settlement mentions',
+    mapFailed: 'The map could not be loaded.',
+    mapCaveat: 'The map shows mentions in the plenary transcript for the selected '
+      + 'cycle(s), not attention in any wider sense: a village can be well served '
+      + 'and never named on the floor of the House. The matching is deliberately '
+      + 'conservative, so every count is a lower bound.',
+    noGeometry: 'No map data is available for this view.',
+    legendBlind: 'no mentions',
+    legendBlindOnly: 'never-mentioned settlement',
+    legendScale: 'Circle size and shade both follow the number of mentions, on a '
+      + 'logarithmic scale.',
+    searchPlaceholder: 'Search for a settlement…',
+    noResults: 'No settlement matches this filter.',
+    sortBy: 'Sort:',
+    sortMentions: 'By mentions',
+    sortName: 'By name',
+    sortElectorate: 'By electorate',
+    sortFocus: 'Own-constituency share',
+    sortCoverage: 'Constituency coverage',
+    clearCounty: 'Clear the {county} filter',
+    binsLabel: 'Map binning',
+    bins: {
+      points: 'Settlements',
+      oevk: 'Constituencies',
+      h3: 'Segments',
+    },
+    segmentsUnavailable: 'The segmented view is not available on this server. '
+      + 'The settlement map is unaffected.',
+    segmentBlindShare: 'never mentioned',
+    segmentCounts: '{named} of {total} settlements mentioned',
+    segmentShared: 'of which {n} are shared with another constituency',
+    segmentOwn: 'has named {named} of {total} settlements in this constituency',
+    legendSegmentScale: 'Each segment is an equal-area hexagon; the shade follows the '
+      + 'total mentions of the settlements inside it, on a logarithmic scale.',
+    legendSegmentBlind: 'The shade is the share of the segment’s settlements that were '
+      + 'never mentioned. Hover a segment for the counts behind the share.',
+    legendOevkScale: 'Each shape is one single-member constituency: the total mentions '
+      + 'of the settlements in it, on a logarithmic scale. Constituencies hold nearly '
+      + 'equal numbers of voters, but not equal areas.',
+    legendOevkBlind: 'The shade is the share of the constituency’s settlements that '
+      + 'were never mentioned. Hover one for the counts and its member.',
+    segmentCaveat: 'A segment holds a handful of settlements and some hold only one — '
+      + 'over one or two places a share is no longer a share, which is why every '
+      + 'segment also reports the counts behind it.',
+    oevkCaveat: 'Constituencies hold nearly equal numbers of voters but not equal '
+      + 'areas: at the same number, a rural one paints far more of the map than a '
+      + 'Budapest one. Five hold a single settlement and nineteen hold three or '
+      + 'fewer — there, the counts behind the share are what matter.',
+    oevkUnattributed: '“{names}” as a whole ({mentions} mentions) belongs to no single '
+      + 'constituency — the capital spans sixteen — so no shape here includes it, '
+      + 'though mentions of the individual Budapest districts are included.',
+    oevkOverlap: '{settlements} settlements (Debrecen, Szeged, Pécs and the split '
+      + 'Budapest districts) lie in more than one constituency. A mention names the '
+      + 'place, not the part of it, so it is counted in each: {mentions} mentions '
+      + 'appear more than once, and the shapes therefore do not sum to the national '
+      + 'total.',
+    mentionsShort: 'mentions',
+    neverShort: 'never mentioned',
+    blindByCounty: 'Where are the blind spots?',
+    blindOfTotal: '{blind} of {total} settlements',
+    methodology: 'Mentions are found by matching the National Election Office’s '
+      + 'official settlement register against the transcript, handling Hungarian '
+      + 'case endings and the adjectival form (Kaposváron, Kaposvárra, kaposvári). '
+      + 'Procedural and chairing speeches are excluded, as they are from every '
+      + 'other statistic here. Settlement names that collide with everyday words or '
+      + 'personal names (Baj = “trouble”, Alap = “fund”, Varga = also an MP) count '
+      + 'only with corroboration: a place-marking ending or a place word in the '
+      + 'sentence, and never inside a recognised person or organisation name. Counts '
+      + 'are therefore lower bounds, and a blind spot means “no mention found”, not '
+      + '“provably never said”.',
+    sourceNote: 'Settlement list, coordinates and constituency mapping: {source}. '
+      + 'The mentions come from the parlament.hu transcripts.',
+    notFound: 'No such settlement.',
+    electorate: '{n} registered voters',
+    inSpeeches: 'in speeches',
+    bySpeakers: 'speakers',
+    between: 'First on {first}, most recently on {last}.',
+    neverInScope: 'Never mentioned in the selected cycle.',
+    neverExplain: 'This page is the blind spot: the settlement exists, we simply '
+      + 'found no reference to it in the plenary transcript. Selecting another cycle '
+      + 'may change the result.',
+    ambiguousCue: 'This settlement’s name collides with an everyday word or a '
+      + 'personal name, so a mention only counts when the sentence unambiguously '
+      + 'speaks of a place. The number here is therefore especially conservative.',
+    ambiguousSuffix: 'This settlement’s name can collide with another word, so a '
+      + 'mention only counts with a place-marking ending or a place word beside it.',
+    representedBy: 'Who represents it?',
+    repUnknownForCycle: 'We have no record of the member for {list} in this cycle. '
+      + 'An earlier cycle’s member is not shown instead: boundaries are redrawn '
+      + 'between elections, so that is no longer the same territory.',
+    constituencyNote: 'The single-member constituency mapping is the data of the '
+      + 'election that produced the current map; boundaries are redrawn between '
+      + 'elections. MPs elected from the national list represent this place too.',
+    constituencyOnly: 'Constituency: {list}.',
+    trendCaption: 'Mentions per year',
+    whoNamedIt: 'Who mentioned it?',
+    citations: 'The sentences themselves',
+    watch: 'watch',
+    searchFor: 'Search the transcript for “{name}”',
+    repsTitle: 'Do MPs talk about their own constituency?',
+    repsIntro: 'Two separate measures for every MP elected in a single-member '
+      + 'constituency: how much of their place-talk is about their own seat, and how '
+      + 'many of their constituency’s settlements they have ever named.',
+    repsCaveat: 'This is a fact, not a league table of diligence. A minister speaks '
+      + 'to the whole country, an inner-city member has no village to name, and a low '
+      + 'share is not a dereliction. MPs elected from a national or county list are '
+      + 'absent from this list — they have no constituency to measure against, and '
+      + 'zero is not the same as “not applicable”.',
+    repsFloor: 'with at least {n} settlement mentions',
+    repsUnit: 'representatives',
+    repsEmpty: 'No such data for this cycle.',
+    repsMethodology: '“Own constituency” is the share of the MP’s settlement '
+      + 'mentions that fall inside their own seat; “coverage” is the share of their '
+      + 'constituency’s settlements they have ever named. The two are kept apart on '
+      + 'purpose: a high share with low coverage means they talk about one of their '
+      + 'towns a great deal. Budapest as a whole counts towards neither (it spans 16 '
+      + 'constituencies, so it says nothing about an own seat), while its districts '
+      + 'do. The seat is the one the MP actually held in that cycle.',
+    colRep: 'Representative',
+    colConstituency: 'Constituency',
+    colFocus: 'Own seat',
+    colCoverage: 'Coverage',
+    colMentions: 'Mentions',
+    profileTitle: 'Settlements',
+    profileFocus: 'of their mentions are their own constituency',
+    profileCoverage: 'of their constituency’s settlements named',
+    profileNoOwn: 'No single-member constituency, so the own-constituency measures '
+      + 'do not apply.',
+    profileTop: 'Most-mentioned settlements',
+    profileOwnTag: 'own seat',
+    profileEmpty: 'Mentioned no settlement in the selected cycle.',
+  },
   about: {
     title: 'About the project',
     body1: '<strong>Parlamonitor</strong> is an application by K-Monitor that presents the work of the Hungarian National Assembly in a straightforward way, based on the data published on the <a href="https://www.parlament.hu/" target="_blank" rel="noopener">Assembly’s website</a>. It makes the key information on representatives, votes and tabled motions available in an easy-to-scan, searchable form, and publishes figures and analyses derived from it.',

@@ -23,6 +23,8 @@ const showProceedings = computed(() => store.moduleEnabled('proceedings'))
 const showReps = computed(() => store.moduleEnabled('representatives'))
 const showBills = computed(() => store.moduleEnabled('bills'))
 const showVotes = computed(() => store.moduleEnabled('votes'))
+// Települések has no top-bar entry of its own: it is a tab of the Felszólalók
+// section, so its module switch is read where that bar is built (`sectionTabs`).
 
 // Two-level navigation: the top bar holds one entry per section; a section that
 // has sibling pages (Képviselők+Frakciók, Törvényjavaslatok+Egyéb irományok)
@@ -31,7 +33,8 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 const NAV_SECTIONS = {
   reps: {
     match: ['representatives', 'lookup', 'advocates', 'speakers', 'allSpeakers',
-            'officials', 'portfolios', 'portfolio', 'factions', 'profile'],
+            'officials', 'portfolios', 'portfolio', 'factions', 'profile',
+            'settlements', 'settlement', 'settlementReps'],
     // `profile` is a detail page of every person tab — which one is decided at
     // runtime by the kind of person the profile is (see `tabActive`).
     tabs: [
@@ -43,9 +46,9 @@ const NAV_SECTIONS = {
       // the same question keyed by place rather than by name — reached from the
       // switch in its search card rather than from a tab of its own, which put
       // the two ways of finding an MP in two different places.
-      // `group` splits the bar in two with a rule (see `visibleTabs`): the first
-      // two tabs list *people*, the last two the *bodies* they act in, and four
-      // equal-looking tabs in a row hid that.
+      // `group` splits the bar with rules (see `visibleTabs`): the first two tabs
+      // list *people*, the next two the *bodies* they act in, and the last the
+      // *places* they answer to — equal-looking tabs in a row hid that.
       { name: 'representatives', key: 'representatives', group: 'people',
         detail: ['advocates', 'speakers', 'allSpeakers', 'lookup', 'profile'] },
       { name: 'officials', key: 'officials', group: 'people', detail: ['profile'] },
@@ -54,6 +57,13 @@ const NAV_SECTIONS = {
       // the section stays.
       { name: 'portfolios', key: 'portfolios', group: 'bodies', detail: ['portfolio'] },
       { name: 'factions', key: 'factions', group: 'bodies' },
+      // Települések (§6D): its own module too, and it sits here rather than in the
+      // top bar because the question it answers is a question about members — whose
+      // places get named. `settlementReps` (the TEL-9 table, "Saját körzet") is
+      // deliberately **not a tab of its own for now**: it is claimed as a detail
+      // route, so the page stays reachable and citable while nothing advertises it.
+      { name: 'settlements', key: 'settlements', group: 'places',
+        detail: ['settlement', 'settlementReps'] },
     ],
   },
   bills: {
@@ -89,6 +99,13 @@ const sectionTabs = computed(() =>
   (currentSection.value ? currentSection.value.tabs : []).filter((t) => {
     if (t.name === 'cohesion') return COHESION_ENABLED && store.cycles.length > 0
     if (t.name === 'portfolios') return store.moduleEnabled('portfolios')
+    if (t.name === 'settlements') return store.moduleEnabled('settlements')
+    // The rest of this bar belongs to the representatives module, and two of its tabs
+    // (Tárcák, Települések) are modules that can outlive it — so a deployment with
+    // representatives switched off must not be left with tabs that 404 (EXT-6).
+    if (currentSection.value === NAV_SECTIONS.reps) {
+      return store.moduleEnabled('representatives')
+    }
     return true
   }))
 // The rule between two `group`s is carried by the first tab of the later group,

@@ -23,6 +23,11 @@ huspacy>=0.5
 # needed on the host; the heavy spaCy/model live in the Modal image (modal_app.py).
 # Optional — the build falls back to local huspacy/regex when it is absent.
 modal>=0.64
+# Equal-area hexagonal binning for the segmented settlement map (§6D TEL-15). A
+# small, pure wheel — no build toolchain, no model, no network. Optional: without it
+# the loader skips the cell table, the /settlements/map/segments endpoint reports the
+# view unavailable and the UI offers no segmented option; the point map is unaffected.
+h3>=4.0
 # stdlib sqlite3 (FTS5) is used directly — no ORM. Tests:
 pytest>=8.0
 httpx>=0.27

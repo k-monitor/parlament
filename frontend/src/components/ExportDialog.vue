@@ -147,8 +147,28 @@ function revokeResult() {
   if (resultUrl.value) { URL.revokeObjectURL(resultUrl.value); resultUrl.value = null }
 }
 
+// The save is a plain <a download> hand-off, so the browser never tells us when
+// (or whether) the file finished writing. Clicking it does mean the download
+// started, so we confirm that much: the button swaps to a tick briefly
+// (`justSaved`) and a note pointing at the browser's downloads stays up
+// (`saved`) until the dialog is reset or closed.
+const saved = ref(false)
+const justSaved = ref(false)
+let savedTimer = null
+function markSaved() {
+  saved.value = true
+  justSaved.value = true
+  clearTimeout(savedTimer)
+  savedTimer = setTimeout(() => { justSaved.value = false }, 2500)
+}
+function clearSaved() {
+  clearTimeout(savedTimer); savedTimer = null
+  saved.value = false; justSaved.value = false
+}
+
 async function runExport() {
   revokeResult()
+  clearSaved()
   errorMsg.value = ''
   progress.value = 0
   abortCtrl = new AbortController()
@@ -210,11 +230,12 @@ function cancel() {
   phase.value = 'cancelled'
 }
 
-function reset() { revokeResult(); phase.value = 'idle'; progress.value = 0; errorMsg.value = '' }
+function reset() { revokeResult(); clearSaved(); phase.value = 'idle'; progress.value = 0; errorMsg.value = '' }
 
 function close() {
   if (running.value) cancel()
   revokeResult()
+  clearSaved()
   emit('close')
 }
 
@@ -237,6 +258,7 @@ onBeforeUnmount(() => {
   document.body.style.overflow = ''
   if (running.value) cancel()
   revokeResult()
+  clearSaved()
 })
 </script>
 
@@ -265,7 +287,9 @@ onBeforeUnmount(() => {
         <div class="ex-ok-badge" aria-hidden="true">✓</div>
         <p class="ex-ok">{{ $t('clipExport.ready') }}</p>
         <p class="ex-filemeta small muted">{{ resultName }}<template v-if="resultSize"> · {{ formatBytes(resultSize) }}</template></p>
-        <a class="btn primary ex-dl" :href="resultUrl" :download="resultName">⤓ {{ $t('clipExport.download') }}</a>
+        <a class="btn primary ex-dl" :class="{ saved: justSaved }" :href="resultUrl" :download="resultName"
+           @click="markSaved">{{ justSaved ? '✓' : '⤓' }} {{ justSaved ? $t('clipExport.saved') : $t('clipExport.download') }}</a>
+        <p v-if="saved" class="ex-saved small" role="status" aria-live="polite">{{ $t('clipExport.savedNote') }}</p>
         <button class="btn secondary ex-again" @click="reset">{{ $t('clipExport.another') }}</button>
         <p class="ex-note small muted">{{ $t('clipExport.provenance') }}</p>
       </div>
@@ -481,6 +505,9 @@ onBeforeUnmount(() => {
 .ex-ok { margin: 0; font-weight: 600; font-size: 1.05rem; }
 .ex-filemeta { margin: 0; word-break: break-all; }
 .ex-dl { justify-content: center; width: 100%; padding: .65rem; font-size: 1rem; margin-top: .3rem; }
+/* Brief post-click confirmation: the button reads back what just happened. */
+.ex-dl.saved { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.ex-saved { margin: 0; color: var(--accent); font-weight: 500; line-height: 1.4; }
 .ex-again { width: 100%; justify-content: center; }
 .ex-done .ex-note { margin-top: .3rem; }
 

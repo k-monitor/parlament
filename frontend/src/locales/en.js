@@ -160,6 +160,8 @@ export default {
     phaseEncodingBurn: 'Re-encoding video with subtitles…',
     ready: 'Your clip is ready.',
     download: 'Save MP4',
+    saved: 'Saving started',
+    savedNote: 'The download has started — look for the file among your browser’s downloads.',
     another: 'New clip',
     provenance: 'The file is produced in your browser from the public parlament.hu recording and the official transcript. Source: Hungarian National Assembly.',
     unsupported: 'Your browser does not support in-browser video export.',

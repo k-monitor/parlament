@@ -216,6 +216,8 @@ export default {
     phaseEncodingBurn: 'Videó újrakódolása felirattal…',
     ready: 'A videórészlet elkészült.',
     download: 'MP4 mentése',
+    saved: 'Mentés elindult',
+    savedNote: 'A letöltés elindult — a fájlt a böngésződ letöltései között találod.',
     another: 'Új részlet',
     provenance: 'A fájl a parlament.hu nyilvános felvételéből és a hivatalos jegyzőkönyvből készül, a böngésződben. Forrás: Magyar Országgyűlés.',
     unsupported: 'A böngésződ nem támogatja a böngészőn belüli videóexportot.',

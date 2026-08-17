@@ -21,7 +21,7 @@
 // deliberately NOT scoped by the global cycle selector: constituency boundaries
 // are redrawn between elections, so the map answers for exactly one cycle, which
 // it names rather than infers from the reader's scope.
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
@@ -32,6 +32,7 @@ import SpeakerLink from '../../components/SpeakerLink.vue'
 import ConstituencyMap from '../../components/ConstituencyMap.vue'
 import SpeakerSearchModes from './SpeakerSearchModes.vue'
 import { copyText } from '../../lib/clipboard.js'
+import { keepScrollOnce } from '../../lib/scrollMemory.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -150,9 +151,19 @@ function pick(s) {
   router.push({ name: 'lookup', query: { q: s.name, maz: s.maz, taz: s.taz } })
 }
 
+// The answer sits below the map — and on a phone well below it, since a map big
+// enough to recognise your own streets in fills the screen. So picking a region
+// brings the MP into view, rather than leaving the reader to scroll down and
+// find out what their tap did. The chosen region goes into the URL like every
+// other state here, and that address change would otherwise bounce the page to
+// the top (the router's default): hence the claim, honoured in scrollBehavior.
+const resultRef = ref(null)
+
 function selectConstituency(evk) {
   selectedEvk.value = evk
+  keepScrollOnce(route.path)
   router.replace({ name: 'lookup', query: { ...route.query, evk } })
+  nextTick(() => resultRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
 }
 
 function startOver() {
@@ -317,7 +328,7 @@ onUnmounted(() => clearTimeout(copyTimer))
       </template>
 
       <!-- The answer itself: who holds the constituency. -->
-      <div v-if="chosen" class="card pad result">
+      <div v-if="chosen" ref="resultRef" class="card pad result">
         <p class="muted small" style="margin:0 0 .2rem;">{{ officialNameOf(chosen) }}</p>
         <h3 style="margin:0 0 .6rem;">{{ chosen.label }}</h3>
 
@@ -432,7 +443,9 @@ onUnmounted(() => clearTimeout(copyTimer))
 .pick-label { font-weight: 600; }
 .pick-mp { margin-left: auto; text-align: right; }
 
-.result { margin-top: .4rem; }
+/* scroll-margin keeps the card clear of the sticky site header when a pick on
+   the map scrolls it into view. */
+.result { margin-top: .4rem; scroll-margin-top: 5rem; }
 .mps { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
 /* Who they are on one line, how to reach them on the next — the contact row can
    hold a long address, and pairing it with the name on one line would push the

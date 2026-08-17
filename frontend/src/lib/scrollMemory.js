@@ -36,6 +36,27 @@ const MAX_POSITIONS = 40
 const trail = []
 const MAX_TRAIL = 30
 
+// A navigation the page scrolls for itself: an in-page choice that writes itself
+// into the URL — picking a constituency on the lookup map (REP-10) — and then
+// brings its own answer into view. Without this the router's default "a new
+// address starts at the top" fights that scroll and wins, because
+// `scrollBehavior` runs after the click handler that did the scrolling.
+let ownScrollPath = null
+
+/** Claim the scroll position of the navigation about to be made to `path`. */
+export function keepScrollOnce(path) { ownScrollPath = path }
+
+/**
+ * Whether `to` is that navigation. A claim is dropped on the first navigation
+ * that asks, whatever it turns out to be, so one made for a navigation that
+ * never arrived cannot go on suppressing later ones.
+ */
+export function claimsOwnScroll(to) {
+  const own = ownScrollPath === to.path
+  ownScrollPath = null
+  return own
+}
+
 // Poll rather than observe: the things that change the page height here are
 // route-level renders and late `fetch` responses, so a coarse tick is plenty and
 // costs one layout read per 60ms during the (short) restore window only.

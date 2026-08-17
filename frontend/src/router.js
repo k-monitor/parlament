@@ -1,7 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { defaultCycles, loadMeta, parseCycles, serializeCycles, setCycles, store } from './store.js'
 import { COHESION_ENABLED } from './features.js'
-import { keepInPlace, rememberScroll, scrollTarget, whenReachable } from './lib/scrollMemory.js'
+import {
+  claimsOwnScroll, keepInPlace, rememberScroll, scrollTarget, whenReachable,
+} from './lib/scrollMemory.js'
 
 // The global electoral-cycle scope is carried in a `?cycle=` query param so that
 // a shared link reproduces the exact scope the sharer was viewing: one or more
@@ -191,6 +193,10 @@ export const router = createRouter({
     // Advanced even for a hash target, so the trail stays a faithful record of
     // the pages the reader has walked through.
     const target = scrollTarget(to, saved)
+    // An in-page choice that rewrote the address and scrolled to its own answer
+    // (the lookup's constituency picker): leave the position it chose alone. Not
+    // on a history pop, where the reader's own saved offset is the truth.
+    if (claimsOwnScroll(to) && !saved) return false
     if (to.hash) return false // viewer manages its own scroll to a sentence
     if (!target || !target.top) return { top: 0 }
     const stale = () => router.currentRoute.value.fullPath !== to.fullPath

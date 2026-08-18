@@ -191,6 +191,18 @@ def test_votes_cohesion_is_not_taken_for_a_vote_id(og_client):
     assert _meta(r.text)["og:title"] == "Frakcióelemzés · Parlamonitor"
 
 
+def test_compare_is_not_taken_for_a_person_id(og_client):
+    # /representatives/compare is the comparison page (REP-15), not somebody called
+    # "compare": it keeps its own card and a 200 instead of the 404 shell a missing
+    # person gets. The people compared ride in `?ids=`, which the canonical drops —
+    # so every combination consolidates onto the one address rather than competing.
+    r = og_client.get("/representatives/compare?ids=k001,n002")
+    assert r.status_code == 200
+    assert _meta(r.text)["og:title"] == "Képviselők összehasonlítása · Parlamonitor"
+    assert _canonical(r.text).endswith("/representatives/compare")
+    assert "noindex" not in r.text
+
+
 def test_detail_pages_carry_structured_data(og_client):
     """Each entity type declares what it *is* (SEO-5). The `Person` block is the
     one that ties an MP page to the person as an entity rather than a name."""

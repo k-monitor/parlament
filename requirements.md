@@ -1296,6 +1296,58 @@ site-wide behaviour, not a per-view nicety.
     MP's details: the departed are a handful per cycle, so backfilling them is a
     handful of requests (cf. REP-9's additive registry, SCR-4's politeness).
 
+- **REP-15 (SHOULD).** **Comparing representatives side by side.** A profile answers
+  *"what did this MP do"*; the question a reader almost always asks next is *"compared
+  to whom?"* — and today they answer it by opening two profiles in two tabs and
+  scrolling both. The site therefore offers an explicit **comparison page**: two to
+  four people in **parallel columns**, one row per figure, laid out like a product
+  spec sheet so a difference is read across a row rather than reconstructed from
+  memory.
+  - **Reached from a profile.** Every profile carries a quiet *"Összehasonlítás"*
+    link on its navigation row — opposite the "back to the list" link, since it too
+    is a way *out* of the page — which opens the comparison **with that person
+    already in the first column** and an empty slot inviting the next. The reader
+    never has to find the page first and then look both people up, and the offer
+    never competes with the person whose page it is.
+  - **No selection is kept between pages.** The list pages deliberately carry no
+    "add to comparison" control and there is no basket: a comparison is assembled on
+    the comparison page itself, by its own name picker. The reader's choice therefore
+    lives in exactly one place — the URL below — so a comparison can never open with
+    someone they don't remember choosing, and nothing about who was compared is
+    stored on their machine (PRIV-1).
+  - **The comparison is a page, with an address.** The people compared live in the
+    **URL** (`/representatives/compare?ids=…`), so a comparison is shareable,
+    citable and bookmarkable exactly like a profile — and honours the global cycle
+    scope (§4A) like every other page, since "who spoke more" is only ever a
+    question about a span of time.
+  - **What is compared** is the record the site already holds, never a new
+    measurement: the identity rows (faction, constituency, office, highest
+    qualification), then the countable ones — speeches, speaking time, sentences,
+    average speech length, sitting days spoken on, own motions submitted, irományok
+    by kind, roll-call participation and absence, committee seats, published asset
+    declarations. Every figure is the **same number the profile shows** for the same
+    scope, computed by the same code (REP-3/REP-7/STAT-1), so the two pages can
+    never disagree; each row links back to the profile it came from. The **mandate**
+    (REP-14) is deliberately *not* a row: a term with its own dates, its termination
+    and its handovers is the profile's subject, and flattened into one comparison
+    cell it is a date range too cramped to read and too easily misread — the column
+    heading links to the profile that states it properly.
+  - **Comparison must not become a scoreboard.** The largest value in a row is
+    marked **neutrally** ("a legnagyobb érték ebben a sorban") and a row's bars are
+    scaled to that row's maximum — the page states *who spoke more*, never *who is
+    better*. Rows where the numbers are not comparable are **not shown as if they
+    were**: a metric the corpus cannot supply for one of the people (a non-MP's
+    roll-call participation, an advocate's constituency) reads as an explicit "nem
+    értelmezhető", never as a zero (TRUST-1, cf. REP-3's hidden-not-faked rule).
+  - **Served by one endpoint** (`/representatives/compare`), so a four-way
+    comparison is one request rather than a fan-out of a dozen, and it reads only
+    the precomputed aggregates the profile reads (REP-7). A person id in the URL
+    that no longer resolves is **reported and skipped**, not fatal: a comparison
+    link shared before a cycle re-import must still open for the people it can
+    still name.
+  - Degrades per EXT-6: with the Bills or Votes module disabled the rows that
+    depend on it are absent, not faked, exactly as on the profile.
+
 - **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
   representative and faction statistics** (speaking time, speech counts, trends —
   REP-3/REP-4/REP-7), but are **never dropped from storage or from the

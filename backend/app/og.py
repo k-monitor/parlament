@@ -270,6 +270,15 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
         "Tárcák",
         "Melyik minisztériumhoz milyen kérdések érkeztek, melyik tárca mit "
         "nyújtott be a Ház elé, és kik vezették."),
+    # Összehasonlítás (REP-15). Without a card this path falls through to the
+    # person-profile route, finds no person called "compare", and would answer a
+    # real page with a 404 shell. The people compared ride in `?ids=`, which
+    # `plain()` drops from the canonical — so the countless combinations all
+    # consolidate onto this one address instead of competing with each other.
+    "/representatives/compare": (
+        "Képviselők összehasonlítása",
+        "Tedd egymás mellé akár négy felszólalót: felszólalások, beszédidő, "
+        "benyújtott irományok és szavazási részvétel egy táblázatban."),
     "/representatives/lookup": (
         "Ki a képviselőm?",
         "Keresd meg a saját választókerületedet és az ott megválasztott "

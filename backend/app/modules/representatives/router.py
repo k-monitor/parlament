@@ -218,6 +218,117 @@ def _latest_mandate_sql(period, alias: str = "mand") -> str:
                  GROUP BY person_id) {alias}""")
 
 
+def _rollcall_where(periods: list[int]) -> str:
+    """The universe of roll-call votes a per-MP participation figure is measured
+    against, as a ``WHERE`` body over ``vote`` (no alias).
+
+    Only votes with a per-MP list count (``has_per_mp``): voice and list votes have
+    no per-person record, so counting them would read as everyone being absent from
+    them. Procedural quorum checks are dropped for the same reason parlament.hu's
+    own statistics drop them (see `_QUORUM_RESULTS`). Binds nothing — the period
+    numbers are inlined by `period_and` — so it splices into any paramstyle."""
+    return ("has_per_mp = 1" + _exclude_quorum("")
+            + period_and(periods, "period_number"))
+
+
+def _vote_participation(db: sqlite3.Connection, person_id: str,
+                        election_history_json, periods: list[int],
+                        total_rollcall: Optional[int] = None) -> dict:
+    """One MP's roll-call participation in ``periods`` (REP-3).
+
+    Returns the five-way split the profile pie draws and the headline "cast no
+    vote" metric derived from it:
+
+    * ``voted``       — *szavazott*: igen/nem/tartózkodás, all of them a vote cast;
+    * ``novote``      — *jelen, nem szavazott*;
+    * ``absent``      — *igazoltan távol* (upstream's *előre bejelentett hiányzó*);
+    * ``not_present`` — *nem volt jelen*: no record at all for a vote inside their
+      mandate;
+    * ``not_mp``      — *nem volt képviselő*: roll calls that fell outside their
+      mandate window(s) — a replacement seated mid-cycle, or an MP who resigned
+      early. Kept separate from a genuine absence and **excluded from the
+      denominator**, so time they could not have voted in never counts against
+      them.
+
+    ``vote_breakdown.total`` is that denominator (everything but ``not_mp``), and
+    ``votes_missed`` = ``novote + absent + not_present`` over it — so the headline
+    percentage and the pie always agree.
+
+    The caller decides whether this is meaningful at all: it is queried only for
+    actual MPs (a minister holds no mandate to attend roll calls, so every vote
+    would read as "nem volt jelen") and only while the Votes module is live
+    (EXT-6 — its tables may not exist otherwise). ``total_rollcall`` lets a caller
+    comparing several people (REP-15) pass the person-independent universe count in
+    once instead of re-counting it per column.
+    """
+    extra = period_and(periods, "v.period_number")
+    # One pass over the MP's roll-call records splits them into the three recorded
+    # participation categories; `total` counts every record they have.
+    vrow = db.execute(
+        f"""SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN vr.value_code IN ('yes','no','abstain') THEN 1 ELSE 0 END) AS voted,
+                   SUM(CASE WHEN vr.value_code = 'novote'  THEN 1 ELSE 0 END) AS novote,
+                   SUM(CASE WHEN vr.value_code = 'absent'  THEN 1 ELSE 0 END) AS absent
+            FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
+            WHERE vr.person_id = :pid{extra}{_exclude_quorum()}""",
+        {"pid": person_id}).fetchone()
+    votes_total = vrow["total"] or 0
+    voted = vrow["voted"] or 0
+    novote = vrow["novote"] or 0
+    votes_absent = vrow["absent"] or 0
+
+    rc_where = _rollcall_where(periods)
+    if total_rollcall is None:
+        total_rollcall = (db.execute(
+            f"SELECT COUNT(*) AS n FROM vote WHERE {rc_where}").fetchone()["n"] or 0)
+
+    # Of that universe, the ones inside the MP's mandate window(s) are the votes
+    # they could actually have taken part in. The windows come from
+    # election_history_json's mandateStart/mandateEnd (ISO UTC, so a lexicographic
+    # datetime compare is chronological).
+    windows = [(e.get("mandateStart"), e.get("mandateEnd"))
+               for e in (_loads(election_history_json) or [])
+               if e.get("mandateStart")]
+    eligible_rollcall = total_rollcall
+    if windows:
+        conds, wparams = [], {}
+        for i, (start, end) in enumerate(windows):
+            wparams[f"ms{i}"] = start
+            cond = f"vote_datetime >= :ms{i}"
+            if end:
+                wparams[f"me{i}"] = end
+                cond += f" AND vote_datetime <= :me{i}"
+            conds.append(f"({cond})")
+        eligible_rollcall = (db.execute(
+            f"SELECT COUNT(*) AS n FROM vote "
+            f"WHERE {rc_where} AND ({' OR '.join(conds)})",
+            wparams).fetchone()["n"] or 0)
+
+    # Clamped at 0 for the rare case where the record count exceeds the eligible
+    # universe (a vote right on the mandate boundary, or votes lacking the flag in
+    # a test/partial import).
+    not_present = max(0, eligible_rollcall - votes_total)
+    not_mp = max(0, total_rollcall - eligible_rollcall)
+    breakdown = {
+        "voted": voted,              # szavazott (igen + nem + tartózkodás)
+        "novote": novote,            # jelen, nem szavazott
+        "absent": votes_absent,      # igazoltan távol
+        "not_present": not_present,  # nem volt jelen (MP, but no record)
+        "not_mp": not_mp,            # nem volt képviselő (outside mandate)
+        "total": voted + novote + votes_absent + not_present,
+    }
+    # Equivalent to `total - voted`, but spelled out so the link between the number
+    # and the three legend rows it sums stays obvious.
+    votes_missed = novote + votes_absent + not_present
+    return {
+        "votes_total": votes_total,
+        "votes_missed": votes_missed,
+        "votes_missed_pct": (round(100.0 * votes_missed / breakdown["total"], 1)
+                             if breakdown["total"] else None),
+        "vote_breakdown": breakdown,
+    }
+
+
 @router.get("")
 def list_representatives(
     q: Optional[str] = None,
@@ -984,6 +1095,217 @@ _LOOKUP_METHODOLOGY = (
 )
 
 
+# How many people one comparison may hold (REP-15). Four columns is what a phone
+# can still show side by side without either scrolling sideways or shrinking the
+# figures out of legibility — and a comparison of more than four is a ranking,
+# which the list pages already are.
+_COMPARE_MAX = 4
+
+# Main types (Felicitas *fotipus*) grouped exactly as the profile's three
+# submitted-irományok sections group them (BILL-9), so a column's counts equal
+# the section badges on that person's own page.
+_DOC_BUCKETS = (("questions", ("K", "A", "I")), ("bills", ("T", "H")))
+
+
+def _doc_counts(db: sqlite3.Connection, person_id: str,
+                periods: list[int]) -> dict:
+    """The irományok this person submitted in scope, bucketed by main type.
+
+    One grouped count over `bill`/`bill_sponsor`, split into the same three buckets
+    the profile shows as separate sections — questions (K/A/I), bills (T/H) and
+    everything else — so the comparison column and the profile agree. A motion with
+    several sponsors counts once for each of them (DISTINCT over the bill)."""
+    rows = db.execute(
+        f"""SELECT b.main_type AS main_type, COUNT(DISTINCT b.id) AS n
+            FROM bill b JOIN bill_sponsor bs ON bs.bill_id = b.id
+            WHERE bs.person_id = :pid{period_and(periods, "b.period_number")}
+            GROUP BY b.main_type""", {"pid": person_id}).fetchall()
+    out = {"questions": 0, "bills": 0, "other": 0, "total": 0}
+    known = {t: key for key, types in _DOC_BUCKETS for t in types}
+    for r in rows:
+        n = r["n"] or 0
+        out[known.get((r["main_type"] or "").strip(), "other")] += n
+        out["total"] += n
+    return out
+
+
+@router.get("/compare")
+def compare_representatives(
+        ids: List[str] = Query(
+            default=[], alias="id",
+            description=f"Person id(s) to compare, repeated; at most {_COMPARE_MAX}"),
+        period: Optional[List[int]] = Query(
+            None, description="Electoral period number(s)"),
+        db: sqlite3.Connection = Depends(get_db)):
+    """Two to four representatives side by side (REP-15).
+
+    One request per comparison rather than a fan-out of a dozen per-person calls:
+    the page draws a spec sheet, so it needs every column's every figure before it
+    can render a single row's bars. Everything is scoped to the selected cycle(s)
+    (§4A) and read from the same precomputed aggregates the profile reads (REP-7,
+    STAT-1) — via the same helpers, so a figure here can never disagree with the
+    figure on that person's own page.
+
+    Columns come back **in the order asked for** (a comparison's left-to-right
+    order is the reader's), duplicates collapsed. Ids past the ``_COMPARE_MAX``
+    limit are reported in ``dropped`` rather than silently truncated, and an id
+    that resolves to nobody is reported in ``missing`` and skipped rather than
+    failing the whole page: a link shared before a re-import must still open for
+    the people it can still name.
+
+    Values that are **not applicable** to a person come back as ``null``, never as
+    a zero the reader would compare against a real one (TRUST-1): roll-call
+    participation for someone holding no mandate (a minister has none to attend),
+    a constituency for a nationality advocate. A genuine zero stays a zero.
+    """
+    periods = period_list(period)
+    # Dedupe, keep the reader's order, and cap — `dict.fromkeys` does both at once.
+    unique = list(dict.fromkeys(i for i in ids if i and i.strip()))
+    wanted, dropped = unique[:_COMPARE_MAX], unique[_COMPARE_MAX:]
+
+    stat_scope = (period_sql(periods, "period_number")
+                  or "period_number IS NULL")   # the precomputed all-cycles row
+    sess_scope = period_and(periods, "s.period_number")
+    bills_available = settings.module_enabled("bills")
+    votes_available = settings.module_enabled("votes")
+    # The roll-call universe is the same for every column, so count it once instead
+    # of once per person (each column then only needs its own mandate window).
+    total_rollcall = None
+    if votes_available:
+        total_rollcall = (db.execute(
+            f"SELECT COUNT(*) AS n FROM vote WHERE {_rollcall_where(periods)}"
+        ).fetchone()["n"] or 0)
+
+    people, missing = [], []
+    for person_id in wanted:
+        p = db.execute("SELECT * FROM person WHERE person_id = ?",
+                       (person_id,)).fetchone()
+        if not p:
+            missing.append(person_id)
+            continue
+
+        totals = db.execute(
+            f"""SELECT SUM(speech_count) AS speech_count,
+                       SUM(speaking_seconds) AS speaking_seconds,
+                       SUM(sentence_count) AS sentence_count
+                FROM person_stats WHERE person_id=? AND {stat_scope}""",
+            (person_id,)).fetchone()
+        speech_count = (totals["speech_count"] if totals else 0) or 0
+        speaking_seconds = (totals["speaking_seconds"] if totals else 0) or 0
+        sentence_count = (totals["sentence_count"] if totals else 0) or 0
+        # On how many sitting days they took the floor — the same count the profile
+        # reports as its scope ("N ülésnap alapján"), and the divisor that turns
+        # "many speeches" into "many speeches spread thin" or "concentrated".
+        speaking_days = db.execute(
+            f"""SELECT COUNT(DISTINCT pss.session_id) AS c
+                FROM person_session_stats pss JOIN session s ON s.id = pss.session_id
+                WHERE pss.person_id = ?{sess_scope}""",
+            (person_id,)).fetchone()["c"] or 0
+
+        current = db.execute(
+            f"""SELECT f.id AS faction_id, f.label AS faction_label,
+                       f.color AS faction_color
+                FROM membership m LEFT JOIN faction f ON f.id = m.faction_id
+                WHERE m.person_id = ?{period_and(periods, "m.period_number")}
+                ORDER BY m.period_number DESC LIMIT 1""",
+            (person_id,)).fetchone()
+
+        offices = _person_offices(db, person_id, _loads(p["offices_json"]))
+        office = _current_office(db, person_id, periods, offices)
+
+        # Official own-motion count (parlament.hu's own statistic), for the cycle in
+        # scope or the most recent on record under "all cycles" — exactly as REP-3
+        # computes it for the profile tile. Null for anyone upstream reports none
+        # for, which is not the same as zero.
+        own_motions = None
+        if bills_available:
+            by_cycle = (_loads(p["external_stats_json"]) or {}).get("billsSubmitted") or []
+            if settings.site_periods:
+                by_cycle = [e for e in by_cycle
+                            if e.get("cycle") in settings.site_periods]
+            own_motions = (_own_bills_for_cycles(by_cycle, periods)
+                           if periods else _latest_own_bills(by_cycle))
+
+        is_mp = bool(p["is_mp"])
+        participation = (_vote_participation(db, person_id,
+                                            p["election_history_json"], periods,
+                                            total_rollcall)
+                         if votes_available and is_mp else None)
+
+        declarations = _loads(_col(p, "asset_declarations_json")) or []
+        committees = _loads(p["committees_json"]) or []
+
+        people.append({
+            # --- identity ---------------------------------------------------
+            "person_id": p["person_id"], "label": p["label"],
+            "photo_uri": p["photo_uri"],
+            "is_mp": is_mp, "is_advocate": bool(_col(p, "is_advocate")),
+            "nationality": _col(p, "nationality"),
+            # Null rather than empty for someone the notion doesn't apply to: an
+            # advocate and a non-MP minister hold no seat, so they have no
+            # constituency — a blank cell would read as "unknown".
+            "constituency": p["constituency"] if is_mp else None,
+            "faction": ({"id": current["faction_id"], "label": current["faction_label"],
+                         "color": current["faction_color"]}
+                        if current and current["faction_label"] else None),
+            "office": office["title"] if office else None,
+            "highest_education": p["highest_education"],
+            "wikipedia_url": p["wikipedia_url"], "kmonitor_url": p["kmonitor_url"],
+            "website": p["website"],
+            # --- what the corpus counts -------------------------------------
+            "speech_count": speech_count,
+            "speaking_seconds": speaking_seconds,
+            "sentence_count": sentence_count,
+            "speaking_days": speaking_days,
+            # Mean length of one of their speeches: the shape of a career the two
+            # totals above hide (many interjections vs. few long addresses).
+            "avg_speech_seconds": (speaking_seconds / speech_count
+                                   if speech_count else None),
+            "own_motions": own_motions,
+            "documents": _doc_counts(db, person_id, periods) if bills_available else None,
+            # Biography, not cycle statistics (like the profile's own lists): the
+            # whole career's committee seats and published declarations, whatever
+            # cycle is selected — `_note` on the row says so in the UI.
+            "committee_count": len(committees),
+            "declaration_count": sum(1 for d in declarations if d.get("url")),
+            # Null (not 0) for a non-MP: they have no mandate to attend roll calls,
+            # so "missed none" would be as wrong as "missed all" (REP-3).
+            "votes_total": participation["votes_total"] if participation else None,
+            "votes_missed": participation["votes_missed"] if participation else None,
+            "votes_missed_pct": (participation["votes_missed_pct"]
+                                 if participation else None),
+            "vote_breakdown": (participation["vote_breakdown"]
+                               if participation else None),
+        })
+
+    if periods:
+        labels = {r["number"]: r["label"] for r in db.execute(
+            "SELECT number, label FROM electoral_period "
+            f"WHERE {period_sql(periods, 'number')}")}
+        cyc_label = ", ".join(labels.get(n) or f"{n}. ciklus" for n in periods)
+        scope_desc = ("A Parlamonitor által feldolgozott ülésnapok alapján — "
+                      f"{cyc_label}.")
+    else:
+        scope_desc = ("A Parlamonitor által feldolgozott ülésnapok alapján — "
+                      "összes ciklus.")
+
+    return {
+        "scope": {"description": scope_desc,
+                  "period": periods[0] if len(periods) == 1 else None,
+                  "periods": periods},
+        "limit": _COMPARE_MAX,
+        "people": people,
+        # Told, not swallowed: the page says which ids it could not put in a column.
+        "missing": missing,
+        "dropped": dropped,
+        # Which optional modules backed this comparison (EXT-6): the rows that
+        # depend on one are left out rather than faked when it is off.
+        "bills_available": bills_available,
+        "votes_available": votes_available,
+        "methodology": _MP_METHODOLOGY,
+    }
+
+
 @router.get("/{person_id}")
 def get_representative(person_id: str, period: Optional[List[int]] = Query(
                           None, description="Electoral period number(s)"),
@@ -1170,104 +1492,18 @@ def get_statistics(person_id: str, period: Optional[List[int]] = Query(
         bills_submitted = (_own_bills_for_cycles(bills_by_cycle, periods)
                            if periods else _latest_own_bills(bills_by_cycle))
 
-    # Attendance (REP-3): on how many roll-call votes the MP cast no vote at all,
-    # both nominally and as a share of the votes they could have cast in scope.
-    # "No vote cast" covers every non-voting participation category — "jelen, nem
-    # szavazott" (`value_code = 'novote'`), "igazoltan távol" (the upstream "Előre
-    # bejelentett hiányzó", normalized to `'absent'`) and "nem volt jelen" (no
-    # record at all) — i.e. exactly the pie's three non-voting slices; the
-    # denominator is the pie's 100% base, so headline % and pie agree. Only
-    # meaningful — and only queried — when the Votes module is live (EXT-6); its
-    # tables may not exist otherwise.
-    # Voting statistics are only shown for actual MPs (is_mp): a minister or other
-    # non-representative has no mandate to attend roll calls, so the whole
-    # participation section (the absence metric AND the pie) is suppressed for
-    # them — otherwise every roll-call vote would read as "nem volt jelen 100%".
-    is_mp = bool(p["is_mp"])
+    # Attendance (REP-3): the roll-call participation split and the headline
+    # "cast no vote" metric, computed by the one helper the comparison page
+    # (REP-15) also calls — the two pages must never report different numbers for
+    # the same person and scope.
     votes_available = settings.module_enabled("votes")
-    votes_total = votes_missed = 0
-    votes_missed_pct = None
-    vote_breakdown = None
-    if votes_available and is_mp:
-        extra = period_and(periods, "v.period_number")
-        vparams: dict = {"pid": person_id}
-        # One pass over the MP's roll-call records splits them into the four
-        # participation categories shown in the profile pie: "szavazott" (a vote
-        # was cast — igen/nem/tartózkodás all count as voting), "nem szavazott"
-        # (present, no vote), "igazoltan távol" (pre-announced absence) and —
-        # derived below — "nem volt jelen" (no record at all for a vote). `total`
-        # counts every record.
-        vrow = db.execute(
-            f"""SELECT COUNT(*) AS total,
-                       SUM(CASE WHEN vr.value_code IN ('yes','no','abstain') THEN 1 ELSE 0 END) AS voted,
-                       SUM(CASE WHEN vr.value_code = 'novote'  THEN 1 ELSE 0 END) AS novote,
-                       SUM(CASE WHEN vr.value_code = 'absent'  THEN 1 ELSE 0 END) AS absent
-                FROM vote_record vr JOIN vote v ON v.id = vr.vote_id
-                WHERE vr.person_id = :pid{extra}{_exclude_quorum()}""", vparams).fetchone()
-        votes_total = vrow["total"] or 0
-        votes_absent = vrow["absent"] or 0
-
-        # The votes the MP has no record in at all split into two categories.
-        # First, of all roll-call votes in scope (those with a per-MP list,
-        # has_per_mp = 1 — voice/list votes are excluded so they don't inflate
-        # everyone's absence, and quorum checks likewise) count the whole
-        # universe.
-        rc_where = ("has_per_mp = 1" + _exclude_quorum("")
-                    + period_and(periods, "period_number"))
-        rc_params: dict = {}
-        total_rollcall = (db.execute(
-            f"SELECT COUNT(*) AS n FROM vote WHERE {rc_where}",
-            rc_params).fetchone()["n"] or 0)
-
-        # Of that universe, the ones that fell WITHIN the MP's mandate window(s)
-        # are the votes they could actually have taken part in ("eligible"). The
-        # windows come from election_history_json's mandateStart/mandateEnd (ISO
-        # UTC, so a lexicographic datetime compare is chronological); an MP who
-        # took their seat mid-cycle (a replacement) or resigned early has votes
-        # outside their mandate. Those are "nem volt képviselő" — kept separate
-        # from a genuine absence and excluded from the participation denominator.
-        windows = [(e.get("mandateStart"), e.get("mandateEnd"))
-                   for e in (_loads(p["election_history_json"]) or [])
-                   if e.get("mandateStart")]
-        eligible_rollcall = total_rollcall
-        if windows:
-            conds, wparams = [], dict(rc_params)
-            for i, (start, end) in enumerate(windows):
-                wparams[f"ms{i}"] = start
-                cond = f"vote_datetime >= :ms{i}"
-                if end:
-                    wparams[f"me{i}"] = end
-                    cond += f" AND vote_datetime <= :me{i}"
-                conds.append(f"({cond})")
-            eligible_rollcall = (db.execute(
-                f"SELECT COUNT(*) AS n FROM vote "
-                f"WHERE {rc_where} AND ({' OR '.join(conds)})",
-                wparams).fetchone()["n"] or 0)
-
-        voted = vrow["voted"] or 0
-        novote = vrow["novote"] or 0
-        # Clamped at 0 for the rare case where the record count exceeds the
-        # eligible universe (e.g. a vote right on the mandate boundary, or votes
-        # lacking the flag in a test/partial import).
-        not_present = max(0, eligible_rollcall - votes_total)
-        not_mp = max(0, total_rollcall - eligible_rollcall)
-        vote_breakdown = {
-            "voted": voted,              # szavazott (igen + nem + tartózkodás)
-            "novote": novote,            # jelen, nem szavazott
-            "absent": votes_absent,      # igazoltan távol
-            "not_present": not_present,  # nem volt jelen (MP, but no record)
-            "not_mp": not_mp,            # nem volt képviselő (outside mandate)
-            # `total` is the participation denominator (the 100% base) — it does
-            # NOT include not_mp, so time before/after the mandate never counts.
-            "total": voted + novote + votes_absent + not_present,
-        }
-        # Headline attendance metric: every occasion the MP cast no vote, over the
-        # pie's 100% base. Equivalent to `total - voted`, but spelled out so the
-        # link between the number and the three legend rows it sums stays obvious.
-        vb_total = vote_breakdown["total"]
-        votes_missed = novote + votes_absent + not_present
-        votes_missed_pct = (round(100.0 * votes_missed / vb_total, 1)
-                            if vb_total else None)
+    participation = (_vote_participation(db, person_id,
+                                        p["election_history_json"], periods)
+                     if votes_available and p["is_mp"] else None)
+    votes_total = participation["votes_total"] if participation else 0
+    votes_missed = participation["votes_missed"] if participation else 0
+    votes_missed_pct = participation["votes_missed_pct"] if participation else None
+    vote_breakdown = participation["vote_breakdown"] if participation else None
 
     if periods:
         labels = {r["number"]: r["label"] for r in db.execute(

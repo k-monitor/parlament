@@ -14,6 +14,7 @@ import ActivityBoard from '../../components/ActivityBoard.vue'
 import HelpTip from '../../components/HelpTip.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import EmbedButton from '../../components/EmbedButton.vue'
+import { compareRoute } from '../../lib/compareUrl.js'
 
 const props = defineProps({ id: String })
 const { t } = useI18n()
@@ -202,6 +203,12 @@ const handovers = computed(() => {
   ].filter((h) => h.who && h.who.label)
 })
 
+// Where the compare link goes (REP-15): the comparison page with this person in
+// the first column and an empty slot for the next, which the page's own picker
+// fills. It carries nobody else — there is no selection kept between pages, so a
+// comparison never opens with someone the reader doesn't remember choosing.
+const compareTo = computed(() => compareRoute([props.id]))
+
 const PLACEHOLDER =
   'data:image/svg+xml;utf8,' + encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="110"><rect width="110" height="110" fill="#e7e5df"/><circle cx="55" cy="44" r="22" fill="#bdb9af"/><rect x="18" y="74" width="74" height="40" rx="20" fill="#bdb9af"/></svg>')
@@ -348,9 +355,20 @@ watch(() => store.cycles.join(','), load)
            Nemzetiségi szószólók chip of the Felszólalók page, a non-MP minister
            from its Egyéb felszólalók chip and an office holder who never spoke
            from Tisztségviselők — not the MP list (see `profileTabFor`). -->
-      <router-link :to="{ name: backTab }" class="small">
-        ‹ {{ backTab === 'representatives' ? $t('reps.title') : $t('nav.' + backTab) }}
-      </router-link>
+      <div class="ptop">
+        <router-link :to="{ name: backTab }" class="small">
+          ‹ {{ backTab === 'representatives' ? $t('reps.title') : $t('nav.' + backTab) }}
+        </router-link>
+        <!-- "Compared to whom?" — the question this page always raises next
+             (REP-15). Deliberately a quiet link on the navigation row rather than a
+             button beside the name: it is a way *out* of this page, like the back
+             link it sits opposite, and it must not compete with the person whose
+             page this is. -->
+        <router-link class="small cmplink" :to="compareTo"
+                     :title="$t('compare.compareWith')">
+          ⇄ {{ $t('compare.compareAction') }}
+        </router-link>
+      </div>
 
       <header class="phead card pad">
         <div class="pmain">
@@ -747,6 +765,13 @@ watch(() => store.cycles.join(','), load)
 </template>
 
 <style scoped>
+/* The navigation row above the card: back on the left, "compare" opposite it on
+   the right (REP-15). Both are quiet small links — this row is for leaving the
+   page, so nothing on it should read as a call to action. */
+.ptop { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.cmplink { color: var(--ink-faint); white-space: nowrap; text-decoration: none; }
+.cmplink:hover, .cmplink:focus-visible { color: var(--accent); text-decoration: underline; }
+
 .phead { display: flex; gap: 1.2rem; align-items: flex-start; margin: .8rem 0 1rem; flex-wrap: wrap; }
 .phead h1 { margin: 0; }
 /* name on top (with the share button beside it), then the portrait and bio

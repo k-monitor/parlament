@@ -116,6 +116,17 @@ const routes = [
     component: () => import('./modules/representatives/RepListView.vue'),
   },
   {
+    // Összehasonlítás (REP-15) — two to four people in parallel columns, the
+    // question a profile always raises next ("compared to whom?"). The people
+    // compared live in `?ids=`, so a comparison is as shareable and citable as a
+    // profile; with none it is the empty picker the reader fills in. Declared
+    // before `/representatives/:id` like the other static segments, so "compare"
+    // is never taken for a person id.
+    path: '/representatives/compare', name: 'compare',
+    meta: { module: 'representatives' },
+    component: () => import('./modules/representatives/RepCompareView.vue'),
+  },
+  {
     path: '/representatives/:id', name: 'profile', meta: { module: 'representatives' },
     component: () => import('./modules/representatives/RepProfileView.vue'), props: true,
   },

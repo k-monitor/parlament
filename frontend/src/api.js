@@ -91,6 +91,10 @@ export const api = {
   repSpeeches: (id, params) => get(`/representatives/${id}/speeches`, params),
   repVoteDays: (id, period) => get(`/representatives/${id}/vote-days`, { period }),
   repVotes: (id, params) => get(`/representatives/${id}/votes`, params),
+  // Several people side by side (REP-15) — one request for the whole spec sheet,
+  // since the page cannot draw a row's bars until every column's figure is in.
+  // `ids` is an array; api.js sends it as the repeated `id` param the API takes.
+  repCompare: (ids, period) => get('/representatives/compare', { id: ids, period }),
   factions: (period) => get('/representatives/factions', { period }),
   // Tisztségviselők (REP-11): one row per office term, not per person.
   officials: (params) => get('/representatives/officials', params),

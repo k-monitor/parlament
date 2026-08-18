@@ -34,7 +34,7 @@ const NAV_SECTIONS = {
   reps: {
     match: ['representatives', 'lookup', 'advocates', 'speakers', 'allSpeakers',
             'officials', 'portfolios', 'portfolio', 'factions', 'profile',
-            'settlements', 'settlement', 'settlementReps'],
+            'compare', 'settlements', 'settlement', 'settlementReps'],
     // `profile` is a detail page of every person tab — which one is decided at
     // runtime by the kind of person the profile is (see `tabActive`).
     tabs: [
@@ -49,8 +49,12 @@ const NAV_SECTIONS = {
       // `group` splits the bar with rules (see `visibleTabs`): the first two tabs
       // list *people*, the next two the *bodies* they act in, and the last the
       // *places* they answer to — equal-looking tabs in a row hid that.
+      // `compare` (REP-15) is claimed the same way as `lookup` and the chips: it is
+      // reached from a profile or the list's compare tray, not from a tab of its
+      // own — a tool for the page you are on rather than a fifth place to browse.
       { name: 'representatives', key: 'representatives', group: 'people',
-        detail: ['advocates', 'speakers', 'allSpeakers', 'lookup', 'profile'] },
+        detail: ['advocates', 'speakers', 'allSpeakers', 'lookup', 'profile',
+                 'compare'] },
       { name: 'officials', key: 'officials', group: 'people', detail: ['profile'] },
       // Tárcák (§6C): the institution behind those offices. Its own module, so
       // the tab goes when the module is switched off (EXT-6) while the rest of

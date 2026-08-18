@@ -752,7 +752,13 @@ watch(() => store.cycles.join(','), load)
 /* name on top (with the share button beside it), then the portrait and bio
    side by side below it */
 .pname { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: .6rem; }
-.pmain { min-width: 0; }
+/* Grows to fill whatever the activity board leaves, and — the point of the
+   explicit flex-basis — is measured at that basis rather than at its max-content
+   width when `.phead` decides where to break. Left at `auto`, the long office
+   title made the bio's max-content plus the 200-day board overflow the card, so
+   the board wrapped onto a row of its own instead of shrinking the bio beside
+   it. Below ~26rem of bio there is no room for both and wrapping is right. */
+.pmain { flex: 1 1 26rem; min-width: 0; }
 .pident { display: flex; gap: 1.2rem; align-items: flex-start; }
 /* Government office (tisztség) line: a muted label above the office name, so a
    non-MP speaker (minister/state secretary) reads as clearly identified. */
@@ -779,8 +785,11 @@ watch(() => store.cycles.join(','), load)
 .link-badge--w { font-family: Georgia, "Times New Roman", serif; font-weight: 700;
   font-size: .82em; line-height: 1; color: var(--ink); }
 .links a:hover .link-badge { border-color: var(--accent); }
-/* activity board sits in the header corner; can scroll horizontally if wide */
-.pactivity { margin-left: auto; max-width: 100%; min-width: 0; }
+/* activity board sits in the header corner; can scroll horizontally if wide.
+   No auto margin: `.pmain` grows into the free space, so the board is already
+   flush with the card's right edge beside it — and when the header does wrap
+   (narrow viewports) it then lines up with the bio instead of floating right. */
+.pactivity { max-width: 100%; min-width: 0; }
 .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; align-items: start; }
 .pcol { display: flex; flex-direction: column; gap: 1.2rem; }
 .bignums { display: flex; gap: 2rem; flex-wrap: wrap; }

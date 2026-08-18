@@ -61,14 +61,13 @@ const range = computed(() => {
 })
 
 // Build the week columns spanning the shown window, snapped to whole weeks
-// (Monday-first) so the grid is rectangular. Each week also carries the month
-// label to print above it when a new month begins.
+// (Monday-first) so the grid is rectangular. The month labels above them are
+// derived from these columns by `monthRuns`.
 const weeks = computed(() => {
   if (!range.value) return []
   const { start: rangeStart, last } = range.value
   let cur = rangeStart - mondayIndex(rangeStart) * DAY
   const out = []
-  let prevMonth = null
   while (cur <= last) {
     const cells = []
     for (let r = 0; r < 7; r++) {
@@ -83,21 +82,69 @@ const weeks = computed(() => {
         documents: rec ? rec.documents : 0,
       })
     }
-    const mDate = new Date(cur)
-    const m = mDate.getUTCMonth()
-    let monthLabel = ''
-    if (m !== prevMonth) {
-      monthLabel = monthFmt.value.format(mDate)
-      if (m === 0 || prevMonth === null) monthLabel = `’${String(mDate.getUTCFullYear()).slice(2)} ` + monthLabel
-      prevMonth = m
-    }
-    out.push({ start: cur, cells, monthLabel })
+    out.push({ start: cur, cells })
     cur += 7 * DAY
   }
   return out
 })
 
-// Weekday row labels (Mon/Wed/Fri shown, like GitHub) in the active locale.
+// Geometry of one week column, shared by the grid and the month labels above it.
+const CELL = 12, GAP = 3
+// Rough px per character of a label at .68rem — enough to tell whether a month's
+// own columns can hold its name ("aug." fits above two weeks, "szept." needs
+// three). Deliberately an estimate, not a measurement: it only decides whether a
+// label is worth printing, while the CSS clip is what guarantees it never bleeds.
+const CHAR_PX = 5.8
+function labelFits(text, width) { return text.length * CHAR_PX <= width }
+
+// Month labels, grouped into runs of week columns (a run = the consecutive weeks
+// whose Monday falls in the same month) and printed above their own run, sized
+// and clipped to it — so a label can never bleed over a neighbouring month's
+// cells. That is what a narrow leading month used to do: the 200-day window
+// starts mid-month, leaving January one column wide and its label lying across
+// February's ("’26 jan." + "febr." rendered as one unreadable smudge).
+// A run too narrow for its name prints nothing, and the ’YY year stamp then
+// travels on to the first run with room for it, so the board is still dated.
+const monthRuns = computed(() => {
+  const runs = []
+  for (const w of weeks.value) {
+    const d = new Date(w.start)
+    const m = d.getUTCMonth()
+    const last = runs[runs.length - 1]
+    if (last && last.month === m) last.cols++
+    else runs.push({ month: m, cols: 1, date: d })
+  }
+  let yearPending = true          // the board is not dated yet
+  const out = runs.map((r) => {
+    const width = r.cols * (CELL + GAP) - GAP
+    if (r.month === 0) yearPending = true   // a new year wants stamping
+    const name = monthFmt.value.format(r.date)
+    const dated = `’${String(r.date.getUTCFullYear()).slice(2)} ${name}`
+    let label = ''
+    if (yearPending && labelFits(dated, width)) {
+      label = dated
+      yearPending = false
+    } else if (labelFits(name, width)) {
+      label = name
+    }
+    return { key: r.date.toISOString().slice(0, 10), label, width, dated }
+  })
+  // A board only a week or two wide (a cycle that has just begun) may have no run
+  // wide enough for the year. Rather than leave it undated, let its last run —
+  // the one with nothing to its right to collide with — widen to fit.
+  if (out.length && !out.some((m) => m.label === m.dated)) {
+    const m = out[out.length - 1]
+    m.label = m.dated
+    m.width = Math.max(m.width, Math.ceil(m.dated.length * CHAR_PX))
+  }
+  return out
+})
+
+// Weekday row labels in the active locale. Only the rows in LABELLED_ROWS are
+// printed (Mon/Wed/Fri, like GitHub): every row labelled would not fit a 12px
+// cell, and the modulo this used to use printed Tue/Thu/Sat instead — labels
+// straddling the rows they name rather than starting at the board's first row.
+const LABELLED_ROWS = [0, 2, 4]
 const weekdayLabels = computed(() => {
   const fmt = new Intl.DateTimeFormat(locale.value, { weekday: 'short', timeZone: 'UTC' })
   // 2024-01-01 is a Monday.
@@ -131,12 +178,13 @@ const summary = computed(() =>
           <div class="months-row">
             <div class="wd-spacer"></div>
             <div class="months">
-              <div v-for="(w, wi) in weeks" :key="wi" class="mcell">{{ w.monthLabel }}</div>
+              <div v-for="m in monthRuns" :key="m.key" class="mspan"
+                   :style="{ width: m.width + 'px' }">{{ m.label }}</div>
             </div>
           </div>
           <div class="body">
             <div class="weekdays">
-              <span v-for="(lbl, i) in weekdayLabels" :key="i" class="wd">{{ i % 2 === 1 ? lbl : '' }}</span>
+              <span v-for="(lbl, i) in weekdayLabels" :key="i" class="wd">{{ LABELLED_ROWS.includes(i) ? lbl : '' }}</span>
             </div>
             <div class="weeks">
               <div v-for="(w, wi) in weeks" :key="wi" class="week">
@@ -182,7 +230,10 @@ const summary = computed(() =>
 .weekdays { display: flex; flex-direction: column; gap: 3px; }
 .wd { height: 12px; font-size: .62rem; line-height: 12px; color: var(--ink-faint); white-space: nowrap; }
 .months { display: flex; gap: 3px; }
-.mcell { width: 12px; flex: none; font-size: .68rem; color: var(--ink-faint); white-space: nowrap; overflow: visible; }
+/* each label is exactly as wide as the month it names and clipped to it, so
+   neighbouring labels can never overlap (see `monthRuns`) */
+.mspan { flex: none; font-size: .68rem; line-height: 1.2; color: var(--ink-faint);
+         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .weeks { display: flex; gap: 3px; }
 .week { display: flex; flex-direction: column; gap: 3px; }
 .cell { width: 12px; height: 12px; border-radius: 2px; background: var(--accent); flex: none; }

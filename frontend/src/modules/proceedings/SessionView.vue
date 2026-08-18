@@ -180,7 +180,7 @@ function searchWord(word) {
           </section>
 
           <section v-if="newWords && newWords.words.length" class="card pad newwords">
-            <div class="sechead">
+            <div class="sechead sechead-collapsible" :class="{ open: newWordsOpen }">
               <button
                 class="sechead-toggle" type="button"
                 :aria-expanded="newWordsOpen" @click="newWordsOpen = !newWordsOpen"
@@ -376,6 +376,17 @@ function searchWord(word) {
 .sechead-toggle .chev { font-size: .8em; opacity: .6; transition: transform .15s ease; }
 .sechead-toggle .chev.open { transform: rotate(90deg); }
 .sechead-toggle:hover .wcloud-title, .sechead-toggle:focus-visible .wcloud-title { color: var(--accent); }
+/* Collapsed, the header row IS the whole card, so the hit target is stretched
+   over it (out to the card's 1rem/1.2rem padding) instead of ending at the
+   title — clicking anywhere on the widget toggles. The row also drops its
+   bottom margin while collapsed, which otherwise pushed the title off-centre.
+   Expanded, the overlay stops at the row so it can't swallow the chips. */
+.sechead-collapsible { position: relative; margin-bottom: 0; }
+.sechead-collapsible.open { margin-bottom: .6rem; }
+.sechead-toggle::after { content: ''; position: absolute; inset: -1rem -1.2rem; }
+.sechead-collapsible.open .sechead-toggle::after { bottom: 0; }
+/* Keep the "?" above that overlay so its own popover stays clickable. */
+.sechead-collapsible .helptip { z-index: 1; }
 .wcloud-title { font-size: 1.05rem; margin: 0 0 .6rem; }
 .newwords { margin-bottom: 1rem; }
 .chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }

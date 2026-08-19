@@ -618,6 +618,16 @@ site-wide behaviour, not a per-view nicety.
   carrying only the search it belongs to and that position — no identifier, and
   at most one per executed search, so no reader's path can be reconstructed from
   it (PRIV-2).
+- **SEA-13 (MAY).** One easter egg: a search whose query contains **"cica"** or
+  **"macska"** (any suffixed form — the match is accent-folded like §4B and
+  anchored to a word start) sets a small pixel cat loose on the page, which
+  chases the pointer, sits down when it catches up and dozes off if it is kept
+  waiting — an homage to X11's `oneko`. It is decoration and nothing else: drawn
+  into a canvas fixed to the viewport, `pointer-events: none` and `aria-hidden`
+  so it never enters layout, hit-testing or the accessibility tree (A11Y-1), no
+  asset to download, and it is **not summoned at all** under
+  `prefers-reduced-motion: reduce` or on a coarse pointer. It leaves on the next
+  search that isn't about cats, and when the search page is left.
 
 ### 5.2 Proceedings viewer (sentence ↔ video sync)
 

@@ -3,12 +3,13 @@
 // (SEA-6: deep-linkable / citable). Editing filters or paging updates the URL,
 // and a watcher re-runs the query — so the back button and a pasted link both
 // reproduce the exact result set.
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
 import { store, loadMeta, setCycles, currentCycleLabel, periodLabel } from '../../store.js'
 import { agendaLabel, formatDate, searchExcerptLines } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
+import { onekoForQuery, dismissOneko } from '../../lib/oneko.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
@@ -112,6 +113,10 @@ let breakdownLoadedSeq = -1
 const clicks = createSearchClicks('proceedings')
 
 async function runFromRoute() {
+  // The site's one easter egg (SEA-13): a search for cats fetches a cat, and
+  // any other search sends it home again. Called before the early return so an
+  // emptied query dismisses it too.
+  onekoForQuery(route.query.q)
   if (!route.query.q) {
     reqSeq++ // orphan any in-flight responses
     data.value = null; trend.value = null; breakdown.value = null
@@ -192,6 +197,10 @@ watch(() => route.query, (q) => {
   sort.value = SORTS.includes(q.sort) ? q.sort : 'relevance'
   runFromRoute()
 })
+
+// The cat is appended to <body>, so it outlives this component unless it is
+// told otherwise — leaving the search page has to take it with us (SEA-13).
+onUnmounted(dismissOneko)
 
 function viewerLink(r) {
   return { name: 'viewer', params: { uid: r.speech_uid }, query: { s: r.sentence_ord } }

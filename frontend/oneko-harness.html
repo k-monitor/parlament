@@ -1,0 +1,19 @@
+<!doctype html><meta charset="utf-8"><title>oneko harness</title>
+<body style="margin:0;height:100vh;background:#f7f6f3">
+<script type="module">
+  // Headless chromium never paints, so rAF callbacks never fire: drive the
+  // animation from a timer clock instead (the only substitution in this check).
+  let clock = 0
+  window.requestAnimationFrame = (cb) => setTimeout(() => cb((clock += 16)), 16)
+  window.matchMedia = (q) => ({ matches: q.includes('pointer: fine'), media: q,
+    addEventListener(){}, removeEventListener(){} })
+  const { onekoForQuery, dismissOneko } = await import('/src/lib/oneko.js')
+  onekoForQuery('cica')
+  const move = (x, y) => document.dispatchEvent(
+    Object.assign(new Event('mousemove'), { clientX: x, clientY: y }))
+  move(760, 180)
+  setTimeout(() => move(220, 430), 4000)
+  setTimeout(() => document.getElementById('oneko').dispatchEvent(new Event('click')), 8000)
+  setTimeout(() => { dismissOneko()
+    document.title = `gone=${!document.getElementById('oneko')} styles=${document.head.querySelectorAll('style').length}` }, 11000)
+</script>

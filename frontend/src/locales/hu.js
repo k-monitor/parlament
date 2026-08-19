@@ -512,6 +512,11 @@ export default {
     // a címke a felület dolga.
     zodiac: 'Csillagjegy',
     chineseZodiac: 'Kínai állatév',
+    // A profilon a jegyek spoiler mögött vannak: a lap megnyitásakor csak a ⛎
+    // jel látszik, a jegy csak kattintásra. A címke a gomb egyetlen felolvasható
+    // tartalma, ezért mondja ki, mi történik (A11Y-1).
+    zodiacReveal: 'Csillagjegyek megjelenítése',
+    zodiacHide: 'Csillagjegyek elrejtése',
     zodiacNote: 'Csak érdekesség, nem elemzés: a két jegy a képviselő Wikidatában szereplő születési dátumából adódik (a napjegy a dátumból, az állatév a kínai holdújévhez igazítva). Semmiféle összefüggés nincs közte és a képviselő munkája között, és a Parlamonitor semmilyen statisztikát nem épít rá. Ahol nincs pontos (napra megadott) születési dátum, ott nem szerepel jegy.',
     zodiacSign: {
       aries: 'Kos', taurus: 'Bika', gemini: 'Ikrek', cancer: 'Rák',

@@ -106,5 +106,10 @@ használtuk.
 A képviselői oldalak aktivitás ábráját a GitHub felhasználói profil felületének
 hasonló ábrája alapján alakítottuk ki.
 
+A keresőbe rejtett húsvéti tojás — a kurzort követő cica — az X11-es `oneko`
+webes változata, az [oneko.js](https://github.com/tylxr59/oneko.js), amely
+[adryd](https://adryd.com) munkája (MIT licenc); a sprite az eredeti oneko
+játékból származik.
+
 A fejlesztés során intenzíven használtuk a Claude Code nevű LLM alapú kódolási
 asszisztenst a programozás felgyorsítása érdekében.

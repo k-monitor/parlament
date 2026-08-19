@@ -621,11 +621,14 @@ site-wide behaviour, not a per-view nicety.
 - **SEA-13 (MAY).** One easter egg: a search whose query contains **"cica"** or
   **"macska"** (any suffixed form — the match is accent-folded like §4B and
   anchored to a word start) sets a small pixel cat loose on the page, which
-  chases the pointer, sits down when it catches up and dozes off if it is kept
-  waiting — an homage to X11's `oneko`. It is decoration and nothing else: drawn
-  into a canvas fixed to the viewport, `pointer-events: none` and `aria-hidden`
-  so it never enters layout, hit-testing or the accessibility tree (A11Y-1), no
-  asset to download, and it is **not summoned at all** under
+  chases the pointer, sits down when it catches up, washes itself, scratches at
+  the edges of the window and eventually falls asleep if it is kept waiting;
+  clicking it pops a handful of hearts. It is **X11's `oneko`** itself: the
+  `oneko.js` script and its sprite sheet (MIT, adryd / the tylxr59 fork)
+  vendored into `frontend/src/lib/`, adapted only so the cat can be summoned by
+  a search and sent away again — the file header lists every change. It is
+  decoration and nothing else: fixed to the viewport, `aria-hidden` so it never
+  enters the accessibility tree (A11Y-1), and **not summoned at all** under
   `prefers-reduced-motion: reduce` or on a coarse pointer. It leaves on the next
   search that isn't about cats, and when the search page is left.
 
@@ -1366,11 +1369,26 @@ site-wide behaviour, not a per-view nicety.
   - **Framed as trivia, not as a finding.** This is a transparency site whose
     credibility rests on every number on it being checkable and meaningful; a sign
     printed in the same visual register as a voting record would corrode exactly
-    that. So the signs sit apart from the statistics, in the biographical block,
-    visibly lighter than the data around them, with a note saying what they are —
-    derived from a birth date, of no analytical value, and offered for curiosity.
+    that. So the signs sit apart from the statistics — on the profile, tucked into
+    the top-right corner of the identity card, out of the reading path of the
+    biographical block rather than appended to it — visibly lighter than everything
+    around them, with a note saying what they are: derived from a birth date, of no
+    analytical value, and offered for curiosity.
     They are never combined with an activity figure, never aggregated into a
     "which sign speaks most" claim, and never used to sort or rank anybody.
+  - **On the profile, behind a spoiler.** Nothing astrological is visible when a
+    profile opens: the corner holds a single **⛎** glyph, and the signs appear only
+    when the reader presses it (and collapse again when they press it a second time). A
+    reader who came for a voting record is never shown a horoscope on the way; a
+    curious one is one click from it. The trigger deliberately uses **Ophiuchus** —
+    the one zodiac glyph that is never among the twelve the site prints — so the
+    button itself cannot give the sign away. It is hidden from assistive tech as
+    well as from the eye while collapsed, so the reveal means the same thing in
+    both. The state is per person and per page view: it is not remembered, and
+    opening the next profile starts collapsed again. The **comparison** (REP-15)
+    keeps its two rows visible — there the reader has already chosen the people and
+    asked for a table of facts about them, and a collapsed cell has neighbours it
+    would have to line up with.
   - **The birth date itself is not published.** It is the input the signs are
     derived from, and a sign is a far coarser disclosure than an exact date, so the
     endpoints serve the signs and keep the date internal (§4.1). A reader who wants

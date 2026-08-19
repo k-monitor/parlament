@@ -439,6 +439,11 @@ export default {
     // date, of no analytical value. Keys are language-neutral; labels live here.
     zodiac: 'Star sign',
     chineseZodiac: 'Chinese zodiac',
+    // On the profile the signs sit behind a spoiler — the page opens showing only
+    // the ⛎ glyph. This label is the button's only readable content, so it says
+    // what pressing it does (A11Y-1).
+    zodiacReveal: 'Show star signs',
+    zodiacHide: 'Hide star signs',
     zodiacNote: 'Curiosity only, not analysis: both signs follow from the birth date on the person\'s Wikidata entry (the sun sign from the date, the animal year aligned to the Chinese lunar new year). There is no connection whatsoever between them and the person\'s work, and Parlamonitor builds no statistics on them. Where no day-precision birth date exists, no sign is shown.',
     zodiacSign: {
       aries: 'Aries', taurus: 'Taurus', gemini: 'Gemini', cancer: 'Cancer',

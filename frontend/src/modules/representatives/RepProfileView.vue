@@ -215,6 +215,9 @@ const compareTo = computed(() => compareRoute([props.id]))
 // absent: it is trivia, and there is no column here for a "nincs adat" cell to line
 // up with (the comparison is where that has to be said).
 const zodiac = computed(() => signsOf(profile.value))
+// …and whether the reader has asked to see them. Collapsed by default, and reset
+// per person in `load()`: a revealed sign must not carry over into the next profile.
+const zodiacRevealed = ref(false)
 
 const PLACEHOLDER =
   'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -294,6 +297,7 @@ async function load() {
     for (const k of Object.keys(m)) delete m[k]
   expanded.questions = expanded.lawbills = expanded.other = expanded.votes
     = expanded.days = expanded.declarations = false
+  zodiacRevealed.value = false
   try {
     // Everything on the profile is scoped to the global cycle scope
     // (store.cycles; empty = all cycles), so the page never mixes in an
@@ -436,34 +440,60 @@ watch(() => store.cycles.join(','), load)
                      PDF, so it sits with the other outbound identity links. -->
                 <a v-if="profile.cv_url" :href="profile.cv_url" target="_blank" rel="noopener">{{ $t('profile.cv') }} (PDF)</a>
               </div>
-              <!-- Csillagjegyek (REP-16). Openly trivia, so it comes last in the
-                   block and is the lightest thing in it: on a site whose credibility
-                   rests on every figure being checkable, a sign set in the same
-                   register as a voting record would corrode exactly that. The tip
-                   says outright that it means nothing. Glyphs are decoration — the
-                   label carries it, and each sign names which kind it is for
-                   assistive tech (A11Y-1). -->
-              <div v-if="zodiac" class="row small zodiac" style="gap:.6rem;">
-                <span v-if="zodiac.sun"
-                      :aria-label="$t('profile.zodiac') + ': ' + zodiac.sun.label">
-                  <span aria-hidden="true">{{ zodiac.sun.glyph }}</span> {{ zodiac.sun.label }}
-                </span>
-                <span v-if="zodiac.animal"
-                      :aria-label="$t('profile.chineseZodiac') + ': ' + zodiac.animal.label">
-                  <span aria-hidden="true">{{ zodiac.animal.glyph }}</span> {{ zodiac.animal.label }}
-                </span>
-                <HelpTip :label="$t('profile.zodiac')">
-                  <p>{{ $t('profile.zodiacNote') }}</p>
-                </HelpTip>
-              </div>
             </div>
           </div>
         </div>
 
-        <!-- GitHub-style activity board (REP-8) lives in the header, to the right
-             of the bio; shown only when the MP has any activity in scope. -->
-        <div class="pactivity" v-if="activity && activity.totals.active_days">
-          <ActivityBoard :days="activity.days" :documents-available="activity.documents_available" :from="cycleStart" />
+        <!-- The header's right-hand column: the zodiac spoiler in the card's top
+             corner, the activity board under it. Both are optional, so the column
+             only exists when there is something to put in it. -->
+        <div class="pside" v-if="zodiac || (activity && activity.totals.active_days)">
+          <!-- Csillagjegyek (REP-16), behind a spoiler. Openly trivia, so it is the
+               lightest thing on the card and it is tucked into the corner: on a site
+               whose credibility rests on every figure being checkable, a sign set in
+               the same register as a voting record would corrode exactly that. Hence
+               the reveal — nothing astrological is on the page as it opens, and a
+               reader only ever sees it by asking. The trigger is ⛎ (Ophiuchus), the
+               one zodiac glyph that is never one of the twelve printed here, so the
+               button itself cannot give the sign away. The tip, once open, says
+               outright that it means nothing. Glyphs are decoration — the label
+               carries it, and each sign names which kind it is for assistive tech
+               (A11Y-1). -->
+          <div v-if="zodiac" class="row small zodiac" style="gap:.6rem;">
+            <button type="button" class="zodiac-peek" aria-controls="zodiac-signs"
+                    :aria-expanded="zodiacRevealed ? 'true' : 'false'"
+                    :title="zodiacRevealed ? $t('profile.zodiacHide') : $t('profile.zodiacReveal')"
+                    @click="zodiacRevealed = !zodiacRevealed">
+              <span aria-hidden="true">⛎</span>
+              <span class="visually-hidden">{{ zodiacRevealed ? $t('profile.zodiacHide') : $t('profile.zodiacReveal') }}</span>
+            </button>
+            <!-- v-show, not v-if: the button names the region it controls, so the
+                 region has to exist for that reference to resolve. Hidden this way it
+                 is out of the accessibility tree too, so nobody — sighted or not —
+                 meets the signs before pressing the glyph. The button stays first in
+                 the source (it is what is read, and what is reachable, while the signs
+                 are hidden); the row is reversed in CSS so the labels open *leftwards*
+                 and the glyph itself never moves out from under the pointer. -->
+            <span v-show="zodiacRevealed" id="zodiac-signs" class="row small" style="gap:.6rem;">
+              <span v-if="zodiac.sun"
+                    :aria-label="$t('profile.zodiac') + ': ' + zodiac.sun.label">
+                <span aria-hidden="true">{{ zodiac.sun.glyph }}</span> {{ zodiac.sun.label }}
+              </span>
+              <span v-if="zodiac.animal"
+                    :aria-label="$t('profile.chineseZodiac') + ': ' + zodiac.animal.label">
+                <span aria-hidden="true">{{ zodiac.animal.glyph }}</span> {{ zodiac.animal.label }}
+              </span>
+              <HelpTip :label="$t('profile.zodiac')">
+                <p>{{ $t('profile.zodiacNote') }}</p>
+              </HelpTip>
+            </span>
+          </div>
+
+          <!-- GitHub-style activity board (REP-8) lives in the header, to the right
+               of the bio; shown only when the MP has any activity in scope. -->
+          <div class="pactivity" v-if="activity && activity.totals.active_days">
+            <ActivityBoard :days="activity.days" :documents-available="activity.documents_available" :from="cycleStart" />
+          </div>
         </div>
       </header>
 
@@ -792,13 +822,26 @@ watch(() => store.cycles.join(','), load)
 </template>
 
 <style scoped>
-/* Trivia, and dressed as trivia (REP-16): the faintest ink on the card, a size down
-   again from the small links above it, and set apart by a rule so it never reads as
-   one more fact about the person's work. */
+/* Trivia, and dressed as trivia (REP-16): the faintest ink on the card and a size
+   down from everything else on it, parked in the top-right corner where it is out
+   of the reading path of the identity block entirely. Right-aligned, because the
+   revealed labels have to grow inwards — the glyph is the thing the reader aims
+   at, so it stays put. */
 .zodiac {
-  margin-top: .6rem; padding-top: .5rem; border-top: 1px dotted var(--line);
+  flex-direction: row-reverse; align-self: flex-end;
   color: var(--ink-faint); font-size: .8rem;
 }
+/* The spoiler trigger. The glyph is the entire affordance, so it needs a hit area
+   a thumb can find and a hover state that admits it is a control — but not one
+   drop more ink than trivia has earned, which is why it stays a bare glyph rather
+   than becoming a button-shaped button. */
+.zodiac-peek {
+  background: none; border: 0; border-radius: 4px; padding: .1rem .25rem;
+  margin: -.1rem 0; cursor: pointer; line-height: 1; font-size: 1rem;
+  color: var(--ink-faint); opacity: .7;
+}
+.zodiac-peek:hover, .zodiac-peek:focus-visible,
+.zodiac-peek[aria-expanded="true"] { opacity: 1; color: var(--accent); }
 
 /* The navigation row above the card: back on the left, "compare" opposite it on
    the right (REP-15). Both are quiet small links — this row is for leaving the
@@ -845,10 +888,13 @@ watch(() => store.cycles.join(','), load)
 .link-badge--w { font-family: Georgia, "Times New Roman", serif; font-weight: 700;
   font-size: .82em; line-height: 1; color: var(--ink); }
 .links a:hover .link-badge { border-color: var(--accent); }
-/* activity board sits in the header corner; can scroll horizontally if wide.
-   No auto margin: `.pmain` grows into the free space, so the board is already
-   flush with the card's right edge beside it — and when the header does wrap
-   (narrow viewports) it then lines up with the bio instead of floating right. */
+/* The header's right-hand column: zodiac corner on top, activity board below.
+   `min-width: 0` on both so the board — which scrolls horizontally when it is
+   wider than the space left — can actually shrink instead of forcing the header
+   to wrap. No auto margin: `.pmain` grows into the free space, so the column is
+   already flush with the card's right edge beside it, and when the header does
+   wrap (narrow viewports) it lines up with the bio instead of floating right. */
+.pside { display: flex; flex-direction: column; gap: .5rem; min-width: 0; max-width: 100%; }
 .pactivity { max-width: 100%; min-width: 0; }
 .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; align-items: start; }
 .pcol { display: flex; flex-direction: column; gap: 1.2rem; }

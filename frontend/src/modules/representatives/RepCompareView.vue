@@ -118,8 +118,10 @@ const SECTIONS = computed(() => {
         // missing data, not a person to whom the notion fails to apply.
         { key: 'education', labelKey: 'profile.education', kind: 'text',
           value: (p) => p.highest_education, absentKey: 'compare.unknown' },
-        // Csillagjegyek (REP-16). Trivia, openly labelled as such and quarantined
-        // at the bottom of the identity block; the row note says it means nothing.
+        // Csillagjegyek (REP-16). Trivia, openly labelled as such — on a profile
+        // quarantined in the card's corner behind a spoiler; here it is a row like
+        // any other, because the reader asked for this table. The note says it
+        // means nothing.
         // Never a `num` row — there is nothing here to rank, and bars would imply
         // there were.
         { key: 'zodiac', labelKey: 'profile.zodiac', kind: 'sign', trivia: true,

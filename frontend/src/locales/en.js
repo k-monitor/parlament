@@ -435,6 +435,22 @@ export default {
     assetDeclarationDate: 'assets as of {date}',
     assetDeclarationMissing: 'No published document',
     assetDeclarationDeadline: 'filing deadline: {date}',
+    // Astrological signs (REP-16). Openly trivia: derived from the Wikidata birth
+    // date, of no analytical value. Keys are language-neutral; labels live here.
+    zodiac: 'Star sign',
+    chineseZodiac: 'Chinese zodiac',
+    zodiacNote: 'Curiosity only, not analysis: both signs follow from the birth date on the person\'s Wikidata entry (the sun sign from the date, the animal year aligned to the Chinese lunar new year). There is no connection whatsoever between them and the person\'s work, and Parlamonitor builds no statistics on them. Where no day-precision birth date exists, no sign is shown.',
+    zodiacSign: {
+      aries: 'Aries', taurus: 'Taurus', gemini: 'Gemini', cancer: 'Cancer',
+      leo: 'Leo', virgo: 'Virgo', libra: 'Libra', scorpio: 'Scorpio',
+      sagittarius: 'Sagittarius', capricorn: 'Capricorn', aquarius: 'Aquarius',
+      pisces: 'Pisces',
+    },
+    chineseSign: {
+      rat: 'Rat', ox: 'Ox', tiger: 'Tiger', rabbit: 'Rabbit',
+      dragon: 'Dragon', snake: 'Snake', horse: 'Horse', goat: 'Goat',
+      monkey: 'Monkey', rooster: 'Rooster', dog: 'Dog', pig: 'Pig',
+    },
     totalSpeeches: 'Number of speeches',
     totalSpeakingTime: 'Total speaking time', billsSubmitted: 'Bills submitted',
     votesAbsent: 'Occasions with no vote cast',
@@ -480,7 +496,10 @@ export default {
     diffOnly: 'Differences only', diffOnlyCount: '{n} identical rows',
     // Neutral by design: the page reports who spoke more, not who is better.
     largest: 'the largest value in this row',
+    // Two different empty cells: the notion does not apply to this person, vs.
+    // it applies and we simply don't know it. Conflating them is a factual error.
     na: 'not applicable',
+    unknown: 'no data',
     sectionWho: 'Who they are', sectionSpeech: 'Speeches',
     sectionDocs: 'Submitted motions', sectionVotes: 'Voting', sectionOther: 'Career',
     avgSpeech: 'Average speech length',
@@ -767,8 +786,9 @@ export default {
       + 'sentence, and never inside a recognised person or organisation name. Counts '
       + 'are therefore lower bounds, and a blind spot means “no mention found”, not '
       + '“provably never said”.',
-    sourceNote: 'Settlement list, coordinates and constituency mapping: {source}. '
-      + 'The mentions come from the parlament.hu transcripts.',
+    sourceNote: 'Settlement list and constituency mapping: {source}. The map points '
+      + 'are OpenStreetMap’s own place nodes (ODbL), so a dot sits exactly where the '
+      + 'basemap prints the name. The mentions come from the parlament.hu transcripts.',
     notFound: 'No such settlement.',
     electorate: '{n} registered voters',
     inSpeeches: 'in speeches',

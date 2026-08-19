@@ -38,7 +38,9 @@ CREATE TABLE person (
     wikidata_id       TEXT,              -- Wikidata QID, joined via P4966 (EXT-2)
     wikipedia_url     TEXT,              -- preferred (hu, else en) Wikipedia article
     -- Birth date from Wikidata (P569, day-precision only) and the two signs the
-    -- scraper derives from it. Stored, not yet surfaced by any endpoint.
+    -- scraper derives from it. The **signs** are served by the profile and the
+    -- comparison (REP-16); the date itself stays internal — it is the input the
+    -- signs are derived from, not a field any page publishes.
     date_of_birth     TEXT,              -- YYYY-MM-DD
     zodiac_sign       TEXT,              -- sun sign, lowercase Latin, e.g. "taurus"
     chinese_zodiac_sign TEXT,            -- lunar-year animal, e.g. "dragon"

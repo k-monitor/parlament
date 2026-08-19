@@ -363,8 +363,10 @@ def test_the_register_is_stored_with_its_geography(built):
     rows = {r["name"]: r for r in conn.execute("SELECT * FROM settlement")}
     # Three settlements from the register, plus the capital as its own entity.
     assert set(rows) == {"Budapest 05. kerület", "Szentendre", "Kaposvár", "Budapest"}
-    assert rows["Kaposvár"]["lat"] == pytest.approx(46.3594)
-    assert rows["Kaposvár"]["lon"] == pytest.approx(17.7968)
+    # The stored point is the label point, not the register's territorial centre —
+    # see `test_a_settlement_is_stored_where_the_basemap_labels_it` below.
+    point = settlements.label_point("15/091", "Kaposvár")
+    assert (rows["Kaposvár"]["lat"], rows["Kaposvár"]["lon"]) == point
     assert rows["Kaposvár"]["county"] == "Pest"        # per this miniature tree
     # The folded name is what the search box matches on (§4B FOLD-1).
     assert rows["Kaposvár"]["name_fold"] == "kaposvar"
@@ -374,6 +376,38 @@ def test_the_register_is_stored_with_its_geography(built):
               conn.execute("SELECT * FROM settlement_constituency")}
     assert labels["14/002"] == "Pest 4. OEVK"
     conn.close()
+
+
+def test_a_settlement_is_stored_where_the_basemap_labels_it(built):
+    """TEL-5: the office's `centrum` centres a settlement's **territory**, which over
+    the 24 largest towns lands a mean 3 km from the name the basemap prints — so every
+    dot missed its own label. The stored point is the checked-in gazetteer's label
+    point (the OSM place node the basemap draws that name at), and the register's
+    point survives only as the fallback."""
+    conn = sqlite3.connect(built)
+    point = conn.execute(
+        "SELECT lat, lon FROM settlement WHERE name = 'Kaposvár'").fetchone()
+    conn.close()
+    assert point == settlements.label_point("15/091", "Kaposvár")
+    # Not the `centrum` the fixture's register published for it...
+    assert point != (46.3594, 17.7968)
+    # ...but the same town: a label point moves the dot across a town, never off it.
+    assert abs(point[0] - 46.3594) < 0.05 and abs(point[1] - 17.7968) < 0.05
+
+
+def test_a_label_point_is_never_taken_from_a_renumbered_id():
+    """The ids are the election office's own, and an election can hand one to a
+    different settlement — so an id match counts only where the name agrees, and the
+    name (unique across the register, and what survives renumbering) carries the
+    match over on its own. A name the table has never heard of keeps whatever the
+    register published, which is why this returns None rather than a guess."""
+    kaposvar = settlements.label_point("15/091", "Kaposvár")
+    assert kaposvar is not None
+    # The fixture's miniature register gives 14/002 to Kaposvár, the real one gives
+    # it to a Pest settlement: the name is what resolves that, in both directions.
+    assert settlements.label_point("14/002", "Kaposvár") == kaposvar
+    assert settlements.label_point("15/091", "Szentendre") != kaposvar
+    assert settlements.label_point("99/999", "Nincsilyentelepülés") is None
 
 
 def test_mentions_are_stored_per_sentence_with_their_speech(built):

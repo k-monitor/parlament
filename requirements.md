@@ -338,7 +338,8 @@ Primary use cases:
   also carries a **date of birth** (P569, day-precision statements only) and the
   two astrological signs derived from it at scrape time — the **sun sign** and the
   **Chinese zodiac animal** (which turns over at the lunar new year, so it needs a
-  tabulated one) — stored, not yet surfaced.
+  tabulated one). The **signs** are surfaced (REP-16); the **date** stays stored and
+  unserved — it is the input they are derived from, not a field a page publishes.
 - **faction / party** — label, optional Wikidata id, color (for charts).
 - **membership** — person ↔ faction ↔ period (factions change over time).
 - **mandate** — person ↔ period: the term they held a seat for (start/end), whether
@@ -1348,6 +1349,36 @@ site-wide behaviour, not a per-view nicety.
   - Degrades per EXT-6: with the Bills or Votes module disabled the rows that
     depend on it are absent, not faked, exactly as on the profile.
 
+- **REP-16 (MAY).** **Astrological signs.** The Wikidata join already carries each
+  person's **birth date** (§4.1), and the scraper derives two signs from it: the
+  **sun sign** and the **Chinese zodiac animal**. Both are surfaced — on the profile
+  and as comparison rows (REP-15) — as **openly labelled trivia**.
+  - **Framed as trivia, not as a finding.** This is a transparency site whose
+    credibility rests on every number on it being checkable and meaningful; a sign
+    printed in the same visual register as a voting record would corrode exactly
+    that. So the signs sit apart from the statistics, in the biographical block,
+    visibly lighter than the data around them, with a note saying what they are —
+    derived from a birth date, of no analytical value, and offered for curiosity.
+    They are never combined with an activity figure, never aggregated into a
+    "which sign speaks most" claim, and never used to sort or rank anybody.
+  - **The birth date itself is not published.** It is the input the signs are
+    derived from, and a sign is a far coarser disclosure than an exact date, so the
+    endpoints serve the signs and keep the date internal (§4.1). A reader who wants
+    the date has the Wikipedia/Wikidata link the profile already carries.
+  - **Missing means missing.** Only about four in five sitting MPs have a
+    day-precision Wikidata birth date, so a great many people have no sign at all —
+    and it is never guessed from a partial date (a year-only P569 statement is
+    rejected at scrape time, not rounded). In the **comparison** the cell says
+    **"nincs adat"**, which the table keeps distinct from **"nem értelmezhető"**: one
+    means the fact applies and is unknown, the other that it does not apply to this
+    person at all, and printing the wrong one is a factual error (TRUST-1). On a
+    **profile** the line is simply absent instead — there is no neighbouring column
+    for a "no data" cell to line up with, and an absent piece of trivia needs no
+    announcement.
+  - Signs travel as **language-neutral keys** (`taurus`, `dragon`) so the display
+    label stays a UI concern in both locales (I18N-1), including the Chinese animal
+    year, whose turnover at the lunar new year is tabulated rather than computed.
+
 - **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
   representative and faction statistics** (speaking time, speech counts, trends —
   REP-3/REP-4/REP-7), but are **never dropped from storage or from the
@@ -1945,6 +1976,18 @@ places in it.
     place in the corpus. The capital is therefore its own entity **alongside** its
     districts, and a district mention is never silently promoted into it (nor a
     *"Budapest"* mention distributed across 23 districts it says nothing about).
+  - **Where a settlement is drawn is not where the register centres it.** The
+    office's point centres a settlement's *administrative territory*, which over the
+    24 largest towns lands a mean 3 km (max 11 km) from where the basemap prints
+    that town's name — so every dot missed its own label, which on a map whose job
+    is *find my town* reads as a bug. The drawn point is therefore the
+    **OpenStreetMap place node** the basemap labels the settlement at, matched to
+    the register **by point-in-polygon** against the office's own boundaries (no
+    name matching, no shared key) and checked in as a table
+    (`app/settlement_points.csv`, from `build_settlement_points.py`), so a rebuild
+    still needs no second network source. The register's own point stays the
+    fallback for anything the table misses, and OpenStreetMap — already credited for
+    the basemap — is credited for the points (ODbL).
 - **TEL-6 (SHOULD).** The module's front page is a **map of Hungary** showing how
   often each settlement is named, over the active cycle scope (§4A). Mention
   frequency spans four orders of magnitude (Budapest against a village named once),

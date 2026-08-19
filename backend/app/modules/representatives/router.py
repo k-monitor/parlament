@@ -1250,6 +1250,11 @@ def compare_representatives(
                         if current and current["faction_label"] else None),
             "office": office["title"] if office else None,
             "highest_education": p["highest_education"],
+            # Astrological trivia (REP-16), the same two keys the profile serves.
+            # Null means the Wikidata birth date is missing — "no data", which the
+            # comparison prints differently from "not applicable".
+            "zodiac_sign": _col(p, "zodiac_sign"),
+            "chinese_zodiac_sign": _col(p, "chinese_zodiac_sign"),
             "wikipedia_url": p["wikipedia_url"], "kmonitor_url": p["kmonitor_url"],
             "website": p["website"],
             # --- what the corpus counts -------------------------------------
@@ -1371,6 +1376,16 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         "lastname": p["lastname"], "photo_uri": p["photo_uri"],
         "wikidata_id": p["wikidata_id"], "wikipedia_url": p["wikipedia_url"],
         "kmonitor_url": p["kmonitor_url"],
+        # The two astrological signs the scraper derives from the Wikidata birth
+        # date (P569, day-precision only) — the sun sign and the Chinese zodiac
+        # animal (REP-16). Language-neutral keys ("taurus", "dragon"); the display
+        # label is the UI's business. The **birth date itself is deliberately not
+        # returned**: it is what the signs are derived from, not something the page
+        # asked to publish. Null for the ~22% of MPs with no Wikidata date, which is
+        # "no data" and not "no sign" — the UI must say so. `_col` because a DB built
+        # before these columns existed simply has neither.
+        "zodiac_sign": _col(p, "zodiac_sign"),
+        "chinese_zodiac_sign": _col(p, "chinese_zodiac_sign"),
         # The CV PDF they had published on parlament.hu, when there is one — only
         # while they sit, since the House takes it down when the mandate ends
         # (REP-13). Absent on a DB built before the column existed (`_col`).

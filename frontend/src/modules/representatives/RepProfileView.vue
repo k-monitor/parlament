@@ -15,6 +15,7 @@ import HelpTip from '../../components/HelpTip.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import EmbedButton from '../../components/EmbedButton.vue'
 import { compareRoute } from '../../lib/compareUrl.js'
+import { signsOf } from '../../lib/zodiac.js'
 
 const props = defineProps({ id: String })
 const { t } = useI18n()
@@ -208,6 +209,12 @@ const handovers = computed(() => {
 // fills. It carries nobody else — there is no selection kept between pages, so a
 // comparison never opens with someone the reader doesn't remember choosing.
 const compareTo = computed(() => compareRoute([props.id]))
+
+// The two astrological signs (REP-16), when Wikidata gave a birth date to derive
+// them from. Null when it did not — for a profile that means the line is simply
+// absent: it is trivia, and there is no column here for a "nincs adat" cell to line
+// up with (the comparison is where that has to be said).
+const zodiac = computed(() => signsOf(profile.value))
 
 const PLACEHOLDER =
   'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -428,6 +435,26 @@ watch(() => store.cycles.join(','), load)
                 <!-- The CV the MP had the House publish (REP-13) — a parlament.hu
                      PDF, so it sits with the other outbound identity links. -->
                 <a v-if="profile.cv_url" :href="profile.cv_url" target="_blank" rel="noopener">{{ $t('profile.cv') }} (PDF)</a>
+              </div>
+              <!-- Csillagjegyek (REP-16). Openly trivia, so it comes last in the
+                   block and is the lightest thing in it: on a site whose credibility
+                   rests on every figure being checkable, a sign set in the same
+                   register as a voting record would corrode exactly that. The tip
+                   says outright that it means nothing. Glyphs are decoration — the
+                   label carries it, and each sign names which kind it is for
+                   assistive tech (A11Y-1). -->
+              <div v-if="zodiac" class="row small zodiac" style="gap:.6rem;">
+                <span v-if="zodiac.sun"
+                      :aria-label="$t('profile.zodiac') + ': ' + zodiac.sun.label">
+                  <span aria-hidden="true">{{ zodiac.sun.glyph }}</span> {{ zodiac.sun.label }}
+                </span>
+                <span v-if="zodiac.animal"
+                      :aria-label="$t('profile.chineseZodiac') + ': ' + zodiac.animal.label">
+                  <span aria-hidden="true">{{ zodiac.animal.glyph }}</span> {{ zodiac.animal.label }}
+                </span>
+                <HelpTip :label="$t('profile.zodiac')">
+                  <p>{{ $t('profile.zodiacNote') }}</p>
+                </HelpTip>
               </div>
             </div>
           </div>
@@ -765,6 +792,14 @@ watch(() => store.cycles.join(','), load)
 </template>
 
 <style scoped>
+/* Trivia, and dressed as trivia (REP-16): the faintest ink on the card, a size down
+   again from the small links above it, and set apart by a rule so it never reads as
+   one more fact about the person's work. */
+.zodiac {
+  margin-top: .6rem; padding-top: .5rem; border-top: 1px dotted var(--line);
+  color: var(--ink-faint); font-size: .8rem;
+}
+
 /* The navigation row above the card: back on the left, "compare" opposite it on
    the right (REP-15). Both are quiet small links — this row is for leaving the
    page, so nothing on it should read as a call to action. */

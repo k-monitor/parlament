@@ -23,6 +23,7 @@ import { api } from '../../api.js'
 import { store, loadMeta, currentCycleLabel } from '../../store.js'
 import { formatSpeakingTime, formatDuration } from '../../format.js'
 import { COMPARE_MAX, parseIds, serializeIds } from '../../lib/compareUrl.js'
+import { signsOf } from '../../lib/zodiac.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import HelpTip from '../../components/HelpTip.vue'
@@ -61,11 +62,18 @@ function num(v) { return v == null ? null : numberFmt.value.format(v) }
 // --- the rows ---------------------------------------------------------------
 // One descriptor per row: how to pull the value out of a person, how to print it,
 // and whether it is a magnitude (bars + the largest-value marker) or a fact
-// (printed as it is). `value` returning `null` means "not applicable to this
-// person" and prints as such — never as a zero the reader would compare against a
-// real one (TRUST-1). `note` is the row's own caveat, shown in a HelpTip: two of
-// these are biography rather than cycle statistics, which the reader has to be
-// told or the selected cycle silently means nothing for them.
+// (printed as it is). `value` returning `null` means the cell has no value — never
+// a zero the reader would compare against a real one (TRUST-1).
+//
+// An empty cell means one of two different things, and saying the wrong one is a
+// factual error: **"nem értelmezhető"** (the notion does not apply to this person —
+// a non-MP has no constituency and no roll calls to miss) or **"nincs adat"** (it
+// applies, we just don't know it — most of the corpus has no birth date, so no
+// sign). `absentKey` picks which; it defaults to the first.
+//
+// `noteKey` is the row's own caveat, shown in a HelpTip: some rows are biography
+// rather than cycle statistics, which the reader has to be told or the selected
+// cycle silently means nothing for them.
 
 // Participation-pie colours, kept identical to the profile's so a reader moving
 // between the two pages reads the same colour as the same thing.
@@ -106,8 +114,23 @@ const SECTIONS = computed(() => {
           value: (p) => p.constituency },
         { key: 'office', labelKey: 'profile.office', kind: 'text',
           value: (p) => p.office },
+        // Upstream simply has no qualification on file for many people — that is
+        // missing data, not a person to whom the notion fails to apply.
         { key: 'education', labelKey: 'profile.education', kind: 'text',
-          value: (p) => p.highest_education },
+          value: (p) => p.highest_education, absentKey: 'compare.unknown' },
+        // Csillagjegyek (REP-16). Trivia, openly labelled as such and quarantined
+        // at the bottom of the identity block; the row note says it means nothing.
+        // Never a `num` row — there is nothing here to rank, and bars would imply
+        // there were.
+        { key: 'zodiac', labelKey: 'profile.zodiac', kind: 'sign', trivia: true,
+          value: (p) => signsOf(p)?.sun || null,
+          text: (p) => signsOf(p)?.sun?.label || null,
+          absentKey: 'compare.unknown', noteKey: 'profile.zodiacNote' },
+        { key: 'chineseZodiac', labelKey: 'profile.chineseZodiac', kind: 'sign',
+          trivia: true,
+          value: (p) => signsOf(p)?.animal || null,
+          text: (p) => signsOf(p)?.animal?.label || null,
+          absentKey: 'compare.unknown', noteKey: 'profile.zodiacNote' },
       ],
     },
     {
@@ -185,6 +208,11 @@ const SECTIONS = computed(() => {
 // The largest value in a numeric row, so the row's bars have a scale and the
 // leading cell can be marked. Deliberately the *largest*, never the "best": the
 // page reports who spoke more, not who is better (REP-15).
+// What this row's empty cell says — see the descriptor contract above.
+function absentText(row) {
+  return t(row.absentKey || 'compare.na')
+}
+
 function rowMax(row) {
   const vals = people.value.map(row.value).filter((v) => typeof v === 'number')
   return vals.length ? Math.max(...vals) : 0
@@ -407,7 +435,7 @@ const shareTitle = computed(() => (people.value.length
                 {{ $t(sec.titleKey) }}
               </th>
             </tr>
-            <tr v-for="row in sec.rows" :key="row.key">
+            <tr v-for="row in sec.rows" :key="row.key" :class="{ trivia: row.trivia }">
               <th scope="row" class="rowhead">
                 {{ $t(row.labelKey) }}
                 <HelpTip v-if="row.noteKey" :label="$t(row.labelKey)">
@@ -421,7 +449,7 @@ const shareTitle = computed(() => (people.value.length
                      and bar are never the only carriers (A11Y-1): the marker has
                      text for assistive tech and the number is always printed. -->
                 <template v-if="row.kind === 'num'">
-                  <span v-if="row.value(p) == null" class="na">{{ $t('compare.na') }}</span>
+                  <span v-if="row.value(p) == null" class="na">{{ absentText(row) }}</span>
                   <template v-else>
                     <span class="val">{{ row.text(p) }}</span>
                     <span v-if="isLead(row, p)" class="leadmark" aria-hidden="true">▲</span>
@@ -435,7 +463,7 @@ const shareTitle = computed(() => (people.value.length
                 <!-- The participation split as a stacked bar, with the numbers in
                      the title/legend so the colours are never the only carrier. -->
                 <template v-else-if="row.kind === 'stack'">
-                  <span v-if="!row.value(p)" class="na">{{ $t('compare.na') }}</span>
+                  <span v-if="!row.value(p)" class="na">{{ absentText(row) }}</span>
                   <template v-else>
                     <span class="stack">
                       <span v-for="s in row.value(p)" :key="s.key" class="seg"
@@ -453,14 +481,25 @@ const shareTitle = computed(() => (people.value.length
                   </template>
                 </template>
 
+                <!-- A sign (REP-16). Glyph as decoration, label as the meaning
+                     (A11Y-1), and the whole cell dimmed so a row of star signs can
+                     never be mistaken for a row of findings. -->
+                <template v-else-if="row.kind === 'sign'">
+                  <span v-if="!row.value(p)" class="na">{{ absentText(row) }}</span>
+                  <span v-else class="signval small">
+                    <span aria-hidden="true">{{ row.value(p).glyph }}</span>
+                    {{ row.value(p).label }}
+                  </span>
+                </template>
+
                 <template v-else-if="row.kind === 'faction'">
                   <FactionBadge v-if="row.value(p)" :faction="row.value(p)" link />
-                  <span v-else class="na">{{ $t('compare.na') }}</span>
+                  <span v-else class="na">{{ absentText(row) }}</span>
                 </template>
 
                 <template v-else>
                   <span v-if="row.value(p)" class="val small">{{ row.value(p) }}</span>
-                  <span v-else class="na">{{ $t('compare.na') }}</span>
+                  <span v-else class="na">{{ absentText(row) }}</span>
                 </template>
               </td>
               <td v-if="canAdd" class="slot"></td>
@@ -580,6 +619,10 @@ tr.sec .rowhead {
 .plus { font-size: 1.5rem; line-height: 1; }
 
 .val { font-variant-numeric: tabular-nums; font-weight: 600; }
+/* Trivia rows (REP-16) are visibly a different kind of thing from the rows above
+   them: faint, unbolded, no bars — nothing to read as a ranking. */
+tr.trivia .rowhead, tr.trivia td { color: var(--ink-faint); font-weight: 400; }
+.signval { white-space: nowrap; }
 /* "Not applicable" is a statement, so it is spelled out rather than left blank —
    an empty cell reads as missing data (TRUST-1). */
 .na { color: var(--ink-faint); font-size: .85rem; font-style: italic; }

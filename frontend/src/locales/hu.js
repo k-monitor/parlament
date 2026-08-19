@@ -507,6 +507,22 @@ export default {
     assetDeclarationDate: 'vagyoni állapot: {date}',
     assetDeclarationMissing: 'Nincs közzétett dokumentum',
     assetDeclarationDeadline: 'beadási határidő: {date}',
+    // Csillagjegyek (REP-16). Nyíltan játék: a Wikidata-beli születési dátumból
+    // származnak, semmilyen elemzési értékük nincs — a kulcsok nyelvsemlegesek,
+    // a címke a felület dolga.
+    zodiac: 'Csillagjegy',
+    chineseZodiac: 'Kínai állatév',
+    zodiacNote: 'Csak érdekesség, nem elemzés: a két jegy a képviselő Wikidatában szereplő születési dátumából adódik (a napjegy a dátumból, az állatév a kínai holdújévhez igazítva). Semmiféle összefüggés nincs közte és a képviselő munkája között, és a Parlamonitor semmilyen statisztikát nem épít rá. Ahol nincs pontos (napra megadott) születési dátum, ott nem szerepel jegy.',
+    zodiacSign: {
+      aries: 'Kos', taurus: 'Bika', gemini: 'Ikrek', cancer: 'Rák',
+      leo: 'Oroszlán', virgo: 'Szűz', libra: 'Mérleg', scorpio: 'Skorpió',
+      sagittarius: 'Nyilas', capricorn: 'Bak', aquarius: 'Vízöntő', pisces: 'Halak',
+    },
+    chineseSign: {
+      rat: 'Patkány', ox: 'Bivaly', tiger: 'Tigris', rabbit: 'Nyúl',
+      dragon: 'Sárkány', snake: 'Kígyó', horse: 'Ló', goat: 'Kecske',
+      monkey: 'Majom', rooster: 'Kakas', dog: 'Kutya', pig: 'Disznó',
+    },
     totalSpeeches: 'Felszólalások száma',
     totalSpeakingTime: 'Összes beszédidő',
     billsSubmitted: 'Benyújtott önálló indítványok',
@@ -567,7 +583,10 @@ export default {
     diffOnlyCount: '{n} egyező sor',
     // Semleges jelölés: a lap azt mondja meg, ki beszélt többet — nem azt, ki jobb.
     largest: 'a legnagyobb érték ebben a sorban',
+    // Két különböző üres cella: a fogalom nem alkalmazható erre a személyre,
+    // illetve alkalmazható, csak nem tudjuk. Összekeverni őket tárgyi hiba.
     na: 'nem értelmezhető',
+    unknown: 'nincs adat',
     sectionWho: 'Kik ők',
     sectionSpeech: 'Felszólalások',
     sectionDocs: 'Benyújtott irományok',
@@ -887,8 +906,10 @@ export default {
       + 'név nem egy felismert személy- vagy szervezetnév része. Ezért a számok '
       + 'alsó becslések, a vakfolt pedig azt jelenti: „nem találtunk említést”, '
       + 'nem azt, hogy biztosan nem hangzott el.',
-    sourceNote: 'A települések listája, koordinátái és választókerületi beosztása: '
-      + '{source}. Az említések a parlament.hu jegyzőkönyveiből származnak.',
+    sourceNote: 'A települések listája és választókerületi beosztása: {source}. '
+      + 'A térképi pontok az OpenStreetMap településpontjai (ODbL), így a pötty ott '
+      + 'van, ahol az alaptérkép kiírja a nevet. Az említések a parlament.hu '
+      + 'jegyzőkönyveiből származnak.',
     // Egy település lapja (TEL-8)
     notFound: 'Nincs ilyen település.',
     electorate: '{n} választó',

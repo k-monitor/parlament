@@ -1969,17 +1969,41 @@ places in it.
      what separates *Varga Mihály* from the village of Varga, and the *Nemzeti
      Foglalkoztatási Alap* from the village of Alap, without a hand-written rule
      per name.
-  2. **Ambiguity is measured against the corpus itself**, not guessed: a name whose
-     lower-case form is a frequent lemma in the corpus's own word statistics
-     (`word_doc_freq`, already built), a Hungarian stop-word, or the name of a
-     person in the register, is **ambiguous by derivation** — so the list maintains
-     itself as the corpus grows rather than rotting in code.
+  2. **Ambiguity is measured against the corpus itself**, not guessed: a name is
+     **ambiguous by derivation** if the transcript *writes* it in **lower case** — as
+     *alap* the fund rather than *Alap* the village — on a large enough **share** of
+     the sitting days that write it at all; or if it is a Hungarian stop-word; or if
+     it is the name of a person in the register. So the policy maintains itself as
+     the corpus grows rather than rotting in code. Both halves of that measure are
+     load-bearing, and each replaced a reading that failed in production:
+     - **Case**, because it is the one signal Hungarian orthography guarantees here
+       (a settlement is a proper noun, so a lower-case occurrence is somebody using
+       the *word*) and because the measurement MUST need no model, exactly as the
+       matching does (SCR-6). Reading the word cloud's lemma table (`word_doc_freq`)
+       instead was only valid for the sittings a lemmatizer had actually analysed: it
+       holds the raw transcript **lower-cased** for every sitting that fell back to
+       the regex tokenizer, so on a deployment whose NLP covered one of eight
+       electoral cycles it reported *every settlement in the country* as an everyday
+       word — 1 300 of 3 178 demoted to needing a place cue, and 207 towns the House
+       does name shown on the map as never named.
+     - **A share, not a count**, because a count of lower-case appearances grows with
+       how much a place is *discussed*: any absolute threshold eventually flags the
+       county seats (*Miskolc*, *Győr*, *Nyíregyháza* and *Pécs* were all flagged
+       even on a fully lemmatized corpus) while missing the villages called *Hét*,
+       *Baj*, *Vál* and *Ura*. A measure of ambiguity MUST be independent of how
+       loud a place is, or the feature erases the very places it exists to name.
   3. An ambiguous name must **earn** its match: the strongly ambiguous ones require
      an explicit **place cue** in the sentence (*község, város, település,
      polgármester, önkormányzat, határában, lakossága, …*), the weakly ambiguous
      ones a **place-marking case suffix** — a bare capitalized token is not
      evidence, least of all at the start of a sentence, where capitalization says
-     nothing at all.
+     nothing at all. **Which tier a name falls into is measured as well**, by a
+     question of its own: does the *word* ever take those place endings? "Bajban
+     vagyunk" is trouble, so no ending can vouch for the village of *Baj* and only a
+     cue will do; nobody is ever "hatvanban", so a capitalized *Hatvanban* is the
+     town of Hatvan and needs nothing further. Deciding this by how word-like a name
+     looks instead would hold a real town of 20 000 to the strictest gate the module
+     has, which is a blind spot invented in a different way.
   4. A **small hand-reviewed table** carries only what derivation cannot see — the
      lake, the river, the world city — each entry naming the homonym it exists for
      (the pattern §6C/MIN-3 already established: a checked-in table seeded from the
@@ -2234,15 +2258,19 @@ places in it.
     that a count is a lower bound, not a precision one.
   > **✅ realized.** `app/settlements.py` holds the matcher — morphology, the four
   > gates and the reviewed table — and is pure, so it is unit-tested on plain
-  > sentences. The loader's `rebuild_settlements` / `rebuild_settlement_mentions` /
-  > `rebuild_settlement_stats` run after the aggregates (the ambiguity policy derives
-  > from `word_doc_freq`) and are scoped to the changed sittings on an incremental
-  > update; `migrate_settlements.py` builds them into a live DB with no re-scrape and
-  > no full rebuild. Over cycles 39–43 the pass finds **59 545 mentions of 2 019
-  > settlements, leaving 1 159 never named** — and rejects 49 000 candidates, counted
-  > by reason in the load log (24 919 vetoed by the entity layer, 12 590 for want of a
-  > cue, 6 326 for want of a place ending, 3 631 as county readings, 1 513 as
-  > sentence-initial bare names). `/api/v1/settlements` serves the listing, the map,
+  > sentences. The loader's `rebuild_settlement_case_usage` (gate 2's evidence, stored
+  > per settlement) / `rebuild_settlements` / `rebuild_settlement_mentions` /
+  > `rebuild_settlement_stats` need no other pass's output, and the mention pass is
+  > scoped to the changed sittings on an incremental update — which leaves the case
+  > evidence alone, since it is a corpus-wide ratio a single sitting cannot move;
+  > `migrate_settlements.py` builds them into a live DB with no re-scrape and no full
+  > rebuild. Over cycles 39–43 the pass measures the case evidence over 982 sitting
+  > days (254 of 3 178 names are ever written in lower case; 197 end up ambiguous,
+  > 142 needing a cue and 55 an ending) and finds **68 517 mentions of 2 020
+  > settlements, leaving 1 158 never named** — and rejects 42 898 candidates, counted
+  > by reason in the load log (24 919 vetoed by the entity layer, 11 091 for want of a
+  > cue, 3 631 as county readings, 1 704 as sentence-initial bare names, 1 553 for
+  > want of a place ending). `/api/v1/settlements` serves the listing, the map,
   > the coverage summary, a settlement's page with its citations and its MP, and the
   > TEL-9 measures; the frontend adds *Települések* as the last tab of the Felszólalók
   > section, with the map + the blind-spot mode and a settlement page, plus a panel on

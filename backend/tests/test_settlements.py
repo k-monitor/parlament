@@ -34,17 +34,31 @@ NAMES = {
     "Budapest": settlements.BUDAPEST_ID,
     "Budapest 09. kerület": "01/009", "Budapest 21. kerület": "01/021",
 }
-# The corpus statistics the ambiguity policy is derived from (TEL-3 gate 2).
+# The corpus evidence the ambiguity policy is derived from (TEL-3 gate 2): per name,
+# the sitting days that write it in lower case against the days that capitalize it.
+# *Alap* is overwhelmingly the word (a fund), *Sima* often enough to need a place
+# ending, and *Eger* only once — a stray lower-case "eger" is not a measurement, and
+# a name that stays unflagged is also the one that keeps its demonym.
 # *Veszprém* sits in the weak tier on purpose: it is a county name as well as a
 # town, so it has to be caught by the county look-ahead rather than by ambiguity.
-DOC_FREQ = {"alap": 900, "sima": 680, "veszprém": 5, "eger": 1}
+# (lower-case days, capitalized days, lower-case days with a place ending). *Alap* is
+# the fund on 82 % of the days that write it and is "alapból" on plenty of them, so it
+# needs a cue; *Sima* is a word often enough to need a place ending but is never
+# "simába", so an ending is enough for it.
+CASE_USAGE = {
+    "Alap": settlements.CaseUsage(180, 40, 120),     # a word, and it takes endings
+    "Sima": settlements.CaseUsage(12, 30, 0),        # 29 % → needs a place ending
+    "Veszprém": settlements.CaseUsage(6, 14, 0),     # 30 % → needs a place ending
+    "Eger": settlements.CaseUsage(1, 40, 0),         # below the floor → unflagged
+    "Kaposvár": settlements.CaseUsage(2, 400, 0),    # a much-named town, unflagged
+}
 STOPWORDS = {"baj"}
 PEOPLE = {"Varga", "Mihály"}
 
 
 @pytest.fixture
 def gazetteer():
-    return settlements.build(NAMES, lemma_doc_freq=DOC_FREQ, stopwords=STOPWORDS,
+    return settlements.build(NAMES, case_usage=CASE_USAGE, stopwords=STOPWORDS,
                              person_names=PEOPLE)
 
 
@@ -121,6 +135,41 @@ def test_an_everyday_word_needs_the_sentence_to_vouch_for_it(gazetteer):
     assert found(gazetteer, "Alap község polgármestere kérte.") == ["17/005"]
 
 
+def test_ambiguity_is_a_share_of_the_days_naming_it_not_a_count(gazetteer):
+    """The regression this measure exists for. Gate 2 asks *how a name is written*,
+    never *how often it is said*: a county seat is named on hundreds of sitting days,
+    so any absolute threshold on its lower-case appearances — a typo, a lower-cased
+    quotation, one sitting whose text was never lemmatized — eventually crosses it and
+    demotes the town to needing a place cue, which erases most of its mentions and can
+    put a town the House does discuss on the never-mentioned map. *Kaposvár* is
+    written lower-case twice against 400 days that capitalize it, so it is not
+    ambiguous; the same two days against five would be."""
+    assert "Kaposvár" not in gazetteer.need_cue | gazetteer.need_suffix
+    assert found(gazetteer, "Ez Kaposvár döntése volt.") == ["14/091"]
+    loud = settlements.build({"Kaposvár": "14/091"},
+                             case_usage={"Kaposvár": settlements.CaseUsage(3, 3, 0)})
+    assert "Kaposvár" in loud.need_suffix
+
+
+def test_a_single_lower_case_day_is_not_evidence(gazetteer):
+    """*Eger* is a mouse ("egerek") as well as a city, but one sitting day writing it
+    lower-case is a fluke, not a measurement — and a name held below the floor keeps
+    its demonym, which is how a place is most often named at all."""
+    assert "Eger" not in gazetteer.need_cue | gazetteer.need_suffix
+    assert found(gazetteer, "Az egri vár felújítása.") == ["10/001"]
+
+
+def test_without_any_evidence_the_policy_errs_towards_counting(gazetteer):
+    """A DB that has never been measured (or a `--skip-wordcloud`-era one) must still
+    produce a usable matcher: the stop-word, person-name and reviewed tiers stand on
+    their own, and nothing is invented from absent evidence — the failure mode is a
+    mention too many, never a blind spot that is not one (TEL-12)."""
+    blind = settlements.build(NAMES, stopwords=STOPWORDS, person_names=PEOPLE)
+    assert "Baj" in blind.need_cue                       # stop-word tier
+    assert "Varga" in blind.need_cue                     # person tier
+    assert "Alap" not in blind.need_cue                  # nothing measured it
+
+
 def test_a_stop_word_name_is_treated_as_ambiguous(gazetteer):
     """Derived from the stop-word list, not hand-written: "Baj lesz ebből" is trouble."""
     assert "Baj" in gazetteer.need_cue
@@ -141,10 +190,37 @@ def test_the_superessive_alone_does_not_vouch_for_a_weak_name():
     is not located by "simán" — while an unambiguously locative ending is enough."""
     gazetteer = settlements.build(
         {"Sima": "05/300", "Bicske": "07/002"},
-        lemma_doc_freq={"sima": 5}, stopwords=(), person_names=())
+        case_usage={"Sima": settlements.CaseUsage(12, 30, 0)},
+        stopwords=(), person_names=())
     assert "Sima" in gazetteer.need_suffix
     assert found(gazetteer, "Ez simán megoldható.") == []
     assert found(gazetteer, "Ez Simában történt.") == ["05/300"]
+
+
+def test_the_tier_turns_on_whether_the_word_takes_place_endings():
+    """Gate 3's two tiers, decided by measurement rather than by how word-like a name
+    reads. *Hatvan* is as much an everyday word as *Baj* is (the number sixty), but
+    nobody is ever "hatvanban", so a capitalized *Hatvanban* can only be the town —
+    while "Bajban vagyunk" is trouble and an ending vouches for nothing."""
+    gazetteer = settlements.build(
+        {"Hatvan": "10/052", "Baj": "11/010"},
+        case_usage={"Hatvan": settlements.CaseUsage(195, 104, 0),
+                    "Baj": settlements.CaseUsage(909, 49, 215)})
+    assert "Hatvan" in gazetteer.need_suffix
+    assert "Baj" in gazetteer.need_cue
+    assert found(gazetteer, "Ez Hatvanban történt.") == ["10/052"]
+    assert found(gazetteer, "Bajban vagyunk emiatt.") == []
+
+
+def test_a_place_ending_on_a_lower_case_word_is_measured_not_assumed():
+    """The tier's evidence: "bajban" is the word declined, "bajt" is the word without a
+    place reading, and only the first says an ending cannot be trusted."""
+    counter = settlements.CaseCounter(["Baj", "Hatvan"])
+    counter.add_day(["Nagy bajban vagyunk, és ez bajt okoz. Ez hatvan éve tart."])
+    usage = counter.usage()
+    assert usage["Baj"].located_days == 1
+    assert usage["Hatvan"] == settlements.CaseUsage(lower_days=1, upper_days=0,
+                                                   located_days=0)
 
 
 def test_a_sentence_initial_bare_name_needs_a_cue(gazetteer):
@@ -162,6 +238,75 @@ def test_the_reviewed_table_holds_a_lake_to_the_strict_standard():
     assert "Balaton" in gazetteer.need_cue
     assert found(gazetteer, "A Balatonban fürödtünk.") == []
     assert found(gazetteer, "Balaton községben lakik.") == ["10/030"]
+
+
+# --- gate 2's evidence: how the corpus writes each name --------------------
+
+def _usage(*days):
+    counter = settlements.CaseCounter(
+        ["Alap", "Kaposvár", "Budakeszi", "Budapest 09. kerület"])
+    for day in days:
+        counter.add_day(day)
+    return counter.usage()
+
+
+def test_the_case_counter_measures_sitting_days_not_occurrences():
+    """One speaker saying "alap" nine times in an afternoon is one day's evidence, not
+    nine: a single sitting's habit must not be able to turn a village into a word."""
+    usage = _usage(["Az alap terhére, az alapból, az alapra terhelve. Ez az alap."],
+                   ["Ez Alap község ügye."])
+    assert usage["Alap"] == settlements.CaseUsage(lower_days=1, upper_days=1,
+                                                 located_days=1)
+
+
+def test_only_the_bare_lower_case_form_is_counted():
+    """No suffix stripping on the lower-case side. Stripping reads "szobra" (his
+    statue) as the town of Szob and "abonyban" is not how the word would appear
+    anyway — and a name accused of being a word by a stemming artefact is a real town
+    pushed towards the never-named list, which is the failure this measure prevents.
+    A genuine Hungarian word appears bare on plenty of days regardless."""
+    counter = settlements.CaseCounter(["Szob", "Alap"])
+    counter.add_day(["A szobra elé tett virágot. Az alapot terhelő összeg."])
+    counter.add_day(["Ez az alap terhére megy. Szoborra gyűjtenek."])
+    usage = counter.usage()
+    # "szobra" survives only as a *located* form, which cannot flag anything on its
+    # own — what decides whether Szob is a word at all is the bare count, and it is 0.
+    assert usage["Szob"].lower_days == 0
+    assert usage["Alap"].lower_days == 1        # the bare "alap", not "alapot"
+
+
+def test_the_tail_of_a_capitalized_word_is_not_a_lower_case_word():
+    """"Habony-művek" is not the town of Abony and "Bebes István" is not Ebes — but a
+    lower-case run is maximal, so both end in one that spells a settlement. Counted,
+    they were 164 and 49 sitting days of "evidence" against two real towns."""
+    counter = settlements.CaseCounter(["Abony", "Ebes", "Alap"])
+    counter.add_day(["A Habony-művek paneljei szerint Bebes István igen."])
+    counter.add_day(["Ez az alap terhére megy."])
+    usage = counter.usage()
+    assert "Abony" not in usage and "Ebes" not in usage
+    assert usage["Alap"].lower_days == 1
+
+
+def test_a_fragment_without_case_is_not_evidence():
+    """An all-lower-case sentence says nothing about capitalization, so it must not be
+    read as saying the name is a word. (The corpus has such fragments, and they are
+    exactly where the lemma-frequency reading went wrong at scale.)"""
+    assert _usage(["az alap terhére kaposváron"]) == {}
+
+
+def test_the_demonym_spelling_of_an_i_name_is_not_lower_case_evidence():
+    """Hungarian writes the settlement-derived adjective in lower case and spells it
+    exactly like a name that already ends in *-i* — "budakeszi lakos" names the town,
+    it does not use a word. Counted, it would make every such town ambiguous."""
+    usage = _usage(["A budakeszi lakosok kérése.", "Ez Budakeszi ügye."])
+    assert usage["Budakeszi"] == settlements.CaseUsage(lower_days=0, upper_days=1)
+
+
+def test_a_district_name_gathers_no_case_evidence():
+    """A district is matched by its own phrase rule, never as a token, so there is no
+    token to measure — and "kerület" is a common word that would drown it."""
+    assert "Budapest 09. kerület" not in _usage(["A IX. kerületben és a kerület "
+                                                 "egészében."])
 
 
 # --- Budapest and its districts (TEL-5) ------------------------------------
@@ -604,6 +749,62 @@ def test_procedural_speeches_are_not_scanned(db_path, vtr):
     conn.close()
 
 
+def test_the_case_evidence_is_measured_from_the_transcript_and_stored(built):
+    """Gate 2's evidence is a property of the corpus, so the loader measures it and
+    keeps it on the row: "measured, never written lower-case" is zero, and only a DB
+    that was never measured holds NULL (which is what makes the repair detectable)."""
+    conn = loader.connect(built)
+    rows = dict(conn.execute(
+        "SELECT name, lower_days FROM settlement WHERE upper_days IS NOT NULL"))
+    # The seeded transcript names Kaposvár (capitalized) and never writes it as a word.
+    assert conn.execute("SELECT upper_days FROM settlement WHERE name = 'Kaposvár'"
+                        ).fetchone()[0] == 1
+    assert rows["Kaposvár"] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM settlement WHERE lower_days IS NULL").fetchone()[0] == 0
+    conn.close()
+
+
+def test_an_update_keeps_the_stored_evidence_but_measures_a_db_that_has_none(built):
+    """The measurement reads every sentence in the corpus, and it is a ratio a single
+    new sitting day cannot move — so the incremental path must not re-run it. It must
+    still run once on a deployment that predates it, or the policy would keep deriving
+    itself from nothing on every update (TEL-3)."""
+    conn = loader.connect(built)
+    conn.execute("UPDATE settlement SET lower_days = 7, upper_days = 9")
+    conn.commit()
+    loader.rebuild_settlements(conn, rescan_case=False)
+    assert tuple(conn.execute("SELECT lower_days, upper_days FROM settlement "
+                              "WHERE name = 'Kaposvár'").fetchone()) == (7, 9)
+
+    conn.execute("UPDATE settlement SET lower_days = NULL, upper_days = NULL, "
+                 "located_days = NULL")
+    conn.commit()
+    loader.rebuild_settlements(conn, rescan_case=False)
+    assert conn.execute("SELECT upper_days FROM settlement WHERE name = 'Kaposvár'"
+                        ).fetchone()[0] == 1
+    conn.close()
+
+
+def test_the_ambiguity_policy_ignores_the_word_cloud_statistics(built):
+    """The bug this measure replaced, as a test: `word_doc_freq` holds lemmas only for
+    the sittings a model analysed and the raw transcript lower-cased for the rest, so
+    a much-named town appears there as a very frequent "word". Reading it demoted 1 300
+    of 3 178 settlements to needing a place cue on the live site and put 207 towns the
+    House does name into the never-named list. Nothing in §6D may consult it."""
+    conn = loader.connect(built)
+    conn.execute("DELETE FROM word_doc_freq")
+    conn.executemany(
+        "INSERT INTO word_doc_freq(period_number, word, doc_count) VALUES (?,?,?)",
+        [(43, "kaposvár", 900), (43, "szentendre", 900)])
+    conn.commit()
+    loader.rebuild_settlements(conn, rescan_case=False)
+    assert conn.execute("SELECT COUNT(*) FROM settlement "
+                        "WHERE ambiguity IS NOT NULL").fetchone()[0] == 0
+    assert loader.rebuild_settlement_mentions(conn) > 0
+    conn.close()
+
+
 def test_an_unreachable_register_keeps_what_is_already_stored(built, monkeypatch):
     """The electoral map is static between elections, so a stale register is a fine
     register — and an outage must cost the refresh, not the data (REP-10's rule)."""
@@ -615,6 +816,25 @@ def test_an_unreachable_register_keeps_what_is_already_stored(built, monkeypatch
     monkeypatch.setattr(loader.settings, "vtr_cache_dir", "/nonexistent-cache")
     assert loader.rebuild_settlements(conn) == 4      # the four already stored
     assert conn.execute("SELECT COUNT(*) FROM settlement").fetchone()[0] == 4
+    conn.close()
+
+
+def test_an_outage_still_re_derives_the_policy_over_what_is_stored(built, monkeypatch):
+    """A register outage must cost the refresh, not the derivation: the ambiguity
+    policy is measured from the transcript, and an install that cannot reach the
+    election office would otherwise be unable to repair a wrong policy at all."""
+    conn = loader.connect(built)
+    conn.execute("UPDATE settlement SET ambiguity = 'cue', ambiguity_reason = 'stale'")
+    conn.commit()
+
+    def dead(url):
+        raise OSError("no network")
+    monkeypatch.setattr(valasztas, "_default_fetch", dead)
+    valasztas.reset_cache()
+    monkeypatch.setattr(loader.settings, "vtr_cache_dir", "/nonexistent-cache")
+    assert loader.rebuild_settlements(conn) == 4
+    assert conn.execute("SELECT COUNT(*) FROM settlement WHERE ambiguity IS NOT NULL"
+                        ).fetchone()[0] == 0
     conn.close()
 
 

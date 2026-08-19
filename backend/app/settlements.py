@@ -36,15 +36,23 @@ survive four gates, in order:
 1. **The entity layer vetoes.** A candidate overlapping a recognized PER/ORG mention
    is dropped — which is what tells *Varga Mihály* from the village of Varga and the
    *Nemzeti Foglalkoztatási Alap* from the village of Alap, with no per-name rule.
-2. **Ambiguity is derived from the corpus**, not guessed (see :func:`build`): a name
-   whose lower-case form is a frequent lemma in the corpus's own word statistics, a
-   stop-word, or the name of a person in the register is ambiguous *by measurement*,
-   so the policy maintains itself as the corpus grows.
+2. **Ambiguity is derived from the corpus**, not guessed (see :func:`build`): a
+   name is ambiguous *by measurement* if the transcript itself writes it in **lower
+   case** — as *alap* the fund rather than *Alap* the village — on a large enough
+   share of the sitting days that write it at all; or if it is a stop-word; or if it
+   is the name of a person in the register. **Case** is the evidence because it is
+   the one thing Hungarian orthography guarantees here: a settlement is a proper
+   noun, so a lower-case occurrence is somebody using the *word*, not naming the
+   place. Crucially the measure says nothing about how *often* a place is discussed,
+   which is what makes it safe — see :class:`CaseCounter` for the trap it replaced.
 3. **An ambiguous name must earn its match** — a place cue in the sentence
    (*község, város, polgármester, önkormányzat, határában*, …) for the strongly
    ambiguous, at least a place-marking case ending for the weakly ambiguous. A bare
    capitalized token is not evidence, least of all sentence-initially, where
-   capitalization means nothing.
+   capitalization means nothing. Which of the two tiers a name lands in is measured
+   too, and by a different question: does the *word* take those place endings at all?
+   *Bajban vagyunk* is trouble, so an ending vouches for nothing and *Baj* needs a
+   cue; nobody is ever *hatvanban*, so a capitalized *Hatvanban* can only be the town.
 4. **A small reviewed table** (:data:`REVIEWED`) carries only what measurement
    cannot see — the lake, the river, the summit named after a town — each entry
    naming the homonym it exists for (the §6C/MIN-3 pattern: a checked-in table
@@ -232,6 +240,28 @@ _SHORTEN = {"á": "a", "é": "e"}
 _TOKEN = re.compile(r"[A-ZÁÉÍÓÖŐÚÜŰ][a-záéíóöőúüű]+")
 _LOWER = re.compile(r"[a-záéíóöőúüű]+")
 
+def stems(token: str):
+    """``(stem, suffix)`` readings of a token, longest suffix first.
+
+    The bare token comes first so an exact register name always wins over any
+    suffix-stripped reading of it. Module-level because both the matcher and gate
+    2's case counter need to recognize the same inflected forms.
+    """
+    yield token, ""
+    for suffix in _SUFFIXES:
+        if len(token) <= len(suffix) + 1 or not token.endswith(suffix):
+            continue
+        stem = token[: -len(suffix)]
+        yield stem, suffix
+        if stem[-1] in _SHORTEN:                 # Kalocsán → Kalocsa
+            yield stem[:-1] + _SHORTEN[stem[-1]], suffix
+    instrumental = _undo_instrumental(token)
+    if instrumental is not None:
+        # Classified as a non-place ending: "Szegeddel" says the town is a
+        # participant, not that anything happened there.
+        yield instrumental, "val"
+
+
 # Tails the demonym takes: "a szegediek", "a szegedieknek", "szegediként".
 _ADJ_TAILS: tuple[str, ...] = tuple(sorted(
     ("", "ak", "ek", "aknak", "eknek", "akat", "eket", "akkal", "ekkel",
@@ -379,28 +409,8 @@ class Gazetteer:
 
     # -- candidate generation ------------------------------------------------
 
-    def _stems(self, token: str):
-        """``(stem, suffix)`` readings of a capitalized token, longest suffix first.
-
-        The bare token comes first so an exact register name always wins over any
-        suffix-stripped reading of it.
-        """
-        yield token, ""
-        for suffix in _SUFFIXES:
-            if len(token) <= len(suffix) + 1 or not token.endswith(suffix):
-                continue
-            stem = token[: -len(suffix)]
-            yield stem, suffix
-            if stem[-1] in _SHORTEN:                 # Kalocsán → Kalocsa
-                yield stem[:-1] + _SHORTEN[stem[-1]], suffix
-        instrumental = _undo_instrumental(token)
-        if instrumental is not None:
-            # Classified as a non-place ending: "Szegeddel" says the town is a
-            # participant, not that anything happened there.
-            yield instrumental, "val"
-
     def _match_name(self, token: str) -> tuple[str | None, str]:
-        for stem, suffix in self._stems(token):
+        for stem, suffix in stems(token):
             if stem in self.by_name:
                 return stem, suffix
         return None, ""
@@ -511,32 +521,223 @@ class Gazetteer:
 
 
 # ---------------------------------------------------------------------------
+# Gate 2's evidence: how the corpus writes each name
+# ---------------------------------------------------------------------------
+
+class CaseUsage(NamedTuple):
+    """What the corpus does with a name, in sitting days.
+
+    ``located_days`` counts the lower-case days that write the word with one of the
+    endings that vouch for a place all by themselves (gate 3's ``_LOCATIVE_ONLY``) —
+    *bajban*, *alapból*, *teremben*. It is what separates the two ambiguity tiers:
+    *hatvan* is as much an everyday word as *baj* is, but nobody is ever "hatvanban",
+    so a capitalized *Hatvanban* can only be the town — while "Bajban vagyunk" is
+    trouble, and needs the sentence to say otherwise.
+    """
+
+    lower_days: int
+    upper_days: int
+    located_days: int = 0
+
+
+class CaseCounter:
+    """Counts, per register name, the sitting days that write it in lower case
+    against the days that capitalize it (and, of the first, the days that put a place
+    ending on it) — the evidence gate 2 and gate 3's tier are derived from.
+
+    **Why case, and not word frequency.** This gate used to ask the corpus's lemma
+    statistics (``word_doc_freq``, built for the word cloud) whether a name's
+    lower-case form is a frequent word. That reading is only valid where those
+    statistics came from a lemmatizer, which preserves case. Where the word-cloud
+    pass fell back to its **regex tokenizer** — every sitting outside a given
+    deployment's NLP scope, which on the live site meant seven of eight electoral
+    cycles — the table holds the whole transcript *lower-cased*, so every settlement
+    in the country reads as "an everyday word" and every one of them is demoted to
+    needing a place cue. The visible result was the opposite of this module's
+    headline claim: 1 300 of 3 178 settlements marked ambiguous and 207 towns that
+    the House does name shown on the map as never named (*Hegyeshalom*, named on 40+
+    sitting days, among them). Counting case needs no model at all, so it cannot
+    disagree with the deployment it runs in (SCR-6) — and it is a strictly better
+    measure besides: the lemma reading also flagged *Miskolc*, *Győr*, *Nyíregyháza*
+    and *Pécs* on a fully lemmatized corpus, while missing *Hét*, *Baj*, *Vál* and
+    *Ura* entirely.
+
+    The two sides are counted **differently**, each according to the direction its
+    error would push a settlement in:
+
+    * the lower-case side matches the **bare word form only**, with no suffix
+      stripping. Stripping reads *szobra* ("his statue") as "szob" and would accuse the
+      town of Szob of being an everyday word on 65 sitting days it never appeared on —
+      and a name accused by a stemming artefact is a town pushed towards the
+      never-named list, which is the whole failure this measure exists to prevent. The
+      sensitivity is not missed: a genuine Hungarian word turns up in its bare form on
+      plenty of sitting days (*alap*, *hét*, *korlát*, *hatvan*, *udvar*).
+      The one exception is ``located_days``, which by definition needs the ending
+      stripped; a stemming artefact there can only make a name that is *already* known
+      to be a word stricter, which is the safe direction.
+    * the capitalized side keeps the **full morphology**, because it is the protective
+      half of the ratio: Hungarian rarely names a place in the bare nominative, so
+      counting only a bare *Miskolc* would understate how thoroughly the corpus treats
+      the name as a place, and understating that is what flags a real town.
+
+    Fed one sitting day at a time (:meth:`add_day`), so what is counted is **days**,
+    not hits: one speaker's tic must not turn a village into a word.
+    """
+
+    # Distinct capitalized forms remembered before the memo below is dropped. The
+    # corpus repeats its vocabulary heavily — a few hundred thousand forms over tens
+    # of millions of tokens — so remembering how a form reads is what keeps this pass
+    # in the mention scan's minutes-not-hours budget; and a cap keeps an agglutinative
+    # language's long tail of one-off forms from costing more memory than the memo
+    # saves in time.
+    _MEMO_LIMIT = 400_000
+
+    def __init__(self, names: Iterable[str]) -> None:
+        # A multi-word name is a Budapest district, matched by its own phrase rule
+        # and never as a token, so it has no case evidence to gather.
+        self._upper = {n: n for n in names if " " not in n}
+        # Names ending in *-i* are skipped on the lower-case side: Hungarian writes
+        # the settlement-derived adjective in lower case and spells it exactly like
+        # the name (*budakeszi lakos*, *ercsi önkormányzat*), so a lower-case
+        # occurrence there refers to the place — it is not a common word.
+        self._lower = {n.lower(): n for n in self._upper
+                       if not n.lower().endswith("i")}
+        self.lower_days: dict[str, int] = {}
+        self.upper_days: dict[str, int] = {}
+        self.located_days: dict[str, int] = {}
+        self._memo: dict[str, str | None] = {}
+        self._located_memo: dict[str, str | None] = {}
+
+    def _read_capitalized(self, token: str) -> str | None:
+        """The register name a capitalized ``token`` reads as, through the same
+        morphology the matcher strips, or ``None``."""
+        memo = self._memo
+        if token in memo:
+            return memo[token]
+        name = None
+        for stem, _suffix in stems(token):
+            name = self._upper.get(stem)
+            if name is not None:
+                break
+        if len(memo) >= self._MEMO_LIMIT:
+            memo.clear()
+        memo[token] = name
+        return name
+
+    def _read_located(self, token: str) -> str | None:
+        """The register name a lower-case ``token`` spells **with a place-marking
+        ending** on it, or ``None`` ("bajban" → Baj, "bajt" → None)."""
+        memo = self._located_memo
+        if token in memo:
+            return memo[token]
+        name = None
+        for stem, suffix in stems(token):
+            # `_LOCATIVE_ONLY`, not every place ending: the superessive is the one
+            # ending gate 3 already distrusts by itself (it is also how Hungarian
+            # builds an adverb — *simán*), so a word that takes *that* is no reason to
+            # escalate a name to the strictest tier.
+            if suffix and suffix in _LOCATIVE_ONLY:
+                name = self._lower.get(stem)
+                if name is not None:
+                    break
+        if len(memo) >= self._MEMO_LIMIT:
+            memo.clear()
+        memo[token] = name
+        return name
+
+    def add_day(self, texts: Iterable[str]) -> None:
+        """Fold one sitting day's sentences into the counts."""
+        lower: set[str] = set()
+        upper: set[str] = set()
+        placed: set[str] = set()
+        for text in texts:
+            # A fragment with no capital letter in it carries no case information,
+            # so it is not evidence about anything.
+            if not text or text == text.lower():
+                continue
+            for match in _LOWER.finditer(text):
+                # A lower-case run must be a whole word. `_LOWER` matches maximal
+                # runs, so the only thing that can precede one is a capital — i.e.
+                # the run is the *tail* of a capitalized token, and reading those as
+                # words made "Habony-művek" evidence about the town of Abony (164
+                # sitting days of it) and "Bebes István" evidence about Ebes.
+                start = match.start()
+                if start and text[start - 1].isalpha():
+                    continue
+                token = match.group(0)
+                name = self._lower.get(token)
+                if name is not None:
+                    lower.add(name)
+                    continue
+                name = self._read_located(token)
+                if name is not None:
+                    placed.add(name)
+            for match in _TOKEN.finditer(text):
+                name = self._read_capitalized(match.group(0))
+                if name is not None:
+                    upper.add(name)
+        for name in lower:
+            self.lower_days[name] = self.lower_days.get(name, 0) + 1
+        for name in upper:
+            self.upper_days[name] = self.upper_days.get(name, 0) + 1
+        for name in placed:
+            self.located_days[name] = self.located_days.get(name, 0) + 1
+
+    def usage(self) -> dict[str, CaseUsage]:
+        """``name → CaseUsage`` for every name the corpus writes either way."""
+        return {name: CaseUsage(self.lower_days.get(name, 0),
+                                self.upper_days.get(name, 0),
+                                self.located_days.get(name, 0))
+                for name in (set(self.lower_days) | set(self.upper_days)
+                             | set(self.located_days))}
+
+
+# ---------------------------------------------------------------------------
 # Building the gazetteer
 # ---------------------------------------------------------------------------
 
-# A name whose lower-case form is a lemma in this many of the corpus's sitting days
-# is treated as strongly ambiguous (needs a cue); at least three days makes it
-# weakly ambiguous (needs a place ending). Both thresholds are deliberately low:
-# under-restricting costs a false blind spot, over-restricting costs a mention the
-# module never claimed to have found (TEL-12).
-STRONG_DOC_FREQ = 20
-WEAK_DOC_FREQ = 3
+# Gate 2's thresholds over that evidence, answering two separate questions with two
+# separate measurements — which is the whole point, because conflating them is how the
+# policy went wrong before.
+#
+# **Is the name also a word at all?** The **share** of the sitting days naming it that
+# write it in lower case — never how many days that is. A county seat is named on
+# hundreds of days and a village on three, so any absolute count reads the busy town
+# as the ambiguous one (the frequency reading this replaced flagged *Miskolc*, *Győr*,
+# *Nyíregyháza* and *Pécs* for exactly that reason). The separation the corpus shows is
+# wide: Miskolc 0.2 %, Nyíregyháza 0 %, Győr 0.8 %, Pécs 1.6 %, Hegyeshalom 0 % against
+# Hatvan 65 %, Alap 54 %, Baj 95 %, Korlát 99 %.
+AMBIGUOUS_CASE_SHARE = 0.25
+# ...and a floor of days, because a share over two occurrences is not a measurement.
+# Three days of lower-case use is the least that tells a homonym from a typo.
+MIN_CASE_DAYS = 3
+# **How strict must it then be?** Whether the *word* takes the place-marking endings
+# that would otherwise vouch for a place on their own (``located_days``). "Bajban
+# vagyunk" is trouble, so *Baj* cannot be let through by an ending and needs a cue;
+# nobody is ever "hatvanban", so a capitalized *Hatvanban* is the town and *Hatvan*
+# needs no more than that. Measured, not assumed: over the corpus *alap*, *baj*, *hét*,
+# *terem*, *levél*, *korlát* and *kulcs* all take them, while *hatvan*, *velem*, *fáj*,
+# *vál*, *gomba* and *kurd* never do.
+MIN_LOCATED_DAYS = 3
 
 
 def build(names: dict[str, str], *,
-          lemma_doc_freq: dict[str, int] | None = None,
+          case_usage: dict[str, CaseUsage] | None = None,
           stopwords: Iterable[str] = (),
           person_names: Iterable[str] = ()) -> Gazetteer:
     """A :class:`Gazetteer` over ``names`` (register spelling → settlement id).
 
-    ``lemma_doc_freq`` is the corpus's own lemma → number-of-sitting-days table
-    (``word_doc_freq``, already built for the word cloud): it is what makes the
-    ambiguity policy *measured* rather than hand-written (gate 2). ``person_names``
-    are the name parts of everyone in the register, so a settlement that is also a
-    surname is held to the strict standard even in the sentences where the NER layer
-    missed the person (gate 1 catches only the ones it found).
+    ``case_usage`` is what :class:`CaseCounter` measured over the transcript — per
+    name, the sitting days that write it in lower case against the days that
+    capitalize it — and it is what makes the ambiguity policy *measured* rather than
+    hand-written (gate 2). Without it the policy falls back to the stop-word list,
+    the person names and the reviewed table: weaker, but wrong only in the direction
+    that over-counts mentions rather than the one that invents blind spots.
+    ``person_names`` are the name parts of everyone in the register, so a settlement
+    that is also a surname is held to the strict standard even in the sentences where
+    the NER layer missed the person (gate 1 catches only the ones it found).
     """
-    freq = lemma_doc_freq or {}
+    usage = case_usage or {}
     stops = {s.casefold() for s in stopwords}
     people = {p for p in person_names if len(p) > 2}
 
@@ -567,15 +768,25 @@ def build(names: dict[str, str], *,
         if name in need_cue or name in need_suffix:
             continue
         lower = name.lower()
-        docs = freq.get(lower, 0)
+        seen = usage.get(name) or CaseUsage(0, 0, 0)
+        days = seen.lower_days + seen.upper_days
+        share = seen.lower_days / days if days else 0.0
         if lower in stops:
             need_cue[name] = f"'{lower}' is a Hungarian stop-word"
         elif name in people:
+            # A person's name is held to the strict standard whatever its morphology:
+            # unlike a word, a person *does* take some of the place endings ("Elekhez
+            # fordult"), so an ending is no evidence at all here.
             need_cue[name] = "also the name of a person in the register"
-        elif docs >= STRONG_DOC_FREQ:
-            need_cue[name] = f"'{lower}' is an everyday word ({docs} sitting days)"
-        elif docs >= WEAK_DOC_FREQ:
-            need_suffix[name] = f"'{lower}' also occurs as a common word ({docs} days)"
+        elif seen.lower_days < MIN_CASE_DAYS or share < AMBIGUOUS_CASE_SHARE:
+            continue
+        elif seen.located_days >= MIN_LOCATED_DAYS:
+            need_cue[name] = (f"'{lower}' is an everyday word that also takes place "
+                              f"endings ({share:.0%} of {days} sitting days write it "
+                              f"lower-case)")
+        else:
+            need_suffix[name] = (f"'{lower}' also occurs as an everyday word "
+                                 f"({share:.0%} of {days} sitting days)")
 
     ambiguous = set(need_cue) | set(need_suffix)
     demonyms: dict[str, str] = {}

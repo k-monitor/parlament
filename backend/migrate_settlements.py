@@ -11,9 +11,15 @@ It is the same code path the loader runs on every load, so a later `--update` si
 refreshes what this produced, and re-running it is safe (each pass replaces its own
 rows wholesale).
 
+It is also the repair path for a DB whose ambiguity policy was derived from
+`word_doc_freq` (TEL-3 gate 2 before the case measurement replaced it): on an install
+whose NLP never covered the whole corpus, that table reports every settlement in the
+country as an everyday word, so most of them were demoted to needing a place cue and
+their mentions were dropped. Re-running this re-measures the evidence and re-scans.
+
 Run from backend/:  .venv/bin/python migrate_settlements.py [DB]
-Defaults: parlamonitor.db. Takes a couple of minutes on the full corpus — the scan is
-pure Python over ~2.5 million non-procedural sentences.
+Defaults: parlamonitor.db. A few minutes on the full corpus: two passes of pure Python
+over ~2.5 million non-procedural sentences — gate 2's case evidence, then the mentions.
 """
 import logging
 import sys

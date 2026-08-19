@@ -2169,12 +2169,16 @@ def rebuild_word_first_seen(conn: sqlite3.Connection) -> None:
 #
 # Three passes, all at load time and none of them needing a model (TEL-2):
 #   1. `rebuild_settlements`        — the register snapshot + the ambiguity policy
-#      (with it, `rebuild_constituencies` and `rebuild_settlement_cells` — the two
-#      geographies the map can be binned on, both functions of the register version)
+#      (with it: `rebuild_settlement_case_usage`, the corpus evidence the policy is
+#      derived from, and `rebuild_constituencies` + `rebuild_settlement_cells`, the
+#      two geographies the map can be binned on — both functions of the register)
 #   2. `rebuild_settlement_mentions` — scan transcript text for mentions
 #   3. `rebuild_settlement_stats`   — the aggregates the request path reads
-# They run AFTER `rebuild_aggregates`, because the ambiguity policy is derived from
-# `word_doc_freq` (TEL-3 gate 2), which that pass builds.
+# None of them reads any other pass's output: gate 2's ambiguity evidence is measured
+# from the transcript itself (see `rebuild_settlement_case_usage`), deliberately NOT
+# from `word_doc_freq` — which holds lemmas on the sittings a model analysed and bare
+# lower-cased tokens on the ones it did not, and reading the second kind as the first
+# is what once made every settlement in the country look like an everyday word.
 # ---------------------------------------------------------------------------
 
 
@@ -2194,7 +2198,13 @@ def _ensure_settlement_tables(conn: sqlite3.Connection) -> None:
             lon         REAL,
             electorate  INTEGER,
             ambiguity   TEXT,
-            ambiguity_reason TEXT
+            ambiguity_reason TEXT,
+            -- Gate 2's evidence (TEL-3): sitting days writing this name in lower
+            -- case, days capitalizing it, and lower-case days that put a place
+            -- ending on it ("bajban"). NULL = never measured.
+            lower_days   INTEGER,
+            upper_days   INTEGER,
+            located_days INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_settlement_fold ON settlement(name_fold);
         CREATE INDEX IF NOT EXISTS idx_settlement_county ON settlement(county);
@@ -2280,10 +2290,19 @@ def _ensure_settlement_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_person_settlement_period
             ON person_settlement_stats(period_number);
     """)
+    # Gate 2's evidence columns on a DB whose `settlement` table predates them: the
+    # `--update` path snapshots the live DB instead of re-running the CREATE above,
+    # so the columns have to arrive by ALTER or the policy would keep deriving
+    # itself from nothing on every deployment that is already up.
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(settlement)")]
+    for column in ("lower_days", "upper_days", "located_days"):
+        if column not in cols:
+            conn.execute(f"ALTER TABLE settlement ADD COLUMN {column} INTEGER")
     conn.commit()
 
 
-def rebuild_settlements(conn: sqlite3.Connection) -> int:
+def rebuild_settlements(conn: sqlite3.Connection, *,
+                        rescan_case: bool = True) -> int:
     """Refresh the settlement register snapshot from the National Election Office
     (TEL-5) and re-derive the ambiguity policy over it (TEL-3).
 
@@ -2292,6 +2311,9 @@ def rebuild_settlements(conn: sqlite3.Connection) -> int:
     is static between elections, so a stale register is a fine register — and only a
     first build with no source at all leaves the module empty, which the API reports
     as "not built" rather than as an empty Hungary (EXT-6).
+
+    ``rescan_case=False`` keeps the stored case evidence instead of re-measuring it
+    over the corpus (the ``--update`` path — see the call below).
     """
     _ensure_settlement_tables(conn)
     try:
@@ -2300,6 +2322,12 @@ def rebuild_settlements(conn: sqlite3.Connection) -> int:
         have = conn.execute("SELECT COUNT(*) FROM settlement").fetchone()[0]
         logger.warning("Settlement register unavailable (%s); keeping the %d "
                        "settlements already stored", exc, have)
+        # The ambiguity policy is derived from the *transcript*, not from the
+        # register, so an outage has no business leaving it stale too: re-derive it
+        # over the settlements already stored. This is also what lets an install with
+        # no reachable election office repair a policy at all (TEL-3).
+        if have:
+            _derive_settlement_ambiguity(conn, rescan_case=rescan_case)
         return have
 
     rows = data["settlements"]
@@ -2351,6 +2379,26 @@ def rebuild_settlements(conn: sqlite3.Connection) -> int:
 
     rebuild_constituencies(conn)
     rebuild_settlement_cells(conn)
+    gazetteer = _derive_settlement_ambiguity(conn, rescan_case=rescan_case)
+    logger.info("Settlement register: %d settlements (%d need a place cue, %d a "
+                "place suffix), NVI data version %s", len(rows),
+                len(gazetteer.need_cue), len(gazetteer.need_suffix), data["version"])
+    return len(rows)
+
+
+def _derive_settlement_ambiguity(conn: sqlite3.Connection, *, rescan_case: bool):
+    """Re-derive gate 2's ambiguity tiers over the stored register and record them on
+    the rows (TEL-3). Returns the gazetteer, for the caller's log line.
+
+    ``rescan_case`` re-measures the corpus evidence first. A full build always does;
+    an incremental update does not — the counts are corpus-wide *orthography* and one
+    more sitting day cannot move a share, while measuring them means reading every
+    sentence in the corpus. A DB that has never been measured is the exception, so an
+    already-deployed site repairs its policy on the next update rather than having to
+    wait for a rebuild.
+    """
+    if rescan_case or _settlement_case_evidence_missing(conn):
+        rebuild_settlement_case_usage(conn)
     gazetteer = _settlement_gazetteer(conn)
     conn.execute("UPDATE settlement SET ambiguity = NULL, ambiguity_reason = NULL")
     # Keyed on the register spelling, which is the name the reader sees: a district's
@@ -2362,10 +2410,7 @@ def rebuild_settlements(conn: sqlite3.Connection) -> int:
           gazetteer.reasons.get(name), name)
          for name in sorted(gazetteer.need_cue | gazetteer.need_suffix)])
     conn.commit()
-    logger.info("Settlement register: %d settlements (%d need a place cue, %d a "
-                "place suffix), NVI data version %s", len(rows),
-                len(gazetteer.need_cue), len(gazetteer.need_suffix), data["version"])
-    return len(rows)
+    return gazetteer
 
 
 def rebuild_constituencies(conn: sqlite3.Connection) -> int:
@@ -2442,21 +2487,88 @@ def rebuild_settlement_cells(conn: sqlite3.Connection) -> int:
     return len(cells)
 
 
-def _settlement_gazetteer(conn: sqlite3.Connection):
-    """The matcher, built from the stored register plus the corpus's own statistics.
+def _settlement_case_evidence_missing(conn: sqlite3.Connection) -> bool:
+    """Whether the corpus has never been measured for gate 2 on this DB."""
+    return not conn.execute(
+        "SELECT COUNT(*) FROM settlement WHERE lower_days IS NOT NULL "
+        "OR upper_days IS NOT NULL OR located_days IS NOT NULL").fetchone()[0]
 
-    The ambiguity policy is *measured*, not written down (TEL-3 gate 2): the lemma
-    document frequencies are the word cloud's ``word_doc_freq`` — which is why this
-    runs after ``rebuild_aggregates`` — and the person names are the register's own
-    plus every resolved PER entity key. With no word statistics (a ``--skip-wordcloud``
-    build) the derivation falls back to the stop-word list, the person names and the
-    reviewed table alone, which is weaker but never wrong in the other direction.
+
+def rebuild_settlement_case_usage(conn: sqlite3.Connection) -> int:
+    """Measure gate 2's evidence (TEL-3): per settlement name, the sitting days the
+    transcript writes it in **lower case** against the days it capitalizes it.
+
+    A settlement is a proper noun, so a lower-case occurrence is somebody saying the
+    *word* — *alap* the fund, *korlát* the limit, *hatvan* the number — while a
+    capitalized one is (nearly always) somebody naming the place. The ratio between
+    the two is therefore a direct, model-free measurement of the only thing gate 2
+    wants to know, and unlike the lemma frequencies it replaced it does not mistake a
+    much-discussed town for a common word (see :class:`app.settlements.CaseCounter`).
+
+    Procedural speeches are excluded, exactly as they are from the mention pass: the
+    printer's colophon closing every sitting day would otherwise be evidence about
+    the town of Vác.
+
+    Stored on the ``settlement`` row rather than recomputed per caller, because both
+    settlement passes need the policy and this is a full pass over the corpus's
+    sentences. Returns the number of sitting days measured.
     """
-    names = {r[1]: r[0] for r in conn.execute("SELECT id, name FROM settlement")}
-    freq: dict[str, int] = {}
-    if _table_exists(conn, "word_doc_freq"):
-        freq = {w: n for w, n in conn.execute(
-            "SELECT word, SUM(doc_count) FROM word_doc_freq GROUP BY word")}
+    _ensure_settlement_tables(conn)
+    names = [r[0] for r in conn.execute("SELECT name FROM settlement")]
+    if not names:
+        return 0
+    counter = settlements.CaseCounter(names)
+    days = 0
+    for (sid,) in conn.execute("SELECT id FROM session ORDER BY id"):
+        texts = [t for (t,) in conn.execute(
+            """SELECT se.text FROM sentence se
+               JOIN speech sp ON sp.uid = se.speech_id
+               WHERE sp.session_id = ? AND sp.procedural = 0
+                 AND se.text IS NOT NULL AND se.text <> ''""", (sid,))]
+        if not texts:
+            continue
+        counter.add_day(texts)
+        days += 1
+    usage = counter.usage()
+    # Zero, not NULL: "measured, and never written that way" is a different fact
+    # from "never measured", and only the second may fall back to the weak policy.
+    conn.execute("UPDATE settlement SET lower_days = 0, upper_days = 0, "
+                 "located_days = 0")
+    conn.executemany(
+        "UPDATE settlement SET lower_days = ?, upper_days = ?, located_days = ? "
+        "WHERE name = ?",
+        [(u.lower_days, u.upper_days, u.located_days, name)
+         for name, u in usage.items()])
+    conn.commit()
+    lowered = sum(1 for u in usage.values() if u.lower_days)
+    logger.info("Settlement case evidence: %d sitting days measured, %d of %d names "
+                "ever written lower-case", days, lowered, len(names))
+    return days
+
+
+def _settlement_gazetteer(conn: sqlite3.Connection):
+    """The matcher, built from the stored register plus the corpus's own evidence.
+
+    The ambiguity policy is *measured*, not written down (TEL-3 gate 2): the
+    measurement is the per-name case evidence ``rebuild_settlement_case_usage``
+    stores, and the person names are the register's own plus every resolved PER
+    entity key. On a DB that has never been measured the derivation falls back to the
+    stop-word list, the person names and the reviewed table alone, which is weaker
+    but wrong only in the direction that over-counts mentions — never in the one that
+    invents blind spots.
+
+    It deliberately does **not** read ``word_doc_freq``: that table is a lemma table
+    only for the sittings a model actually analysed, and holds the raw transcript
+    lower-cased for the rest, so on any install whose NLP does not cover the whole
+    corpus it reports every settlement in the country as an everyday word.
+    """
+    names: dict[str, str] = {}
+    usage: dict[str, settlements.CaseUsage] = {}
+    for sid, name, low, up, located in conn.execute(
+            "SELECT id, name, lower_days, upper_days, located_days FROM settlement"):
+        names[name] = sid
+        if low is not None or up is not None:
+            usage[name] = settlements.CaseUsage(low or 0, up or 0, located or 0)
     people: set[str] = set()
     for row in conn.execute("SELECT lastname, firstname, label FROM person"):
         for part in ((row[0] or "").split() + (row[1] or "").split()
@@ -2465,7 +2577,7 @@ def _settlement_gazetteer(conn: sqlite3.Connection):
     if _table_exists(conn, "entity_link"):
         for (key,) in conn.execute("SELECT entity_key FROM entity_link WHERE kind='PER'"):
             people.update((key or "").split())
-    return settlements.build(names, lemma_doc_freq=freq,
+    return settlements.build(names, case_usage=usage,
                              stopwords=STOPWORDS, person_names=people)
 
 
@@ -3167,9 +3279,9 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         # even under --skip-wordcloud (which only drops the lemma pass).
         rebuild_speech_metrics(conn, db_path.parent, lemmas=not skip_wordcloud)
         rebuild_aggregates(conn)
-        # Settlement mentions (§6D) come after the aggregates, not with them: the
-        # ambiguity policy is derived from the word document frequencies that pass
-        # builds (TEL-3). Needs no model — only the register, which is cached.
+        # Settlement mentions (§6D). Needs no model and no other pass's output — only
+        # the register (cached) and the transcript, which is where gate 2's ambiguity
+        # evidence is measured from as well (TEL-3).
         rebuild_settlements(conn)
         rebuild_settlement_mentions(conn)
         rebuild_settlement_stats(conn)
@@ -3442,11 +3554,14 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
         # links among them — recomputed from what remains.
         if loaded_sessions or removed:
             rebuild_aggregates(conn)
-            # §6D, after the aggregates for the same reason as in the full build.
-            # The register refresh is cheap (a cached, version-scoped fetch) and the
-            # mention pass is scoped to the sittings that changed; the stats are
+            # §6D. The register refresh is cheap (a cached, version-scoped fetch) and
+            # the mention pass is scoped to the sittings that changed; the stats are
             # rebuilt wholesale so the per-cycle and all-cycles rows stay in step.
-            rebuild_settlements(conn)
+            # Gate 2's case evidence is NOT re-measured: it is a corpus-wide ratio
+            # that a single new sitting day cannot move, and measuring it means
+            # reading every sentence in the corpus (TEL-3). A DB that has never been
+            # measured is the exception — `rebuild_settlements` measures that one.
+            rebuild_settlements(conn, rescan_case=False)
             if loaded_sessions:
                 rebuild_settlement_mentions(conn,
                                             only_sessions=set(loaded_sessions))

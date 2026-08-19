@@ -53,18 +53,25 @@ survive four gates, in order:
 Rejections are counted by reason so the policy's effect is observable in the load
 log rather than taken on faith.
 
-This module is pure: it holds no database or network access. The loader supplies the
-register (from :mod:`app.valasztas`, TEL-5) and the corpus statistics; the request
-path never runs any of it (TEL-11).
+This module is pure: it holds no database or network access, only its own checked-in
+tables (:data:`REVIEWED`, and the label points the map draws a settlement at). The
+loader supplies the register (from :mod:`app.valasztas`, TEL-5) and the corpus
+statistics; the request path never runs any of it (TEL-11).
 """
 
 from __future__ import annotations
 
+import csv
+import logging
 import os
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Iterable, NamedTuple
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # The capital (TEL-5)
@@ -78,6 +85,69 @@ from typing import Iterable, NamedTuple
 BUDAPEST_ID = "01/000"
 BUDAPEST_NAME = "Budapest"
 BUDAPEST_POINT = (47.4979, 19.0402)      # Deák Ferenc tér, the conventional centre
+
+# ---------------------------------------------------------------------------
+# Where the map draws a settlement (TEL-5)
+#
+# The election office publishes a centre point per settlement, and it is a centre of
+# the **administrative territory**, not of the place: over the 24 largest towns it
+# lands a mean 3.1 km from where the basemap prints the town's name (Veszprém 6.5 km,
+# Salgótarján 7.6 km). A map whose job is "find my town" cannot put the dot in the
+# fields beside the label, so the drawn point comes from a checked-in table instead —
+# the OpenStreetMap place node the basemap labels each settlement at, which makes the
+# dot and the label agree by construction. `build_settlement_points.py` regenerates
+# it; the register's own point remains the fallback for anything the table misses.
+#
+# Read here rather than in the loader because this is the module that owns settlement
+# geography (BUDAPEST_POINT above, the H3 binning below) — it stays free of database
+# and network access, and gains only its own static table, as REVIEWED already is.
+# ---------------------------------------------------------------------------
+LABEL_POINTS_PATH = Path(__file__).with_name("settlement_points.csv")
+
+
+class LabelPoint(NamedTuple):
+    name: str
+    lat: float
+    lon: float
+
+
+@lru_cache(maxsize=1)
+def label_points() -> tuple[dict[str, LabelPoint], dict[str, LabelPoint]]:
+    """The gazetteer, indexed ``(by id, by name)``.
+
+    Two indexes because neither key is safe alone: the id is the office's own and an
+    election can renumber it — onto *another* settlement, which is why an id match
+    counts only when the name agrees — while the name survives renumbering and is
+    unique across the register. A missing or unreadable file is not an error: the
+    register's own points then stand (SCR-5).
+    """
+    by_id: dict[str, LabelPoint] = {}
+    by_name: dict[str, LabelPoint] = {}
+    try:
+        with LABEL_POINTS_PATH.open(encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(
+                    line for line in handle if not line.startswith("#")):
+                try:
+                    point = LabelPoint(row["name"], float(row["lat"]), float(row["lon"]))
+                except (KeyError, TypeError, ValueError):
+                    continue
+                by_id[row["id"]] = point
+                by_name[point.name] = point
+    except OSError as exc:
+        logger.warning("No settlement label points (%s); the map falls back to the "
+                       "register's territorial centres", exc)
+    return by_id, by_name
+
+
+def label_point(settlement_id: str | None, name: str | None) -> tuple[float, float] | None:
+    """Where this settlement's dot belongs, or ``None`` to keep what the register
+    published for it."""
+    by_id, by_name = label_points()
+    found = by_id.get(settlement_id or "")
+    if found is None or found.name != name:
+        found = by_name.get(name or "")
+    return (found.lat, found.lon) if found else None
+
 
 # ---------------------------------------------------------------------------
 # Morphology

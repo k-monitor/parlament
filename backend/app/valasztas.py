@@ -570,6 +570,17 @@ def _outlines(maz: str, version: str, *,
             for rec in (payload.get("list") or []) if rec.get("taz")}
 
 
+def outlines(maz: str, *, version: str | None = None,
+             fetch: Callable[[str], bytes] | None = None) -> dict[str, list[list[float]]]:
+    """Every settlement boundary in one county, keyed by ``taz``, as GeoJSON rings.
+
+    The public form of the lookup's per-county fetch, for the offline tools that
+    need the geography wholesale rather than one split settlement's worth of it —
+    `build_settlement_points.py` assigns OSM place nodes to settlements with it.
+    """
+    return _outlines(maz, version or _get_version(fetch=fetch), fetch=fetch)
+
+
 def _oevk_geometry(version: str, *,
                    fetch: Callable[[str], bytes] | None = None) -> dict[str, dict]:
     """Every constituency's boundary **and** published centre point, keyed

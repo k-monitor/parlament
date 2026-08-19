@@ -2315,6 +2315,21 @@ def rebuild_settlements(conn: sqlite3.Connection) -> int:
         "constituencies": [],
     }]
 
+    # Where each settlement is *drawn* is not where the register says its territory
+    # is centred (TEL-5): the office's point sits a mean 3 km from the name the
+    # basemap prints, so the checked-in gazetteer's label point wins wherever it has
+    # one. Applied here, before the insert, so everything derived from a settlement's
+    # coordinates — the H3 binning below included — is derived from the drawn point.
+    placed = 0
+    for r in rows:
+        point = settlements.label_point(r["id"], r["name"])
+        if point:
+            r["lat"], r["lon"] = point
+            placed += 1
+    logger.info("Settlement points: %d of %d from the label gazetteer, %d left on "
+                "the register's territorial centre", placed, len(rows),
+                len(rows) - placed)
+
     conn.execute("DELETE FROM settlement_constituency")
     conn.executemany(
         """INSERT INTO settlement(id, name, name_en, name_fold, county, lat, lon,

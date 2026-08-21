@@ -118,21 +118,6 @@ const SECTIONS = computed(() => {
         // missing data, not a person to whom the notion fails to apply.
         { key: 'education', labelKey: 'profile.education', kind: 'text',
           value: (p) => p.highest_education, absentKey: 'compare.unknown' },
-        // Csillagjegyek (REP-16). Trivia, openly labelled as such — on a profile
-        // quarantined in the card's corner behind a spoiler; here it is a row like
-        // any other, because the reader asked for this table. The note says it
-        // means nothing.
-        // Never a `num` row — there is nothing here to rank, and bars would imply
-        // there were.
-        { key: 'zodiac', labelKey: 'profile.zodiac', kind: 'sign', trivia: true,
-          value: (p) => signsOf(p)?.sun || null,
-          text: (p) => signsOf(p)?.sun?.label || null,
-          absentKey: 'compare.unknown', noteKey: 'profile.zodiacNote' },
-        { key: 'chineseZodiac', labelKey: 'profile.chineseZodiac', kind: 'sign',
-          trivia: true,
-          value: (p) => signsOf(p)?.animal || null,
-          text: (p) => signsOf(p)?.animal?.label || null,
-          absentKey: 'compare.unknown', noteKey: 'profile.zodiacNote' },
       ],
     },
     {
@@ -254,6 +239,27 @@ const sections = computed(() => SECTIONS.value
 
 const hiddenRows = computed(() => SECTIONS.value
   .reduce((n, s) => n + s.rows.filter(isUniform).length, 0))
+
+// --- csillagjegyek (REP-16) -------------------------------------------------
+// Trivia, and kept out of the table proper. Every other row on this page is a
+// checkable figure; a star sign set in the same register would corrode exactly
+// the credibility the rest of it rests on. So the signs sit at the foot of the
+// page behind the same ⛎ spoiler the profile uses: nothing astrological is on
+// screen as the comparison opens, and a reader only ever sees it by asking.
+// Never a `num` row and never part of a section — there is nothing here to rank,
+// and "csak a különbségek" has no business hiding a piece of trivia as if it were
+// a figure two people happened to share.
+const ZODIAC_ROWS = [
+  { key: 'zodiac', labelKey: 'profile.zodiac', value: (p) => signsOf(p)?.sun || null },
+  { key: 'chineseZodiac', labelKey: 'profile.chineseZodiac', value: (p) => signsOf(p)?.animal || null },
+]
+const zodiacRevealed = ref(false)
+// No spoiler at all unless at least one column has a sign: most of the corpus has
+// no day-precision birth date, and a glyph that opens onto two rows of "nincs
+// adat" promises something the page cannot deliver. Once it *is* open, the people
+// without a sign still get the "nincs adat" cell — in a table a blank has
+// neighbours it would have to line up with (TRUST-1).
+const hasZodiac = computed(() => people.value.some((p) => signsOf(p)))
 
 // --- adding and removing ----------------------------------------------------
 // Both rewrite `?ids=` and let the watcher re-fetch: the URL is the state, so a
@@ -437,7 +443,7 @@ const shareTitle = computed(() => (people.value.length
                 {{ $t(sec.titleKey) }}
               </th>
             </tr>
-            <tr v-for="row in sec.rows" :key="row.key" :class="{ trivia: row.trivia }">
+            <tr v-for="row in sec.rows" :key="row.key">
               <th scope="row" class="rowhead">
                 {{ $t(row.labelKey) }}
                 <HelpTip v-if="row.noteKey" :label="$t(row.labelKey)">
@@ -483,17 +489,6 @@ const shareTitle = computed(() => (people.value.length
                   </template>
                 </template>
 
-                <!-- A sign (REP-16). Glyph as decoration, label as the meaning
-                     (A11Y-1), and the whole cell dimmed so a row of star signs can
-                     never be mistaken for a row of findings. -->
-                <template v-else-if="row.kind === 'sign'">
-                  <span v-if="!row.value(p)" class="na">{{ absentText(row) }}</span>
-                  <span v-else class="signval small">
-                    <span aria-hidden="true">{{ row.value(p).glyph }}</span>
-                    {{ row.value(p).label }}
-                  </span>
-                </template>
-
                 <template v-else-if="row.kind === 'faction'">
                   <FactionBadge v-if="row.value(p)" :faction="row.value(p)" link />
                   <span v-else class="na">{{ absentText(row) }}</span>
@@ -526,8 +521,58 @@ const shareTitle = computed(() => (people.value.length
               <td v-if="canAdd" class="slot"></td>
             </tr>
           </tbody>
+
+          <!-- Csillagjegyek (REP-16), at the foot of the table and behind a
+               spoiler. Rows of *this* table rather than a table of their own: the
+               columns are the same people, so they have to line up under the same
+               heads — a second table would resolve its own widths and drift out of
+               register the moment a column is missing.
+               The trigger is ⛎ (Ophiuchus), the one zodiac glyph that is never
+               among the twelve behind it, so the button itself cannot give a sign
+               away; the note beside the revealed label says outright that it means
+               nothing.
+               `v-show`, not `v-if`: the button names the region it controls, so
+               that region has to exist for the reference to resolve. Hidden this
+               way it is out of the accessibility tree too, so the reveal means the
+               same thing to every reader — nobody meets a horoscope on the way to a
+               voting record. -->
+          <tbody v-if="hasZodiac">
+            <tr class="ztrigger" :class="{ zlast: !zodiacRevealed }">
+              <th scope="row" class="rowhead">
+                <button type="button" class="zodiac-peek" aria-controls="compare-zodiac"
+                        :aria-expanded="zodiacRevealed ? 'true' : 'false'"
+                        :title="zodiacRevealed ? $t('profile.zodiacHide') : $t('profile.zodiacReveal')"
+                        @click="zodiacRevealed = !zodiacRevealed">
+                  <span aria-hidden="true">⛎</span>
+                  <span class="visually-hidden">{{ zodiacRevealed ? $t('profile.zodiacHide') : $t('profile.zodiacReveal') }}</span>
+                </button>
+              </th>
+              <td :colspan="people.length"></td>
+              <td v-if="canAdd" class="slot"></td>
+            </tr>
+          </tbody>
+          <tbody v-if="hasZodiac" v-show="zodiacRevealed" id="compare-zodiac" class="zbody">
+            <tr v-for="row in ZODIAC_ROWS" :key="row.key">
+              <th scope="row" class="rowhead">
+                {{ $t(row.labelKey) }}
+                <HelpTip :label="$t(row.labelKey)">
+                  <p>{{ $t('profile.zodiacNote') }}</p>
+                </HelpTip>
+              </th>
+              <td v-for="p in people" :key="p.person_id">
+                <span v-if="!row.value(p)" class="na">{{ $t('compare.unknown') }}</span>
+                <!-- Glyph as decoration, label as the meaning (A11Y-1). -->
+                <span v-else class="signval small">
+                  <span aria-hidden="true">{{ row.value(p).glyph }}</span>
+                  {{ row.value(p).label }}
+                </span>
+              </td>
+              <td v-if="canAdd" class="slot"></td>
+            </tr>
+          </tbody>
         </table>
       </div>
+
     </div>
   </StateBlock>
 
@@ -621,9 +666,6 @@ tr.sec .rowhead {
 .plus { font-size: 1.5rem; line-height: 1; }
 
 .val { font-variant-numeric: tabular-nums; font-weight: 600; }
-/* Trivia rows (REP-16) are visibly a different kind of thing from the rows above
-   them: faint, unbolded, no bars — nothing to read as a ranking. */
-tr.trivia .rowhead, tr.trivia td { color: var(--ink-faint); font-weight: 400; }
 .signval { white-space: nowrap; }
 /* "Not applicable" is a statement, so it is spelled out rather than left blank —
    an empty cell reads as missing data (TRUST-1). */
@@ -639,6 +681,26 @@ td.lead .fill { background: var(--accent); }
 .stacklegend { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .3rem; }
 .stacklegend .dot { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; margin-right: .2rem; }
 .links { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .2rem; }
+
+/* --- csillagjegyek (REP-16) ---
+   The last rows of the spec sheet, dressed as what they are: the faintest ink in
+   the table and nothing on them bolded or barred that could be read as a ranking.
+   The trigger row is a slim strip carrying nothing but the glyph. Collapsed it is
+   the table's last line, so its rule comes off — otherwise it would double with
+   the container's own border. */
+.ztrigger th, .ztrigger td { padding-top: .35rem; padding-bottom: .35rem; }
+.ztrigger.zlast th, .ztrigger.zlast td { border-bottom: none; }
+.zbody td, .zbody .rowhead { color: var(--ink-faint); font-weight: 400; }
+/* The spoiler trigger, identical to the profile's (REP-16): the glyph is the whole
+   affordance, so it needs a hit area a thumb can find and a hover state that
+   admits it is a control — but not one drop more ink than trivia has earned. */
+.zodiac-peek {
+  background: none; border: 0; border-radius: 4px; padding: .1rem .25rem;
+  margin: -.1rem 0; cursor: pointer; line-height: 1; font-size: 1rem;
+  color: var(--ink-faint); opacity: .7;
+}
+.zodiac-peek:hover, .zodiac-peek:focus-visible,
+.zodiac-peek[aria-expanded="true"] { opacity: 1; color: var(--accent); }
 
 /* --- picker --- */
 .pickscrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 1rem; z-index: 60; }

@@ -100,6 +100,7 @@ export default {
     button: 'Keresés',
     results: 'találat',
     resultsCapped: 'több mint {n} találat',
+    tooSlow: 'A keresés túl sok felszólalást érintett, ezért megszakadt. Próbálj hosszabb vagy pontosabb keresőszót, vagy szűkítsd a ciklust, illetve az időszakot.',
     noResults: 'Nincs találat a megadott feltételekre.',
     hint: 'Tipp: idézőjellel pontos kifejezésre kereshetsz, pl. „tisztelt ház”.',
     filters: 'Szűrők',

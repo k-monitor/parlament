@@ -734,6 +734,8 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_PHOTOS_DIR` | `/data/media/photos` | MP portrait directory |
 | `PARLAMONITOR_FRONTEND_DIST` | `/app/frontend/dist` | built SPA served by the backend |
 | `PARLAMONITOR_MAX_SEARCH_TOTAL` | `5000` | cap on reported search totals |
+| `PARLAMONITOR_MIN_PREFIX_LEN` | `2` | shortest search term still expanded to a **prefix** term (`word*`). Below it the term is matched exactly: `a*` matches 5.9M of the corpus's 9.0M sentences and costs ~2.8 s to merge, where exact `a` costs 0.7 ms. The default disarms only single characters; two-letter terms ("EU") keep their suffixes |
+| `PARLAMONITOR_SEARCH_TIMEOUT` | `20` | wall-clock ceiling in seconds on the SQL behind one search request; over budget it is abandoned and answered `503` + `Retry-After` rather than holding a worker thread. A backstop, not a policy: on the 10-cycle corpus the worst *reachable* query (a very common two-letter prefix across all cycles) measures ~7 s, so this leaves real headroom under load. Tighten only after measuring your own corpus; `0` disables |
 | `PARLAMONITOR_SEARCH_ANALYTICS` | `1` | privacy-friendly search-keyword logging (PRIV-1); `0` to disable (see [Search analytics](#search-analytics-privacy-friendly)) |
 | `PARLAMONITOR_ANALYTICS_DB` | `/analytics/search-analytics.db` | where the aggregated search stats are written (bind-mounted from `./analytics` on the host) |
 | `PARLAMONITOR_ANALYTICS_CSV` | `1` | daily CSV export of the aggregated stats (PRIV-1); `0` to keep only the SQLite store |
@@ -743,8 +745,8 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_API_CACHE_CONTROL` | `public, max-age=60, s-maxage=300, stale-while-revalidate=600` | Cache-Control stamped on API responses |
 | `PARLAMONITOR_HTML_CACHE_CONTROL` | `public, max-age=0, s-maxage=300, stale-while-revalidate=600` | Cache-Control stamped on the SPA shell / OG share cards |
 | `PARLAMONITOR_SQLITE_MMAP_SIZE` | `1073741824` (1 GiB) | per-connection SQLite `mmap_size` ceiling in bytes; raise above the DB file's size so the whole DB is memory-mapped instead of read() for its tail |
-| `PARLAMONITOR_QUERY_CACHE_TTL` | `300` | seconds to memoize the expensive read-only aggregates (search trend/breakdown, module `/facets`); `0` disables the in-process cache |
-| `PARLAMONITOR_QUERY_CACHE_SIZE` | `256` | max distinct (query+filters) entries kept per cached aggregate endpoint |
+| `PARLAMONITOR_QUERY_CACHE_TTL` | `300` | seconds to memoize the expensive read-only aggregates (the search **result page**, its trend/breakdown, module `/facets`); `0` disables the in-process cache |
+| `PARLAMONITOR_QUERY_CACHE_SIZE` | `256` | max distinct entries kept per cached endpoint. `/search` keys include the **page**, so paging through one search fills several entries where an aggregate fills one — raise this on a deployment with heavy search traffic |
 | **Constituency lookup** (REP-10) | | the "Ki a képviselőm?" page; the only feature reading a source other than `parlament.hu` |
 | `PARLAMONITOR_EVK_LOOKUP` | `1` | `0` hides the page and 404s its endpoints. It also governs the **settlement-mention module's** geography (§6D TEL-5), which reads the same source: with the lookup off, the loader keeps whatever register it already stored and, on a first build, the Települések pages report "not built" instead of an empty country — the mentions themselves are unaffected |
 | `PARLAMONITOR_VTR_BASE_URL` | `https://vtr.valasztas.hu/ogy2026/data` | National Election Office data tree; its own `config.json` names the current data version, so only this base changes for the next election |

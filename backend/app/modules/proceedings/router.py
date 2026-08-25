@@ -16,8 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...analytics import search_analytics
 from ...config import settings
-from ...db import (get_db, like_contains, period_in_scope, period_key,
-                   period_list, period_sql)
+from ...db import (QueryBudgetExceeded, get_db, like_contains, period_in_scope,
+                   period_key, period_list, period_sql, query_budget,
+                   sentence_id_range)
 from ...media import per_speech_clip
 from ...nlp import LINKABLE_LABELS
 # How completely a held day is published (SIT-2). Shared with the Bluesky
@@ -118,7 +119,8 @@ def _context_side(db, session_id, speech_index, ord, direction):
     return out
 
 
-def _search_where(q, date_from, date_to, period, person_id, faction_id, agenda_type):
+def _search_where(db, q, date_from, date_to, period, person_id, faction_id,
+                  agenda_type):
     """Build the shared FTS-match + filter clause for the search endpoints.
 
     `/search`, `/search/trend` (SEA-8) and `/search/breakdown` (SEA-9) all
@@ -141,6 +143,16 @@ def _search_where(q, date_from, date_to, period, person_id, faction_id, agenda_t
     per_sql = period_sql(period, "sp.period_number")
     if per_sql:
         where.append(per_sql); needs.add("speech")
+        # Bound the same filter as a rowid range on the FTS index, where it can be
+        # pushed into the doclist scan instead of costing a `sentence` + `speech`
+        # row fetch per match (db.sentence_id_range; schema.sql). Added ALONGSIDE
+        # the predicate above, never instead of it, so a loose or stale bound
+        # costs speed and nothing else — and needs no join of its own, since
+        # `sentence_fts` is always the FROM's first table.
+        span = sentence_id_range(db, period)
+        if span:
+            where.append("sentence_fts.rowid BETWEEN :sid_lo AND :sid_hi")
+            params["sid_lo"], params["sid_hi"] = span
     if person_id:
         where.append("sp.person_id = :person_id"); params["person_id"] = person_id; needs.add("speech")
     if faction_id is not None:
@@ -148,6 +160,36 @@ def _search_where(q, date_from, date_to, period, person_id, faction_id, agenda_t
     if agenda_type:
         where.append("ai.type = :agenda_type"); params["agenda_type"] = agenda_type; needs.add("agenda")
     return " AND ".join(where), params, needs
+
+
+def _budgeted(db, run):
+    """Run one search endpoint's whole body under the wall-clock budget,
+    answering 503 rather than letting it hold a worker thread
+    (``settings.search_timeout``).
+
+    Wrapped around the *endpoint*, not around each statement: a search runs a
+    count, a ranked page and a handful of per-hit context lookups, and a
+    per-statement budget would let one request spend the full allowance several
+    times over. One deadline covers the request.
+
+    A search can be made arbitrarily expensive from the query string alone — a
+    very short prefix term expands to millions of matches, and bm25 has to score
+    every one of them to find the top twenty. `build_match`'s length floor and the
+    cycle range above make the *reachable* worst case small, but neither is a
+    bound: this is the bound. 503 + Retry-After is the honest answer — the query
+    is valid and might well succeed with a narrower scope, so it is the origin
+    declining the work, not the request being wrong."""
+    try:
+        with query_budget(db, settings.search_timeout):
+            return run()
+    except QueryBudgetExceeded:
+        raise HTTPException(
+            503,
+            "Search took too long and was stopped. Try a longer or more specific "
+            "term, or narrow the cycle/date range.",
+            # Retrying the identical query costs the same and fails the same,
+            # so the backoff is a real one rather than an invitation.
+            headers={"Retry-After": "30"})
 
 
 def _assemble_from(se: bool, speech: bool, session: bool, agenda: bool) -> str:
@@ -192,9 +234,52 @@ def search(
     surrounding transcript context — spilling into the adjacent speeches at a
     speech boundary — speaker/faction/date/agenda metadata, and the timing needed
     to open the viewer at that moment (SEA-4)."""
-    where_sql, params, needs = _search_where(q, date_from, date_to, period,
+    where_sql, params, needs = _search_where(db, q, date_from, date_to, period,
                                               person_id, faction_id, agenda_type)
-    order_by = _SEARCH_SORTS.get(sort, _SEARCH_SORTS["relevance"])
+    sort_name = sort if sort in _SEARCH_SORTS else "relevance"
+
+    # The result list is the most-requested and most expensive thing the API
+    # serves, and — unlike its trend/breakdown companions, which were already
+    # memoized — it was recomputed in full every time. It is a pure function of
+    # (query, filters, sort, page) over a read-only DB, and the SPA re-fires it
+    # with an identical argument set on every page flip and every sort change, so
+    # memoize the payload exactly as the aggregates are. `page` is part of the key
+    # (unlike trend/breakdown, which are page-independent), which makes the key
+    # space wider — paging through one search fills entries rather than reusing
+    # one — so a busy deployment may want a larger PARLAMONITOR_QUERY_CACHE_SIZE
+    # than the aggregates need.
+    key = (q, date_from, date_to, period_key(period), person_id, faction_id,
+           agenda_type, sort_name, limit, offset)
+    payload = cached_aggregate("search", key, lambda: _budgeted(
+        db, lambda: _search_compute(
+            db, q, where_sql, params, needs, sort_name, limit, offset)))
+
+    # Privacy-respecting analytics (PRIV-1): count this search — its keyword, its
+    # filters, how many hits it found and which page was asked for — into the
+    # current hour's aggregate. No IP / no exact timestamp; the request's network
+    # metadata is never touched. Only `/search` is instrumented (not
+    # trend/breakdown/suggest, which the SPA fires for the same query), so one
+    # user search is one recorded event; the result the reader then opens is
+    # counted onto this same bucket by the click ping (SEA-12, main.py).
+    #
+    # Deliberately OUTSIDE the cache above: this counts *searches people ran*, so
+    # a repeat search must be counted again even when its payload was served from
+    # memory. The figure recorded is the one the reader is shown and pages
+    # through — already capped in the payload. Best-effort; never affects the
+    # response.
+    search_analytics.record(
+        source="proceedings", query=q, date_from=date_from, date_to=date_to,
+        # Multi-cycle scope is recorded as one canonical "43,44" key, so the same
+        # selection always aggregates onto the same row.
+        period=period_list(period),
+        person_id=person_id, faction_id=faction_id, agenda_type=agenda_type,
+        sort=sort_name, results=payload["total"], offset=offset)
+    return payload
+
+
+def _search_compute(db, q, where_sql, params, needs, sort_name, limit, offset):
+    """Run one page of the search and build its payload (see ``search``)."""
+    order_by = _SEARCH_SORTS[sort_name]
     is_relevance = order_by == "rank"
 
     # Joins the FILTERS reference. A date filter needs session, an agenda filter
@@ -213,25 +298,6 @@ def search(
         f"LIMIT {settings.max_search_total + 1})", params).fetchone()
     total = total_row["c"]
     capped = total > settings.max_search_total
-
-    # Privacy-respecting analytics (PRIV-1): count this search — its keyword, its
-    # filters, how many hits it found and which page was asked for — into the
-    # current hour's aggregate. No IP / no exact timestamp; the request's network
-    # metadata is never touched. Only `/search` is instrumented (not
-    # trend/breakdown/suggest, which the SPA fires for the same query), so one
-    # user search is one recorded event; the result the reader then opens is
-    # counted onto this same bucket by the click ping (SEA-12, main.py).
-    # Best-effort — never affects the response.
-    search_analytics.record(
-        source="proceedings", query=q, date_from=date_from, date_to=date_to,
-        # Multi-cycle scope is recorded as one canonical "43,44" key, so the same
-        # selection always aggregates onto the same row.
-        period=period_list(period),
-        person_id=person_id, faction_id=faction_id, agenda_type=agenda_type,
-        sort=sort if sort in _SEARCH_SORTS else "relevance",
-        # The capped figure — the one the reader is shown and pages through.
-        results=min(total, settings.max_search_total), offset=offset,
-    )
 
     # Rank + page over the FTS/filter joins ALONE, then join the <=`limit`
     # survivors for their display metadata. A pure-relevance, unfiltered search
@@ -285,7 +351,7 @@ def search(
     return {
         "query": q,
         "match": params["match"],
-        "sort": sort if sort in _SEARCH_SORTS else "relevance",
+        "sort": sort_name,
         "total": min(total, settings.max_search_total),
         "total_is_capped": capped,
         "limit": limit,
@@ -376,7 +442,7 @@ def search_trend(
     monthly across the full multi-decade corpus. Only the periods that actually
     have hits are returned; the client fills the gaps with zeros so the timeline
     is continuous and honest."""
-    where_sql, params, _needs = _search_where(q, date_from, date_to, period,
+    where_sql, params, _needs = _search_where(db, q, date_from, date_to, period,
                                                person_id, faction_id, agenda_type)
 
     # This aggregate re-scans the whole match set on every call and the SPA fires
@@ -387,8 +453,9 @@ def search_trend(
     # keeps it far fresher). The 400 for an empty query is raised above the cache.
     key = (q, date_from, date_to, period_key(period), person_id, faction_id,
            agenda_type, date.today().isoformat())
-    return cached_aggregate("search_trend", key, lambda: _search_trend_compute(
-        db, q, where_sql, params, date_from, date_to, period))
+    return cached_aggregate("search_trend", key, lambda: _budgeted(
+        db, lambda: _search_trend_compute(
+            db, q, where_sql, params, date_from, date_to, period)))
 
 
 def _search_trend_compute(db, q, where_sql, params, date_from, date_to, period):
@@ -491,7 +558,7 @@ def search_breakdown(
     representative its `person_id` so the UI can link to the profile (REP-1).
     Speeches with no resolved representative are not attributed to a person row;
     those with no faction are not attributed to a faction row."""
-    where_sql, params, _needs = _search_where(q, date_from, date_to, period,
+    where_sql, params, _needs = _search_where(db, q, date_from, date_to, period,
                                                person_id, faction_id, agenda_type)
 
     # Two grouped top-N over the whole match set, fired alongside every search and
@@ -499,8 +566,8 @@ def search_breakdown(
     # on DB swap. The 400 for an empty query is raised above, before the cache.
     key = (q, date_from, date_to, period_key(period), person_id, faction_id,
            agenda_type, limit)
-    return cached_aggregate("search_breakdown", key, lambda: _search_breakdown_compute(
-        db, q, where_sql, params, limit))
+    return cached_aggregate("search_breakdown", key, lambda: _budgeted(
+        db, lambda: _search_breakdown_compute(db, q, where_sql, params, limit)))
 
 
 def _search_breakdown_compute(db, q, where_sql, params, limit):

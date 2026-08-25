@@ -593,6 +593,34 @@ CREATE TABLE build_meta (
     value TEXT
 );
 
+-- The span of `sentence.id` each electoral cycle occupies — a *search accelerator*,
+-- never a source of truth (SEA-1).
+--
+-- The loader writes a cycle's sittings together, so each cycle's sentences land in
+-- one contiguous, ascending block of ids. That makes a cycle filter expressible as
+-- a **rowid range on `sentence_fts`**, which FTS5 pushes down into the doclist scan.
+-- Without it, `sp.period_number = 43` can only be checked by fetching the
+-- `sentence` and `speech` rows behind every single match — millions of B-tree
+-- probes to discard >99% of them, since one cycle is a small slice of the corpus.
+-- Measured on the 10-cycle corpus, the range takes a cycle-scoped search of a
+-- common term from ~380 ms to ~47 ms, and a very common one from ~4.3 s to ~240 ms.
+--
+-- Because the range is only ever ANDed *alongside* the exact `period_number`
+-- predicate (never in place of it), it cannot change a result — at worst it stops
+-- helping. That matters: contiguity is an artifact of load order, not an invariant.
+-- An `--update` that appends a sitting to an older cycle would interleave ids, and
+-- the range simply widens into a looser (still correct) bound on the next rebuild.
+--
+-- Only cycles that actually have sentences get a row, and the reader applies the
+-- range only when *every* cycle it was asked for is present — a cycle missing here
+-- has an unknown span, so nothing can be bounded and the query falls back to the
+-- predicate alone. A DB built before this table existed does the same.
+CREATE TABLE period_sentence_range (
+    period_number INTEGER PRIMARY KEY REFERENCES electoral_period(number),
+    first_id      INTEGER NOT NULL,   -- MIN(sentence.id) in this cycle
+    last_id       INTEGER NOT NULL    -- MAX(sentence.id) in this cycle
+);
+
 -- Per-file load bookkeeping for the *incremental* update path (`--update`).
 -- Records the (mtime, size) of every processed JSON the DB was last built/updated
 -- from, keyed by basename, so an update reloads only the sittings/registries whose

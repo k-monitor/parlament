@@ -1493,10 +1493,48 @@ def rebuild_aggregates(conn: sqlite3.Connection) -> None:
     conn.commit()
     rebuild_word_doc_freq(conn)
     rebuild_word_first_seen(conn)
+    rebuild_period_sentence_ranges(conn)
     # Derived from the bill/speech/office rows just loaded (§6C), so it belongs
     # to the same rebuild pass — never to a request.
     rebuild_portfolios(conn)
     logger.info("Rebuilt aggregate tables")
+
+
+def rebuild_period_sentence_ranges(conn: sqlite3.Connection) -> None:
+    """Record the `sentence.id` span each electoral cycle occupies (search accelerator).
+
+    See `period_sentence_range` in schema.sql for what this buys and why it can
+    never change a result. Rebuilt wholesale on every load, so the bound tracks
+    whatever order the sentences actually ended up in — including the interleaved
+    case, where it simply widens.
+
+    One full scan of `sentence` (~4 s on the 10-cycle corpus). A DB whose schema
+    predates the table is left alone: the reader treats an absent table exactly
+    like an unbounded cycle and runs the query the way it always did."""
+    try:
+        conn.execute("DELETE FROM period_sentence_range")
+    except sqlite3.OperationalError:      # schema predates the table
+        logger.debug("No period_sentence_range table; skipping range rebuild")
+        return
+    conn.execute(
+        """INSERT INTO period_sentence_range(period_number, first_id, last_id)
+           SELECT sp.period_number, MIN(se.id), MAX(se.id)
+           FROM sentence se JOIN speech sp ON sp.uid = se.speech_id
+           WHERE sp.period_number IS NOT NULL
+           GROUP BY sp.period_number""")
+    conn.commit()
+    # Contiguity is what makes the bound *tight* rather than merely correct, and
+    # it is worth knowing when a rebuild has lost it: overlapping cycles still
+    # produce right answers, just progressively less of the speed-up.
+    rows = conn.execute(
+        "SELECT period_number, first_id, last_id FROM period_sentence_range "
+        "ORDER BY first_id").fetchall()
+    overlaps = sum(1 for a, b in zip(rows, rows[1:]) if b[1] <= a[2])
+    if overlaps:
+        logger.warning(
+            "period_sentence_range: %d cycle pair(s) overlap — the cycle filter "
+            "still answers correctly but is bounded less tightly", overlaps)
+    logger.info("Rebuilt sentence-id ranges for %d cycle(s)", len(rows))
 
 
 def _nlp_backend(model: str, *, modal_ok: bool = True) -> str:

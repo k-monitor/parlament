@@ -187,6 +187,32 @@ class Settings:
         os.environ.get("PARLAMONITOR_SITE_CYCLES", "").strip())
     # Cap on reported search totals so a pathological query can't scan forever.
     max_search_total: int = int(os.environ.get("PARLAMONITOR_MAX_SEARCH_TOTAL", "5000"))
+    # Shortest search term still expanded to a PREFIX term (SEA-1). Bare words
+    # become `word*` so Hungarian morphology matches without stemming, which is
+    # right for real words and pathological for very short ones: `a*` expands to
+    # every word in the corpus beginning with "a" — 5.9M of 9.0M sentences, ~2.8 s
+    # just to merge the doclists, where the exact term `a` costs 0.7 ms. A term
+    # below this length is matched exactly instead. The default of 2 disarms only
+    # the single-character case, which is a corpus scan rather than a search; two-
+    # letter terms ("EU", "uj") keep their suffixes and stay prefix terms.
+    min_prefix_len: int = int(os.environ.get("PARLAMONITOR_MIN_PREFIX_LEN", "2"))
+    # Wall-clock ceiling, in seconds, on the SQL behind one search request
+    # (app/db.py `query_budget`). The read path is shared and stateless, so a
+    # single request scanning a large share of the corpus holds a worker thread
+    # for as long as it takes; enough of them together are an availability
+    # problem, not a slow page. Over budget, the request is abandoned and answered
+    # 503 (Retry-After) instead of the origin being held.
+    #
+    # A backstop, not a policy: it must never fire on a query someone might mean.
+    # The expensive half of a search is bm25, which has to score every match to
+    # find the best twenty and cannot be indexed around — so the cost is set by
+    # how much of the corpus a term matches. On the 10-cycle corpus the worst
+    # *reachable* query is a very common two-letter prefix over all cycles
+    # ("el" — the Hungarian verbal prefix — at ~7 s; ~4 s of it bm25 alone), and
+    # a cycle-scoped one is 2-3x cheaper again. 20 s leaves that real headroom
+    # under load while still bounding anything unforeseen. Tighten it only after
+    # measuring your own corpus; 0 disables it.
+    search_timeout: float = float(os.environ.get("PARLAMONITOR_SEARCH_TIMEOUT", "20"))
     # Read-path SQLite mmap ceiling in bytes (OPS-4). SQLite memory-maps up to this
     # much of the DB file into the shared OS page cache — it is a ceiling, not a
     # reservation. Default 1 GiB; raise it above the DB file's size so the whole

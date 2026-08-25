@@ -64,6 +64,7 @@ export default {
   search: {
     title: 'Search the proceedings', placeholder: 'Term or "exact phrase"…', button: 'Search',
     results: 'results', resultsCapped: 'more than {n} results', noResults: 'No results for these filters.',
+    tooSlow: 'The search matched too much of the corpus and was stopped. Try a longer or more specific term, or narrow the cycle or date range.',
     hint: 'Tip: use quotes for an exact phrase, e.g. "tisztelt ház".',
     filters: 'Filters', clearFilters: 'Clear filters', period: 'Term', dateFrom: 'From', dateTo: 'To',
     speaker: 'Speaker', faction: 'Faction', agendaType: 'Agenda type', all: 'All', watch: 'Watch', on: '·',

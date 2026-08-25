@@ -49,6 +49,10 @@ const breakdown = ref(null)
 const breakdownLoading = ref(false)
 const loading = ref(false)
 const error = ref(false)
+// A search the origin refused as too expensive (503) is not a transient fault:
+// re-running it costs the same and fails the same, so the reader is told what to
+// change instead of being offered a retry (see the backend's query budget).
+const tooSlow = ref(false)
 
 const factions = ref([])
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
@@ -124,7 +128,7 @@ async function runFromRoute() {
     return
   }
   const seq = ++reqSeq
-  loading.value = true; error.value = false
+  loading.value = true; error.value = false; tooSlow.value = false
   const filterArgs = {
     q: route.query.q,
     period: store.cycles, // global cycle scope (empty = all cycles)
@@ -158,7 +162,7 @@ async function runFromRoute() {
       clicks.arm(searchArgs, offset)
     }
   } catch (e) {
-    if (seq === reqSeq) error.value = true
+    if (seq === reqSeq) { error.value = true; tooSlow.value = e.status === 503 }
   } finally {
     if (seq === reqSeq) loading.value = false
   }
@@ -330,6 +334,8 @@ function onTrendSelect({ from, to }) {
 
   <StateBlock
     :loading="loading" :error="error"
+    :error-text="tooSlow ? $t('search.tooSlow') : ''"
+    :retryable="!tooSlow"
     :empty="!!data && data.results.length === 0"
     :empty-text="$t('search.noResults')"
     @retry="runFromRoute"

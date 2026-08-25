@@ -10,12 +10,31 @@ from app.search import build_match
 
 @pytest.mark.parametrize("query,expected", [
     ("költségvetés", '"költségvetés"*'),
-    ("a b", '"a"* "b"*'),
+    # Two characters is the default floor, so "eu" keeps its suffixes …
+    ("eu b", '"eu"* "b"'),
+    # … while a single character is matched exactly: `a*` is a scan of two thirds
+    # of the corpus, not a search (see settings.min_prefix_len).
+    ("a b", '"a" "b"'),
     ('"tisztelt ház"', '"tisztelt ház"'),
     ('ágazat "nemzeti ügy"', '"ágazat"* "nemzeti ügy"'),
 ])
 def test_build_match(query, expected):
     assert build_match(query) == expected
+
+
+def test_prefix_floor_is_configurable(monkeypatch):
+    """The floor is a knob, not a constant: a deployment that would rather pay for
+    short prefixes can lower it, and one on slower storage can raise it."""
+    # Patched on the Settings object `app.search` itself holds, not on
+    # `app.config.settings`: modules bind `settings` at import, and another test in
+    # the suite `importlib.reload`s app.config, rebinding that name to a fresh
+    # object — the hazard test_og.py and test_compare.py both document.
+    from app import search as search_module
+
+    monkeypatch.setattr(search_module.settings, "min_prefix_len", 1)
+    assert build_match("a b") == '"a"* "b"*'
+    monkeypatch.setattr(search_module.settings, "min_prefix_len", 5)
+    assert build_match("ágazat ügy") == '"ágazat"* "ügy"'
 
 
 def test_build_match_empty():

@@ -1,6 +1,16 @@
 <script setup>
 // Reusable loading / error / empty state with an accessible live region.
-defineProps({ loading: Boolean, error: Boolean, empty: Boolean, emptyText: String })
+// `errorText` overrides the generic failure message when the caller knows what
+// actually went wrong; `retryable` (default true) hides the retry button for
+// failures repeating the request cannot fix.
+defineProps({
+  loading: Boolean,
+  error: Boolean,
+  empty: Boolean,
+  emptyText: String,
+  errorText: String,
+  retryable: { type: Boolean, default: true },
+})
 const emit = defineEmits(['retry'])
 </script>
 
@@ -10,8 +20,8 @@ const emit = defineEmits(['retry'])
     {{ $t('app.loading') }}
   </div>
   <div v-else-if="error" class="state" role="alert">
-    <p>{{ $t('app.error') }}</p>
-    <button class="btn secondary" @click="emit('retry')">{{ $t('app.retry') }}</button>
+    <p>{{ errorText || $t('app.error') }}</p>
+    <button v-if="retryable" class="btn secondary" @click="emit('retry')">{{ $t('app.retry') }}</button>
   </div>
   <div v-else-if="empty" class="state">{{ emptyText }}</div>
   <slot v-else />

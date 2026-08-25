@@ -15,6 +15,10 @@ import os
 import sqlite3
 import threading
 import unicodedata
+from contextlib import contextmanager
+# `monotonic` by name: a bare `import time` would be shadowed by datetime's `time`
+# on the very next line, which `local_instant` below needs.
+from time import monotonic
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from collections.abc import Iterable
@@ -125,6 +129,38 @@ def period_and(period: Iterable[int] | None, column: str) -> str:
 def period_key(period: Iterable[int] | None) -> tuple[int, ...]:
     """Hashable canonical scope, for aggregate cache keys (``()`` = all cycles)."""
     return tuple(period_list(period))
+
+
+def sentence_id_range(db: sqlite3.Connection,
+                      period: Iterable[int] | None) -> tuple[int, int] | None:
+    """The ``sentence.id`` span the selected cycles occupy, or ``None`` when it
+    cannot be bounded (see ``period_sentence_range`` in schema.sql).
+
+    A *hint* for the full-text search: ANDed alongside the exact
+    ``speech.period_number`` predicate — never instead of it — it lets FTS5 skip
+    doclist entries outside the scope rather than fetching a ``sentence`` and a
+    ``speech`` row per match just to reject it. Because the exact predicate stays,
+    a bound that is merely correct-but-loose costs only speed.
+
+    Returns ``None`` — meaning "add no range clause" — when the scope is all
+    cycles (nothing to narrow), when the table is absent (a DB built before it
+    existed), or when **any** requested cycle has no row. That last case is the
+    one that matters for correctness: a cycle with no row has an unknown span, so
+    including it in a range would risk excluding its sentences. Only a scope whose
+    every cycle is accounted for is bounded."""
+    nums = period_list(period)
+    if not nums:
+        return None                       # all cycles — nothing to narrow to
+    try:
+        row = db.execute(
+            "SELECT COUNT(*) AS n, MIN(first_id) AS lo, MAX(last_id) AS hi "
+            "FROM period_sentence_range "
+            f"WHERE {period_sql(nums, 'period_number')}").fetchone()
+    except sqlite3.OperationalError:      # DB built before the table existed
+        return None
+    if not row or row["n"] != len(nums) or row["lo"] is None:
+        return None                       # a cycle we cannot place — do not bound
+    return int(row["lo"]), int(row["hi"])
 
 
 # Office terms are stored as the **UTC instants** upstream reports (a term
@@ -275,3 +311,66 @@ def get_db():
                 conn.close()
             except sqlite3.Error:  # pragma: no cover
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Per-request query budget (NFR-1 availability)
+# ---------------------------------------------------------------------------
+
+class QueryBudgetExceeded(Exception):
+    """A query was aborted because it outran its wall-clock budget."""
+
+
+# How often the budget is checked, in SQLite VM instructions. Small enough that a
+# runaway query is stopped promptly — an over-budget FTS scan is cut off within a
+# second or so of its deadline, the granularity being one xNext call — and large
+# enough that the Python callback costs nothing measurable next to the work
+# between calls (a ranked search measured the same with it and without).
+_BUDGET_STEP = 20_000
+
+
+@contextmanager
+def query_budget(conn: sqlite3.Connection, seconds: float):
+    """Abort any query running on ``conn`` inside this block once ``seconds`` of
+    wall clock have passed, raising ``QueryBudgetExceeded``.
+
+    The read path is one shared, stateless resource: a single request that scans
+    a large share of the 9M-sentence corpus (a one- or two-character prefix term
+    expands to millions of matches) holds a worker thread for as long as it takes,
+    and enough of them together are an availability problem rather than a slow
+    page. This puts a ceiling on what one request can cost, so the origin sheds
+    the pathological query instead of the traffic behind it.
+
+    A no-op when ``seconds <= 0`` (the budget is off). The handler is always
+    removed on the way out, so a pooled connection never carries a stale deadline
+    into the next request."""
+    if seconds <= 0:
+        yield
+        return
+    deadline = monotonic() + seconds
+    tripped = False
+
+    def _tick() -> int:
+        nonlocal tripped
+        if monotonic() > deadline:
+            tripped = True
+            return 1
+        return 0
+
+    conn.set_progress_handler(_tick, _BUDGET_STEP)
+    try:
+        yield
+    except sqlite3.OperationalError as exc:
+        # Whether *we* aborted the statement is recorded by the handler itself
+        # rather than read out of the message. SQLite's wording depends on where
+        # the abort lands — a plain statement reports "interrupted", but one
+        # caught while FTS5 is opening its virtual table surfaces as "vtable
+        # constructor failed" — and a message-sniffing check would turn that into
+        # a 500. Once the handler returns 1 the statement stops immediately, so
+        # `tripped` cannot be set by anything but the budget.
+        if tripped:
+            raise QueryBudgetExceeded(
+                f"query exceeded its {seconds:g}s budget") from exc
+        raise
+    finally:
+        conn.set_progress_handler(None, 0)

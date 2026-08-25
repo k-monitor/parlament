@@ -2,11 +2,17 @@
 to an already-loaded DB and rebuild the statistics that depend on it.
 
 ``speech.procedural`` is decided once, at insert time, from
-``settings.is_procedural_type(felszolalas_tipus)`` — so changing
-``DEFAULT_PROCEDURAL_SPEECH_TYPES`` (or ``PARLAMONITOR_PROCEDURAL_SPEECH_TYPES``)
-does NOT retroactively change existing rows, and ``loader --update`` won't notice
-either: it keys off the processed files' (mtime, size), and a config change
-touches no file.
+``settings.is_procedural(felszolalas_tipus, <first sentence>)`` — so changing
+``DEFAULT_PROCEDURAL_SPEECH_TYPES`` / ``DEFAULT_CHAIR_TRANSCRIPT_PREFIXES`` (or
+their ``PARLAMONITOR_*`` overrides) does NOT retroactively change existing rows,
+and ``loader --update`` won't notice either: it keys off the processed files'
+(mtime, size), and a config change touches no file.
+
+Both halves of the rule are re-applied here: the speech-type list, and the
+transcript fallback that catches chair turns upstream left untyped (all of cycle
+34). The fallback needs the first sentence, so it is evaluated in SQL through the
+``looks_like_chairing`` function ``loader.connect`` registers — the same Python
+predicate the loader calls, not a re-spelling of it.
 
 This re-derives the flag for every speech from the CURRENT config and rebuilds
 person/faction/session aggregates from it. Pure SQL — no scraping, no
@@ -55,6 +61,8 @@ if not db_path.exists():
 print(f"DB: {db_path.resolve()}")
 print("procedural types in effect: "
       + ", ".join(sorted(settings.procedural_speech_types)))
+print("chair transcript prefixes (untyped speeches only): "
+      + (", ".join(settings.chair_transcript_prefixes) or "(none)"))
 
 t0 = time.time()
 # Serialize against the loader (`init`/`sync`): an --update snapshots the live DB
@@ -67,13 +75,27 @@ with loader._writer_lock(db_path):
     # bulk — far cheaper than walking 140k speech rows in Python.
     types = [r[0] for r in conn.execute(
         "SELECT DISTINCT felszolalas_tipus FROM speech")]
-    wanted = {t: (1 if settings.is_procedural_type(t) else 0) for t in types}
+
+    # One pass per (type, target flag). A type upstream actually supplied settles
+    # its rows wholesale; the UNTYPED rows do not — they split by the transcript
+    # fallback (`Settings.is_procedural`), so they take two passes, one per
+    # outcome. Without this the untyped rows would all be forced back to 0 and
+    # this migration would silently undo the fallback the loader applies.
+    chair = f"looks_like_chairing({loader.FIRST_SENTENCE_SQL.format(a='speech')})"
+    passes: list[tuple[str, int, str, list]] = []
+    for t in types:
+        if t is None:
+            passes.append(("(no type) — chair turn per transcript", 1,
+                           f"felszolalas_tipus IS NULL AND {chair}", []))
+            passes.append(("(no type) — substantive", 0,
+                           f"felszolalas_tipus IS NULL AND NOT {chair}", []))
+        else:
+            passes.append((t, 1 if settings.is_procedural_type(t) else 0,
+                           "felszolalas_tipus = ?", [t]))
 
     flipped: list[tuple[str | None, int, int]] = []  # (type, new flag, n rows changed)
     affected: set[str] = set()                       # sittings whose text set moved
-    for t, flag in wanted.items():
-        where, params = ("felszolalas_tipus IS NULL", []) if t is None else \
-                        ("felszolalas_tipus = ?", [t])
+    for label, flag, where, params in passes:
         sids = [r[0] for r in conn.execute(
             f"SELECT DISTINCT session_id FROM speech "
             f"WHERE {where} AND procedural <> ?", params + [flag])]
@@ -82,7 +104,7 @@ with loader._writer_lock(db_path):
         cur = conn.execute(
             f"UPDATE speech SET procedural = ? WHERE {where} AND procedural <> ?",
             [flag] + params + [flag])
-        flipped.append((t, flag, cur.rowcount))
+        flipped.append((label, flag, cur.rowcount))
         affected.update(sids)
     conn.commit()
 

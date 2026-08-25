@@ -373,6 +373,40 @@ def test_procedural_type_list_covers_the_chairing_families():
         assert not settings.is_procedural_type(t), t
 
 
+def test_untyped_chair_turns_fall_back_to_the_transcript():
+    """STAT-1's fallback for the speeches upstream gives no type at all.
+
+    Cycle 34 ships `felszolalasTipusa` unset on 99.8% of its speeches, so the
+    type list alone leaves its chair turns counting as substantive — which puts
+    that period's Speaker and deputies atop every speech ranking. The transcript
+    still tags them, so an untyped speech opening "ELNÖK:" is treated as chairing.
+    """
+    from app.config import settings
+
+    # Untyped + the transcript's chair tag → excluded. Folded and left-stripped,
+    # since the tag is non-ASCII and the text may carry leading whitespace.
+    for text in ("ELNÖK: Köszönöm szépen.",
+                 "Elnök ELNÖK: Megköszönöm Horn Gyula képviselőtársunknak...",
+                 "  ELNÖK: Tisztelt Országgyűlés!",
+                 "elnök: köszönöm"):
+        assert settings.is_procedural(None, text), text
+
+    # Anchored at the start, so merely addressing or naming the chair is still a
+    # real contribution — as is a speech with no text to judge.
+    for text in ("DR. TORGYÁN JÓZSEF (FKGP): Tisztelt Elnök Úr!",
+                 "Tisztelt Elnök Úr! Köszönöm a szót.",
+                 "SZABAD GYÖRGY elnök: Tapsuk egyetértést jelez...",
+                 "", None):
+        assert not settings.is_procedural(None, text), text
+
+    # An upstream type is authoritative in BOTH directions — the fallback may
+    # only ever speak where upstream said nothing.
+    assert not settings.is_procedural("felszólalás", "ELNÖK: Köszönöm.")
+    assert settings.is_procedural("ülésvezetés", "Tisztelt Ház!")
+    # And with no sentence supplied it collapses to the type-only rule.
+    assert settings.is_procedural("ülésvezetés") and not settings.is_procedural(None)
+
+
 def test_swap_clears_the_destinations_orphaned_wal(tmp_path, data_dir, db_path):
     """A stale `<db>-wal` next to the LIVE file must not survive an atomic swap.
 

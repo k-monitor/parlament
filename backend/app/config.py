@@ -136,6 +136,18 @@ DEFAULT_PROCEDURAL_SPEECH_TYPES = (
     "Országgyűlés a képviselő tiszteletdíjának csökkentését és kitiltását fenntartotta",
 )
 
+# How a chair turn opens in the transcript, for the speeches upstream left
+# untyped (see `Settings.chair_transcript_prefixes`). Matched against the first
+# sentence, strip()+casefold()ed, as a PREFIX — the transcript renders these as a
+# speaker tag ("ELNÖK: Köszönöm szépen."), so anchoring at the start is what keeps
+# a mere mention of the Speaker mid-sentence from counting. One entry is enough:
+# the name-tagged variant ("SZABAD GYÖRGY elnök:") accounts for 29 further rows
+# corpus-wide, and matching "elnök" unanchored would swallow every speech that
+# merely addresses the chair.
+DEFAULT_CHAIR_TRANSCRIPT_PREFIXES = (
+    "ELNÖK",
+)
+
 
 @dataclass
 class Settings:
@@ -222,6 +234,20 @@ class Settings:
         os.environ.get("PARLAMONITOR_ANALYTICS_CSV_DIR") or None)
     # Folded set of speech types excluded from statistics (STAT-1).
     procedural_speech_types: frozenset = field(default_factory=lambda: _procedural_speech_types())
+    # Transcript fallback for the same rule, used ONLY where upstream supplies no
+    # type at all. Cycle 34 (1990–94) arrives with `felszolalasTipusa` unset on
+    # 99.8% of its speeches, so the type list above cannot see its chair turns:
+    # ~38.8k of them (half the cycle, 511 hours) would count as substantive and
+    # put the period's Speaker and deputies at the top of every speech ranking.
+    # Their transcripts do carry the marker the type field lost — a chair turn is
+    # transcribed opening with "ELNÖK:" — so a folded prefix match on the first
+    # sentence recovers what the label should have said. Deliberately narrow: an
+    # explicit type always wins, so this can only ever add a flag where upstream
+    # said nothing. Measured over the whole 10-cycle corpus it matches 38,756 of
+    # cycle 34's 38,785 chair turns and exactly ZERO speeches in any other cycle
+    # (41,363 untyped rows there, all left alone).
+    chair_transcript_prefixes: tuple = field(
+        default_factory=lambda: _chair_transcript_prefixes())
     # Word-cloud term-extraction backend (WCLOUD-2). "huspacy" lemmatizes and
     # extracts named entities with the HuSpaCy model locally; "modal" runs that
     # same HuSpaCy pipeline on Modal (modal.com) GPU/CPU workers so a
@@ -474,6 +500,32 @@ class Settings:
         (STAT-1). Case/whitespace-insensitive."""
         return bool(speech_type) and speech_type.strip().casefold() in self.procedural_speech_types
 
+    def looks_like_chairing(self, first_sentence: str | None) -> bool:
+        """Whether a speech's FIRST sentence opens like a chair turn.
+
+        The transcript half of the STAT-1 rule, for speeches upstream left
+        untyped (see ``chair_transcript_prefixes``). Folded rather than
+        `LIKE`-matched because the marker is non-ASCII ("ELNÖK") and SQLite's
+        `LIKE` only folds ASCII — so a naive query would miss "Elnök".
+        """
+        if not first_sentence or not self.chair_transcript_prefixes:
+            return False
+        head = first_sentence.lstrip().casefold()
+        return any(head.startswith(p) for p in self.chair_transcript_prefixes)
+
+    def is_procedural(self, speech_type: str | None,
+                      first_sentence: str | None = None) -> bool:
+        """The whole STAT-1 exclusion decision for one speech.
+
+        The type decides whenever upstream gives one — a label is authoritative,
+        and a non-chairing label is as much of an answer as a chairing one. Only
+        a *missing* type falls through to the transcript, which is why passing no
+        ``first_sentence`` simply reproduces ``is_procedural_type``.
+        """
+        if speech_type:
+            return self.is_procedural_type(speech_type)
+        return self.looks_like_chairing(first_sentence)
+
     @property
     def site_periods(self) -> tuple[int, ...]:
         """The electoral cycles the site serves, ascending — ``()`` for "every
@@ -539,6 +591,15 @@ def _procedural_speech_types() -> frozenset:
     else:
         types = [t.strip() for t in raw.split(",") if t.strip()]
     return frozenset(t.casefold() for t in types)
+
+
+def _chair_transcript_prefixes() -> tuple:
+    raw = os.environ.get("PARLAMONITOR_CHAIR_TRANSCRIPT_PREFIXES")
+    if raw is None:
+        prefixes = DEFAULT_CHAIR_TRANSCRIPT_PREFIXES
+    else:
+        prefixes = [p.strip() for p in raw.split(",") if p.strip()]
+    return tuple(p.casefold() for p in prefixes)
 
 
 def _enabled_modules() -> list[str]:

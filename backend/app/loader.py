@@ -87,7 +87,20 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Expose the transcript half of the STAT-1 rule to SQL, so a set-based
+    # re-derivation over an existing DB (migrate_procedural_types) decides
+    # exactly as the row-by-row load does, instead of restating the match as a
+    # `LIKE` that would only fold the ASCII half of "ELNÖK".
+    conn.create_function("looks_like_chairing", 1,
+                         settings.looks_like_chairing, deterministic=True)
     return conn
+
+
+# The first sentence of a speech, as a scalar subquery — the argument
+# `looks_like_chairing` expects. `{a}` is the alias of the `speech` row in scope.
+# Kept next to the function it feeds so the two cannot drift apart.
+FIRST_SENTENCE_SQL = ("(SELECT text FROM sentence WHERE speech_id = {a}.uid "
+                      "ORDER BY ord LIMIT 1)")
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
@@ -1123,8 +1136,11 @@ def _load_speech(conn, sid, period, sp, agenda_cache) -> None:
     uid = f"{sid}-{speech_index}"
     # Per-speech type (felszólalás típusa); a chairing type marks the speech
     # procedural so it is excluded from statistics but still stored/shown (STAT-1).
+    # Where upstream supplies no type — all of cycle 34 — the first sentence's
+    # speaker tag stands in for it; see `Settings.is_procedural`.
     speech_type = debug.get("felszolalasTipusa")
-    procedural = 1 if settings.is_procedural_type(speech_type) else 0
+    procedural = 1 if settings.is_procedural(
+        speech_type, sentences[0]["text"] if sentences else None) else 0
     conn.execute(
         """INSERT INTO speech(uid, origin_id, speech_uuid, session_id, agenda_item_id,
                period_number, speech_index, person_id, speaker_label,

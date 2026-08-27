@@ -282,6 +282,29 @@ def lemma_streams(texts, *, batch_size: int = 128, n_process: int = 1,
         yield [lemma for lemma in (_diversity_lemma(t) for t in doc) if lemma]
 
 
+def _count_doc(doc, counts: "Counter[str]", entity_words: set[str]) -> None:
+    """Fold one analysed sentence into the running word-cloud tallies.
+
+    Split out of :func:`analyze_counts` so the single-pass :func:`analyze_all`
+    produces *byte-identical* counts rather than a second, drifting copy of this
+    logic — the cloud and the shared lemma cache must never disagree about what
+    the model said."""
+    consumed: set[int] = set()
+    for ent in doc.ents:
+        key = _entity_key(ent)
+        if key is None:
+            continue
+        counts[key] += 1
+        entity_words.add(key)
+        consumed.update(t.i for t in ent)
+    for tok in doc:
+        if tok.i in consumed:
+            continue
+        key = _lemma_key(tok)
+        if key is not None:
+            counts[key] += 1
+
+
 def analyze_counts(texts, *, batch_size: int = 128, n_process: int = 1,
                    model: str | None = None):
     """Lemmatized + entity-aware term frequencies for ``texts``.
@@ -298,18 +321,45 @@ def analyze_counts(texts, *, batch_size: int = 128, n_process: int = 1,
     entity_words: set[str] = set()
     texts = [t for t in texts if t]
     for doc in nlp.pipe(texts, batch_size=batch_size, n_process=n_process):
-        consumed: set[int] = set()
-        for ent in doc.ents:
-            key = _entity_key(ent)
-            if key is None:
-                continue
-            counts[key] += 1
-            entity_words.add(key)
-            consumed.update(t.i for t in ent)
-        for tok in doc:
-            if tok.i in consumed:
-                continue
-            key = _lemma_key(tok)
-            if key is not None:
-                counts[key] += 1
+        _count_doc(doc, counts, entity_words)
     return counts, entity_words
+
+
+def analyze_all(texts, *, batch_size: int = 128, n_process: int = 1,
+                model: str | None = None):
+    """Word-cloud tallies **and** diversity lemma streams from ONE pipeline pass.
+
+    Returns ``(counts, entity_words, lemma_streams)``: the first two exactly as
+    :func:`analyze_counts` yields them, the third exactly as
+    :func:`lemma_streams` does.
+
+    Lemmatizing is the expensive part of both, and the two passes that need it —
+    the word cloud (``rebuild_session_word_counts``) and the lexical-diversity
+    half of the speech metrics (``rebuild_speech_metrics``) — read *the same
+    sentences*: both take every non-procedural sentence of a sitting, and the
+    metric's measurable subset is 98.7 % of that set. Running the model twice over
+    it is the single most expensive redundancy in the build, and on Modal it is
+    billed twice. So the cloud's pass emits the lemma streams too and they are
+    kept (``app.lemma_cache``) for whoever needs them next.
+
+    The two products need *different* token filters over the same parse —
+    :func:`_lemma_key` keeps content words for the cloud, :func:`_diversity_lemma`
+    keeps running text for the metric — which is why this returns both rather than
+    letting one be derived from the other.
+
+    Unlike :func:`analyze_counts`, empty texts are **not** dropped: the lemma
+    streams are positional, so the caller can zip them back onto the sentence rows
+    they came from. An empty text parses to an empty doc, contributes nothing to
+    the counts, and yields an empty stream."""
+    nlp = get_nlp(model)
+    if nlp is None:
+        raise RuntimeError("HuSpaCy model not available")
+    counts: Counter[str] = Counter()
+    entity_words: set[str] = set()
+    streams: list[list[str]] = []
+    for doc in nlp.pipe([t or "" for t in texts], batch_size=batch_size,
+                        n_process=n_process):
+        _count_doc(doc, counts, entity_words)
+        streams.append([lemma for lemma in (_diversity_lemma(t) for t in doc)
+                        if lemma])
+    return counts, entity_words, streams

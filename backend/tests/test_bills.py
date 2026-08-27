@@ -47,6 +47,24 @@ def test_bill_source_url_falls_back_when_no_text(conn):
     assert "iromanyok-lekerdezese" in no_text["source_url"]
 
 
+def test_bill_source_url_prefers_a_source_that_names_its_own_page(conn, db_path):
+    """The 1994-98 archive (parlamonitor.bills.legacy) carries its own document
+    page in `sourceUrl`, because the modern portal has no adatlap for that cycle
+    at all — so it wins over both the text link and the generic fallback."""
+    c = loader.connect(db_path)
+    loader.load_bills(c, {"meta": {"cycle": 35}, "data": [
+        {"billId": "35-04754", "billNumber": "T/4754", "title": "X",
+         "sourceUrl": "https://www.parlament.hu/iromany/04754ir.htm",
+         "textUrl": "https://www.parlament.hu/iromany/fulltext/04754txt.htm"},
+        {"billId": "35-05646", "billNumber": "K/5646", "title": "Y",
+         "sourceUrl": "https://www.parlament.hu/iromany/05646ir.htm"},
+    ]})
+    rows = dict(c.execute("SELECT id, source_url FROM bill WHERE period_number=35"))
+    assert rows["35-04754"] == "https://www.parlament.hu/iromany/04754ir.htm"
+    assert rows["35-05646"] == "https://www.parlament.hu/iromany/05646ir.htm"
+    c.close()
+
+
 def test_bill_source_url_is_adatlap_deep_link_for_real_bill(conn, db_path):
     """A real bill (UUID id) links to its parlament.hu adatlap detail sheet."""
     c = loader.connect(db_path)

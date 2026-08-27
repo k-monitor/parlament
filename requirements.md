@@ -884,12 +884,18 @@ site-wide behaviour, not a per-view nicety.
 ### 5.7 Speech readability & lexical diversity
 
 - **READ-1 (SHOULD).** Each **speech** carries two measured language annotations —
-  how **hard it is to read** and how **varied its vocabulary** is — shown wherever
-  a speech appears as an item the reader can act on: the sitting-day speech list
-  (§5.5) and the viewer (§5.2). They give a citizen a sense of *how* something was
-  said, next to the *what* the transcript already carries: whether a contribution
-  is plain speech or dense officialese, and whether it draws on a wide vocabulary
-  or circles a handful of words.
+  how **hard it is to read** and how **varied its vocabulary** is — available
+  wherever a speech appears as an item the reader can act on: the sitting-day
+  speech list (§5.5) and the viewer (§5.2). They give a citizen a sense of *how*
+  something was said, next to the *what* the transcript already carries: whether a
+  contribution is plain speech or dense officialese, and whether it draws on a wide
+  vocabulary or circles a handful of words. They are **hidden by default and shown
+  on request**: this is a second-order reading of a speech, not something a visitor
+  came for, and it must not tax the page a reader did come for — a 400-row sitting
+  day least of all. **One opt-in governs every surface** (persisted per device, and
+  offered on the sitting day, where a list of speeches is what makes the annotation
+  worth comparing at all); with it off no speech is annotated anywhere, and the
+  measurement is still produced, served and current.
 - **READ-2.** The metrics are **LIX** (readability: mean sentence length plus the
   share of long words, with **RIX** — long words per sentence — alongside) and
   **TTR/MATTR** (lexical diversity: the share of distinct word stems). They come
@@ -910,6 +916,16 @@ site-wide behaviour, not a per-view nicety.
   number, so the two paths never share an input. Lemmas come from the **same
   HuSpaCy pipeline, model routing and Modal cycle scope** as the word cloud
   (WCLOUD-6), so the language stack stays single-sourced.
+  > **✅ realized**, and single-sourced in the literal sense: the cloud and this
+  > metric read the *same* sentences (every non-procedural sentence of a sitting;
+  > the measurable subset is 98.7 % of that set), so lemmatizing for each in turn
+  > meant paying twice — on Modal, billing twice. One pipeline pass
+  > (`nlp.analyze_all`) now yields both, and the streams are kept per sentence in
+  > `backend/lemma-cache/` (`app/lemma_cache.py`) for this pass and whatever needs
+  > lemmas next. The metric loads no model when the cloud has already run.
+  > Note the two products still need **different filters over that one parse** —
+  > the cloud keeps content words, diversity keeps running text — which is why the
+  > shared artefact is the parse's lemma stream and not the cloud's term counts.
 - **READ-4 (degradation).** The **readability half needs no model** and must
   therefore land on any install, including a bare host with no HuSpaCy at all. The
   **diversity half needs lemmas**; when no lemmatizer is reachable it is **omitted
@@ -938,8 +954,15 @@ site-wide behaviour, not a per-view nicety.
   itself** (the quintiles of every measured speech), which is both honest and the
   comparison a reader actually wants: *"harder to read than 80 % of what is said in
   this House"*. Absolute labels borrowed from another language's calibration MUST
-  NOT be shown. The band, the number and the tint each carry the value
-  independently (A11Y-1).
+  NOT be shown. It follows further that **the chip shows the comparison, not the
+  score**: a LIX of 54 or a MATTR of 0.71 is a number the reader has no scale for,
+  so the chip says in words where the speech sits **against the House's median** —
+  *easier / typical / harder to read*, *less / typical / more varied vocabulary* —
+  collapsed from those quintiles, with the middle fifth (which straddles the median)
+  as *typical* so the label never turns on a tenth of a point. The score itself, its
+  quintile and the counts behind it stay one hover away and MUST remain reachable
+  (TRUST-1 / REP-5). The value is carried by the **word**, never by colour alone
+  (A11Y-1).
 - **READ-7 (cost & provenance).** The measurement runs **at load time, never per
   request**, and its per-sitting output is **cached on disk** keyed by a
   fingerprint of the transcript *and* the method (package version, threshold,
@@ -1534,6 +1557,32 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   has none (SCR-5). (The per-bill vote here is the aggregate tally; the **per-MP
   roll-call** is provided by the Votes module, §6B, and each bill-detail vote
   links into it — VOTE-6.)
+- **BILL-12 (MUST).** The **1994-98 cycle (35)** is ingested from the **static
+  iromány archive** `parlament.hu/iromany/`, not from the API: the Felicitas
+  `iromany` query returns **zero** documents for that term, so the site the House
+  published at the time (generated HTML, frozen 1998-04-03) is the only source
+  for its 5 646 irományok. The scraper parses it into the same record shape as
+  the API path, so nothing downstream special-cases the cycle
+  (`scraper/parlamonitor/bills/legacy.py`; see its README section for the layers
+  and their request cost). Constraints that follow from the source, and must not
+  be papered over:
+  - the pages are **ISO-8859-2**, and their accented letters are HTML entities
+    whose *names* were chosen for the byte values — `&otilde;`/`&ucirc;` mean
+    ő/ű, so a plain unescape silently mis-renders exactly the letters that make
+    Hungarian Hungarian;
+  - submitters carry the archive's own MP-page id, which **is** the cycle-35
+    `personID`, so sponsorship joins per BILL-3 with no name matching;
+  - the era recorded **no** legislative-stage diagram (BILL-4 degrades to the
+    event history), **no** vote tallies, no deadlines and no background
+    documents; those stay empty rather than being inferred;
+  - the four event kinds that name a **responding tárca** are renamed to the
+    API's vocabulary — enumerated, with the archive's wording kept on the event —
+    because the §6C derivation matches event names exactly; the era's *ministry*
+    names still need entries in the §6C portfolio table;
+  - the archive's per-document **speech list** and a question's **addressee** are
+    parsed and kept in the scrape output but not loaded: neither has a column
+    that means it (the addressee for the same reason `cimzettNeve` is left out of
+    the modern scrape).
 - **BILL-9 (MUST).** The non-bill irományok have their own **browsable,
   filterable list page** ("Egyéb irományok"), separate from the
   törvényjavaslatok page, paginated and filterable by

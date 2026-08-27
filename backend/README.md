@@ -59,6 +59,32 @@ from surface forms when none are reachable — see `app/readability.py` for why 
 two metrics must never share a token stream. Both are cached per sitting in
 `speech-metrics-cache.json` next to the DB.
 
+### The shared lemma store
+
+The diversity half and the word cloud both need HuSpaCy lemmas for the *same*
+sentences — every non-procedural sentence of a sitting, of which the metric's
+measurable subset is 98.7 % — so the corpus used to be lemmatized twice per build,
+and billed twice on Modal. It now happens once: `nlp.analyze_all()` produces the
+cloud's tallies and the lemma streams from a single pipeline pass, and the streams
+are kept in `lemma-cache/` next to the DB (`app/lemma_cache.py`), one gzipped file
+per sitting, keyed by sentence id so any later pass can read the sentences it
+cares about in whatever order it wants. The metrics pass reads them back and does
+not load a model at all; its log line says how many sittings came that way. It also
+*fills* the store from its own work, so a repeated `--remeasure-speeches` (after a
+`saphes` upgrade, say) does not buy the same lemmatization twice.
+
+Sizeable — a few hundred MB gzipped over the full corpus, which is why it is
+per-sitting files rather than one document like the other caches. Turn it off with
+`PARLAMONITOR_LEMMA_CACHE=0` and each pass lemmatizes for itself again, exactly as
+before; nothing else changes. `PARLAMONITOR_LEMMA_MEMO` (default 8) is how many
+sittings the in-process memo holds, so an incremental `--update` never touches the
+disk between the two passes.
+
+On Modal the sharing needs the deployed service to carry `analyze_sessions_full`
+(`modal deploy modal_app.py`). Against an older deployment the client falls back to
+`analyze_sessions`, logs it once, and the metrics pass lemmatizes for itself — the
+build is correct either way, just not yet cheaper.
+
 Sittings whose cached spans still fingerprint-match are reused, so this is cheap
 to re-run; omit `--period` to cover every sitting. The current cycle's default
 model (`hu_core_news_trf`) loads only on Modal, so it needs

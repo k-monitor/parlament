@@ -161,6 +161,28 @@ class NlpService:
         return out
 
     @modal.method()
+    def analyze_sessions_full(self, sessions: list[list[str]]) -> list[dict]:
+        """Word-cloud tallies **and** diversity lemma streams from ONE parse.
+
+        The cloud and the lexical-diversity metric read the same sentences (see
+        ``app.lemma_cache``), so asking for them separately means paying this
+        service — GPU time, metered — twice for the same lemmatization. Returns,
+        per sitting, ``{"counts": {term: n}, "entities": [term, …], "lemmas":
+        [[lemma, …], …]}``: the first two exactly as :meth:`analyze_sessions`
+        yields them, ``lemmas`` one ordered list per input sentence, in order.
+
+        Kept as a separate method rather than a flag on ``analyze_sessions`` so
+        that a client speaking to an older deployment gets a clean "no such
+        method" it can fall back from, instead of a rejected keyword argument."""
+        from app import nlp
+        out = []
+        for texts in sessions:
+            counts, entity_words, streams = nlp.analyze_all(texts, batch_size=256)
+            out.append({"counts": dict(counts), "entities": sorted(entity_words),
+                        "lemmas": streams})
+        return out
+
+    @modal.method()
     def analyze_sessions_spans(self, sessions: list[list[str]]) -> list[list]:
         """Extract named-entity mention spans (every NER label) for a batch of
         sittings (NEL, §10). ``sessions`` is a list of per-sitting sentence lists; returns,

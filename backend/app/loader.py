@@ -40,8 +40,8 @@ try:                                    # POSIX only; the writer lock degrades t
 except ImportError:                     # pragma: no cover - non-POSIX
     fcntl = None
 
-from . import (kmonitor, nlp, nlp_modal, portfolios, readability, settlements,
-               valasztas, wikidata)
+from . import (kmonitor, lemma_cache, nlp, nlp_modal, portfolios, readability,
+               settlements, valasztas, wikidata)
 from .config import settings
 from .parlament_links import bill_page_url
 from .wordfreq import STOPWORDS, count_words
@@ -755,7 +755,8 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
              rec.get("title"), rec.get("type"), rec.get("mainType"),
              rec.get("status"), rec.get("submittedDate"), text_url,
              rec.get("textCaption"),
-             bill_page_url(bid) or text_url or _BILL_PORTAL_FALLBACK,
+             bill_page_url(bid) or rec.get("sourceUrl") or text_url
+             or _BILL_PORTAL_FALLBACK,
              1 if rec.get("noText") else 0, _json_or_none(rec.get("stages")),
              h.get("subtype"), h.get("character"), h.get("negotiationMode"),
              h.get("statusType"), h.get("currentEvent"), h.get("promulgationNumber"),
@@ -984,6 +985,11 @@ def load_votes(conn: sqlite3.Connection, registry: dict) -> int:
 # Bills have no clean per-bill permalink on the modern portal; the text PDF is
 # the most specific resolvable original (LEGAL-1). This generic search page is
 # the fallback when a bill has no text.
+#
+# A source that carries its own document page instead says so in `sourceUrl` —
+# the 1994-98 archive (parlamonitor.bills.legacy) does, because the modern portal
+# has no adatlap for that cycle at all, so `bill_page_url` would send a reader to
+# a page that cannot show the document.
 _BILL_PORTAL_FALLBACK = "https://www.parlament.hu/web/guest/iromanyok-lekerdezese"
 
 
@@ -1210,6 +1216,10 @@ _PORTFOLIO_ANSWER_EVENTS = (
     "kérdés írásban megválaszolva",                # answered in writing (K)
     "interpelláció szóban megválaszolva",          # answered in plenary (I)
     "azonnali kérdésre adott miniszteri viszonválasz",   # the minister's reply (A)
+    # 1994-98 only (parlamonitor.bills.legacy): the era answered interpellations in
+    # writing too, and named the responding tárca when it did. The API's own
+    # vocabulary has no such event, so the name exists for that cycle alone.
+    "interpelláció írásban megválaszolva",
 )
 
 
@@ -1734,11 +1744,19 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
                          [(s,) for s in sids])
 
     def _fetch(sid):
-        return [t for (t,) in conn.execute(
-            "SELECT se.text FROM sentence se "
+        """The sitting's non-procedural sentences as ``[(sentence_id, text), …]``.
+
+        The ids are what lets this pass fill the shared lemma cache, which is
+        keyed by sentence rather than by position (``app.lemma_cache``). The
+        ``ORDER BY`` is explicit rather than incidental now that a second consumer
+        depends on these rows; it matches the order SQLite already returned (all
+        997 cached sittings verified), so no existing cache entry is invalidated
+        by making it explicit."""
+        return conn.execute(
+            "SELECT se.id, se.text FROM sentence se "
             "JOIN speech sp ON sp.uid = se.speech_id "
-            "WHERE sp.session_id = ? AND sp.procedural = 0 AND se.text IS NOT NULL",
-            (sid,))]
+            "WHERE sp.session_id = ? AND sp.procedural = 0 AND se.text IS NOT NULL "
+            "ORDER BY se.id", (sid,)).fetchall()
 
     done: set[str] = set()      # sittings whose rows are in (cached or computed)
 
@@ -1749,6 +1767,27 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
                 "INSERT INTO session_word_count(session_id, word, count, kind) "
                 "VALUES (?, ?, ?, ?)",
                 [(sid, w, c, k) for w, (c, k) in words.items()])
+
+    def _keep_lemmas(sid, rows, streams, model):
+        """Hand this sitting's diversity lemma streams to the shared store.
+
+        Guarded on alignment: the streams are positional over ``rows``, and a
+        backend that returned a different number of them (a truncated Modal reply,
+        say) must not be zipped onto the wrong sentences — better no cache entry
+        than one that maps a speech's lemmas to its neighbour's."""
+        if cache_dir is None or not lemma_cache.enabled():
+            return
+        if streams is None or len(streams) != len(rows):
+            if streams is not None:
+                logger.warning("lemma cache: %s returned %d streams for %d "
+                               "sentences; not caching", sid, len(streams), len(rows))
+            return
+        method = lemma_cache.method_tag(model)
+        lemma_cache.put(cache_dir, sid,
+                        lemma_cache.fingerprint(method, rows),
+                        {sentence_id: stream
+                         for (sentence_id, _t), stream in zip(rows, streams)},
+                        model=model, method=method)
 
     reused = recomputed = kept = 0
 
@@ -1776,7 +1815,8 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
         for sid in sids:
             model, modal_ok = plan.get(sid, (settings.huspacy_model, True))
             backend, method = _resolve(model, modal_ok)
-            texts = _fetch(sid)
+            rows = _fetch(sid)
+            texts = [t for (_sentence_id, t) in rows]
             fp = _session_fingerprint(method, texts)
             entry = cache["sessions"].get(sid)
             if entry and entry.get("fp") == fp:
@@ -1789,9 +1829,13 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
                 reused += 1
                 kept += 1
             elif backend == "modal":
-                modal_misses.setdefault(model, []).append((sid, fp, texts))
+                modal_misses.setdefault(model, []).append((sid, fp, rows))
             elif backend == "huspacy":
-                counts, entity_words = nlp.analyze_counts(texts, model=model)
+                # One pipeline pass, two products: the cloud's tallies and the
+                # diversity lemma streams the metrics pass would otherwise pay a
+                # second full lemmatization for (app/lemma_cache.py).
+                counts, entity_words, streams = nlp.analyze_all(texts, model=model)
+                _keep_lemmas(sid, rows, streams, model)
                 _emit(sid, fp, _words_map(counts, entity_words), model, method)
             else:
                 # Regex fallback: no HuSpaCy model was used, so record it as such.
@@ -1800,8 +1844,15 @@ def rebuild_session_word_counts(conn: sqlite3.Connection,
         conn.commit()
         for model, misses in modal_misses.items():
             _backend, method = _resolve(model, True)
-            for sid, fp, words in nlp_modal.extract(misses,
-                                                    app_name=_modal_app_for(model)):
+            by_sid = {sid: rows for (sid, _fp, rows) in misses}
+            packed = [(sid, fp, [t for (_i, t) in rows]) for (sid, fp, rows) in misses]
+            for sid, fp, words, streams in nlp_modal.extract(
+                    packed, app_name=_modal_app_for(model), with_lemmas=True):
+                # `streams` is None against a deployment that predates the
+                # lemma-sharing method; the cloud is unaffected and the metrics
+                # pass simply lemmatizes for itself, as it always did.
+                if streams is not None:
+                    _keep_lemmas(sid, by_sid[sid], streams, model)
                 _emit(sid, fp, words, model, method)
     except Exception as exc:  # enrichment must never break the build (SCR-5)
         # The cloud is enrichment; the transcript it was derived from is the
@@ -2987,44 +3038,77 @@ def rebuild_speech_metrics(conn: sqlite3.Connection,
     if only_sessions is not None:
         sids = [sid for sid in sids if sid in only_sessions]
 
-    def _fetch(sid) -> list[tuple[str, list[str]]]:
-        """The sitting's substantive speeches as ``(uid, [sentence, …])``, in a
-        deterministic order so a cached fingerprint keeps matching."""
+    def _fetch(sid) -> list[tuple[str, list[tuple[int, str]]]]:
+        """The sitting's substantive speeches as ``(uid, [(sentence_id, text), …])``,
+        in a deterministic order so a cached fingerprint keeps matching.
+
+        The sentence ids are carried so this pass can look its lemmas up in the
+        shared store, which the word-cloud pass fills sentence-by-sentence
+        (``app.lemma_cache``). They are not part of any fingerprint computed here,
+        so the existing metrics cache is unaffected."""
         rows = conn.execute(
-            "SELECT sp.uid, se.text FROM sentence se "
+            "SELECT sp.uid, se.id, se.text FROM sentence se "
             "JOIN speech sp ON sp.uid = se.speech_id "
             "WHERE sp.session_id = ? AND sp.procedural = 0 AND se.text IS NOT NULL "
             "ORDER BY sp.speech_index, se.id", (sid,)).fetchall()
-        speeches: list[tuple[str, list[str]]] = []
-        for uid, text in rows:
+        speeches: list[tuple[str, list[tuple[int, str]]]] = []
+        for uid, sentence_id, text in rows:
             if not speeches or speeches[-1][0] != uid:
                 speeches.append((uid, []))
-            speeches[-1][1].append(text)
+            speeches[-1][1].append((sentence_id, text))
         return speeches
 
     def _flat(speeches) -> list[str]:
         """Every sentence of the sitting, in order — what the fingerprint covers,
         so a change anywhere in the day's text invalidates its entry."""
-        return [t for (_uid, texts) in speeches for t in texts]
+        return [t for (_uid, pairs) in speeches for (_i, t) in pairs]
 
-    def _measurable(speeches) -> list[tuple[str, list[str], dict]]:
+    def _rows(speeches) -> list[tuple[int, str]]:
+        """The sitting's ``(sentence_id, text)`` rows — the key the shared lemma
+        store is addressed by. Deliberately the *whole* non-procedural set, not the
+        measurable subset, so this pass and the word-cloud pass derive the same
+        fingerprint for the same sitting."""
+        return [pair for (_uid, pairs) in speeches for pair in pairs]
+
+    def _measurable(speeches) -> list[tuple[str, list[tuple[int, str]], dict]]:
         """The speeches that clear the length floor, with their readability already
-        computed: ``(uid, [sentence, …], readability)``.
+        computed: ``(uid, [(sentence_id, sentence), …], readability)``.
 
         Filtering here — before the lemma pass rather than after it — is what keeps
         the neural half honest about its cost. Roughly half of a sitting's
         substantive speeches are one- or two-sentence contributions that will never
         be scored, and lemmatizing them would burn model time (and, on Modal,
-        metered credit) to produce a row that is then discarded."""
+        metered credit) to produce a row that is then discarded. (By *sentence*
+        count the saving is small — long speeches hold almost all the sentences —
+        which is why the shared store, not this filter, is what actually removes
+        the duplicated work.)"""
         out = []
-        for uid, texts in speeches:
-            read = readability.readability(texts)
+        for uid, pairs in speeches:
+            read = readability.readability([t for (_i, t) in pairs])
             if read is not None:
-                out.append((uid, texts, read))
+                out.append((uid, pairs, read))
         return out
 
     def _lemma_texts(measurable) -> list[str]:
-        return [t for (_uid, texts, _read) in measurable for t in texts]
+        """The sentences the lemma stream is built from — the **raw** transcript
+        rows, not ``readability.spoken_sentences``' cleaned ones.
+
+        This is a known asymmetry with the readability half, which strips the
+        speaker attribution and the stenographer's stage directions first (READ-5):
+        the diversity half therefore counts "(Taps a kormánypárti oldalon.)" as
+        vocabulary. It predates the shared store — this pass always fed raw rows —
+        but the store now makes it structural, because cleaning happens *inside*
+        sentences and the shared streams are keyed by whole sentence, so cleaned
+        lemmas could not be recovered from them and could not be shared with the
+        word cloud (which counts raw text) at all. Fixing it means choosing: strip
+        for both passes, or keep two streams and give up the sharing. Nothing has
+        shipped wrong yet — no stored measurement carries MATTR."""
+        return [t for (_uid, pairs, _read) in measurable for (_i, t) in pairs]
+
+    def _lemma_ids(measurable) -> list[int]:
+        """Sentence ids in the same order as :func:`_lemma_texts`, so a stream
+        fetched from the shared store lines up with the sentences it describes."""
+        return [i for (_uid, pairs, _read) in measurable for (i, _t) in pairs]
 
     def _richer_metrics_hit(entry, model: str, speeches) -> bool:
         """Whether ``entry`` already holds a *complete* (lemma-backed) measurement
@@ -3063,7 +3147,7 @@ def rebuild_speech_metrics(conn: sqlite3.Connection,
             reuse.append(sid)
         else:
             misses_by.setdefault((model, modal_ok), []).append(
-                (sid, fp, _measurable(speeches)))
+                (sid, fp, _rows(speeches), _measurable(speeches)))
 
     if only_sessions is None:
         conn.execute("DELETE FROM speech_metrics")
@@ -3074,6 +3158,7 @@ def rebuild_speech_metrics(conn: sqlite3.Connection,
     processed = 0
     measured = 0
     diverse = 0                              # sittings that also got TTR/MATTR
+    from_cache = 0                           # served from the shared lemma store
 
     for sid in reuse:
         entry = cache["sessions"][sid]
@@ -3104,14 +3189,64 @@ def rebuild_speech_metrics(conn: sqlite3.Connection,
         readability-only path); it is re-grouped here into the per-speech streams
         MATTR slides its window over."""
         out, at = {}, 0
-        for uid, texts, read in measurable:
+        for uid, pairs, read in measurable:
             lemmas = None
             if per_sentence_lemmas is not None:
-                lemmas = [lem for per_sent in per_sentence_lemmas[at:at + len(texts)]
+                lemmas = [lem for per_sent in per_sentence_lemmas[at:at + len(pairs)]
                           for lem in per_sent]
-            at += len(texts)
+            at += len(pairs)
             out[uid] = _metrics_row(read, lemmas)
         return out
+
+    def _shared_lemmas(sid, rows, meas, model):
+        """This sitting's measurable lemma streams from the shared store, or None.
+
+        The word-cloud pass lemmatized the very same sentences earlier in this
+        build (98.7 % overlap) and kept the streams; reading them back is what
+        spares this pass a second full lemmatization — on Modal, a second bill.
+        A partial entry (any measurable sentence missing) is refused outright
+        rather than half-used: a speech measured on some of its sentences would be
+        a wrong MATTR wearing a right one's name."""
+        if cache_dir is None or not lemma_cache.enabled():
+            return None
+        stored = lemma_cache.get(
+            cache_dir, sid,
+            lemma_cache.fingerprint(lemma_cache.method_tag(model), rows))
+        if stored is None:
+            return None
+        streams = []
+        for sentence_id in _lemma_ids(meas):
+            stream = stored.get(sentence_id)
+            if stream is None:
+                return None
+            streams.append(stream)
+        return streams
+
+    def _keep_lemmas(sid, rows, meas, streams, model):
+        """Fill the shared store from this pass, for the features that come next.
+
+        This pass only lemmatizes its *measurable* subset, so the entry it writes
+        usually covers most of a sitting rather than all of it (98.7 % of sentences,
+        but rarely every one). It is stored anyway: coverage is simply which
+        sentence ids the map holds, and a reader that needs one it lacks falls back
+        to computing — the same outcome as no entry at all, so a partial entry can
+        only help. Concretely it makes a repeated ``--remeasure-speeches`` free,
+        where before the second run paid the model again. A later word-cloud pass
+        over the same sitting overwrites it with full coverage.
+
+        Alignment is still enforced: streams are positional over the measurable
+        sentences, and mapping them onto the wrong ids would be silently wrong."""
+        if cache_dir is None or not lemma_cache.enabled() or streams is None:
+            return
+        ids = _lemma_ids(meas)
+        if len(streams) != len(ids):
+            logger.warning("lemma cache: %s produced %d streams for %d measurable "
+                           "sentences; not caching", sid, len(streams), len(ids))
+            return
+        method = lemma_cache.method_tag(model)
+        lemma_cache.put(cache_dir, sid,
+                        lemma_cache.fingerprint(method, rows),
+                        dict(zip(ids, streams)), model=model, method=method)
 
     try:
         for (model, modal_ok), misses in misses_by.items():
@@ -3120,22 +3255,40 @@ def rebuild_speech_metrics(conn: sqlite3.Connection,
             # under the floor) still gets a cache entry — so it is not reclassified
             # as a miss on every future run — but never a model call: dispatching an
             # empty batch to Modal would pay the round trip for no rows.
-            empty = [m for m in misses if not m[2]]
-            misses = [m for m in misses if m[2]]
-            for (sid, fp, _meas) in empty:
+            empty = [m for m in misses if not m[3]]
+            misses = [m for m in misses if m[3]]
+            for (sid, fp, _rows_, _meas) in empty:
                 _emit(sid, fp, {}, None, method)
+            # Sittings the word-cloud pass already lemmatized: measured here without
+            # loading a model or dispatching anything. Only attempted when a
+            # lemmatizer was resolvable anyway, so `method` stays exactly the tag
+            # this sitting would have carried had it been computed here.
+            if mode is not None:
+                pending = []
+                for (sid, fp, rows, meas) in misses:
+                    shared = _shared_lemmas(sid, rows, meas, model)
+                    if shared is None:
+                        pending.append((sid, fp, rows, meas))
+                    else:
+                        _emit(sid, fp, _measure(meas, shared), model, method)
+                        from_cache += 1
+                misses = pending
             if mode == "modal":
-                packed = [(sid, fp, _lemma_texts(meas)) for (sid, fp, meas) in misses]
-                by_sid = {sid: meas for (sid, _fp, meas) in misses}
+                packed = [(sid, fp, _lemma_texts(meas))
+                          for (sid, fp, _rows_, meas) in misses]
+                by_sid = {sid: (rows, meas) for (sid, _fp, rows, meas) in misses}
                 for sid, fp, lemmas in nlp_modal.extract_lemmas(
                         packed, app_name=_modal_app_for(model)):
-                    _emit(sid, fp, _measure(by_sid[sid], lemmas), model, method)
+                    rows, meas = by_sid[sid]
+                    _keep_lemmas(sid, rows, meas, lemmas, model)
+                    _emit(sid, fp, _measure(meas, lemmas), model, method)
             elif mode == "local":
-                for (sid, fp, meas) in misses:
+                for (sid, fp, rows, meas) in misses:
                     lemmas = list(nlp.lemma_streams(_lemma_texts(meas), model=model))
+                    _keep_lemmas(sid, rows, meas, lemmas, model)
                     _emit(sid, fp, _measure(meas, lemmas), model, method)
             else:
-                for (sid, fp, meas) in misses:
+                for (sid, fp, _rows_, meas) in misses:
                     _emit(sid, fp, _measure(meas, None), None, method)
     except Exception as exc:  # enrichment must never break the build (SCR-5)
         # Same contract as the word cloud and the entity pass: the transcript is
@@ -3147,8 +3300,9 @@ def rebuild_speech_metrics(conn: sqlite3.Connection,
     _flush()
     rebuild_metric_distribution(conn)
     logger.info("speech metrics: %d sittings (%d measured, %d cached), %d speeches "
-                "scored, %d sittings with lexical diversity",
-                len(sids), processed, len(reuse), measured, diverse)
+                "scored, %d sittings with lexical diversity (%d of them lemmatized "
+                "by the word-cloud pass, no model call here)",
+                len(sids), processed, len(reuse), measured, diverse, from_cache)
 
 
 def rebuild_metric_distribution(conn: sqlite3.Connection) -> None:

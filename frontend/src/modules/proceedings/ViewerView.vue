@@ -17,6 +17,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
 import { api } from '../../api.js'
+import { store } from '../../store.js'
 import { agendaLabel, formatDate, formatDuration, segmentSentences } from '../../format.js'
 import EntityText from '../../components/EntityText.vue'
 import StateBlock from '../../components/StateBlock.vue'
@@ -432,9 +433,13 @@ onBeforeUnmount(() => {
           <span class="muted" v-if="session">{{ formatDate(session.date) }} · {{ session.sitting }}. {{ $t('viewer.sittingDay') }}</span>
           <span class="badge" v-if="speech.agenda && speech.agenda.type">{{ speech.agenda.title || agendaLabel(speech.agenda.type) }}</span>
           <span class="badge subtle" v-if="speech.speech_type">{{ $t('viewer.speechType') }}: {{ speech.speech_type }}</span>
-          <!-- Readability / lexical diversity (READ-5). Full form here — there is
-               room for the worded band next to the number on a single speech. -->
-          <SpeechMetricsBadge :metrics="speech.metrics" />
+          <!-- Readability / lexical diversity (READ-5), off unless the reader has
+               asked for it — the same persisted opt-in the sitting-day list is
+               behind (`store.showSpeechMetrics`), so the annotation is absent
+               everywhere by default and appears on every surface at once when it
+               is switched on. Full form here: a single speech has room for the
+               whole phrase, where the day list shortens it. -->
+          <SpeechMetricsBadge v-if="store.showSpeechMetrics" :metrics="speech.metrics" />
           <TimingBadge :timing="speech.timing" />
         </div>
       </div>

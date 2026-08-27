@@ -99,30 +99,59 @@ def _words(result: dict) -> dict:
 
 
 def extract(misses, *, batch_sentences: int | None = None,
-            app_name: str | None = None):
-    """Yield ``(sid, fp, words)`` for each miss (a ``(sid, fp, texts)`` triple),
-    in order, running the HuSpaCy analysis on Modal. Batches are dispatched with
-    ``.map`` so the deployed pool of warm containers processes them in parallel;
-    results come back in input order. ``app_name`` picks the deployed service
-    (default the primary one; the archive-model app for old cycles)."""
+            app_name: str | None = None, with_lemmas: bool = False):
+    """Yield ``(sid, fp, words, lemma_streams)`` for each miss (a ``(sid, fp,
+    texts)`` triple), in order, running the HuSpaCy analysis on Modal. Batches are
+    dispatched with ``.map`` so the deployed pool of warm containers processes them
+    in parallel; results come back in input order. ``app_name`` picks the deployed
+    service (default the primary one; the archive-model app for old cycles).
+
+    ``with_lemmas`` asks the service for the diversity lemma streams from the same
+    parse, so the metrics pass does not have to buy a second full lemmatization of
+    the same sentences (``app.lemma_cache``). ``lemma_streams`` is ``None`` — never
+    an error — whenever they are not available: not requested, or a deployment
+    that predates ``analyze_sessions_full``. Redeploying the Modal app is what
+    turns the sharing on; until then the cloud is unaffected and the metrics pass
+    lemmatizes for itself exactly as before."""
     batch_sentences = batch_sentences or settings.modal_batch_sentences
     svc = _service(app_name)
     chunks = list(_chunks(misses, batch_sentences))
     if not chunks:
         return
     payloads = [[texts for (_sid, _fp, texts) in chunk] for chunk in chunks]
-    logger.info("Modal NLP (%s): %d sitting(s) in %d batch(es) (~%d sentences/batch)",
-                app_name or settings.modal_app_name,
-                sum(len(c) for c in chunks), len(chunks), batch_sentences)
+    logger.info("Modal NLP (%s): %d sitting(s) in %d batch(es) (~%d sentences/batch)"
+                "%s", app_name or settings.modal_app_name,
+                sum(len(c) for c in chunks), len(chunks), batch_sentences,
+                " +lemmas" if with_lemmas else "")
+
     # Drive the loop off the .map() generator (not as zip's 2nd arg): zip stops
     # when `chunks` is exhausted and leaves the Modal generator suspended at its
     # final yield, which Modal then tears down off-task ("aclose(): asynchronous
     # generator is already running"). Iterating it directly drains it to
     # StopIteration so it closes cleanly. One result batch per input payload, so
     # its index lines up with `chunks`.
+    if with_lemmas:
+        produced = 0
+        try:
+            for i, results in enumerate(svc.analyze_sessions_full.map(payloads)):
+                for (sid, fp, _texts), result in zip(chunks[i], results):
+                    produced += 1
+                    yield sid, fp, _words(result), result.get("lemmas")
+            return
+        except Exception as exc:
+            # Only a failure *before the first result* is read as "this deployment
+            # has no such method". Once results are flowing the method plainly
+            # exists, so a later error is a real one and must not be swallowed by
+            # silently re-running the whole batch through the older entry point.
+            if produced:
+                raise
+            logger.info("Modal service has no analyze_sessions_full (%s); using "
+                        "analyze_sessions — redeploy modal_app.py to share lemmas",
+                        exc)
+
     for i, results in enumerate(svc.analyze_sessions.map(payloads)):
         for (sid, fp, _texts), result in zip(chunks[i], results):
-            yield sid, fp, _words(result)
+            yield sid, fp, _words(result), None
 
 
 def extract_lemmas(misses, *, batch_sentences: int | None = None,

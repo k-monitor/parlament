@@ -11,6 +11,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api.js'
+import { store } from '../../store.js'
 import { formatDuration, transcriptParagraphs } from '../../format.js'
 import EntityText from '../../components/EntityText.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -102,11 +103,12 @@ function paraText(p) {
            speaker so the long "video only" note never squeezes the name. -->
       <div class="speech-meta">
         <span class="muted small" v-if="playable && !speech.has_text">📼 {{ $t('viewer.videoOnly') }}</span>
-        <!-- Readability / lexical diversity (READ-5). Compact here: the number
-             and the tint on the row, the full wording in the tooltip, so a
-             400-speech day stays scannable. Absent for a speech that is not
+        <!-- Readability / lexical diversity (READ-5), only when the reader has
+             asked for it on this day (the toggle in SessionView). Compact even
+             then: the bare number on the row, the full wording in the tooltip, so
+             a 400-speech day stays scannable. Absent for a speech that is not
              measurable, which is most procedural rows. -->
-        <SpeechMetricsBadge :metrics="speech.metrics" compact />
+        <SpeechMetricsBadge v-if="store.showSpeechMetrics" :metrics="speech.metrics" compact />
         <TimingBadge :timing="speech.timing" />
         <span class="muted small nowrap" v-if="speech.duration">⏱ {{ formatDuration(speech.duration) }}</span>
       </div>

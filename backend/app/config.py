@@ -348,6 +348,17 @@ class Settings:
     speech_metrics: bool = field(default_factory=lambda:
         (os.environ.get("PARLAMONITOR_SPEECH_METRICS", "1").strip().lower()
          not in ("0", "false", "no", "")))
+    # Shared lemma cache (app/lemma_cache.py). The word cloud and the lexical
+    # diversity metric both need HuSpaCy lemmas for the *same* sentences, so the
+    # cloud's pass emits them once and they are kept on disk, keyed by sentence id,
+    # for every later pass and future feature. Set PARLAMONITOR_LEMMA_CACHE=0 to
+    # turn the store off: nothing breaks, each pass simply lemmatizes for itself
+    # again (the pre-existing behaviour) — worth doing only when the disk it would
+    # occupy is scarcer than the model time it saves. See the module docstring for
+    # the size it reaches on a full corpus.
+    lemma_cache: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_LEMMA_CACHE", "1").strip().lower()
+         not in ("0", "false", "no", "")))
     # Person-entity linking (NEL, §10). When enabled the loader extracts PERSON
     # mentions from transcript sentences (HuSpaCy NER — shares the wordcloud
     # backend/model) into the `entity` table and resolves each distinct name to a

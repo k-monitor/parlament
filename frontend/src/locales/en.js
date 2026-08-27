@@ -90,34 +90,51 @@ export default {
     copyLink: 'Copy link', linkCopied: 'Link copied to clipboard', sittingDay: 'sitting', backToSession: 'Back to sitting',
     speechType: 'Speech type',
   },
-  // Speech annotation: readability (LIX) and lexical diversity (MATTR). Bands are
-  // relative to the whole corpus — the classic (Swedish) LIX labels are calibrated
-  // for a long-word threshold of 6 and mean nothing at the Hungarian threshold of
-  // 8, so a speech is placed against what is actually said in this House.
+  // Speech annotation: readability (LIX) and lexical diversity (MATTR). The chip
+  // shows only where a speech sits against the House's median — the raw scores are
+  // uninterpretable on their own (the classic Swedish LIX labels are calibrated for
+  // a long-word threshold of 6 and mean nothing at the Hungarian threshold of 8,
+  // and MATTR is a bare ratio), so the number, its corpus quintile and the counts
+  // behind it live in the tooltip instead. `*VsShort` is the dense sitting-day list.
   metrics: {
     lixName: 'Readability (LIX)',
-    lixTip: 'From the share of long words and the sentence length. The band '
-      + 'compares this speech to every speech in the House, not to an absolute scale.',
+    lixVs: {
+      easier: 'easier to read',
+      typical: 'typical',
+      harder: 'harder to read',
+    },
+    lixVsShort: { easier: 'easier', typical: 'typical', harder: 'harder' },
+    vsTip: 'Compared with the median of every measured speech in the House — the '
+      + 'middle fifth counts as typical.',
+    lixTip: 'Measured from the share of long words and the sentence length.',
+    lixScore: 'LIX {value} — {band} of the House\'s speeches',
     lixCounts: '{words} words · {sentences} sentences · {perSentence} words/sentence · '
       + '{longShare}% long words (over 8 letters)',
     lixBand: {
-      'very-easy': 'very easy',
-      easy: 'easy',
-      average: 'average',
-      hard: 'hard',
-      'very-hard': 'very hard',
+      'very-easy': 'the easiest fifth',
+      easy: 'the second-easiest fifth',
+      average: 'the middle fifth',
+      hard: 'the second-hardest fifth',
+      'very-hard': 'the hardest fifth',
     },
     mattrName: 'Lexical diversity (MATTR)',
+    mattrVs: {
+      less: 'less varied vocabulary',
+      typical: 'typical',
+      more: 'more varied vocabulary',
+    },
+    mattrVsShort: { less: 'less varied', typical: 'typical', more: 'more varied' },
     mattrTip: 'What share of the word stems are distinct within any {window}-word '
       + 'window. Measured on lemmas, so Hungarian inflection does not masquerade as '
       + 'a richer vocabulary.',
+    mattrScore: 'MATTR {value} — {band} of the House\'s speeches',
     mattrCounts: '{types} distinct stems · {tokens} words',
     mattrBand: {
-      'very-low': 'very low',
-      low: 'low',
-      average: 'average',
-      high: 'high',
-      'very-high': 'very high',
+      'very-low': 'the least varied fifth',
+      low: 'the second-least-varied fifth',
+      average: 'the middle fifth',
+      high: 'the second-most-varied fifth',
+      'very-high': 'the most varied fifth',
     },
   },
   clipExport: {
@@ -187,6 +204,18 @@ export default {
     topSpeakers: 'Who spoke the most on this day?',
     topSpeakersCaption: 'Representatives by total speaking time on this sitting day (chairing and procedural speeches excluded). Click a name to open the representative\'s profile.',
     newWords: 'Which words were said for the first time?',
+    metricsLabel: 'Speech metrics',
+    metricsShow: 'Speech metrics',
+    metricsHide: 'Hide speech metrics',
+    metricsCaption: 'Two comparisons per speech: how hard it is to read (LIX — the '
+      + 'share of long words and the sentence length) and how varied its vocabulary '
+      + 'is (MATTR — how distinct the word stems are). Each says only where the '
+      + 'speech sits against the median of every speech in the House, since neither '
+      + 'score means anything on an absolute scale; hover a chip for the number '
+      + 'itself. Only substantive speeches of sufficient length are measured — '
+      + 'chairing and short remarks carry no score. Hidden by default: switching '
+      + 'it on here also annotates the individual speech pages, and is remembered '
+      + 'on this device.',
     newWordsCaption: 'These lemmas were spoken in parliament for the first time on this sitting day — never before, previous cycles included (based on the transcripts available). Names and capitalized (proper-noun) words are excluded. The number is how often it was said that day. Click a word to search that day.',
     showTranscript: 'Show transcript',
     hideTranscript: 'Hide transcript',

@@ -151,33 +151,50 @@ export default {
     speechType: 'Felszólalás típusa',
   },
   // Felszólalás-annotáció: olvashatóság (LIX) és szókincsgazdagság (MATTR).
-  // A sávok a teljes korpuszhoz viszonyítanak: a klasszikus (svéd) LIX-címkék a
-  // 6-os hosszúszó-küszöbre vannak kalibrálva, a magyar küszöb 8, ott azok a
-  // címkék értelmüket vesztik — ezért „az itt elhangzottak x%-ánál nehezebb”.
+  // A chipen csak az áll, hogy a felszólalás a Ház mediánjához képest hol van: a
+  // nyers számok önmagukban értelmezhetetlenek (a klasszikus svéd LIX-címkék a
+  // 6-os hosszúszó-küszöbre vannak kalibrálva, a magyar küszöb 8; a MATTR meg
+  // puszta arányszám), ezért a szám, a kvintilise és a mögötte lévő darabszámok a
+  // tooltipbe kerültek. A `*VsShort` a sűrű ülésnap-listáé.
   metrics: {
     lixName: 'Olvashatóság (LIX)',
-    lixTip: 'A hosszú szavak aránya és a mondathossz alapján. A sáv a Ház összes '
-      + 'felszólalásához viszonyít, nem abszolút skálához.',
+    lixVs: {
+      easier: 'könnyebben olvasható',
+      typical: 'átlagos',
+      harder: 'nehezebben olvasható',
+    },
+    lixVsShort: { easier: 'könnyebb', typical: 'átlagos', harder: 'nehezebb' },
+    vsTip: 'A Ház összes mért felszólalásának mediánjához viszonyítva – a középső '
+      + 'ötöd számít átlagosnak.',
+    lixTip: 'A hosszú szavak aránya és a mondathossz alapján számoljuk.',
+    lixScore: 'LIX {value} – a Ház felszólalásai közül {band}',
     lixCounts: '{words} szó · {sentences} mondat · {perSentence} szó/mondat · '
       + '{longShare}% hosszú szó (8 betűnél hosszabb)',
     lixBand: {
-      'very-easy': 'nagyon könnyű',
-      easy: 'könnyű',
-      average: 'átlagos',
-      hard: 'nehéz',
-      'very-hard': 'nagyon nehéz',
+      'very-easy': 'a legkönnyebb ötödben',
+      easy: 'a második legkönnyebb ötödben',
+      average: 'a középső ötödben',
+      hard: 'a második legnehezebb ötödben',
+      'very-hard': 'a legnehezebb ötödben',
     },
     mattrName: 'Szókincsgazdagság (MATTR)',
+    mattrVs: {
+      less: 'kevésbé változatos szókincs',
+      typical: 'átlagos',
+      more: 'változatosabb szókincs',
+    },
+    mattrVsShort: { less: 'kevésbé változatos', typical: 'átlagos', more: 'változatosabb' },
     mattrTip: 'Hány százalékban különbözőek a szótövek egy {window} szavas ablakon '
       + 'belül. A szóalakokat szótőre visszavezetve mérjük, hogy a magyar ragozás '
       + 'ne látszódjon gazdagabb szókincsnek.',
+    mattrScore: 'MATTR {value} – a Ház felszólalásai közül {band}',
     mattrCounts: '{types} különböző szótő · {tokens} szó',
     mattrBand: {
-      'very-low': 'nagyon alacsony',
-      low: 'alacsony',
-      average: 'átlagos',
-      high: 'magas',
-      'very-high': 'nagyon magas',
+      'very-low': 'a legkevésbé változatos ötödben',
+      low: 'a második legkevésbé változatos ötödben',
+      average: 'a középső ötödben',
+      high: 'a második legváltozatosabb ötödben',
+      'very-high': 'a legváltozatosabb ötödben',
     },
   },
   clipExport: {
@@ -255,6 +272,18 @@ export default {
     topSpeakers: 'Ki beszélt a legtöbbet ezen a napon?',
     topSpeakersCaption: 'A képviselők összes felszólalási ideje szerint ezen az ülésnapon (az ülésvezetői és rendészeti felszólalások nélkül). A névre kattintva a képviselő profilja nyílik meg.',
     newWords: 'Mely szavak hangzottak el először?',
+    metricsLabel: 'Beszédmetrikák',
+    metricsShow: 'Beszédmetrikák',
+    metricsHide: 'Beszédmetrikák elrejtése',
+    metricsCaption: 'Felszólalásonként két összehasonlítás: mennyire nehéz olvasni '
+      + '(LIX – a hosszú szavak aránya és a mondathossz), és mennyire változatos a '
+      + 'szókincse (MATTR – mennyire különbözőek a szótövek). Mindkettő csak azt '
+      + 'mondja meg, hogy a felszólalás a Ház összes felszólalásának mediánjához '
+      + 'képest hol van, mert egyik pontszám sem értelmezhető abszolút skálán; a '
+      + 'chipre húzva a szám is előjön. Csak a kellően hosszú, érdemi '
+      + 'felszólalásokra számoljuk ki – az ülésvezetői és a rövid hozzászólásokon '
+      + 'nem jelenik meg. Alapból nincs bekapcsolva: ha itt bekapcsolod, az egyes '
+      + 'felszólalások oldalán is megjelenik, és megjegyezzük ezen az eszközön.',
     newWordsCaption: 'Ezek a szótövek ezen az ülésnapon hangzottak el először a parlamentben – korábban, a megelőző ciklusokban sem mondta ki őket senki (a rendelkezésre álló jegyzőkönyvek alapján). A neveket és a nagybetűs (tulajdonnévi) szavakat kihagytuk. A szám az adott napi előfordulást jelzi. Kattintásra rákeres az adott napra.',
     showTranscript: 'Jegyzőkönyv megjelenítése',
     hideTranscript: 'Jegyzőkönyv elrejtése',

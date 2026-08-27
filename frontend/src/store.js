@@ -13,6 +13,10 @@ import { reactive } from 'vue'
 import { api } from './api.js'
 
 const CYCLE_KEY = 'parlamonitor.cycle'
+// Whether the dense sitting-day speech list shows the readability / lexical
+// diversity chips (READ-5). A viewer-side display preference, not a scope, so it
+// is remembered per browser and never travels in the URL.
+const METRICS_KEY = 'parlamonitor.speechMetrics'
 
 export const store = reactive({
   meta: null,
@@ -30,6 +34,13 @@ export const store = reactive({
   // profile's back link returns to — chip and all. Null while nothing (or nothing
   // yet loaded) is open.
   profileTab: null,
+  // Off by default, and on *every* surface: the per-speech metric chips are an
+  // annotation most readers are not there for — two extra chips on every row of a
+  // 400-speech day is real clutter, and the viewer's speech header already carries
+  // enough badges. The sitting-day toggle is the only control, so it is also where
+  // the feature is discovered; once switched on it shows the chips on the day list
+  // and in the viewer alike. See `setShowSpeechMetrics`.
+  showSpeechMetrics: false,
   moduleEnabled(name) {
     if (!this.meta) return true // optimistic before load
     return this.meta.modules.some((m) => m.name === name)
@@ -103,6 +114,34 @@ export function setCycles(values) {
     /* localStorage unavailable (private mode) — in-memory state still works */
   }
 }
+
+// Show/hide the per-speech metric chips — on the sitting-day list and in the
+// viewer, which read the same flag — and remember the choice. Mirrors `setCycles`:
+// persistence is best-effort, so a browser with no localStorage (private mode)
+// still gets a working in-memory toggle.
+export function setShowSpeechMetrics(on) {
+  store.showSpeechMetrics = !!on
+  try {
+    localStorage.setItem(METRICS_KEY, store.showSpeechMetrics ? '1' : '0')
+  } catch {
+    /* localStorage unavailable (private mode) — in-memory state still works */
+  }
+}
+
+// Restore the saved choice at startup. Anything other than a stored "1" — no
+// value, a stale value, an unreadable store — leaves both surfaces unannotated,
+// which is the default a first-time visitor gets.
+function initShowSpeechMetrics() {
+  try {
+    store.showSpeechMetrics = localStorage.getItem(METRICS_KEY) === '1'
+  } catch {
+    store.showSpeechMetrics = false
+  }
+}
+
+// Read at import time: unlike the cycle scope this needs nothing from /meta, and
+// restoring it before the first render avoids the chips flashing in and out.
+initShowSpeechMetrics()
 
 // The scope a visitor gets with no saved choice and no `?cycle=` in the URL:
 // the latest cycle (periods arrive newest-first from /meta). It is also the

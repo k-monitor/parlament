@@ -129,6 +129,21 @@ def _load_portfolio_corpus(db_path, conn=None, answer_label="belügyminiszter",
     return c
 
 
+def test_an_interpellation_answered_in_writing_counts_as_answered(db_path):
+    """1994-98 only: the era answered interpellations in writing too, and named
+    the responding tárca when it did (parlamonitor.bills.legacy). The modern API's
+    vocabulary has no such event, so the name exists for that cycle alone."""
+    c = _load_portfolio_corpus(db_path, extra=[_answered_question(
+        bill_id="q-legacy", number="I/1632", label="földművelésügyi miniszter",
+        submitted="1995-11-08", answered="1995-12-19",
+        event="interpelláció írásban megválaszolva")])
+    rows = c.execute("SELECT portfolio_slug FROM portfolio_bill "
+                     "WHERE role = 'answered' AND bill_id = 'q-legacy'").fetchall()
+    assert [r["portfolio_slug"] for r in rows] == [
+        portfolios.resolve("földművelésügyi miniszter").slug]
+    c.close()
+
+
 def test_the_three_link_kinds_land_on_their_portfolios(db_path):
     c = _load_portfolio_corpus(db_path)
     # answered: the interpelláció's responding minister

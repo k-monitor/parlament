@@ -41,10 +41,12 @@ def test_extract_maps_results_in_order_with_entity_kinds(monkeypatch):
     misses = [("43001", "fp1", ["m1", "m2"]), ("43002", "fp2", ["m3"])]
     out = list(nlp_modal.extract(misses, batch_sentences=100))
 
-    assert [sid for sid, _, _ in out] == ["43001", "43002"]
-    _, _, words = out[0]
+    assert [sid for sid, _, _, _ in out] == ["43001", "43002"]
+    _, _, words, streams = out[0]
     assert words["törvény"] == [2, "term"]
     assert words["orbán viktor"] == [1, "entity"]
+    # Lemmas were not asked for, so none come back — never a fabricated empty.
+    assert streams is None
 
 
 def test_method_tag_matches_local_huspacy():
@@ -110,7 +112,8 @@ def test_rebuild_uses_modal_and_caches(monkeypatch, conn, db_path):
         calls["batches"] += 1
         for sid, fp, _texts in misses:
             calls["sittings"] += 1
-            yield sid, fp, {"törvény": [3, "term"], "orbán viktor": [2, "entity"]}
+            yield (sid, fp, {"törvény": [3, "term"], "orbán viktor": [2, "entity"]},
+                   None)
 
     monkeypatch.setattr(loader.settings, "wordcloud_backend", "modal")
     monkeypatch.setattr(nlp_modal, "available", lambda: True)
@@ -168,7 +171,7 @@ def _modal_build(monkeypatch, tmp_path, data, *, modal_cycles):
     def fake_extract(misses, app_name=None, **_kw):
         dispatched.append((app_name, sorted(sid for sid, _fp, _t in misses)))
         for sid, fp, _texts in misses:
-            yield sid, fp, {"törvény": [1, "term"]}
+            yield sid, fp, {"törvény": [1, "term"]}, None
 
     monkeypatch.setattr(loader.settings, "wordcloud_backend", "modal")
     monkeypatch.setattr(loader.settings, "huspacy_model", "hu_core_news_trf")

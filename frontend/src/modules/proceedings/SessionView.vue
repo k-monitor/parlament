@@ -5,6 +5,8 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
+import { store, setShowSpeechMetrics } from '../../store.js'
+import { SPEECH_METRICS_ENABLED } from '../../features.js'
 import { agendaLabel, formatDate, formatSpeakingTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -43,6 +45,14 @@ const notReady = computed(() => data.value?.session?.status === 'awaiting_media'
 // the day's video is reachable from the day page and not only from a speaker's
 // profile or a shared speech link.
 const hasDayVideo = computed(() => !!data.value?.session?.video_uri)
+// Whether to offer the readability / lexical-diversity toggle on this day at all
+// (READ-5). Only when the feature is on, the DB carries measurements, *and* this
+// particular day has at least one measurable speech — a toggle that reveals
+// nothing is worse than no toggle. Most speeches are unmeasurable (procedural,
+// text-less, or under the ~50-word floor), so a short day can genuinely have none.
+const hasSpeechMetrics = computed(() => SPEECH_METRICS_ENABLED
+  && store.featureEnabled('speech_metrics')
+  && (data.value?.agenda || []).some((a) => (a.speeches || []).some((sp) => sp.metrics)))
 // Held and browsable, but still being published (SIT-2): a transcript or per-speech
 // video is missing from some speech and is still expected. Flagged in the heading
 // exactly as in the sittings list, so a half-published day never looks finished.
@@ -218,6 +228,22 @@ function searchWord(word) {
               </li>
             </ol>
           </section>
+
+          <!-- Beszédmetrikák (READ-5). The chips are OFF by default on this list:
+               a sitting day runs to hundreds of rows, and two extra chips on each
+               would bury the speaker, faction and duration people actually scan
+               for. One control turns the column on for a reader who came to
+               compare, and the choice is remembered across days and visits. The
+               single-speech viewer shows the same numbers unconditionally, so the
+               annotation is discoverable whether or not this is ever pressed. -->
+          <div v-if="hasSpeechMetrics" class="metrics-toggle">
+            <button
+              type="button" class="btn secondary small"
+              :aria-pressed="store.showSpeechMetrics ? 'true' : 'false'"
+              @click="setShowSpeechMetrics(!store.showSpeechMetrics)"
+            >📖 {{ store.showSpeechMetrics ? $t('sessions.metricsHide') : $t('sessions.metricsShow') }}</button>
+            <HelpTip :label="$t('sessions.metricsLabel')"><p>{{ $t('sessions.metricsCaption') }}</p></HelpTip>
+          </div>
 
           <!-- The agenda + speaker list is shown even for a not-yet-processed day
                (names/order exist); only the timing toplist above is suppressed. -->
@@ -404,6 +430,9 @@ function searchWord(word) {
 .chips .chip:hover, .chips .chip:focus-visible { border-color: var(--accent); outline: none; }
 .chips .chip-count { font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .toplist { margin-bottom: 1rem; }
+/* Right-aligned control row above the agenda, so the toggle reads as a display
+   option for the list below rather than as part of the day's content. */
+.metrics-toggle { display: flex; align-items: center; justify-content: flex-end; gap: .4rem; margin: 0 0 .5rem; }
 .top-rows { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(130px, 1.5fr) auto 1fr auto auto; row-gap: .24rem; }
 .top-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; column-gap: .55rem; align-items: center; padding: .12rem 0; font-size: .9rem; }
 .top-row :deep(.row span) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

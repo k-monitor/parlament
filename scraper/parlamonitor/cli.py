@@ -24,6 +24,10 @@ politeness/transport knobs come from the environment or flags, never hard-coded
     # Bills (irományok) of the current cycle
     python -m parlamonitor bills --cycle 43 ./data
 
+    # The 1994-98 irományok, which the API has none of: parsed off the static
+    # archive parlament.hu still serves from that term
+    python -m parlamonitor bills --cycle 35 --archive ./data
+
     # Nationality advocates (szószólók) — one cycle, or backfill every cycle
     python -m parlamonitor advocates --cycle 43 ./data
     python -m parlamonitor advocates --all-cycles ./data
@@ -49,6 +53,8 @@ from .felicitas import FelicitasClient
 from .http_client import CaptchaWall, HttpClient
 from .lockfile import acquire
 from .advocates.scrape import advocate_cycles, fetch_advocates, save_advocates
+from .bills.legacy import CYCLE as ARCHIVE_CYCLE
+from .bills.legacy import faction_ids_from_registries, fetch_legacy_bills
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
 from .officeholders.scrape import fetch_office_holders, save_office_holders
 from .votes.scrape import fetch_votes, save_votes
@@ -370,6 +376,8 @@ def cmd_officeholders(args) -> None:
 def cmd_bills(args) -> None:
     paths = Paths(args.data_dir)
     paths.ensure()
+    if args.archive:
+        return _cmd_bills_archive(args, paths)
     felicitas = _client(args)
     main_types = (tuple(t.strip() for t in args.main_types.split(",") if t.strip())
                   if args.main_types else DEFAULT_MAIN_TYPES)
@@ -392,6 +400,50 @@ def cmd_bills(args) -> None:
         "count": registry["meta"]["count"],
         "detailFetched": registry["meta"].get("detailFetched"),
         "detailReused": registry["meta"].get("detailReused"),
+    })
+
+
+def _cmd_bills_archive(args, paths: Paths) -> None:
+    """``bills --archive``: cycle 35 off the static 1994-98 site, which is the
+    only place those irományok exist (the Felicitas API returns none)."""
+    if args.cycle != ARCHIVE_CYCLE:
+        raise SystemExit(f"--archive only covers cycle {ARCHIVE_CYCLE} "
+                         f"(1994-98); got --cycle {args.cycle}")
+    cfg = RuntimeConfig.from_env(
+        sleep=args.sleep, retry_count=args.retry_count, proxy=args.proxy,
+        captcha_retries=args.captcha_retries,
+        ssh_host=args.ssh_host, ssh_port=args.ssh_port, ssh_user=args.ssh_user,
+        ssh_key=args.ssh_key, ssh_known_hosts=args.ssh_known_hosts)
+    # Faction ids come off every MP registry on disk, not just cycle 35's — see
+    # faction_ids_from_registries.
+    registries = sorted(paths.processed.glob("representatives-*.json"))
+    faction_ids = faction_ids_from_registries(registries)
+    if not faction_ids:
+        logger.warning("No representatives-*.json in %s, so submitters get no "
+                       "faction link; run the representatives stage first",
+                       paths.processed)
+
+    with HttpClient(cfg) as http:
+        with acquire(paths.lockfile, force=args.force_lock):
+            registry = fetch_legacy_bills(
+                http, with_detail=not args.no_detail,
+                with_motions=not args.no_motions,
+                with_speakers=args.speakers,
+                cache_path=paths.bills_file(ARCHIVE_CYCLE),
+                force=args.force, faction_ids=faction_ids, limit=args.limit)
+            save_bills(paths, ARCHIVE_CYCLE, registry)
+
+    meta = registry["meta"]
+    _write_log(paths, {
+        "command": "bills",
+        "cycle": ARCHIVE_CYCLE,
+        "source": meta["source"],
+        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "count": meta["count"],
+        "detailFetched": meta.get("detailFetched"),
+        "detailReused": meta.get("detailReused"),
+        "withMotions": meta.get("withMotions"),
+        "withSpeakers": meta.get("withSpeakers"),
     })
 
 
@@ -618,6 +670,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--force", action="store_true",
                     help="re-fetch every bill's detail, ignoring the cache "
                          "(default: reuse cached detail for unchanged bills)")
+    sp.add_argument("--archive", action="store_true",
+                    help=f"read cycle {ARCHIVE_CYCLE} (1994-98) off the static "
+                         f"iromany archive instead of the API, which has none "
+                         f"of it; only valid with --cycle {ARCHIVE_CYCLE}")
+    sp.add_argument("--no-motions", action="store_true",
+                    help="--archive only: skip each document's non-self-standing "
+                         "motions (módosítók) listing")
+    sp.add_argument("--speakers", action="store_true",
+                    help="--archive only: also read each document's speaker "
+                         "listing (a request per document; parsed and saved, but "
+                         "the current schema has nowhere to load it)")
+    sp.add_argument("--limit", type=int, default=None,
+                    help="--archive only: stop after this many documents "
+                         "(smoke run)")
     sp.set_defaults(func=cmd_bills)
 
     sp = sub.add_parser("votes", help="scrape the cycle's roll-call votes (szavazások)")

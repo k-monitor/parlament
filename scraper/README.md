@@ -143,6 +143,12 @@ python -m parlamonitor representatives --cycle 43 --photos ./data
 # has them (40 on). Portraits are downloaded by default (~13 people per cycle).
 python -m parlamonitor advocates --cycle 43 ./data
 python -m parlamonitor advocates --all-cycles ./data
+
+# Irományok of a cycle (every document type) from the Felicitas API
+python -m parlamonitor bills --cycle 43 ./data
+
+# …except 1994-98, which the API has none of — see below
+python -m parlamonitor bills --cycle 35 --archive ./data
 ```
 
 Adding advocates to an **already-scraped** corpus needs nothing else: the
@@ -248,6 +254,67 @@ entirely for a fast list-only refresh.
 Schedule it from cron/systemd (OPS-2); each run appends an ingestion log under
 `data/logs/` (SCR-3).
 
+### The 1994-98 irományok (`bills --archive`)
+
+The Felicitas `iromany` API knows nothing about the **35th cycle**: the query that
+returns 19 408 documents for cycle 37 returns **zero** for 1994-98. What survives
+is the static site the House published at the time, still served under
+`parlament.hu/iromany/` — plain generated HTML, frozen on 1998-04-03. It is the
+only source for those 5 646 documents, so `parlamonitor/bills/legacy.py` parses it
+into the same record shape the API stage emits; the result is a drop-in
+`bills-35.json` the loader ingests with no special-casing.
+
+```bash
+# Scrape the MP registry first — the archive links submitters by the very
+# personID it uses (`s322`), so this is what makes them joinable.
+python -m parlamonitor representatives --cycle 35 ./data
+
+python -m parlamonitor bills --cycle 35 --archive ./data
+```
+
+What it reads, and what that costs:
+
+| Layer | Requests | Default |
+| ----- | -------- | ------- |
+| the two "Összes" listings (number, date, type, title) | 2 | on — `--no-detail` stops here |
+| one `<NNNNN>ir.htm` adatlap per document (submitters, status, promulgation, event history, committee events, roll-call links) | 5 646 | on |
+| `mod/<NNNNN>imo.htm` — the non-self-standing motions, only where the adatlap says there are any | ~1 000 | on — `--no-motions` skips |
+| `felsz/<NNNNN>npl.htm` — the speeches held on the document | ≤5 646 | **off** — `--speakers` |
+
+At the default 1 s politeness that is a couple of hours, once. The run is
+**resumable**: the pages cannot change, so any document already in
+`bills-35.json` is reused whole and an interrupted scrape picks up where it
+stopped (`--force` re-fetches everything). A `bills-35.json` left behind by the
+*API* stage is ignored rather than merged.
+
+Two things are parsed and saved but deliberately **not** loaded, for want of a
+column that means them: the addressee a question was put to (`header.addressee` —
+the modern scrape leaves the equivalent `cimzettNeve` out for the same reason;
+the *answering* side is loaded, off the answer event's `relatedLabel`) and the
+speaker listing (`detail.speakers`), which addresses speeches already in the
+database — `sessionId` + `speechNumber` are `speech.session_id` and
+`speech.speech_index` — but has nowhere to hang a bill→speech link except off an
+event. That is why `--speakers` is opt-in.
+
+The archive records no stage diagram, no vote tallies, no deadlines and no
+background documents, so those stay empty rather than being guessed at. The
+roll-call sheets it links (`/szavaz/szavlist/`) are, like the irományok, the only
+surviving source for the cycle's votes — a separate stage, not this one.
+
+One thing **is** rewritten, deliberately: the four event names that carry a
+responding tárca. The archive abbreviates them into a fixed-width column and puts
+them in the active voice ("kérdést megválaszolja" for what the API calls "kérdés
+megválaszolva"), and the §6C portfolio derivation matches event names *exactly* —
+so left alone, the cycle's ~4 000 answered questions would contribute nothing to
+it. The map is enumerated in `_EVENT_NAMES` and the archive's own wording is kept
+on the event's `remark`.
+
+That gets the events matched; the **ministry names** on them are still the era's
+(`művelődési és közokt. miniszter`, and ~30 more, half of them *politikai
+államtitkár* posts). Those need entries in the hand-reviewed portfolio table in
+`backend/app/portfolios.py` — without them each stands alone as its own tárca,
+which the loader warns about by name at the end of a build.
+
 ### Continuous sync (`sync`) — stay in step with parlament.hu, cheaply
 
 For a production deployment that must keep updating, the `sync` command does one
@@ -320,6 +387,7 @@ parlamonitor/
                        MPs and non-MPs) → officeholders.json
   bills/
     scrape.py          irományok list + per-bill detail → bills-<cycle>.json
+    legacy.py          the 1994-98 static iromány archive → bills-35.json
   votes/
     scrape.py          szavazások list + per-vote detail → votes-<cycle>.json
   cli.py               workflow orchestration (stages, lockfile, ingest log)
@@ -328,6 +396,7 @@ check_whisper_cache.py which copied whisper-<session>.json caches are usable
 tests/
   test_pipeline.py     offline tests: transform, timing, names, agenda, segment
   test_advocates.py    offline tests: szószóló registry shape + cycle discovery
+  test_bills_legacy.py offline tests: the static 1994-98 iromány archive
   test_officeholders.py offline tests: office-term grouping + open-ended terms
 ```
 

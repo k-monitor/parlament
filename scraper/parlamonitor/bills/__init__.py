@@ -5,4 +5,8 @@ Fetches the cycle's bills from the Felicitas ``iromany`` API and writes one
 ``bill_sponsor`` tables. Sponsors carry the kepviseloId that joins to an MP
 profile, so the module references the shared ``person`` entity rather than
 duplicating it (EXT-2).
+
+The 35th cycle (1994-98) is the one the API has nothing at all for; ``legacy.py``
+parses the same registry out of the static archive parlament.hu still serves from
+that term, so the module has two sources and one output shape.
 """

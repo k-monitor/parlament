@@ -253,7 +253,7 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
         "felszólalásaik és irományaik a Parlamonitoron."),
     "/representatives/speakers": (
         "Egyéb felszólalók",
-        "Akik képviselői mandátum nélkül szólaltak fel a Házban: miniszterek, "
+        "Akik képviselői mandátum nélkül szólaltak fel a Parlamentben: miniszterek, "
         "államtitkárok, meghívott vendégek felszólalásai."),
     # The "all" chip of the Felszólalók page: the three lists above at once. It
     # needs a card of its own — without one this path falls through to the person
@@ -269,7 +269,7 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
     "/representatives/portfolios": (
         "Tárcák",
         "Melyik minisztériumhoz milyen kérdések érkeztek, melyik tárca mit "
-        "nyújtott be a Ház elé, és kik vezették."),
+        "nyújtott be a Parlament elé, és kik vezették."),
     # Összehasonlítás (REP-15). Without a card this path falls through to the
     # person-profile route, finds no person called "compare", and would answer a
     # real page with a 404 shell. The people compared ride in `?ids=`, which
@@ -291,7 +291,7 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
         "Egyéb irományok",
         "Kérdések, interpellációk, határozati javaslatok és minden további "
         "iromány típus — benyújtók és állapotuk szerint böngészve."),
-    "/questions": (
+    "/analyses/questions": (
         "Kérdések és interpellációk",
         "Ki kérdez és ki válaszol az Országgyűlésben: a kérdések és "
         "interpellációk útja a kérdezőtől a válaszadó tárcáig."),
@@ -299,7 +299,14 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
         "Szavazások",
         "Az Országgyűlés név szerinti szavazásai: eredmények, frakciók "
         "szerinti megoszlás és képviselőnkénti szavazatok."),
-    "/votes/cohesion": (
+    # Elemzések (§4E) — the section itself, and the analyses that have a card of
+    # their own. Települések has none, as it never had one under its old address:
+    # a page with no card is served exactly as it was, off the index.
+    "/analyses": (
+        "Elemzések",
+        "Számított kimutatások a Parlament munkájáról: frakciófegyelem, a kérdések "
+        "útja a válaszadó tárcáig, és az ország a felszólalásokban."),
+    "/analyses/faction-cohesion": (
         "Frakcióelemzés",
         "Mennyire szavaznak együtt a frakciók: együttszavazási arányok és "
         "frakciófegyelem cikluson belül."),
@@ -429,12 +436,11 @@ def _browse_body(title: str, description: str) -> str:
     """A browse page's crawlable rendering: what the page is, plus the site's
     navigation. The nav follows the sitemap's own list of static routes, so a
     module that isn't mounted (EXT-6) disappears from both at once."""
-    from .seo import STATIC_PATHS
+    from .seo import STATIC_PATHS, static_enabled
     items = [
         "<li>" + _link(path, _ROUTE_CARDS[path][0]) + "</li>"
         for path, module in STATIC_PATHS
-        if path in _ROUTE_CARDS
-        and (module is None or settings.module_enabled(module))]
+        if path in _ROUTE_CARDS and static_enabled(module)]
     nav = "<nav><ul>" + "".join(items) + "</ul></nav>" if items else ""
     return _wrap(f"<h1>{_esc(title)}</h1><p>{_esc(description)}</p>{nav}")
 
@@ -576,8 +582,8 @@ def _missing(request: Request) -> HTMLResponse:
     """A deep link whose id resolves to nothing.
 
     The SPA's static sub-routes share these URL shapes — `/representatives/
-    factions`, `/votes/cohesion` — and *are* real pages, so they answer 200 with
-    their own card. Anything else is a genuine miss and answers **404 with the
+    factions`, `/representatives/officials` — and *are* real pages, so they
+    answer 200 with their own card. Anything else is a genuine miss and answers **404 with the
     app shell**: the SPA still boots and renders its 404 view, while a crawler
     is told the truth instead of being handed a soft 404 to file under "Crawled
     – currently not indexed"."""
@@ -974,8 +980,9 @@ def register(app) -> None:
                    db: sqlite3.Connection = Depends(get_db)):
         """Metadata for a single vote (VOTE-*). Without this, all ~19 000 vote
         pages shared the generic site card and the same `<title>` — nothing for
-        a search engine to tell them apart by. `/votes/cohesion` finds no vote
-        and falls back to its own browse-page card."""
+        a search engine to tell them apart by. (`/votes/cohesion`, the
+        Frakcióelemzés's old address, never reaches here: it is answered by the
+        301 registered ahead of this route — see `redirects.py`.)"""
         try:
             v = db.execute(
                 """SELECT id, vote_datetime, subject, result, yes, no, abstain,

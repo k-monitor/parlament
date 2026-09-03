@@ -47,6 +47,32 @@ def og_client(tmp_path, db_path, monkeypatch):
     return TestClient(app)
 
 
+@pytest.fixture
+def spa_client(tmp_path, db_path, monkeypatch):
+    """The whole front door, wired in the order `main.py` wires it: the moved-page
+    redirects, then the per-page card routes, then the catch-all SPA mount. What
+    a browse route or an old address actually gets is a function of that order,
+    so a client that skips a layer can't answer for it."""
+    from app import main as main_module
+    from app import redirects
+
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text(SHELL, encoding="utf-8")
+
+    monkeypatch.setattr(og.settings, "frontend_dist", str(dist))
+    monkeypatch.setattr(og.settings, "site_url", "https://parlamonitor.k-monitor.hu")
+    monkeypatch.setattr(db_module.settings, "db_path", str(db_path))
+    monkeypatch.setattr(og, "_shell_cache", None)  # force a re-read of our shell
+
+    app = FastAPI()
+    redirects.register(app)
+    og.register(app)
+    app.mount("/", main_module.SPAStaticFiles(directory=str(dist), html=True),
+              name="frontend")
+    return TestClient(app)
+
+
 def _meta(html: str) -> dict:
     """Parse the injected og:* / twitter:* / description content into a dict."""
     import re
@@ -183,12 +209,44 @@ def test_share_vote_card(og_client):
     assert "igen" in m["og:description"]
 
 
-def test_votes_cohesion_is_not_taken_for_a_vote_id(og_client):
-    # /votes/cohesion is a real sub-page, not a vote — it keeps its own card
-    # and a 200 rather than becoming a 404 for a vote that doesn't exist.
-    r = og_client.get("/votes/cohesion")
+def test_cohesion_page_has_its_own_card(spa_client):
+    # Frakcióelemzés is a page of the Elemzések section (§4E) with a card of its
+    # own — not a vote id, and not the generic site card.
+    r = spa_client.get("/analyses/faction-cohesion")
     assert r.status_code == 200
-    assert _meta(r.text)["og:title"] == "Frakcióelemzés · Parlamonitor"
+    m = _meta(r.text)
+    assert m["og:title"] == "Frakcióelemzés · Parlamonitor"
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/analyses/faction-cohesion"
+
+
+def test_analyses_index_has_its_own_card(spa_client):
+    r = spa_client.get("/analyses")
+    assert r.status_code == 200
+    assert _meta(r.text)["og:title"] == "Elemzések · Parlamonitor"
+
+
+@pytest.mark.parametrize("old_path, new_path", [
+    ("/votes/cohesion", "/analyses/faction-cohesion"),
+    ("/questions", "/analyses/questions"),
+    ("/settlements", "/analyses/settlements"),
+    ("/settlements/representatives", "/analyses/settlements/representatives"),
+    ("/settlements/01/234", "/analyses/settlements/01/234"),
+])
+def test_moved_pages_redirect_permanently(spa_client, old_path, new_path):
+    # The three analyses moved into their own section; their old addresses are in
+    # shared links and in the index, so the server answers a 301 (redirects.py).
+    # `/votes/cohesion` in particular must not be taken for a vote id first.
+    r = spa_client.get(old_path, follow_redirects=False)
+    assert r.status_code == 301
+    assert r.headers["location"] == new_path
+
+
+def test_moved_page_redirect_keeps_the_query(spa_client):
+    # An old link can carry the cycle scope (§4A) or the chosen chart — the
+    # redirect must land on the view it named, not on the page's default.
+    r = spa_client.get("/votes/cohesion?cycle=43&tab=bars", follow_redirects=False)
+    assert r.status_code == 301
+    assert r.headers["location"] == "/analyses/faction-cohesion?cycle=43&tab=bars"
 
 
 def test_compare_is_not_taken_for_a_person_id(og_client):
@@ -328,26 +386,11 @@ def test_share_unknown_bill_is_a_noindex_404(og_client):
     assert m["robots"] == "noindex, follow"
 
 
-def test_home_and_list_routes_get_default_card(tmp_path, db_path, monkeypatch):
+def test_home_and_list_routes_get_default_card(spa_client):
     """The SPA root and any client route without its own card are served through
     SPAStaticFiles with the site-wide default OG card injected — so the home page
     previews with the default image, not a bare shell (the earlier bug)."""
-    from app import main as main_module
-
-    dist = tmp_path / "dist"
-    dist.mkdir()
-    (dist / "index.html").write_text(SHELL, encoding="utf-8")
-
-    monkeypatch.setattr(og.settings, "frontend_dist", str(dist))
-    monkeypatch.setattr(og.settings, "site_url", "https://parlamonitor.k-monitor.hu")
-    monkeypatch.setattr(db_module.settings, "db_path", str(db_path))
-    monkeypatch.setattr(og, "_shell_cache", None)  # force a re-read of our shell
-
-    app = FastAPI()
-    og.register(app)
-    app.mount("/", main_module.SPAStaticFiles(directory=str(dist), html=True),
-              name="frontend")
-    client = TestClient(app)
+    client = spa_client
 
     # The home page (root) — served as index.html by StaticFiles, now with the
     # default card injected, and og:image/og:url made absolute.

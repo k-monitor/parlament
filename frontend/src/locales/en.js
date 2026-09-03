@@ -25,7 +25,7 @@ export default {
   // `representatives` is the merged Felszólalók page: representatives, nationality
   // advocates and the other speakers in one list, picked apart by category chips
   // (REP-1). `advocates` / `speakers` name two of those chips.
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', cohesion: 'Faction analysis', settlements: 'Settlements', settlementReps: 'Own constituency', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', analyses: 'Analyses', analysesIndex: 'Overview', cohesion: 'Faction analysis', settlements: 'Settlements', settlementReps: 'Own constituency', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -665,6 +665,35 @@ export default {
       unnamed: 'Unnamed ministry',
       unanswered: 'Unanswered',
       nofaction: 'Independent / other',
+    },
+  },
+  analyses: {
+    lead: 'Computed views of the House at work: not a single speech or vote, but '
+      + 'what thousands of them add up to.',
+    note: 'Every analysis here is Parlamonitor\'s own calculation from the National '
+      + 'Assembly\'s public data. Each page carries its methodology, so you can see '
+      + 'exactly what the number measures — and what it does not.',
+    needsCycle: 'This analysis only makes sense within one term: pick a term to open it.',
+    empty: 'No analyses are available in this deployment.',
+    cards: {
+      cohesion: {
+        source: 'From the votes',
+        title: 'Faction analysis',
+        desc: 'How closely factions vote together, and how well each holds its own '
+          + 'line — agreement matrix, cohesion bars and bloc map.',
+      },
+      questions: {
+        source: 'From the documents',
+        title: 'Questions and interpellations',
+        desc: 'Who asks and who answers: the path of a question from the asker\'s '
+          + 'faction to the ministry that replies.',
+      },
+      settlements: {
+        source: 'From the proceedings',
+        title: 'Settlements',
+        desc: 'Which Hungarian settlements get named in plenary, how often and by '
+          + 'whom — and which have never come up at all.',
+      },
     },
   },
   votes: {

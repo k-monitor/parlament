@@ -207,9 +207,9 @@ const siteHref = computed(() => {
       }
       break
     case 'faction-speaking': path = '/representatives/factions'; break
-    case 'questions-sankey': path = '/questions'; break
+    case 'questions-sankey': path = '/analyses/questions'; break
     case 'faction-cohesion':
-      path = '/votes/cohesion'
+      path = '/analyses/faction-cohesion'
       if (q.tab) usp.set('tab', q.tab)
       break
     case 'vote-participation': path = q.id ? `/representatives/${q.id}` : '/representatives'; break

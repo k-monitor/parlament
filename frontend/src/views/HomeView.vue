@@ -236,12 +236,6 @@ watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
   .stats div { padding-left: 1.4rem; }
   .stats div:nth-child(odd) { padding-left: 0; border-left: 0; }
 }
-/* Shared column tracks for the donate row + the three feature cards, so the
-   donate card's edges line up exactly with the cards below it. */
-.explore-grid { grid-template-columns: 1fr; }
-@media (min-width: 520px) { .explore-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 780px) { .explore-grid { grid-template-columns: repeat(3, 1fr); } }
-
 .home-donate-row { margin-top: 1.5rem; }
 /* Spans all three tracks so it lines up with the full width of the cards below. */
 .home-donate { grid-column: 1 / -1; }
@@ -277,50 +271,5 @@ watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
 @media (prefers-reduced-motion: reduce) {
   .example { transition: none; }
   .example:hover { transform: none; }
-}
-
-.feature {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  padding: 1.4rem 1.4rem 1.6rem;
-  color: var(--ink);
-  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
-}
-.feature:hover {
-  text-decoration: none;
-  border-color: var(--accent);
-  transform: translateY(-3px);
-  box-shadow: 0 2px 6px rgba(0,0,0,.07), 0 12px 28px rgba(0,0,0,.09);
-}
-.feature__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  margin-bottom: 1rem;
-  transition: background .15s ease, color .15s ease;
-}
-.feature__icon svg { width: 26px; height: 26px; }
-.feature:hover .feature__icon { background: var(--accent); color: var(--accent-ink); }
-.feature h2 { margin: 0 0 .4rem; font-size: 1.15rem; }
-.feature p { margin: 0; flex: 1; }
-.feature__cta {
-  color: var(--accent);
-  font-size: 1.25rem;
-  font-weight: 700;
-  line-height: 1;
-  margin-top: 1rem;
-  transition: transform .15s ease;
-}
-.feature:hover .feature__cta { transform: translateX(4px); }
-@media (prefers-reduced-motion: reduce) {
-  .feature, .feature__icon, .feature__cta { transition: none; }
-  .feature:hover { transform: none; }
-  .feature:hover .feature__cta { transform: none; }
 }
 </style>

@@ -15,6 +15,12 @@
   --maxw: 1100px;
   --gutter: 1.5rem;      /* page side-margin (was 1rem — too tight against text on mobile) */
   --shadow: 0 1px 3px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.05);
+  /* Elemzések (§4E) sets itself apart from the browse sections with a warmer
+     ground and a band above it: two steps down from --bg, both still well clear
+     of the white cards that sit on them. */
+  --section-band: #e9e3d5;
+  --section-bg: #f3efe5;
+  --section-line: #d9d2c1;
   --font: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
 }
 
@@ -42,6 +48,11 @@ a:hover { text-decoration: underline; }
 /* Only vertical padding here — horizontal is the container's --gutter. Using the
    `padding` shorthand would reset left/right to 0 and override that gutter. */
 .page { padding-top: 1.5rem; padding-bottom: 4rem; }
+/* Inside the Elemzések section the page's own ground shifts a shade warmer, so
+   the change of part is visible past the masthead, all the way down the page
+   (App.vue toggles the class as the reader enters and leaves the section). */
+body.section-analyses { background: var(--section-bg); }
+
 /* The proceedings viewer runs as a fixed full-screen pane on mobile (video
    pinned, only the transcript scrolls). Drop the page's vertical padding there
    so the pane fits the viewport exactly and nothing but the transcript moves. */
@@ -160,6 +171,59 @@ table.data th { color: var(--ink-soft); }
 .avatar.lg { width: 110px; height: 110px; border-radius: 12px; }
 .avatar.sm { width: 28px; height: 28px; }
 .avatar.xs { width: 20px; height: 20px; }
+
+/* Entry card — an icon, a title, a sentence and an arrow, linking into a part of
+   the site. Shared by the home page's three "explore" cards and the Elemzések
+   index (§4E), so the two read as one system; `.explore-grid` is the column
+   track they both sit on (one / two / three across). */
+.explore-grid { grid-template-columns: 1fr; }
+@media (min-width: 520px) { .explore-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 780px) { .explore-grid { grid-template-columns: repeat(3, 1fr); } }
+
+.feature {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 1.4rem 1.4rem 1.6rem;
+  color: var(--ink);
+  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.feature:hover {
+  text-decoration: none;
+  border-color: var(--accent);
+  transform: translateY(-3px);
+  box-shadow: 0 2px 6px rgba(0,0,0,.07), 0 12px 28px rgba(0,0,0,.09);
+}
+.feature__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  margin-bottom: 1rem;
+  transition: background .15s ease, color .15s ease;
+}
+.feature__icon svg { width: 26px; height: 26px; }
+.feature:hover .feature__icon { background: var(--accent); color: var(--accent-ink); }
+.feature h2 { margin: 0 0 .4rem; font-size: 1.15rem; }
+.feature p { margin: 0; flex: 1; }
+.feature__cta {
+  color: var(--accent);
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1;
+  margin-top: 1rem;
+  transition: transform .15s ease;
+}
+.feature:hover .feature__cta { transform: translateX(4px); }
+@media (prefers-reduced-motion: reduce) {
+  .feature, .feature__icon, .feature__cta { transition: none; }
+  .feature:hover { transform: none; }
+  .feature:hover .feature__cta { transform: none; }
+}
 
 @media (max-width: 640px) {
   h1 { font-size: 1.4rem; }

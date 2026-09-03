@@ -4,9 +4,10 @@ import { useRoute } from 'vue-router'
 import { store, loadMeta } from './store.js'
 import { setLocale } from './i18n.js'
 import { formatLongDate } from './format.js'
-import { COHESION_ENABLED } from './features.js'
 import { useI18n } from 'vue-i18n'
 import CycleSelect from './components/CycleSelect.vue'
+import { ANALYSES, ANALYSIS_BY_ROUTE, ANALYSIS_ROUTES, analysisAvailable, analysisEnabled }
+  from './modules/analyses/registry.js'
 
 const { locale } = useI18n()
 const route = useRoute()
@@ -23,8 +24,13 @@ const showProceedings = computed(() => store.moduleEnabled('proceedings'))
 const showReps = computed(() => store.moduleEnabled('representatives'))
 const showBills = computed(() => store.moduleEnabled('bills'))
 const showVotes = computed(() => store.moduleEnabled('votes'))
-// Települések has no top-bar entry of its own: it is a tab of the Felszólalók
-// section, so its module switch is read where that bar is built (`sectionTabs`).
+// Elemzések (§4E) is a section, not a module: it is on the bar as long as at
+// least one of the analyses it gathers has its module mounted. Deliberately not
+// narrowed to what is *openable right now* — a within-cycle analysis is
+// unavailable under the "all cycles" scope, and a whole top-bar entry coming and
+// going as the reader changes the cycle would be far more startling than the one
+// card on the section's own page saying why it can't be opened.
+const showAnalyses = computed(() => ANALYSES.some(analysisEnabled))
 
 // Two-level navigation: the top bar holds one entry per section; a section that
 // has sibling pages (Képviselők+Frakciók, Törvényjavaslatok+Egyéb irományok)
@@ -34,7 +40,7 @@ const NAV_SECTIONS = {
   reps: {
     match: ['representatives', 'lookup', 'advocates', 'speakers', 'allSpeakers',
             'officials', 'portfolios', 'portfolio', 'factions', 'profile',
-            'compare', 'settlements', 'settlement', 'settlementReps'],
+            'compare'],
     // `profile` is a detail page of every person tab — which one is decided at
     // runtime by the kind of person the profile is (see `tabActive`).
     tabs: [
@@ -47,8 +53,8 @@ const NAV_SECTIONS = {
       // switch in its search card rather than from a tab of its own, which put
       // the two ways of finding an MP in two different places.
       // `group` splits the bar with rules (see `visibleTabs`): the first two tabs
-      // list *people*, the next two the *bodies* they act in, and the last the
-      // *places* they answer to — equal-looking tabs in a row hid that.
+      // list *people*, the next two the *bodies* they act in — equal-looking tabs
+      // in a row hid that.
       // `compare` (REP-15) is claimed the same way as `lookup` and the chips: it is
       // reached from a profile or the list's compare tray, not from a tab of its
       // own — a tool for the page you are on rather than a fifth place to browse.
@@ -61,28 +67,33 @@ const NAV_SECTIONS = {
       // the section stays.
       { name: 'portfolios', key: 'portfolios', group: 'bodies', detail: ['portfolio'] },
       { name: 'factions', key: 'factions', group: 'bodies' },
-      // Települések (§6D): its own module too, and it sits here rather than in the
-      // top bar because the question it answers is a question about members — whose
-      // places get named. `settlementReps` (the TEL-9 table, "Saját körzet") is
-      // deliberately **not a tab of its own for now**: it is claimed as a detail
-      // route, so the page stays reachable and citable while nothing advertises it.
-      { name: 'settlements', key: 'settlements', group: 'places',
-        detail: ['settlement', 'settlementReps'] },
     ],
   },
   bills: {
-    match: ['bills', 'documents', 'questions', 'bill', 'document'],
+    match: ['bills', 'documents', 'bill', 'document'],
     tabs: [
       { name: 'bills', key: 'bills', detail: ['bill'] },
-      { name: 'questions', key: 'questions' },
       { name: 'documents', key: 'documents', detail: ['document'] },
     ],
   },
   votes: {
-    match: ['votes', 'cohesion', 'vote'],
+    // One tab, so no sub-bar of its own (see the `v-if` below) — the roll-call
+    // list is the whole section now that Frakcióelemzés reads under Elemzések.
+    match: ['votes', 'vote'],
     tabs: [
       { name: 'votes', key: 'votes', detail: ['vote'] },
-      { name: 'cohesion', key: 'cohesion' },
+    ],
+  },
+  // Elemzések (§4E): the derived views onto the corpus, gathered out of the
+  // sections whose data they read. Built from the registry — the section's one
+  // description — so a new analysis needs no navigation code. Its first tab is
+  // the index the top-bar entry points at, the way every other section's first
+  // tab is that section's own landing page.
+  analyses: {
+    match: ANALYSIS_ROUTES,
+    tabs: [
+      { name: 'analyses', key: 'analysesIndex' },
+      ...ANALYSES.map((a) => ({ name: a.route, key: a.route, detail: a.detail })),
     ],
   },
 }
@@ -90,22 +101,24 @@ const currentSection = computed(() =>
   Object.values(NAV_SECTIONS).find((s) => s.match.includes(route.name)) || null)
 function sectionActive(id) { return NAV_SECTIONS[id].match.includes(route.name) }
 
-// The Frakcióelemzés (cohesion) sub-tab compares how factions vote *within* the
-// cycles in scope; across the whole corpus that comparison is meaningless, so
-// it's hidden while the global scope is "all cycles" (router.js bounces the
-// route to match). It is also hidden outright while COHESION_ENABLED is off
-// (features.js). Either way a section can be left with a single tab, in which
-// case the sub-tab bar is redundant with the top nav and hidden entirely (see the
-// `v-if` below). (The constituency lookup switches off the same way — its
-// external source can be unconfigured — but it is a mode of the Felszólalók page
-// now, so its own search card hides the switch, not this bar.)
+// A tab is dropped when the page behind it isn't there to be opened. In the
+// Elemzések bar that is the registry's own answer (module mounted, and — for a
+// within-cycle analysis like Frakcióelemzés — an actual cycle in scope rather
+// than "all cycles", which router.js bounces the route to match). Either way a
+// section can be left with a single tab, in which case the sub-tab bar is
+// redundant with the top nav and hidden entirely (see the `v-if` below). (The
+// constituency lookup switches off the same way — its external source can be
+// unconfigured — but it is a mode of the Felszólalók page now, so its own search
+// card hides the switch, not this bar.)
 const sectionTabs = computed(() =>
   (currentSection.value ? currentSection.value.tabs : []).filter((t) => {
-    if (t.name === 'cohesion') return COHESION_ENABLED && store.cycles.length > 0
+    if (currentSection.value === NAV_SECTIONS.analyses) {
+      // The index is always there; the analyses answer for themselves.
+      return t.name === 'analyses' || analysisAvailable(ANALYSIS_BY_ROUTE[t.name])
+    }
     if (t.name === 'portfolios') return store.moduleEnabled('portfolios')
-    if (t.name === 'settlements') return store.moduleEnabled('settlements')
-    // The rest of this bar belongs to the representatives module, and two of its tabs
-    // (Tárcák, Települések) are modules that can outlive it — so a deployment with
+    // The rest of this bar belongs to the representatives module, and one of its
+    // tabs (Tárcák) is a module that can outlive it — so a deployment with
     // representatives switched off must not be left with tabs that 404 (EXT-6).
     if (currentSection.value === NAV_SECTIONS.reps) {
       return store.moduleEnabled('representatives')
@@ -135,6 +148,19 @@ function tabActive(tab) {
   }
   return route.name === tab.name || (tab.detail || []).includes(route.name)
 }
+
+// Elemzések (§4E) is a part of the site rather than another browse section, and
+// it says so: inside it the plain sub-tab bar is replaced by a masthead carrying
+// the section's name, what it is, and its tabs — and the page ground behind it
+// shifts a shade warmer (a body class, the same way the viewer marks its pane).
+// The landing page then leaves its title to the masthead instead of repeating it,
+// which is also why the masthead's name is that page's `h1` and a plain line
+// everywhere else: each page keeps exactly one first-level heading.
+const inAnalyses = computed(() => currentSection.value === NAV_SECTIONS.analyses)
+const atAnalysesIndex = computed(() => route.name === 'analyses')
+watch(inAnalyses, (on) => {
+  document.body.classList.toggle('section-analyses', on)
+}, { immediate: true })
 
 function toggleLang() { setLocale(locale.value === 'hu' ? 'en' : 'hu') }
 
@@ -182,6 +208,16 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
                      :class="{ 'router-link-active': sectionActive('bills') }">{{ $t('nav.bills') }}</router-link>
         <router-link v-if="showVotes" :to="{ name: 'votes' }"
                      :class="{ 'router-link-active': sectionActive('votes') }">{{ $t('nav.votes') }}</router-link>
+        <!-- Elemzések is not a sixth browse section, so it does not sit in the row
+             as if it were one: the entry is a chip — set off by its own air and
+             outline against the bar, and filled with the section band's own sand
+             while the reader is inside it, so the top bar and the masthead below
+             read as one piece. The separation is carried by the chip itself
+             rather than by a rule between items: this row wraps on a narrow
+             screen (and under a wide font stack), and a separate rule element
+             gets left behind at the end of a line when it does. -->
+        <router-link v-if="showAnalyses" :to="{ name: 'analyses' }" class="nav-analyses"
+                     :class="{ 'router-link-active': sectionActive('analyses') }">{{ $t('nav.analyses') }}</router-link>
       </nav>
       <div class="header-controls">
         <a class="infolink" :href="FEEDBACK_URL" target="_blank" rel="noopener"
@@ -208,7 +244,25 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 
   </div>
 
-  <nav v-if="!isEmbed && visibleTabs.length > 1" class="subheader" :aria-label="$t('nav.submenu')">
+  <div v-if="!isEmbed && inAnalyses" class="sectionhead" :class="{ compact: !atAnalysesIndex }">
+    <div class="container">
+      <component :is="atAnalysesIndex ? 'h1' : 'p'" class="sectionhead-title">
+        {{ $t('nav.analyses') }}
+      </component>
+      <p v-if="atAnalysesIndex" class="sectionhead-lead">{{ $t('analyses.lead') }}</p>
+      <nav class="subnav" :aria-label="$t('nav.submenu')">
+        <router-link
+          v-for="t in visibleTabs" :key="t.name"
+          :to="{ name: t.name }" class="subtab" :class="{ active: tabActive(t) }"
+        >{{ $t('nav.' + t.key) }}</router-link>
+      </nav>
+    </div>
+  </div>
+
+  <nav
+    v-else-if="!isEmbed && visibleTabs.length > 1" class="subheader"
+    :aria-label="$t('nav.submenu')"
+  >
     <div class="container subnav">
       <template v-for="t in visibleTabs" :key="t.name">
         <span v-if="t.sep" class="subnav-sep" aria-hidden="true"></span>
@@ -304,17 +358,65 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 /* Three zones: brand (left), nav (flexes + wraps), controls (pinned right). The
    bar itself never wraps, so the cycle/lang controls stay in the top-right
    corner even when the nav links wrap onto a second line. */
-.header-bar { display: flex; align-items: center; gap: 1rem; flex-wrap: nowrap; position: relative; }
+.header-bar { display: flex; align-items: center; gap: .75rem; flex-wrap: nowrap; position: relative; }
 .brand { display: inline-flex; align-items: center; gap: .5rem; color: #fff; font-weight: 800; font-size: 1.15rem; flex-shrink: 0; }
 .brand:hover { text-decoration: none; }
 .brand-mark { width: 2rem; height: 2rem; object-fit: contain; display: block; border-radius: .4rem; background: #fff; padding: .2rem; box-sizing: border-box; }
-.mainnav { display: flex; align-items: center; gap: .25rem; flex-wrap: wrap; flex: 1 1 auto; }
+.mainnav { display: flex; align-items: center; gap: .2rem; flex-wrap: wrap; flex: 1 1 auto; }
 .header-controls { display: flex; align-items: center; gap: .4rem; flex-shrink: 0; margin-left: auto; }
+/* Six sections have to sit on one line inside the 1100 px container next to the
+   brand and the controls — at the old .7rem/.95rem the sixth (Elemzések, §4E)
+   wrapped onto a second row and made the sticky header a third taller on every
+   page. The row has to hold under whatever the reader's system resolves
+   "Segoe UI" to, and the widest of those (Adwaita Sans) needs ~40 px more than
+   the narrowest, so the fit is left with that much slack rather than a few
+   pixels; the phone layout below overrides both, so its tap targets are
+   unaffected. */
 .mainnav a {
-  color: #f6dcd7; padding: .4rem .7rem; border-radius: 8px; font-weight: 600; font-size: .95rem;
+  color: #f6dcd7; padding: .4rem .5rem; border-radius: 8px; font-weight: 600; font-size: .92rem;
 }
 .mainnav a:hover { background: rgba(255,255,255,.14); text-decoration: none; }
 .mainnav a.router-link-active { background: rgba(255,255,255,.2); color: #fff; }
+.mainnav a.nav-analyses {
+  border: 1px solid rgba(255,255,255,.45); color: #fff;
+  margin-left: .45rem;
+  padding-top: calc(.4rem - 1px); padding-bottom: calc(.4rem - 1px);
+}
+.mainnav a.nav-analyses:hover { background: rgba(255,255,255,.2); }
+/* Inside the section: the chip takes the masthead band's tone, so the entry and
+   the band beneath it are visibly the same place. */
+.mainnav a.nav-analyses.router-link-active {
+  background: var(--section-band); border-color: var(--section-band); color: var(--ink);
+}
+.mainnav a.nav-analyses.router-link-active:hover { background: #f2ede1; }
+
+/* Elemzések (§4E) — the section masthead that stands in for the plain bar below.
+   The band is a shade deeper than the page ground it sits on, so the derived
+   pages read as their own part of the site rather than as another browse
+   section; the reader is told what the section is before being handed its tabs.
+   The tabs inside it are the same `.subtab`s, on a darker ground. */
+.sectionhead {
+  background: var(--section-band);
+  border-bottom: 1px solid var(--section-line);
+}
+.sectionhead .container { padding-top: 1.15rem; }
+.sectionhead-title {
+  margin: 0; font-size: 1.55rem; font-weight: 800; color: var(--ink);
+  letter-spacing: -.01em;
+}
+.sectionhead-lead { margin: .15rem 0 0; color: var(--ink-soft); max-width: 62ch; }
+.sectionhead .subnav { margin-top: .9rem; padding-bottom: 0; }
+.sectionhead .subtab:hover { background: rgba(255,255,255,.75); }
+/* On an analysis's own page the band shrinks to a label + the tabs: the page
+   below has its own title and its own framing, and a second big heading above it
+   would compete with the one the reader came for. What stays is the answer to
+   "where am I". */
+.sectionhead.compact .container { padding-top: .7rem; }
+.sectionhead.compact .sectionhead-title {
+  font-size: .78rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.sectionhead.compact .subnav { margin-top: .35rem; }
 
 /* Contextual second-level bar (Képviselők ↔ Frakciók, Törvényjavaslatok ↔
    Egyéb irományok). Shown only while inside the section — no hover/dropdown. */
@@ -427,6 +529,13 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
   }
   .mainnav.open { display: flex; }
   .mainnav a { padding: .65rem .75rem; font-size: 1rem; }
+  /* In the panel the entries are full-width rows, where a chip would look like a
+     stray button — the same separation is a rule and a little air above it. */
+  .mainnav a.nav-analyses {
+    border: 0; border-top: 1px solid rgba(255,255,255,.25);
+    margin: .4rem 0 0; padding: .9rem .75rem .65rem;
+  }
+  .mainnav a.nav-analyses.router-link-active { border-top-color: transparent; }
 }
 
 /* Smallest phones (≈320 px): claw back a couple of dozen pixels from the icon

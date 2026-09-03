@@ -42,8 +42,12 @@ export default {
     documents: 'Egyéb irományok',
     questions: 'Kérdések',
     votes: 'Szavazások',
+    // Elemzések (§4E): a szekció neve a felső sávban, és — `analysesIndex` — a
+    // saját fülsorának első füle, ami a szekció nyitóoldalára visz vissza.
+    analyses: 'Elemzések',
+    analysesIndex: 'Áttekintés',
     cohesion: 'Frakcióelemzés',
-    // Települések (§6D): a térkép és — második fülként — a saját körzetre
+    // Települések (§6D): a térkép és — a fül alatti oldalként — a saját körzetre
     // vonatkozó mutatók (TEL-9).
     settlements: 'Települések',
     settlementReps: 'Saját körzet',
@@ -151,7 +155,7 @@ export default {
     speechType: 'Felszólalás típusa',
   },
   // Felszólalás-annotáció: olvashatóság (LIX) és szókincsgazdagság (MATTR).
-  // A chipen csak az áll, hogy a felszólalás a Ház mediánjához képest hol van: a
+  // A chipen csak az áll, hogy a felszólalás a Parlament mediánjához képest hol van: a
   // nyers számok önmagukban értelmezhetetlenek (a klasszikus svéd LIX-címkék a
   // 6-os hosszúszó-küszöbre vannak kalibrálva, a magyar küszöb 8; a MATTR meg
   // puszta arányszám), ezért a szám, a kvintilise és a mögötte lévő darabszámok a
@@ -164,10 +168,10 @@ export default {
       harder: 'nehezebben olvasható',
     },
     lixVsShort: { easier: 'könnyebb', typical: 'átlagos', harder: 'nehezebb' },
-    vsTip: 'A Ház összes mért felszólalásának mediánjához viszonyítva – a középső '
+    vsTip: 'A Parlament összes mért felszólalásának mediánjához viszonyítva – a középső '
       + 'ötöd számít átlagosnak.',
     lixTip: 'A hosszú szavak aránya és a mondathossz alapján számoljuk.',
-    lixScore: 'LIX {value} – a Ház felszólalásai közül {band}',
+    lixScore: 'LIX {value} – a Parlament felszólalásai közül {band}',
     lixCounts: '{words} szó · {sentences} mondat · {perSentence} szó/mondat · '
       + '{longShare}% hosszú szó (8 betűnél hosszabb)',
     lixBand: {
@@ -187,7 +191,7 @@ export default {
     mattrTip: 'Hány százalékban különbözőek a szótövek egy {window} szavas ablakon '
       + 'belül. A szóalakokat szótőre visszavezetve mérjük, hogy a magyar ragozás '
       + 'ne látszódjon gazdagabb szókincsnek.',
-    mattrScore: 'MATTR {value} – a Ház felszólalásai közül {band}',
+    mattrScore: 'MATTR {value} – a Parlament felszólalásai közül {band}',
     mattrCounts: '{types} különböző szótő · {tokens} szó',
     mattrBand: {
       'very-low': 'a legkevésbé változatos ötödben',
@@ -278,7 +282,7 @@ export default {
     metricsCaption: 'Felszólalásonként két összehasonlítás: mennyire nehéz olvasni '
       + '(LIX – a hosszú szavak aránya és a mondathossz), és mennyire változatos a '
       + 'szókincse (MATTR – mennyire különbözőek a szótövek). Mindkettő csak azt '
-      + 'mondja meg, hogy a felszólalás a Ház összes felszólalásának mediánjához '
+      + 'mondja meg, hogy a felszólalás a Parlament összes felszólalásának mediánjához '
       + 'képest hol van, mert egyik pontszám sem értelmezhető abszolút skálán; a '
       + 'chipre húzva a szám is előjön. Csak a kellően hosszú, érdemi '
       + 'felszólalásokra számoljuk ki – az ülésvezetői és a rövid hozzászólásokon '
@@ -359,7 +363,7 @@ export default {
       + 'nyújtanak be –, de nem képviselők: nincs frakciójuk, választókerületük és szavazati joguk.',
     searchAdvocatePlaceholder: 'Szószóló keresése név szerint…',
     noAdvocateResults: 'Nincs a feltételeknek megfelelő szószóló.',
-    // Egyéb felszólalók: mandátum nélkül szólaltak fel a Házban (REP-12).
+    // Egyéb felszólalók: mandátum nélkül szólaltak fel a Parlamentben (REP-12).
     othersUnit: 'felszólaló',
     otherNote: 'Az Országgyűlés ülésein nemcsak képviselők szólalnak fel: '
       + 'miniszterek és államtitkárok – akik gyakran nem képviselők –, a '
@@ -782,6 +786,37 @@ export default {
       nofaction: 'Független / egyéb',
     },
   },
+  // Elemzések (§4E) — a szekció nyitóoldala. A kártyák szövege itt van, a
+  // sorrendjük és az, hogy melyik modulhoz tartoznak, a
+  // modules/analyses/registry.js-ben.
+  analyses: {
+    lead: 'Kimutatások a Parlament munkájáról.',
+    note: 'Minden elemzés a Parlamonitor saját számítása az Országgyűlés nyilvános '
+      + 'adataiból. Mindegyik oldalon ott a módszertan is, hogy pontosan mit mér '
+      + 'a szám — és mit nem.',
+    needsCycle: 'Ez az elemzés cikluson belül értelmezhető: válassz egy konkrét ciklust.',
+    empty: 'Ebben a telepítésben nincs elérhető elemzés.',
+    cards: {
+      cohesion: {
+        source: 'Szavazások alapján',
+        title: 'Frakcióelemzés',
+        desc: 'Mennyire szavaznak együtt a frakciók, és mennyire tartják magukat '
+          + 'a saját soraikhoz — egyezési mátrix, frakciófegyelem és blokktérkép.',
+      },
+      questions: {
+        source: 'Irományok alapján',
+        title: 'Kérdések és interpellációk',
+        desc: 'Ki kérdez és ki válaszol: a kérdések útja a kérdező frakciójától '
+          + 'a válaszadó tárcáig.',
+      },
+      settlements: {
+        source: 'Felszólalások alapján',
+        title: 'Települések',
+        desc: 'Mely magyar településeket említik a plenáris ülésen, milyen gyakran '
+          + 'és kik — és melyekről nem esett szó soha.',
+      },
+    },
+  },
   votes: {
     title: 'Szavazások',
     subtitle: 'Az Országgyűlés név szerinti és listás szavazásai.',
@@ -854,7 +889,7 @@ export default {
   // The About copy carries inline links and emphasis, so these paragraphs are
   // rendered with v-html (static, author-written markup — no user input).
   // NB: a literal '@' would be parsed as vue-i18n link syntax; use &#64;.
-  // Települések (§6D) — mely helységeket említi a Ház, és melyeket soha.
+  // Települések (§6D) — mely helységeket említi a Parlament, és melyeket soha.
   settlements: {
     title: 'Települések',
     intro: 'A parlament országos, de amiről vitázik, az szinte mindig helyi. '
@@ -874,7 +909,7 @@ export default {
     // A térkép melletti figyelmeztetés: mit mér és mit nem (TEL-7/TEL-12).
     mapCaveat: 'A térkép a plenáris jegyzőkönyvben szereplő említéseket mutatja a '
       + 'kiválasztott ciklus(ok)ra, nem a településre fordított figyelmet: egy '
-      + 'falut jól szolgálhatnak úgy is, hogy a Ház ülésén nem hangzik el a neve. '
+      + 'falut jól szolgálhatnak úgy is, hogy a Parlament ülésén nem hangzik el a neve. '
       + 'A felismerés szándékosan óvatos, ezért minden szám alsó becslés.',
     noGeometry: 'Ehhez a nézethez nincs elérhető térképi adat.',
     legendBlind: 'nincs említés',

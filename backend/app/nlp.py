@@ -72,6 +72,50 @@ _pipelines: dict[str, object | None] = {}
 _DISABLED_PIPES = ("parser", "senter",
                    "experimental_arc_predicter", "experimental_arc_labeler")
 
+# Whether spaCy's ops were successfully moved onto a local GPU (None = not tried).
+_gpu_ready: bool | None = None
+
+
+def _prefer_gpu() -> bool:
+    """Move the pipeline onto a local CUDA GPU when ``PARLAMONITOR_HUSPACY_GPU``
+    is set, returning whether that worked. Tried once per process.
+
+    Off by default because the host that builds the DB is normally a small CPU
+    box, where this could only fail slower — that host offloads to Modal
+    instead (``app.nlp_modal``). It exists for the other case: running the
+    build (or a ``--reextract-entities`` / ``--remeasure-speeches`` backfill of
+    the archive) on a machine that *has* a GPU, where the transformer is an
+    order of magnitude faster and the metered Modal path is unnecessary.
+
+    The import order mirrors ``modal_app.py``'s GPU image, and for the same
+    reason: torch's wheel carries the CUDA libraries and importing it loads them
+    into the process, so without that preload ``import cupy`` fails inside thinc,
+    ``has_cupy`` stays False, and the transformer silently runs on CPU next to an
+    idle GPU. Every step is best-effort — a machine that turns out to have no
+    usable GPU logs why and keeps running on the CPU.
+    """
+    global _gpu_ready
+    if _gpu_ready is not None:
+        return _gpu_ready
+    _gpu_ready = False
+    if (os.environ.get("PARLAMONITOR_HUSPACY_GPU", "").strip().lower()
+            in ("", "0", "false", "no")):
+        return _gpu_ready
+    detail = ""
+    for mod in ("torch", "cupy"):           # torch FIRST — see above
+        try:
+            __import__(mod)
+        except Exception as exc:
+            detail += f" {mod}_error={exc!r}"
+    try:
+        import spacy
+        _gpu_ready = bool(spacy.prefer_gpu())   # a no-op without cupy
+    except Exception as exc:
+        detail += f" prefer_gpu_error={exc!r}"
+    (logger.info if _gpu_ready else logger.warning)(
+        "PARLAMONITOR_HUSPACY_GPU is set: gpu_active=%s%s", _gpu_ready, detail)
+    return _gpu_ready
+
 
 def get_nlp(model: str | None = None):
     """Lazily load (once per model) a HuSpaCy model, or ``None`` if unavailable.
@@ -82,13 +126,16 @@ def get_nlp(model: str | None = None):
     model's actual pipeline since the component set and names vary across HuSpaCy
     models), leaving the embedding/transformer, tagger/morphologizer, lemmatizer
     and NER. A missing model or import is logged once and degrades to ``None`` so
-    callers can fall back to the regex tokenizer.
+    callers can fall back to the regex tokenizer. With
+    ``PARLAMONITOR_HUSPACY_GPU=1`` the pipeline is moved onto a local GPU first
+    (``_prefer_gpu``).
     """
     model = model or settings.huspacy_model
     if model in _pipelines:
         return _pipelines[model]
     try:
         import spacy
+        _prefer_gpu()
         pipe = spacy.load(model)
         for name in _DISABLED_PIPES:
             if name in pipe.pipe_names:

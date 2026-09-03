@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { defaultCycles, loadMeta, parseCycles, serializeCycles, setCycles, store } from './store.js'
-import { COHESION_ENABLED } from './features.js'
 import {
   claimsOwnScroll, keepInPlace, rememberScroll, scrollTarget, whenReachable,
 } from './lib/scrollMemory.js'
@@ -11,6 +10,12 @@ import {
 // scope — matching the localStorage sentinel in store.js. The guard below keeps
 // it in sync in both directions.
 const CYCLE_QUERY = 'cycle'
+
+// A page that has moved: keep the reader's query and hash, and hand the old
+// path's params (a settlement's `<maz>/<taz>`) to the new route.
+const moved = (name) => (to) => ({
+  name, params: to.params, query: to.query, hash: to.hash,
+})
 
 // Core routes are always present. Feature-module views are **lazily loaded**
 // (separate chunks, EXT-4) and gated on the module being enabled (EXT-6).
@@ -131,16 +136,24 @@ const routes = [
     component: () => import('./modules/representatives/RepProfileView.vue'), props: true,
   },
 
+  // --- where these pages used to live -------------------------------------
+  // The three analyses were sub-tabs of Votes / Törvényjavaslatok / Felszólalók
+  // before they were gathered into their own section. A direct hit on an old
+  // address is answered by the server with a 301 (backend `app/redirects.py`),
+  // which is what a crawler or an existing link gets; these mirror the same
+  // moves for navigation that happens inside the running app, carrying the
+  // query (`?cycle=`, `?tab=`) and hash across unchanged. Declared ahead of the
+  // `/votes/:id` pattern that shares the `/votes/…` shape with one of them.
+  { path: '/votes/cohesion', redirect: moved('cohesion') },
+  { path: '/questions', redirect: moved('questions') },
+  { path: '/settlements', redirect: moved('settlements') },
+  { path: '/settlements/representatives', redirect: moved('settlementReps') },
+  { path: '/settlements/:maz(\\d{2})/:taz(\\d{3})', redirect: moved('settlement') },
+
   // --- bills module ---
   {
     path: '/bills', name: 'bills', meta: { module: 'bills' },
     component: () => import('./modules/bills/BillsListView.vue'),
-  },
-  {
-    // Kérdések — Sankey of who asked a question and who answered (BILL-11).
-    // Part of the bills module; declared before /bills/:id so it isn't shadowed.
-    path: '/questions', name: 'questions', meta: { module: 'bills' },
-    component: () => import('./modules/bills/QuestionsView.vue'),
   },
   {
     path: '/bills/:id', name: 'bill', meta: { module: 'bills' },
@@ -163,39 +176,48 @@ const routes = [
     path: '/votes', name: 'votes', meta: { module: 'votes' },
     component: () => import('./modules/votes/VotesListView.vue'),
   },
-  // Frakcióelemzés — the party co-voting charts (VOTE-8), a sub-tab of Votes.
-  // Declared before /votes/:id so "cohesion" isn't captured as a vote id. Behind
-  // COHESION_ENABLED (features.js): while off, the same path serves the 404 view
-  // rather than disappearing into /votes/:id.
-  ...(COHESION_ENABLED ? [{
-    path: '/votes/cohesion', name: 'cohesion', meta: { module: 'votes' },
-    component: () => import('./modules/votes/CohesionView.vue'),
-  }] : [{
-    path: '/votes/cohesion', component: () => import('./views/NotFoundView.vue'),
-  }]),
   {
     path: '/votes/:id', name: 'vote', meta: { module: 'votes' },
     component: () => import('./modules/votes/VoteView.vue'), props: true,
   },
 
-  // --- settlements module (§6D) ---
+  // --- elemzések (§4E) ---
+  // A section of the site rather than a module: each page below reads the data
+  // of the module named in its `meta`, and switches off with it (EXT-6). The
+  // landing page has no module of its own — it lists whichever analyses are
+  // available, and says so when none are.
   {
-    path: '/settlements', name: 'settlements', meta: { module: 'settlements' },
+    path: '/analyses', name: 'analyses',
+    component: () => import('./modules/analyses/AnalysesView.vue'),
+  },
+  {
+    // Frakcióelemzés — the party co-voting charts (VOTE-8).
+    path: '/analyses/faction-cohesion', name: 'cohesion', meta: { module: 'votes' },
+    component: () => import('./modules/votes/CohesionView.vue'),
+  },
+  {
+    // Kérdések — Sankey of who asked a question and who answered (BILL-11).
+    path: '/analyses/questions', name: 'questions', meta: { module: 'bills' },
+    component: () => import('./modules/bills/QuestionsView.vue'),
+  },
+  {
+    // Települések (§6D) — the settlement-mention map and list.
+    path: '/analyses/settlements', name: 'settlements', meta: { module: 'settlements' },
     component: () => import('./modules/settlements/SettlementsView.vue'),
   },
   {
     // The own-constituency measures (TEL-9). **Not linked from anywhere for now** —
     // the route stays so the page is reachable and citable, but no tab advertises it
-    // (see NAV_SECTIONS in App.vue). Declared before the two-segment settlement route
-    // so "representatives" is never taken for a county code.
-    path: '/settlements/representatives', name: 'settlementReps',
+    // (see the registry in modules/analyses). Declared before the two-segment
+    // settlement route so "representatives" is never taken for a county code.
+    path: '/analyses/settlements/representatives', name: 'settlementReps',
     meta: { module: 'settlements' },
     component: () => import('./modules/settlements/SettlementRepsView.vue'),
   },
   {
     // A settlement is identified by the register's own "<maz>/<taz>" key, kept as
     // two path segments so the URL carries the same id the API does.
-    path: '/settlements/:maz(\\d{2})/:taz(\\d{3})', name: 'settlement',
+    path: '/analyses/settlements/:maz(\\d{2})/:taz(\\d{3})', name: 'settlement',
     meta: { module: 'settlements' },
     component: () => import('./modules/settlements/SettlementView.vue'), props: true,
   },
@@ -257,15 +279,8 @@ router.beforeEach(async (to) => {
   }
   // Embed routes are self-contained (their own `?cycle=` + params) and must not
   // adopt the visitor's saved cycle or have their URL rewritten — the iframe
-  // snippet has to stay byte-for-byte what the sharer copied. Let them through —
-  // except the figure of a page that is currently off the public site, which is
-  // shown as a 404 like its host page (previously copied iframes go blank).
-  if (to.meta.embed) {
-    if (!COHESION_ENABLED && to.params.kind === 'faction-cohesion') {
-      return { name: 'notfound', params: { pathMatch: to.path.substring(1).split('/') }, query: to.query }
-    }
-    return true
-  }
+  // snippet has to stay byte-for-byte what the sharer copied. Let them through.
+  if (to.meta.embed) return true
   // The constituency lookup (REP-10) sits inside an enabled module but depends on
   // an external source, so the backend can switch it off on its own — in which case
   // its endpoints 404 and so must its page, rather than rendering an error state.
@@ -337,7 +352,7 @@ router.beforeEach(async (to) => {
     // bounce to the vote list, keeping the scope. Also fires when the user
     // switches to "all cycles" while already viewing the page.
     if (to.name === 'cohesion' && !store.cycles.length) {
-      return { name: 'votes', query: to.query, hash: to.hash }
+      return { name: 'analyses', query: to.query, hash: to.hash }
     }
   }
   return true

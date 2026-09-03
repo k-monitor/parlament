@@ -54,9 +54,15 @@ ROBOTS_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400"
 
 # --- what goes in the sitemaps ----------------------------------------------
 
-# Static routes, with the module each belongs to (None = always present). These
-# are the entry points a crawler can actually reach the corpus through.
-STATIC_PATHS: tuple[tuple[str, str | None], ...] = (
+# The modules the Elemzések section (§4E) gathers its pages from — the backend's
+# half of `frontend/src/modules/analyses/registry.js`. The section's landing page
+# is there as long as any one of them is mounted.
+ANALYSIS_MODULES = ("votes", "bills", "settlements")
+
+# Static routes, with the module each belongs to (None = always present; a tuple
+# = present while any one of them is). These are the entry points a crawler can
+# actually reach the corpus through.
+STATIC_PATHS: tuple[tuple[str, str | tuple[str, ...] | None], ...] = (
     ("/", None),
     ("/about", None),
     ("/search", "proceedings"),
@@ -74,9 +80,26 @@ STATIC_PATHS: tuple[tuple[str, str | None], ...] = (
     ("/representatives/portfolios", "portfolios"),
     ("/bills", "bills"),
     ("/documents", "bills"),
-    ("/questions", "bills"),
     ("/votes", "votes"),
+    # Elemzések (§4E). The section index, and the two analyses that stand as
+    # entry points of their own. Települések is deliberately absent, exactly as
+    # it was under its old address: its pages carry no card and stay off the
+    # index (see `_ROUTE_CARDS` in og.py).
+    ("/analyses", ANALYSIS_MODULES),
+    ("/analyses/faction-cohesion", "votes"),
+    ("/analyses/questions", "bills"),
 )
+
+
+def static_enabled(module: str | tuple[str, ...] | None) -> bool:
+    """Whether a `STATIC_PATHS` entry's page is mounted in this deployment
+    (EXT-6). Shared with og.py, which builds the crawlable nav from the same
+    list, so the sitemap and that nav can never disagree."""
+    if module is None:
+        return True
+    if isinstance(module, tuple):
+        return any(settings.module_enabled(m) for m in module)
+    return settings.module_enabled(module)
 
 
 @dataclass(frozen=True)
@@ -220,8 +243,7 @@ def _enabled_sections() -> list[_Section]:
 
 
 def _enabled_static() -> list[str]:
-    return [p for p, mod in STATIC_PATHS
-            if mod is None or settings.module_enabled(mod)]
+    return [p for p, mod in STATIC_PATHS if static_enabled(mod)]
 
 
 # --- URL building -----------------------------------------------------------

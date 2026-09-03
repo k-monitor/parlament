@@ -15,6 +15,8 @@ src/
   modules/
     proceedings/           SearchView, ViewerView (hls.js), SessionsView, SessionView (§5)
     representatives/        RepListView, RepProfileView, FactionsView (§6)
+    analyses/              the Elemzések section (§4E): registry.js describes what is
+                           in it — the landing cards, sub-tabs and route set follow
   views/                   HomeView, AboutView, NotFoundView
 ```
 

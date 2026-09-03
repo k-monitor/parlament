@@ -345,7 +345,10 @@ if settings.frontend_dist and os.path.isdir(settings.frontend_dist):
     # routes (a shared sentence shows its quote + speaker, etc.). Registered
     # BEFORE the catch-all SPA mount so it shadows the static shell for these
     # exact paths; every other client route still gets the generic shell.
-    from . import og
+    from . import og, redirects
+    # Pages that have moved keep resolving: a 301 from every old address, ahead
+    # of both the card routes and the SPA mount so neither answers them (§4E).
+    redirects.register(app)
     og.register(app)
 
     app.mount("/", SPAStaticFiles(directory=settings.frontend_dist, html=True),

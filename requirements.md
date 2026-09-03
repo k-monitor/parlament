@@ -548,6 +548,85 @@ site-wide behaviour, not a per-view nicety.
 
 ---
 
+## 4E. Cross-cutting: The Elemzések Section
+
+A few pages on this site are not a record of anything — they are a **calculation
+over** the record: how the factions vote together, where a question travels from
+the asker to the answering ministry, which settlements ever get named in the
+chamber. Each was born inside the module whose data it reads and lived as a
+sub-tab there, which scattered three pages of one kind across three corners of
+the site and left each looking like a footnote to a browse list. They are now one
+section — **Elemzések** — with its own entry in the top bar.
+
+- **ANA-1 (MUST).** Elemzések is a **navigation section, not a module**. Every
+  page in it goes on belonging to the module whose data it derives from — the
+  cohesion charts to Votes, the questions Sankey to Bills, the settlement map to
+  Settlements — and disappears with that module, never faked (EXT-6). The section
+  owns no tables, no API routes and no scraper stage of its own: it owns a landing
+  page and a tab bar. (Tárcák set the precedent from the other side — a module
+  whose pages sit in *another* section's tab bar, §7/MIN-5.)
+- **ANA-2 (MUST).** The section has a **landing page** (`/analyses`) listing every
+  analysis the deployment actually serves: what each is computed from ("szavazások
+  alapján"), what it shows, and a link into it. That page is the section's front
+  door and the framing these figures were missing — an analysis reached as one
+  more tab of a browse list reads as one more column of that list, and a
+  co-voting percentage with nothing around it invites a conclusion it does not
+  support (TRUST-1).
+- **ANA-2a.** The section also **looks like a different part of the site**, since
+  that is what it is. It is set apart **before it is entered**: in the top bar its
+  entry is not a sixth item in the row of browse sections but a **chip** — set off
+  by its own air and outline, and filled with the section's own band colour while
+  the reader is inside it, so the bar and the page beneath it read as one piece.
+  The separation is carried by the chip itself and never by a rule between items:
+  that row wraps on a narrow screen, and under a wide "Segoe UI" fallback it is
+  close to wrapping at any width, which leaves a separate rule element stranded at
+  the end of a line. For the same reason the row's fit is left ~40 px of slack
+  rather than a few pixels — enough for the widest system font a reader is likely
+  to resolve it to. In place of the plain sub-tab bar the browse
+  sections carry, every page under `/analyses` then opens with a **section
+  masthead** — a band naming the section, saying in one line what it is, and
+  holding its tabs — and the page ground behind it shifts a shade warmer for as
+  long as the reader is inside. The site's own chrome (brand, cycle chooser,
+  footer) is otherwise untouched: this is a room in the same building, not a
+  second site. The masthead is **full** on the
+  landing page (whose `h1` it is, so the page does not repeat it) and **compact**
+  on an analysis's own page, where the page's title is the one the reader came
+  for and the band only has to answer *where am I*.
+- **ANA-3.** The section's contents are described in **one place**
+  (`frontend/src/modules/analyses/registry.js`): the landing cards, the sub-tab
+  bar and the set of routes that count as "inside the section" are all built from
+  it, so adding an analysis is an entry, a route and its strings — no navigation
+  code. The backend keeps the one thing it cannot read from there
+  (`ANALYSIS_MODULES` in `seo.py`), which decides whether the section is
+  advertised in the sitemap at all.
+- **ANA-4 (MUST).** An analysis that is **within-cycle by nature** (the faction
+  cohesion, VOTE-8) is *unavailable*, not silently absent, under the "all cycles"
+  scope (§4A): its tab goes, its route bounces to the landing page, and its card
+  stays on that page greyed out **with the reason**. A reader who cannot find a
+  page they have seen before is worse served than one who is told why.
+- **ANA-5 (MUST).** The pages **changed address** (`/votes/cohesion`,
+  `/questions`, `/settlements/…` → `/analyses/…`), and every old address answers a
+  **server-side 301** to its new one, carrying the query string across (§4A's
+  `?cycle=`, a chart's `?tab=`) so an old link lands on the view it named. A
+  client-side redirect would leave a crawler with a 200 at the old URL until it
+  ran the app — the failure mode §SEO-2 exists because of. The SPA carries a
+  mirror of the same moves for navigation inside the already-running app.
+
+> **✅ realized.** `/analyses` (landing) + `/analyses/faction-cohesion`,
+> `/analyses/questions`, `/analyses/settlements[/…]`, built from the registry;
+> `app/redirects.py` answers the five old addresses with 301s ahead of both the
+> card routes and the SPA mount. The nav chip (`.nav-analyses`) and the masthead
+> (`.sectionhead`, `.compact` off the landing route) live in `App.vue`; the warm
+> ground is a `body.section-analyses` class, following the viewer's
+> `body.viewer-pane` precedent. All three tones are tokens (`--section-band` /
+> `--section-bg` / `--section-line`) in `styles.css`, so the chip, the band and the
+> page ground cannot drift apart. The section's own card and the two analyses that
+> stand as entry points are in `_ROUTE_CARDS`/`STATIC_PATHS`; Települések keeps
+> the indexing status it had at its old address. Frakcióelemzés, held back for
+> want of exactly this framing, is **on** with the section.
+
+---
+
 ## 5. Functional Requirements — Module: Proceedings Search & Viewer
 
 ### 5.1 Search
@@ -1654,7 +1733,8 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   diagram is **keyboard-navigable and screen-reader-labelled** (A11Y-1) and
   carries a short methodology note (TRUST-1). It is part of the Bills module's vertical slice
   (BILL-5): new `/api/v1/bills/questions/sankey` and `/api/v1/bills/questions/list`
-  routes and a new frontend sub-tab, disabled with the rest of the module (EXT-6).
+  routes and a frontend page — in the Elemzések section (§4E), disabled with the
+  rest of the module wherever it sits (EXT-6).
   The Sankey diagram is **embeddable** (§4C).
 
 ---
@@ -1725,7 +1805,8 @@ header).
   (`--no-detail`) for a fast list-only refresh.
 - **VOTE-8 (scope).** v1 covers the current cycle's votes with their per-MP roll
   call, per-faction breakdown and bill links, plus a **party-cohesion analysis**
-  (*Frakcióelemzés*, a Votes sub-tab): computed house-wide over the cycle's
+  (*Frakcióelemzés*, a page of the Elemzések section — §4E; a Votes sub-tab until
+  that section existed): computed house-wide over the cycle's
   roll-call set, it shows how factions vote together three ways — an **agreement
   matrix**, cohesion/alignment **bars**, and an MDS **bloc map** — each meeting
   the site's accessibility bar (A11Y-1) and carrying a methodology note (TRUST-1). This
@@ -2180,11 +2261,12 @@ places in it.
   loader step and `settlement` / `settlement_mention` / aggregate tables derived
   from the shared `sentence`, `speech`, `person` and `entity` rows (EXT-2 — it
   duplicates none of them), its own `/api/v1/settlements` routes, and its own
-  lazily-loaded frontend views. Its **pages sit in the Felszólalók tab bar**, not in a
-  section of their own (the precedent is Tárcák, MIN-5): the question the module
-  actually answers — whose places get named, and by whom — is a question about members,
-  and a top-level entry beside *Keresés* and *Szavazások* claimed a prominence the
-  reader's own path does not. It **owns no scraping of its own**. Disabling it via
+  lazily-loaded frontend views. Its **pages sit in the Elemzések tab bar** (§4E),
+  not in a section of their own: what the module produces is a calculation over the
+  proceedings — which places get named, and by whom — which is exactly what that
+  section gathers, and a top-level entry beside *Keresés* and *Szavazások* claimed a
+  prominence the reader's own path does not. (Before Elemzések existed it sat in the
+  Felszólalók tab bar on the Tárcák precedent, MIN-5.) It **owns no scraping of its own**. Disabling it via
   `PARLAMONITOR_MODULES` removes its nav entry, routes and the profile panel with no
   errors (EXT-6), and because its geography comes from the constituency lookup's
   source, `PARLAMONITOR_EVK_LOOKUP=0` (or an upstream outage) leaves the mentions
@@ -2331,9 +2413,9 @@ places in it.
   > cue, 3 631 as county readings, 1 704 as sentence-initial bare names, 1 553 for
   > want of a place ending). `/api/v1/settlements` serves the listing, the map,
   > the coverage summary, a settlement's page with its citations and its MP, and the
-  > TEL-9 measures; the frontend adds *Települések* as the last tab of the Felszólalók
-  > section, with the map + the blind-spot mode and a settlement page, plus a panel on
-  > every MP's profile. A ratio ordering carries a **five-mention floor**, stated on
+  > TEL-9 measures; the frontend adds *Települések* as a page of the Elemzések
+  > section (§4E), with the map + the blind-spot mode and a settlement page, plus a
+  > panel on every MP's profile. A ratio ordering carries a **five-mention floor**, stated on
   > the page: ranked without one, the top of the list was whoever named exactly one
   > place that happened to be theirs.
   >
@@ -2430,6 +2512,15 @@ rework of existing features.
 > pages are mounted in the Representatives section's tab bar while remaining a
 > separately switchable module, which is the first time the two have come apart:
 > a section's tab bar is a navigation choice, not a module boundary.
+>
+> The **Elemzések section (§4E)** carries that same observation to its conclusion
+> from the other side: three pages that were sub-tabs of Votes, Bills and
+> Settlements now sit together in a section with its own top-bar entry and landing
+> page, while each remains a page *of the module whose data it reads* and switches
+> off with it (EXT-6). It cost no tables, no API routes and no scraper stage — a
+> landing view, a registry the navigation is generated from, and 301s from the
+> addresses the pages used to have. A section, it turns out, is not a module at
+> all; it is a claim about what belongs next to what.
 
 ---
 

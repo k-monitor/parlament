@@ -451,6 +451,36 @@ def _now() -> str:
 
 # --- CLI -------------------------------------------------------------------
 
+def check_auth() -> int:
+    """Log in and say whether the credential works — nothing else.
+
+    A pass that cannot post logs one 401 and retries forever, which is a slow way
+    to test a secret. This exercises exactly the same parse and the same
+    createSession call, on demand, and reports the *shape* of what it sent so a
+    mistyped variable is visible without ever printing the password."""
+    creds = bluesky.credentials()
+    if not creds:
+        print("no credentials configured — set PARLAMONITOR_BLUESKY_AUTH="
+              "handle:app-password (or the _HANDLE / _APP_PASSWORD pair)",
+              file=sys.stderr)
+        return 1
+    identifier, password = creds
+    groups = [len(g) for g in password.split("-")]
+    print(f"service    {settings.bluesky_service}\n"
+          f"identifier {identifier}\n"
+          f"password   {len(password)} chars in {len(groups)} dash-separated "
+          f"group(s){'' if groups == [4, 4, 4, 4] else '  <- an app password is 4-4-4-4'}",
+          file=sys.stderr)
+    try:
+        session = bluesky.BlueskyClient(identifier, password).login()
+    except bluesky.BlueskyError as exc:
+        print(f"FAILED     {exc}", file=sys.stderr)
+        return 1
+    print(f"OK         authenticated as {session.handle} ({session.did})",
+          file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Announce newly processed sitting days (and the haikus said "
@@ -467,6 +497,9 @@ def main(argv: list[str] | None = None) -> int:
                          "per-run cap, so it takes several passes)")
     ap.add_argument("--today", help="pin today's date (YYYY-MM-DD) for the "
                                     "recency window; for testing")
+    ap.add_argument("--check-auth", action="store_true",
+                    help="only log in and report whether the configured "
+                         "credential works; post nothing, read nothing")
     ap.add_argument("-q", "--quiet", action="store_true", help="errors only")
     args = ap.parse_args(argv)
 
@@ -474,6 +507,9 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(levelname)s %(name)s: %(message)s",
                         stream=sys.stderr)
     logging.getLogger("app").setLevel(logging.ERROR if args.quiet else logging.INFO)
+
+    if args.check_auth:
+        return check_auth()
 
     try:
         today = date.fromisoformat(args.today) if args.today else None

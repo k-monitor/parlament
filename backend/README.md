@@ -124,6 +124,7 @@ uvicorn app.main:app --reload                      # http://localhost:8000
 | `PARLAMONITOR_PHOTOS_DIR` | `../data/media/photos` | MP portrait directory |
 | `PARLAMONITOR_FRONTEND_DIST` | — | if set, serves the built SPA from one process (OPS-1) |
 | `PARLAMONITOR_MAX_SEARCH_TOTAL` | 5000 | cap on reported search totals |
+| `PARLAMONITOR_HUSPACY_GPU` | `0` | `1` runs the local HuSpaCy model on a CUDA GPU (needs `torch` + `cupy-cuda12x` in the venv) — for a build or a `--reextract-entities`/`--remeasure-speeches` backfill on a GPU machine; logs and stays on the CPU when no GPU is usable |
 | `PARLAMONITOR_MODAL_CYCLES` | `latest` | which electoral cycles may be processed on Modal (`latest`/`all`/`43,42`) — the metered-spend guard; out-of-scope sittings use a local model, else the regex tokenizer (and no entity mentions) |
 | `PARLAMONITOR_SPEECH_METRICS` | `1` | measure + serve per-speech readability & lexical diversity (§5.7); `0` skips the pass and hides the annotations |
 | `PARLAMONITOR_LIX_THRESHOLD` | `8` | LIX long-word threshold — a long word is *longer than* this. Defaults to `saphes`' calibration for Hungarian; Björnsson's Swedish `6` saturates here (42% of tokens "long" vs a ~25% norm) |
@@ -141,6 +142,7 @@ read-only and remembers what it said in `bluesky-state.json` beside it, so it is
 safe to run repeatedly and from anywhere:
 
 ```bash
+python -m app.social --check-auth        # does the credential work? log in and stop
 python -m app.social --dry-run          # decide + print; send nothing, remember nothing
 python -m app.social                    # one real pass (needs PARLAMONITOR_BLUESKY_AUTH)
 python find_haikus.py --period 43       # the corpus-wide haiku exploration CLI

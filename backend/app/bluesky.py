@@ -51,6 +51,30 @@ class BlueskyError(RuntimeError):
     unrecorded, so the next run retries it rather than losing the post."""
 
 
+def _identifier(raw: str) -> str:
+    """An identifier in the shape createSession accepts: a **bare** handle, DID or
+    email.
+
+    A handle copied out of the Bluesky UI carries a leading ``@``, which the PDS
+    rejects with the very same "Invalid identifier or password" as a wrong app
+    password would — the two are indistinguishable in a log, so drop it here."""
+    return raw.strip().lstrip("@").strip()
+
+
+def implausible_identifier(identifier: str) -> str:
+    """Why ``identifier`` cannot be what createSession wants, or ``""``.
+
+    An AT Protocol handle is a **domain** (``parlamonitor.bsky.social``), so a
+    single bare word is never one — and yet the PDS answers it with the very same
+    "Invalid identifier or password" as a revoked app password, which sends you
+    looking at the secret instead of the name. A DID is the one dotless form; an
+    email has a dot of its own."""
+    if identifier.startswith("did:") or "." in identifier:
+        return ""
+    return (f"{identifier!r} cannot be a Bluesky handle — a handle is a full domain, "
+            f"so this is probably '{identifier}.bsky.social'")
+
+
 def credentials() -> tuple[str, str] | None:
     """``(identifier, app_password)`` from the environment, or ``None``.
 
@@ -63,14 +87,16 @@ def credentials() -> tuple[str, str] | None:
     raw = (settings.bluesky_auth or "").strip()
     if raw:
         identifier, _, password = raw.rpartition(":")
-        identifier, password = identifier.strip(), password.strip()
+        identifier, password = _identifier(identifier), password.strip()
         if identifier and password:
+            if flaw := implausible_identifier(identifier):
+                logger.warning("PARLAMONITOR_BLUESKY_AUTH: %s", flaw)
             return identifier, password
         logger.warning("PARLAMONITOR_BLUESKY_AUTH is not 'handle:app-password' — "
                        "ignoring it")
         return None
     if settings.bluesky_handle and settings.bluesky_password:
-        return settings.bluesky_handle.strip(), settings.bluesky_password.strip()
+        return _identifier(settings.bluesky_handle), settings.bluesky_password.strip()
     return None
 
 
@@ -189,8 +215,21 @@ class BlueskyClient:
         """Exchange the app password for an access token (idempotent per run)."""
         if self.session:
             return self.session
-        data = self._call("com.atproto.server.createSession",
-                          {"identifier": self.identifier, "password": self._password})
+        try:
+            data = self._call("com.atproto.server.createSession",
+                              {"identifier": self.identifier, "password": self._password})
+        except BlueskyError as exc:
+            # A wrong handle, a revoked app password and the account password used by
+            # mistake all come back as the same 401. The announcer's log line is the
+            # only place anyone ever sees this, so name the account that was tried and
+            # what to look at — otherwise every sync repeats an unactionable error.
+            cause = exc.__cause__
+            if isinstance(cause, urllib.error.HTTPError) and cause.code in (400, 401):
+                raise BlueskyError(
+                    f"{exc} (tried identifier {self.identifier!r} on {self.service} — "
+                    "PARLAMONITOR_BLUESKY_AUTH wants a bare handle/DID/email and a "
+                    "current app password, not the account password)") from exc
+            raise
         if not data.get("accessJwt") or not data.get("did"):
             raise BlueskyError("createSession returned no access token")
         self.session = Session(did=data["did"],

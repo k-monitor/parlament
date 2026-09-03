@@ -465,6 +465,8 @@ def check_auth() -> int:
               file=sys.stderr)
         return 1
     identifier, password = creds
+    if flaw := bluesky.implausible_identifier(identifier):
+        print(f"WARNING    {flaw}", file=sys.stderr)
     groups = [len(g) for g in password.split("-")]
     print(f"service    {settings.bluesky_service}\n"
           f"identifier {identifier}\n"

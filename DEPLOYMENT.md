@@ -777,6 +777,7 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_WORDCLOUD_BACKEND` | `auto` | `auto`/`huspacy`/`regex`/`modal` term extraction (WCLOUD-6) |
 | `PARLAMONITOR_HUSPACY_MODEL` | `hu_core_news_trf` | model for the newest cycle — must match the primary Modal image |
 | `PARLAMONITOR_HUSPACY_MODEL_ARCHIVE` | `hu_core_news_md` | model for frozen earlier cycles — must match the archive Modal image |
+| `PARLAMONITOR_HUSPACY_GPU` | `0` | `1` moves the **local** HuSpaCy pipeline onto a CUDA GPU (`spacy.prefer_gpu()` after preloading torch+cupy). For running a build/backfill on a machine that has a GPU instead of paying for Modal; a no-op — logged — where no GPU is usable |
 | `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` | — | Modal auth (required when backend=`modal`) |
 | `PARLAMONITOR_MODAL_APP` | `parlamonitor-nlp` | deployed Modal app for the newest cycle's model |
 | `PARLAMONITOR_MODAL_APP_ARCHIVE` | `parlamonitor-nlp-md` | deployed Modal app for the archive model (only reachable when the scope is widened) |
@@ -1001,8 +1002,27 @@ PARLAMONITOR_BLUESKY_AUTH=parlamonitor.bsky.social:abcd-efgh-ijkl-mnop
 PARLAMONITOR_SITE_URL=https://parlamonitor.example.org
 ```
 
-Try it before letting it speak — this decides what it *would* post, prints it, and
-touches neither the network nor its state file:
+Check the credential first — this only logs in, and reports the identifier and the
+*shape* of the password it read (never the password itself):
+
+```bash
+podman-compose run --rm init announce --check-auth
+```
+
+A `401 Invalid identifier or password` here means one of four things: the identifier
+is not a handle, the app password was revoked or regenerated, the account password
+was used instead of an [app password](https://bsky.app/settings/app-passwords), or
+the value never reached the container (`podman-compose config | grep BLUESKY_AUTH`).
+Without this, the only symptom is one 401 per sync pass, retried forever — nothing
+is lost, but nothing is posted either.
+
+The identifier is the trap: a handle is a **full domain**, so it is
+`parlamonitor.bsky.social`, never a bare `parlamonitor` — and the PDS rejects the
+bare word with the exact same message as a bad password. `--check-auth` (and the
+sync log) calls that out on its own.
+
+Then try what it would say — this decides the posts, prints them, and touches
+neither the network nor its state file:
 
 ```bash
 podman-compose run --rm init announce --dry-run

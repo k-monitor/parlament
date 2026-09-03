@@ -8,8 +8,11 @@ recording fake client.
 
 from __future__ import annotations
 
+import io
 import json
+import logging
 import sqlite3
+import urllib.error
 from datetime import date
 
 import pytest
@@ -163,6 +166,60 @@ def test_credentials_come_from_one_env_var(monkeypatch):
     monkeypatch.setattr(settings, "bluesky_handle", "bot.example")
     monkeypatch.setattr(settings, "bluesky_password", "pw")
     assert bluesky.credentials() == ("bot.example", "pw")
+
+
+def test_a_handle_pasted_with_its_at_sign_still_authenticates(monkeypatch):
+    """createSession rejects "@bot.example" exactly like a wrong password, so the
+    leading @ a handle carries in the Bluesky UI is stripped, not passed on."""
+    monkeypatch.setattr(settings, "bluesky_auth", " @bot.example:abcd-efgh-ijkl-mnop ")
+    assert bluesky.credentials() == ("bot.example", "abcd-efgh-ijkl-mnop")
+    monkeypatch.setattr(settings, "bluesky_auth", "")
+    monkeypatch.setattr(settings, "bluesky_handle", "@bot.example")
+    monkeypatch.setattr(settings, "bluesky_password", "pw")
+    assert bluesky.credentials() == ("bot.example", "pw")
+
+
+def test_a_bare_word_identifier_is_called_out_as_not_a_handle(caplog):
+    """The 401 for `parlamonitor` is identical to the one for a revoked app
+    password, so the shape of the *name* has to be reported separately (this is
+    what the deploy host actually had wrong)."""
+    assert "parlamonitor.bsky.social" in bluesky.implausible_identifier("parlamonitor")
+    # The valid forms stay silent: a handle is a domain, a DID has no dot.
+    assert bluesky.implausible_identifier("parlamonitor.bsky.social") == ""
+    assert bluesky.implausible_identifier("did:plc:abc123") == ""
+    assert bluesky.implausible_identifier("bot@example.org") == ""
+
+    with caplog.at_level(logging.WARNING, logger="app.bluesky"):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "bluesky_auth", "parlamonitor:qvsa-pbv2-cwim-siij")
+            # Still returned — a warning, not a veto: only the PDS decides.
+            assert bluesky.credentials() == ("parlamonitor", "qvsa-pbv2-cwim-siij")
+    assert "probably 'parlamonitor.bsky.social'" in caplog.text
+    assert "qvsa-pbv2-cwim-siij" not in caplog.text
+
+
+def test_rejected_login_names_the_account_it_tried():
+    """The announcer logs this line and nothing else, so a 401 has to carry enough
+    to act on: which identifier, and which knob holds it."""
+    def opener(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {},
+                                     io.BytesIO(b'{"error":"AuthenticationRequired",'
+                                                b'"message":"Invalid identifier or password"}'))
+    client = bluesky.BlueskyClient("bot.example", "abcd-efgh-ijkl-mnop", opener=opener)
+    with pytest.raises(bluesky.BlueskyError) as excinfo:
+        client.login()
+    message = str(excinfo.value)
+    assert "Invalid identifier or password" in message
+    assert "'bot.example'" in message
+    assert "PARLAMONITOR_BLUESKY_AUTH" in message
+    assert "abcd-efgh-ijkl-mnop" not in message          # never log the secret
+
+    # A transport failure is not a credential problem: no misleading hint.
+    def flaky(req, timeout=None):
+        raise urllib.error.URLError("connection reset")
+    with pytest.raises(bluesky.BlueskyError) as excinfo:
+        bluesky.BlueskyClient("bot.example", "pw", opener=flaky).login()
+    assert "PARLAMONITOR_BLUESKY_AUTH" not in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

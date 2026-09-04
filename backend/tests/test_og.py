@@ -172,6 +172,58 @@ def test_share_video_only_speech_has_no_quote_but_still_a_card(og_client):
     assert "„" not in m["og:description"]  # no empty quote marks
 
 
+@pytest.mark.parametrize("path, published", [
+    ("/proceedings/43001-1", "2026-05-09"),            # the sitting date
+    ("/proceedings/43001-2", "2026-05-09"),            # …a video-only speech too
+    ("/sessions/43001", "2026-05-09"),                 # the day itself
+    ("/bills/bill-uuid-1", "2026-05-10T09:00:00Z"),    # when it was submitted
+    ("/documents/bill-uuid-1", "2026-05-10T09:00:00Z"),
+    ("/votes/v-1", "2026-05-26T13:04:20Z"),            # the moment of the vote
+])
+def test_every_article_card_carries_its_publication_date(og_client, path, published):
+    """An `og:type=article` card with no `article:published_time` is undated for
+    every consumer that reads og:* rather than the ld+json block — and the vote
+    card, which declares no entity block at all, has no other machine-readable
+    date on the page. A sitting day (and so a speech) is date-only, since its
+    `date_start` is midnight-padded rather than a real time of day; an iromány
+    and a vote keep the full upstream timestamp."""
+    r = og_client.get(path)
+    m = _meta(r.text)
+    assert m["og:type"] == "article"
+    assert m["article:published_time"] == published
+    # article:* is an OG namespace, so it is emitted as `property`, not `name`.
+    assert f'<meta property="article:published_time" content="{published}" />' in r.text
+
+
+def test_og_date_agrees_with_the_structured_data(og_client):
+    """Where a card carries both, the two must say the same thing — one page
+    advertising two publication dates is worse than advertising none."""
+    speech = _jsonld(og_client.get("/proceedings/43001-1").text)
+    article = next(b for b in speech if b["@type"] == "Article")
+    assert article["datePublished"] == _meta(
+        og_client.get("/proceedings/43001-1").text)["article:published_time"]
+
+    iromany = _jsonld(og_client.get("/bills/bill-uuid-1").text)
+    law = next(b for b in iromany if b["@type"] == "Legislation")
+    assert law["datePublished"] == _meta(
+        og_client.get("/bills/bill-uuid-1").text)["article:published_time"]
+
+    # The sitting day is an Event, so its date lives in `startDate`.
+    event = next(b for b in _jsonld(og_client.get("/sessions/43001").text)
+                 if b["@type"] == "Event")
+    assert event["startDate"] == _meta(
+        og_client.get("/sessions/43001").text)["article:published_time"]
+
+
+def test_a_record_with_no_date_emits_no_date_tag():
+    """The tag is omitted rather than emitted empty: `article:published_time`
+    with a blank value is a malformed date, not a missing one."""
+    assert og._published_time(None) == []
+    assert og._published_time("") == []
+    assert og._published_time("2026-05-09") == [
+        ("article:published_time", "2026-05-09")]
+
+
 def test_share_unknown_speech_is_a_noindex_404_carrying_the_app(og_client):
     # An unknown id is a real 404 — a 200 "not found" page is the soft 404 that
     # Search Console files under "Crawled – currently not indexed" (§SEO-4) —

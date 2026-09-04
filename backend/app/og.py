@@ -319,6 +319,29 @@ _KNOWN_PREFIXES = ("/proceedings/", "/representatives/", "/sessions/",
                    "/bills/", "/documents/", "/votes/", "/embed/")
 
 
+def _published_time(value: str | None) -> list[tuple[str, str]]:
+    """`article:published_time` for an `og:type=article` card — OpenGraph's
+    counterpart to JSON-LD's `datePublished` — as an `extra` pair list that is
+    empty when the record carries no date.
+
+    Without it a card is undated for every consumer that reads og:* and not the
+    ld+json block (most feed readers, most link unfurlers); on the vote card,
+    which declares no entity block at all, it is the ONLY machine-readable date
+    on the page.
+
+    The value goes through verbatim: every source column is already ISO 8601,
+    in one of two shapes the property accepts alike — date-only for a sitting
+    day (`session.date`, because `date_start` is midnight-padded rather than a
+    real time of day) and a full UTC timestamp for an iromány or a vote.
+
+    Nothing here emits `article:modified_time`: none of these records is ever
+    revised, and the timestamps that do move (`session.scraped_at`, a re-load of
+    an iromány) would churn on every re-scrape and claim a change to the content
+    that never happened.
+    """
+    return [("article:published_time", value)] if value else []
+
+
 def _is_known_path(path: str) -> bool:
     return (path in ("", "/") or path in _ROUTE_CARDS
             or path.startswith(_KNOWN_PREFIXES))
@@ -690,7 +713,8 @@ def register(app) -> None:
                 # A portrait suits the small square summary card; the generic
                 # logo fallback (landscape) suits the large card.
                 card="summary" if has_photo else "summary_large_image",
-                extra=[("article:author", speaker)],
+                extra=[("article:author", speaker)]
+                      + _published_time(sp["session_date"]),
                 jsonld=[article, _breadcrumbs(request, [
                     ("Parlamonitor", "/"), ("Ülésnapok", "/sessions"),
                     (date_hu or "Ülésnap", f"/sessions/{sp['session_id']}"),
@@ -813,6 +837,10 @@ def register(app) -> None:
             request, title=_truncate(title, 120),
             description=_truncate(description),
             url_path=f"/representatives/portfolios/{slug}", og_type="article",
+            # The one article card with no `article:published_time`: a tárca is a
+            # standing institution, not a dated document. `portfolio` carries no
+            # date of its own, and the office terms filed under it belong to the
+            # holders, not to this page.
             jsonld=[_breadcrumbs(request, [
                 ("Parlamonitor", "/"), ("Tárcák", "/representatives/portfolios"),
                 (_truncate(p["name"], 60), f"/representatives/portfolios/{slug}")])],
@@ -854,6 +882,7 @@ def register(app) -> None:
             return render(
                 request, title=title, description=description,
                 url_path=f"/sessions/{session_id}", og_type="article",
+                extra=_published_time(ss["date"]),
                 jsonld=[event, _breadcrumbs(request, [
                     ("Parlamonitor", "/"), ("Ülésnapok", "/sessions"),
                     (date_hu or "Ülésnap", f"/sessions/{session_id}")])],
@@ -953,6 +982,7 @@ def register(app) -> None:
             return render(
                 request, title=title, description=_truncate(description),
                 url_path=url_path, og_type="article",
+                extra=_published_time(b["submitted_date"]),
                 jsonld=[legislation, _breadcrumbs(request, [
                     ("Parlamonitor", "/"),
                     ("Törvényjavaslatok" if is_bill else "Egyéb irományok",
@@ -1024,6 +1054,7 @@ def register(app) -> None:
                 request, title=_truncate(title, 120),
                 description=_truncate(description),
                 url_path=f"/votes/{vote_id}", og_type="article",
+                extra=_published_time(v["vote_datetime"]),
                 jsonld=[_breadcrumbs(request, [
                     ("Parlamonitor", "/"), ("Szavazások", "/votes"),
                     (_truncate(lead or "Szavazás", 60), f"/votes/{vote_id}")])],

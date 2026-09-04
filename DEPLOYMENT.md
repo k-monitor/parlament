@@ -799,6 +799,7 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_BLUESKY_HAIKU_MPS_ONLY` | `1` | require a mandate-holding member; `0` also includes ministers/advocates who spoke |
 | `PARLAMONITOR_BLUESKY_MAX_AGE_DAYS` | `30` | how far back a day may be and still count as news; also bounds the work (only these days are queried/scanned) |
 | `PARLAMONITOR_BLUESKY_MAX_POSTS` | `4` | hard cap per pass — the flood backstop; the rest waits for the next pass |
+| `PARLAMONITOR_BLUESKY_POST_INTERVAL` | `1` | seconds to wait **between** posts in one pass (never before the first). Posts stamped with the same `createdAt` collapse in the AppView's author feed — only the last of each shows on the profile — and spacing also keeps a burst clear of the PDS write limits. `0` disables the wait |
 | `PARLAMONITOR_BLUESKY_STATE` | _(`bluesky-state.json` beside the DB)_ | the bot's memory of what it already said. On the `/db` volume by default, so it survives restarts **and** `REBUILD_DB` |
 | `PARLAMONITOR_BLUESKY_SERVICE` | `https://bsky.social` | the PDS to post to (change only for a self-hosted PDS) |
 | `PARLAMONITOR_BLUESKY_LANG` | `hu` | declared post language, so clients don't offer to translate Hungarian into Hungarian |

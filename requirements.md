@@ -2713,6 +2713,11 @@ what was said.
   per sitting day rather than per pass — so a transcript arriving in five
   instalments still yields one poem, not five. Whatever a failure prevents from
   going out stays unrecorded and is retried; whatever went out is never repeated.
+  Posts sent in one pass MUST be **distinguishable in time** — a distinct
+  sub-second `createdAt` each, and a pause between sends — because the network's
+  author feed keeps only one post per timestamp: a burst stamped with the same
+  second is accepted and indexed, yet all but the last of it is invisible on the
+  account's own profile.
 - **SOC-8 (SHOULD).** Announcing MUST NOT be able to break the pipeline it rides
   on. It reads the database **read-only**, holds no lock, writes nothing the site
   serves, and runs *after* the DB has been updated and swapped in — a failed post

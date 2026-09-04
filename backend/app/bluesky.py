@@ -253,7 +253,11 @@ class BlueskyClient:
         record = {
             "$type": "app.bsky.feed.post",
             "text": text,
-            "createdAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            # Millisecond precision is not cosmetic: the AppView's author feed
+            # keys on this timestamp, so two posts stamped with the same second
+            # collapse into one and only the last survives on the profile — which
+            # is exactly what a burst of haikus from one sitting day looks like.
+            "createdAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
             "langs": langs or [settings.bluesky_lang],
         }
         facets = link_facets(text)

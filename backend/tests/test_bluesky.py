@@ -311,6 +311,7 @@ def bluesky_settings(monkeypatch):
     monkeypatch.setattr(settings, "bluesky_haiku_mps_only", True)
     monkeypatch.setattr(settings, "bluesky_max_posts", 4)
     monkeypatch.setattr(settings, "bluesky_max_age_days", 30)
+    monkeypatch.setattr(settings, "bluesky_post_interval", 0)
     monkeypatch.setattr(settings, "bluesky_auth", "")
     monkeypatch.setattr(settings, "bluesky_handle", "")
     monkeypatch.setattr(settings, "bluesky_password", "")
@@ -384,6 +385,32 @@ def test_announces_a_fully_processed_day_and_its_haiku(announce_db, tmp_path):
     # Every post is inside the server's own limit.
     assert all(bluesky.graphemes(p["text"]) <= bluesky.MAX_GRAPHEMES
                for p in client.posts)
+
+
+def test_posts_in_one_pass_are_spaced_apart(announce_db, tmp_path, monkeypatch):
+    """A burst of posts sharing one timestamp collapses in the AppView's author
+    feed (only the last of each second survives on the profile), so a pass waits
+    between sends — but never before the first one."""
+    monkeypatch.setattr(settings, "bluesky_post_interval", 1)
+    waits: list[float] = []
+    monkeypatch.setattr(social.time, "sleep", waits.append)
+
+    result, client = _run(announce_db, _seeded_state(tmp_path / "state.json"))
+
+    assert len(client.posts) == 2                  # the day and its haiku
+    assert waits == [1]                            # one gap, not two
+    assert len(result.posts) == 2
+
+
+def test_a_single_post_pass_does_not_wait(announce_db, tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "bluesky_post_interval", 1)
+    monkeypatch.setattr(settings, "bluesky_haikus", False)
+    waits: list[float] = []
+    monkeypatch.setattr(social.time, "sleep", waits.append)
+
+    _, client = _run(announce_db, _seeded_state(tmp_path / "state.json"))
+
+    assert len(client.posts) == 1 and waits == []
 
 
 def test_a_second_pass_says_nothing_new(announce_db, tmp_path):

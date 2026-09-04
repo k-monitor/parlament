@@ -37,6 +37,7 @@ import logging
 import os
 import sqlite3
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -351,6 +352,10 @@ def announce(db_path: str | Path | None = None, *, client=None,
             logger.info("Bluesky (dry run) would post [%s]:\n%s\n", post.kind, post.text)
             result.posts.append(post)
             continue
+        if result.posts and settings.bluesky_post_interval > 0:
+            # Space the sends out: see `bluesky_post_interval`. Guarded on
+            # `result.posts` so the wait only ever falls BETWEEN two sends.
+            time.sleep(settings.bluesky_post_interval)
         try:
             uri = poster.post(post.text, embed=post.embed)
         except bluesky.BlueskyError as exc:

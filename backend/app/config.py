@@ -515,6 +515,13 @@ class Settings:
     # unexpected backlog (a wiped state file plus --backfill, a re-scrape that
     # completes twenty days at once): the rest simply waits for the next pass.
     bluesky_max_posts: int = int(os.environ.get("PARLAMONITOR_BLUESKY_MAX_POSTS", "4"))
+    # Seconds to wait between two posts in one pass. Belt and braces on top of the
+    # millisecond `createdAt` (app/bluesky.py): a burst of posts sharing one
+    # timestamp collapses in the AppView's author feed, and spacing them also keeps
+    # a day's worth of announcements clear of the PDS write rate limits. Only ever
+    # between posts, never before the first, so a single-post pass is unaffected.
+    bluesky_post_interval: float = float(
+        os.environ.get("PARLAMONITOR_BLUESKY_POST_INTERVAL", "1"))
     # Haiku announcements (SOC-4) and their per-sitting-day quota. One a day keeps
     # them a curiosity rather than the account's whole output; the quota counts
     # POSTED poems per day, so a transcript arriving in instalments cannot multiply

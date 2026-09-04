@@ -103,8 +103,8 @@ function sectionActive(id) { return NAV_SECTIONS[id].match.includes(route.name) 
 
 // A tab is dropped when the page behind it isn't there to be opened. In the
 // Elemzések bar that is the registry's own answer (module mounted, and — for a
-// within-cycle analysis like Frakcióelemzés — an actual cycle in scope rather
-// than "all cycles", which router.js bounces the route to match). Either way a
+// within-cycle analysis like Frakcióelemzés — exactly one cycle in scope, not
+// "all cycles" or several, which router.js bounces the route to match). Either way a
 // section can be left with a single tab, in which case the sub-tab bar is
 // redundant with the top nav and hidden entirely (see the `v-if` below). (The
 // constituency lookup switches off the same way — its external source can be

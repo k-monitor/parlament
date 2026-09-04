@@ -3,8 +3,9 @@
 // into its own sub-tab of the Votes section. It reads the /votes/cohesion
 // aggregate — computed house-wide over the whole cycle's roll-call set — and
 // hands it to CohesionPanel, which shows the same numbers three ways (agreement
-// matrix / bars / bloc map). Honours the global cycle chooser (§4A); unlike the
-// old in-list panel it carries no per-page filters (it's the whole-cycle view).
+// matrix / bars / bloc map). Honours the global cycle chooser (§4A) — which for
+// this page is always a single cycle, the route being unreachable otherwise;
+// unlike the old in-list panel it carries no per-page filters (whole-cycle view).
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'

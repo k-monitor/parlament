@@ -673,7 +673,7 @@ export default {
     note: 'Every analysis here is Parlamonitor\'s own calculation from the National '
       + 'Assembly\'s public data. Each page carries its methodology, so you can see '
       + 'exactly what the number measures — and what it does not.',
-    needsCycle: 'This analysis only makes sense within one term: pick a term to open it.',
+    needsCycle: 'This analysis only makes sense within a single term: pick one term to open it.',
     empty: 'No analyses are available in this deployment.',
     cards: {
       cohesion: {

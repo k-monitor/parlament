@@ -346,12 +346,13 @@ router.beforeEach(async (to) => {
       }
     }
 
-    // Frakcióelemzés (cohesion) is a within-cycle analysis — co-voting compared
-    // across a whole multi-decade corpus is meaningless — so under the "all
-    // cycles" scope its sub-tab is hidden (App.vue) and its route is unreachable:
-    // bounce to the vote list, keeping the scope. Also fires when the user
-    // switches to "all cycles" while already viewing the page.
-    if (to.name === 'cohesion' && !store.cycles.length) {
+    // Frakcióelemzés (cohesion) is a within-cycle analysis — co-voting pooled
+    // across several Houses is meaningless, whether that is the whole corpus or
+    // two terms with different memberships — so unless exactly one cycle is in
+    // scope its sub-tab is hidden (App.vue) and its route is unreachable: bounce
+    // to the section index, keeping the scope. Also fires when the user widens
+    // the scope while already viewing the page.
+    if (to.name === 'cohesion' && store.cycles.length !== 1) {
       return { name: 'analyses', query: to.query, hash: to.hash }
     }
   }

@@ -794,7 +794,7 @@ export default {
     note: 'Minden elemzés a Parlamonitor saját számítása az Országgyűlés nyilvános '
       + 'adataiból. Mindegyik oldalon ott a módszertan is, hogy pontosan mit mér '
       + 'a szám — és mit nem.',
-    needsCycle: 'Ez az elemzés cikluson belül értelmezhető: válassz egy konkrét ciklust.',
+    needsCycle: 'Ez az elemzés egy cikluson belül értelmezhető: válassz ki egyetlen ciklust.',
     empty: 'Ebben a telepítésben nincs elérhető elemzés.',
     cards: {
       cohesion: {

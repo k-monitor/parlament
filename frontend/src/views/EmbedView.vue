@@ -186,7 +186,12 @@ const isEmpty = computed(() => {
     case 'search-trend': return !(data.value.buckets && data.value.buckets.length)
     case 'faction-speaking': return factionBars.value.length === 0
     case 'questions-sankey': return !(data.value.total > 0)
-    case 'faction-cohesion': return !(data.value.factions && data.value.factions.length >= 2)
+    // Frakcióelemzés is a single-cycle analysis (analyses/registry.js): a
+    // hand-built embed URL naming several cycles would pool Houses that never
+    // sat together, so it shows nothing rather than a meaningless matrix.
+    case 'faction-cohesion':
+      return period.value.length !== 1
+        || !(data.value.factions && data.value.factions.length >= 2)
     case 'vote-participation': return !(voteBreakdown.value && voteBreakdown.value.total)
     default: return true
   }

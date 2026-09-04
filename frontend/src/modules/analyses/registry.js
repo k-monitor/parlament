@@ -18,7 +18,7 @@ import { store } from '../../store.js'
 //   detail   — routes that are detail pages of this analysis: they keep its tab
 //              active and count as being "inside" the section.
 //   cycleScoped — the analysis only means something within one electoral cycle,
-//              so it is unavailable under the "all cycles" scope (§4A).
+//              so it is unavailable unless exactly one cycle is in scope (§4A).
 //   icon     — SVG path `d` strings, drawn stroked in a 24×24 box.
 export const ANALYSES = [
   {
@@ -61,7 +61,10 @@ export const ANALYSIS_BY_ROUTE = Object.fromEntries(ANALYSES.map((a) => [a.route
 export function analysisEnabled(a) { return store.moduleEnabled(a.module) }
 
 // Whether it can be *opened right now*: enabled, and — for a within-cycle
-// analysis — with an actual cycle in scope rather than "all cycles" (§4A).
+// analysis — with exactly one cycle in scope (§4A). Neither "all cycles" nor a
+// multi-cycle selection will do: the numbers describe one House, and pooling
+// several terms' roll calls would compare factions that never sat together,
+// under memberships that changed in between.
 export function analysisAvailable(a) {
-  return analysisEnabled(a) && (!a.cycleScoped || store.cycles.length > 0)
+  return analysisEnabled(a) && (!a.cycleScoped || store.cycles.length === 1)
 }

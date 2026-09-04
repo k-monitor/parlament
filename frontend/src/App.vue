@@ -309,6 +309,15 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
               <path d="M14 8.5V6.9c0-.7.2-1.1 1.2-1.1h1.5V3.1C16.3 3 15.4 3 14.5 3 12 3 10.4 4.5 10.4 7v1.5H8v2.9h2.4V21H14v-9.6h2.4l.4-2.9H14z" />
             </svg>
           </a>
+          <a
+            class="social-link" href="https://bsky.app/profile/parlamonitor.bsky.social"
+            target="_blank" rel="noopener noreferrer" :aria-label="$t('footer.bluesky')"
+          >
+            <svg viewBox="0 0 600 530" width="20" height="20" fill="currentColor"
+                 aria-hidden="true" focusable="false">
+              <path d="M135.7 44C202.6 94.3 274.5 195.9 301 250.6c26.5-54.7 98.4-156.3 165.3-206.6C514.6 7.8 593-30.5 593 58.9c0 17.9-10.2 149.9-16.2 171.3-20.9 74.5-96.9 93.5-164.5 82 118.1 20.1 148.2 86.7 83.3 153.3-123.2 126.5-177-31.7-190.8-72.2-2.6-7.4-3.8-10.9-3.8-7.9 0-3-1.2.5-3.8 7.9-13.8 40.5-67.6 198.7-190.8 72.2-64.9-66.6-34.8-133.2 83.3-153.3-67.6 11.5-143.6-7.5-164.5-82C10.2 208.8 0 76.8 0 58.9 0-30.5 78.4 7.8 135.7 44z" />
+            </svg>
+          </a>
         </div>
       </div>
 

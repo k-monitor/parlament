@@ -1090,6 +1090,7 @@ export default {
     kmonitorHome: 'K-Monitor honlap',
     instagram: 'K-Monitor az Instagramon',
     facebook: 'K-Monitor a Facebookon',
+    bluesky: 'Parlamonitor a Bluesky-on',
     feedback: 'Visszajelzés',
   },
   agendaTypes: {

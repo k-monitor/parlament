@@ -958,6 +958,7 @@ export default {
     kmonitorHome: 'K-Monitor website',
     instagram: 'K-Monitor on Instagram',
     facebook: 'K-Monitor on Facebook',
+    bluesky: 'Parlamonitor on Bluesky',
     feedback: 'Feedback',
   },
   agendaTypes: {

@@ -75,7 +75,7 @@ export default {
   },
   cycle: {
     label: 'Ciklus',
-    all: 'Összes ciklus',
+    all: 'Összes',
     count: '{n} ciklus',
     multiHint: 'Több ciklus is kiválasztható.',
     scope: '{cycle} adatai',

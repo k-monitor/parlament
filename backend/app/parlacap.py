@@ -448,6 +448,58 @@ def aggregate(rows, threshold: float | None = None) -> dict | None:
     }
 
 
+# The same winner :func:`aggregate` picks, expressed in SQL — so a *filter* on
+# topic selects exactly the irományok whose chip shows that topic.
+#
+# It has to be a query rather than a stored column because the threshold is a
+# read-time policy (TOPIC-6): the dominant topic is not a fact about the row, it
+# is a fact about the row *and the setting in force*, and an operator must be able
+# to move that setting with a restart. So the aggregation is redone per request,
+# over an index, for the page being served.
+#
+# **The ORDER BY is the tie-break in :func:`aggregate`, and the two must not
+# drift.** Words first (a document is about what it spends its words on), then
+# block count to separate two labels that split it evenly, then the label name so
+# the answer is deterministic rather than dependent on scan order. ``share`` there
+# is words over the same per-document total, so ordering by ``SUM(words)`` is the
+# same ordering. "Other" is excluded here exactly as it is excluded from the vote:
+# it is not a policy topic and can never be a document's subject.
+#
+# ``{scope}`` is where a caller adds cheap pre-filters (a cycle, say) so the scan
+# is bounded by an index rather than covering the whole corpus. Measured: 6.6 ms
+# over cycle 43 as it stands (10.8k blocks), and ~200 ms against a synthetic
+# fully-classified five-cycle archive (1.5M blocks, ~290k in the scanned cycle) —
+# paid only when the filter is actually engaged. A covering
+# ``(period_number, bill_id, label)`` index removes the GROUP BY's temp B-tree but
+# saves ~4 % of that, the rest being the window sort, so it is not worth carrying
+# on a table that size; revisit if the archive is ever classified in full.
+DOMINANT_TOPIC_SQL = """
+SELECT bill_id, label FROM (
+  SELECT bill_id, label,
+         ROW_NUMBER() OVER (PARTITION BY bill_id
+                            ORDER BY SUM(words) DESC, COUNT(*) DESC, label ASC) AS rk
+  FROM bill_topic
+  WHERE score >= :topic_threshold AND label <> :topic_non_policy {scope}
+  GROUP BY bill_id, label
+) WHERE rk = 1
+"""
+
+
+def dominant_topic_sql(scope: str = "") -> str:
+    """:data:`DOMINANT_TOPIC_SQL` with ``scope`` spliced in.
+
+    ``scope`` is appended to the inner ``WHERE`` and must be caller-built SQL with
+    bound parameters — never interpolated user input."""
+    return DOMINANT_TOPIC_SQL.format(scope=scope)
+
+
+def topic_params(threshold: float | None = None) -> dict:
+    """The bound parameters :data:`DOMINANT_TOPIC_SQL` needs."""
+    return {"topic_threshold": (settings.parlacap_threshold
+                                if threshold is None else threshold),
+            "topic_non_policy": NON_POLICY}
+
+
 # ---------------------------------------------------------------------------
 # inference (needs torch + transformers; never imported on the web server)
 # ---------------------------------------------------------------------------

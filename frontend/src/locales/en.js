@@ -611,6 +611,9 @@ export default {
     title: 'Bills', subtitle: 'Bills submitted to the National Assembly.',
     figyusz: 'Use Figyusz! notifications to follow parliamentary documents!',
     searchPlaceholder: 'Search the title or bill number…', period: 'Cycle', status: 'Status',
+    // The machine-read label (TOPIC-8); the filter returns exactly the rows
+    // whose chip shows it.
+    topic: 'Topic',
     sortNumber: 'By bill number', sortDate: 'By submission', count: 'bills',
     bySponsor: 'Submitter', viewProfile: 'View profile', clearSponsor: 'Clear filter',
     noResults: 'No matching bills.', submitters: 'Submitters',
@@ -677,6 +680,7 @@ export default {
     clearSponsor: 'Clear filter',
     searchPlaceholder: 'Search the title or document number…',
     type: 'Type', period: 'Cycle', status: 'Status',
+    topic: 'Topic',
     verdict: 'Answer accepted',
     verdictAccepted: 'the MP accepted the answer',
     verdictRejected: 'the MP rejected the answer',

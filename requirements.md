@@ -1184,11 +1184,27 @@ section — **Elemzések** — with its own entry in the top bar.
     on-disk cache and the same refusal to fail a build (TOPIC-7). A topic must
     mean the same thing whichever text it was read off, so the reader is shown
     the same chip and the same breakdown, worded for a document.
+  - **The lists are filterable by topic**, combining with the existing filters and
+    carried in the URL like them (BILL-1). The filter matches an iromány's
+    **dominant** topic — the one its chip shows — never merely a topic the
+    document touches somewhere: a filter that sits beside a visible label and
+    selects rows carrying a *different* label is worse than no filter. It follows
+    that the selection is resolved by the same rule and the same threshold as the
+    chip, at request time, so retuning the threshold moves the filter and the
+    labels together (TOPIC-6) rather than desynchronising them. The picker offers
+    only the topics **present in the current scope**, each with its **hit count**,
+    so it never presents a choice that leads to an empty list; where the corpus
+    carries no topics the control is absent rather than dead. A topic filter the
+    deployment cannot honour MUST return **nothing**, never the unfiltered list —
+    silently dropping it would show the reader every iromány under one label.
   > **✅ realized.** `bill_topic` rows written by `loader.rebuild_bill_topics`
   > from `parlacap.build_text_blocks`; served as `topic` on the bills list and
   > detail, rendered by the shared `TopicBadge.vue` (`kind="bill"`).
   > `PARLAMONITOR_BILL_TOPICS` switches the pass; `PARLAMONITOR_DOCUMENTS_DIR`
-  > points at the mirror. Measured on cycle 43: **320 of 356** documents with
+  > points at the mirror. Filtering is `?topic=` (repeatable) on the list, with
+  > `/bills/facets` returning the topics in scope and their counts; both resolve
+  > the dominant topic through `parlacap.DOMINANT_TOPIC_SQL`, which is the SQL
+  > expression of `parlacap.aggregate`'s tie-break and is tested against it. Measured on cycle 43: **320 of 356** documents with
   > text get a topic at the 0.90 threshold (90 % coverage, against 69 % for
   > speeches — a document is longer and far more topically focused than a
   > speech). The predictions live in the same `parlacap-cache.json` under a

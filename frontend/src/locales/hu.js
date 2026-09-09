@@ -714,6 +714,9 @@ export default {
     searchPlaceholder: 'Keresés a címben vagy irományszámban…',
     period: 'Ciklus',
     status: 'Állapot',
+    // Gépi besorolás (TOPIC-8) — a szűrő pontosan azokat adja vissza, amelyeken
+    // ez a címke látszik.
+    topic: 'Téma',
     sortNumber: 'Irományszám szerint',
     sortDate: 'Benyújtás szerint',
     count: 'törvényjavaslat',
@@ -792,6 +795,7 @@ export default {
     type: 'Típus',
     period: 'Ciklus',
     status: 'Állapot',
+    topic: 'Téma',
     verdict: 'Válasz elfogadása',
     verdictAccepted: 'a képviselő elfogadta a választ',
     verdictRejected: 'a képviselő elutasította a választ',

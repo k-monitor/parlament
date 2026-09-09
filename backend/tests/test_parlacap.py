@@ -779,3 +779,171 @@ def test_replay_accepts_a_matching_method(conn, tmp_path, data_dir,
     monkeypatch.setattr(parlacap, "backend", lambda **kw: None)
     loader.rebuild_bill_topics(conn, tmp_path, data_dir=tmp_path / "nowhere")
     assert conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0] == expected
+
+
+# ---------------------------------------------------------------------------
+# filtering irományok by topic (TOPIC-8)
+# ---------------------------------------------------------------------------
+# The one property that matters, and the one that is easy to get wrong: a filter
+# sitting next to a visible label must select exactly the rows carrying that
+# label. "Has a block labelled X" would be far cheaper and would quietly return
+# documents whose chip says something else — so the filter resolves the *dominant*
+# topic by the same rule the chip does, at the same read-time threshold.
+
+class _TextClassifier:
+    """Labels each block by a marker word in its text, so a test can build a
+    corpus with known — and deliberately competing — topics."""
+
+    def __init__(self, marks):
+        self.marks = marks          # substring -> (label, score)
+        self.calls = 0
+
+    def __call__(self, texts):
+        self.calls += 1
+        out = []
+        for t in texts:
+            hit = next(((lab, sc) for mark, (lab, sc) in self.marks.items()
+                        if mark in t), None)
+            if hit is None or parlacap.word_count(t) < settings.parlacap_min_words:
+                out.append(None)
+                continue
+            label, score = hit
+            out.append((parlacap.LABELS.index(label), score,
+                        parlacap.LABELS.index("Other"), 0.01))
+        return out
+
+
+def _words(mark, n=30):
+    return mark + " " + " ".join(f"szó{i}" for i in range(n))
+
+
+@pytest.fixture
+def topic_corpus(conn, tmp_path, data_dir, monkeypatch):
+    """Three irományok with known, different topics.
+
+    The fixture registry gives only T/100 a document link, so the other two are
+    pointed at documents here — the loader joins on `bill.text_url`, which is
+    exactly what a real registry supplies."""
+    for instance in _live_settings():
+        monkeypatch.setattr(instance, "parlacap", True)
+        monkeypatch.setattr(instance, "bill_topics", True)
+        monkeypatch.setattr(instance, "parlacap_min_words", 2)
+        # Small enough that each recovered paragraph closes its own block —
+        # otherwise the two competing topics below merge into one block and the
+        # contest this fixture exists to create never happens.
+        monkeypatch.setattr(instance, "parlacap_target_words", 5)
+
+    urls = {"bill-uuid-1": _T100,
+            "bill-uuid-2": "https://www.parlament.hu/irom43/00101/00101.pdf",
+            "doc-uuid-3": "https://www.parlament.hu/irom43/00005/00005.pdf"}
+    for bid, url in urls.items():
+        conn.execute("UPDATE bill SET text_url = ? WHERE id = ?", (url, bid))
+    conn.commit()
+
+    # T/100 is contested: more Energy words than Health ones, but the Health
+    # block is the more confident of the two — which is what makes the threshold
+    # able to change its answer.
+    _mirror(data_dir, {
+        urls["bill-uuid-1"]: _words("EGESZSEG", 20) + "\n\n" + _words("ENERGIA", 60),
+        urls["bill-uuid-2"]: _words("ENERGIA", 40),
+        urls["doc-uuid-3"]: _words("KOZLEKEDES", 40),
+    })
+    fake = _TextClassifier({"EGESZSEG": ("Health", 0.97),
+                            "ENERGIA": ("Energy", 0.92),
+                            "KOZLEKEDES": ("Transportation", 0.96)})
+    monkeypatch.setattr(parlacap, "classify", fake)
+    monkeypatch.setattr(parlacap, "backend", lambda **kw: "local")
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    conn.commit()
+    return fake
+
+
+def _listing(client, **params):
+    from urllib.parse import urlencode
+    return client.get("/api/v1/bills?" + urlencode(params, doseq=True)).json()
+
+
+def test_topic_filter_returns_exactly_the_rows_whose_chip_matches(client, topic_corpus):
+    body = _listing(client, period=43, topic="Energy", limit=50)
+    assert {b["bill_number"] for b in body["bills"]} == {"T/100", "T/101"}
+    # …and every one of them actually shows that label
+    assert all(b["topic"]["label"] == "Energy" for b in body["bills"])
+    assert body["total"] == 2
+
+
+def test_topic_filter_takes_several_topics(client, topic_corpus):
+    body = _listing(client, period=43, topic=["Energy", "Transportation"], limit=50)
+    assert {b["bill_number"] for b in body["bills"]} == {"T/100", "T/101", "I/5"}
+
+
+def test_topic_filter_never_matches_a_merely_present_topic(client, topic_corpus):
+    """T/100 has a confident Health block, but Energy outweighs it — so the
+    document is *about* energy and must not appear under Health. This is the
+    difference between filtering on the dominant topic and filtering on any
+    block, and it is invisible unless a document has two."""
+    body = _listing(client, period=43, topic="Health", limit=50)
+    assert body["total"] == 0
+
+
+def test_topic_filter_tracks_the_read_time_threshold(client, topic_corpus,
+                                                     monkeypatch):
+    """Raising the threshold past Energy's confidence must move the filter and
+    the chip together — they are one rule (TOPIC-6). If the filter were served
+    from a stored column, retuning the threshold would silently desynchronise
+    the two."""
+    for instance in _live_settings():
+        monkeypatch.setattr(instance, "parlacap_threshold", 0.95)
+    body = _listing(client, period=43, topic="Health", limit=50)
+    assert {b["bill_number"] for b in body["bills"]} == {"T/100"}
+    assert body["bills"][0]["topic"]["label"] == "Health"
+    # Energy no longer clears the bar anywhere, so it selects nothing at all.
+    assert _listing(client, period=43, topic="Energy", limit=50)["total"] == 0
+
+
+def test_topic_facet_counts_match_the_filtered_totals(client, topic_corpus):
+    """A facet count that did not equal the size of the list it opens would be
+    worse than no count at all."""
+    facets = client.get("/api/v1/bills/facets?period=43").json()
+    assert facets["topics"], "expected the facet to offer the topics in scope"
+    for f in facets["topics"]:
+        total = _listing(client, period=43, topic=f["label"], limit=1)["total"]
+        assert total == f["count"], f["label"]
+    # ordered commonest-first, and carrying the CAP code the chip shows
+    counts = [f["count"] for f in facets["topics"]]
+    assert counts == sorted(counts, reverse=True)
+    assert all(f["code"] == parlacap.CAP_CODES[f["label"]] for f in facets["topics"])
+
+
+def test_topic_facet_respects_the_sibling_filters(client, topic_corpus):
+    """The bills page passes main_type=T; its picker must not offer a topic that
+    only an interpelláció carries, or selecting it yields an empty list."""
+    facets = client.get("/api/v1/bills/facets?period=43&main_type=T").json()
+    labels = {f["label"] for f in facets["topics"]}
+    assert "Transportation" not in labels          # that is I/5, a non-bill
+    assert "Energy" in labels
+
+
+def test_an_unhonourable_topic_filter_returns_nothing_not_everything(client, conn):
+    """On a DB with no topic table the filter cannot be applied. Dropping it and
+    answering with the unfiltered list is the dangerous failure — the reader
+    would be looking at every iromány believing it was one topic."""
+    conn.execute("DROP TABLE IF EXISTS bill_topic")
+    conn.commit()
+    assert _listing(client, period=43, topic="Health")["total"] == 0
+    # …while an unfiltered request is unaffected
+    assert _listing(client, period=43)["total"] > 0
+
+
+def test_dominant_topic_sql_agrees_with_aggregate(conn, topic_corpus):
+    """The SQL winner and the Python winner are two expressions of one rule
+    (weight by words, blocks break a tie, then the label) and must not drift."""
+    sql_winner = dict(conn.execute(
+        parlacap.dominant_topic_sql(), parlacap.topic_params()).fetchall())
+    rows: dict[str, list] = {}
+    for r in conn.execute("SELECT bill_id, block, label, score, runner_up, "
+                          "runner_score, words FROM bill_topic ORDER BY bill_id, block"):
+        rows.setdefault(r["bill_id"], []).append(tuple(r)[1:])
+    agg_winner = {bid: parlacap.aggregate(rs)["label"]
+                  for bid, rs in rows.items() if parlacap.aggregate(rs)}
+    assert sql_winner == agg_winner
+    assert agg_winner            # the corpus really did classify something

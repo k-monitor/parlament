@@ -13,6 +13,7 @@
 // per-submitter list should hide.
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
 import { formatDate } from '../../format.js'
@@ -21,10 +22,13 @@ import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import TopicBadge from '../../components/TopicBadge.vue'
 import MultiSelect from '../../components/MultiSelect.vue'
+import { topicGlyph, topicName } from '../../lib/topics.js'
 import Pagination from '../../components/Pagination.vue'
 
 const route = useRoute()
 const router = useRouter()
+// `t` below is the search-debounce timer, so the i18n helpers are named.
+const { t: tr, te: hasTr } = useI18n()
 
 const PAGE = 50
 
@@ -33,6 +37,10 @@ const loading = ref(false)
 const error = ref(false)
 const types = ref([])      // distinct iromány categories (excl. törvényjavaslat)
 const statuses = ref([])
+// CAP policy topics present in this slice, with their counts (TOPIC-8). Facet-
+// driven rather than the model's full 21: a cycle typically uses a subset, and
+// offering topics that match nothing is a dead end dressed as a choice.
+const topics = ref([])
 
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
@@ -51,15 +59,19 @@ const f = reactive({
   status: toArray(route.query.status),
   // Did the MP who asked accept the answer they got? (interpellációk only)
   verdict: route.query.verdict || '',
+  // What the iromány is about, by the CAP label its chip shows (TOPIC-8).
+  topic: toArray(route.query.topic),
   sort: route.query.sort || 'number',
 })
 // Open the filter panel on load when a filter is already active (e.g. a shared
 // or deep-linked list), so its filters are visible rather than hidden.
-const showFilters = ref(!!(f.type.length || f.status.length || route.query.verdict))
+const showFilters = ref(!!(f.type.length || f.status.length || f.topic.length
+  || route.query.verdict))
 
 function clearFilters() {
   f.type = []
   f.status = []
+  f.topic = []
   f.verdict = ''
   apply()
 }
@@ -93,6 +105,7 @@ function apply() {
   if (f.type.length) query.type = f.type
   if (f.status.length) query.status = f.status
   if (f.verdict) query.verdict = f.verdict
+  if (f.topic.length) query.topic = f.topic
   if (f.sort && f.sort !== 'number') query.sort = f.sort
   if (sponsor.value) query.sponsor = sponsor.value
   // Changing a filter resets to the first page (offset is intentionally dropped).
@@ -113,8 +126,18 @@ async function loadFacets() {
     // back twice — dedupe, or the picker lists it twice.
     types.value = [...new Set(r.types.map((t) => t.type).filter(Boolean))]
     statuses.value = r.statuses
-  } catch { types.value = []; statuses.value = [] }
+    topics.value = r.topics || []
+  } catch { types.value = []; statuses.value = []; topics.value = [] }
 }
+
+// Facet topics as picker rows: the glyph and Hungarian name the chip uses, plus
+// the hit count, which is what tells a reader which topics are worth opening (a
+// facet with one hit rarely is). Hidden entirely when the DB carries no topics —
+// `topics` is then empty and the control does not render.
+const topicOptions = computed(() => topics.value.map((x) => ({
+  value: x.label,
+  label: `${topicGlyph(x.label)} ${topicName(x.label, tr, hasTr)} (${x.count})`,
+})))
 
 // Bills are excluded on the browse page (they have their own), but not from a
 // single submitter's list — see the note at the top of the file.
@@ -141,6 +164,7 @@ async function load() {
     period: store.cycles, sort: route.query.sort || 'number',
     sponsor: route.query.sponsor, main_type_not: mainTypeNot.value,
     answer_verdict: route.query.verdict || undefined,
+    topic: toArray(route.query.topic),
   }
   try {
     const res = await api.bills({ ...args, limit: PAGE, offset })
@@ -157,7 +181,8 @@ onMounted(() => {
 })
 watch(() => route.query, (q, prev) => {
   f.q = q.q || ''; f.type = toArray(q.type); f.status = toArray(q.status)
-  f.verdict = q.verdict || ''; f.sort = q.sort || 'number'
+  f.verdict = q.verdict || ''; f.topic = toArray(q.topic)
+  f.sort = q.sort || 'number'
   if (q.sponsor !== (prev && prev.sponsor)) loadSponsorLabel()
   loadFacets(); load()
 })
@@ -201,6 +226,18 @@ onUnmounted(() => clearTimeout(t))
           <MultiSelect
             id="d-status" v-model="f.status" :options="statuses"
             :label="$t('documents.status')" @change="apply"
+          />
+        </div>
+        <!-- The machine-read policy topic (TOPIC-8). Only rendered where the
+             corpus actually carries topics, so a DB built without them shows
+             no dead control. Selecting one returns exactly the irományok whose
+             chip shows it — the filter resolves the dominant topic by the same
+             rule, at the same confidence threshold. -->
+        <div v-if="topicOptions.length">
+          <label for="d-topic">{{ $t('documents.topic') }}</label>
+          <MultiSelect
+            id="d-topic" v-model="f.topic" :options="topicOptions"
+            :label="$t('documents.topic')" @change="apply"
           />
         </div>
         <!-- Only question-type irományok record the asking MP's verdict on the

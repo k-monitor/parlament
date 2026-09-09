@@ -38,34 +38,10 @@
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { store } from '../store.js'
+// Glyphs and names are shared with the iromány lists' topic filter, so the chip
+// and the control that selects it can never drift apart (see lib/topics.js).
+import { TOPIC_GLYPHS, topicGlyph, topicName as capName } from '../lib/topics.js'
 
-// One glyph per CAP major topic, keyed by the English label the API sends (which is
-// the model's own label space — see app/parlacap.py LABELS). Keyed by label rather
-// than by CAP code so an unmapped label degrades to no glyph instead of a wrong one.
-const GLYPHS = {
-  Macroeconomics: '📈',
-  'Civil Rights': '✊',
-  Health: '🏥',
-  Agriculture: '🌾',
-  Labor: '👷',
-  Education: '🎓',
-  Environment: '🌍',
-  Energy: '⚡',
-  Immigration: '🛂',
-  Transportation: '🚆',
-  'Law and Crime': '⚖️',
-  'Social Welfare': '🤝',
-  Housing: '🏘️',
-  'Domestic Commerce': '🏦',
-  Defense: '🛡️',
-  Technology: '💻',
-  'Foreign Trade': '🚢',
-  'International Affairs': '🌐',
-  'Government Operations': '🏛️',
-  'Public Lands': '🏞️',
-  Culture: '🎭',
-  Other: '💬',
-}
 
 // `compact` marks the dense sitting-day list, where the chip competes for a row
 // with a speaker, a faction, a speech-type badge, a duration and four action
@@ -113,15 +89,9 @@ function tk(key, params) {
   return te(scoped) ? t(scoped, params) : t(`topics.${key}`, params)
 }
 
-// Topic names are translated by their English label; an unknown one (a model whose
-// label space grew) falls back to the label itself rather than rendering a raw i18n
-// key at the reader.
-function topicName(label) {
-  const key = `topics.names.${label}`
-  return te(key) ? t(key) : label
-}
+const topicName = (label) => capName(label, t, te)
 
-const glyph = computed(() => GLYPHS[props.topic?.label] || '🏷️')
+const glyph = computed(() => topicGlyph(props.topic?.label))
 const name = computed(() => (props.topic ? topicName(props.topic.label) : ''))
 const pct = (v) => `${Math.round((v || 0) * 100)}%`
 
@@ -261,7 +231,7 @@ onBeforeUnmount(() => watchViewport(false))
           <div class="tp-sub">{{ $t('topics.alsoAbout') }}</div>
           <div v-for="b in runners" :key="b.label" class="tp-bar">
             <span class="tp-bar-label">
-              <span aria-hidden="true">{{ GLYPHS[b.label] || '🏷️' }}</span>
+              <span aria-hidden="true">{{ TOPIC_GLYPHS[b.label] || '🏷️' }}</span>
               {{ topicName(b.label) }}
             </span>
             <span class="tp-bar-track" aria-hidden="true">

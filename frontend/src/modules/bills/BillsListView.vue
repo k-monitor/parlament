@@ -4,6 +4,7 @@
 // and each MP sponsor links to their profile (EXT-2).
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
 import { formatDate } from '../../format.js'
@@ -11,10 +12,14 @@ import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import TopicBadge from '../../components/TopicBadge.vue'
+import MultiSelect from '../../components/MultiSelect.vue'
 import Pagination from '../../components/Pagination.vue'
+import { topicGlyph, topicName } from '../../lib/topics.js'
 
 const route = useRoute()
 const router = useRouter()
+// `t` below is the search-debounce timer, so the i18n helpers are named.
+const { t: tr, te: hasTr } = useI18n()
 
 const PAGE = 50
 
@@ -22,23 +27,43 @@ const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
 const statuses = ref([])
+// CAP policy topics present in this slice, with their counts (TOPIC-8).
+const topics = ref([])
 
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
 
+// Topic takes several values at once, so it travels as a repeated query param —
+// which vue-router hands back as a string when there is one and an array beyond
+// that. (Status here stays single-valued, as it has been.)
+function toArray(v) {
+  if (v === undefined || v === null || v === '') return []
+  return (Array.isArray(v) ? v : [v]).filter((x) => x !== null && x !== '')
+}
+
 const f = reactive({
   q: route.query.q || '',
   status: route.query.status || '',
+  // What the bill is about, by the CAP label its chip shows (TOPIC-8).
+  topic: toArray(route.query.topic),
   sort: route.query.sort || 'number',
 })
 // Open the filter panel on load when a filter is already active (e.g. a shared
 // or deep-linked list), so its filters are visible rather than hidden.
-const showFilters = ref(!!route.query.status)
+const showFilters = ref(!!route.query.status || !!f.topic.length)
 
 function clearFilters() {
   f.status = ''
+  f.topic = []
   apply()
 }
+
+// Facet topics as picker rows: the glyph and name the chip uses, plus the hit
+// count. Empty (so the control does not render) on a corpus with no topics.
+const topicOptions = computed(() => topics.value.map((x) => ({
+  value: x.label,
+  label: `${topicGlyph(x.label)} ${topicName(x.label, tr, hasTr)} (${x.count})`,
+})))
 
 // `sponsor` is not an interactive filter — it arrives as a deep link scoped to
 // one MP. It's carried in the URL and preserved across the other filters.
@@ -66,6 +91,7 @@ function apply() {
   const query = {}
   if (f.q) query.q = f.q
   if (f.status) query.status = f.status
+  if (f.topic.length) query.topic = f.topic
   if (f.sort && f.sort !== 'number') query.sort = f.sort
   if (sponsor.value) query.sponsor = sponsor.value
   // Changing a filter resets to the first page (offset is intentionally dropped).
@@ -78,10 +104,10 @@ function gotoPage(p) {
 
 async function loadFacets() {
   try {
-    statuses.value = (await api.billFacets({
-      period: store.cycles, main_type: 'T',
-    })).statuses
-  } catch { statuses.value = [] }
+    const r = await api.billFacets({ period: store.cycles, main_type: 'T' })
+    statuses.value = r.statuses
+    topics.value = r.topics || []
+  } catch { statuses.value = []; topics.value = [] }
 }
 
 // Monotonic load id: overlapping fetches (filter watcher + cycle watcher) can
@@ -102,7 +128,7 @@ async function load() {
   const args = {
     q: route.query.q, status: route.query.status, period: store.cycles,
     sponsor: route.query.sponsor, sort: route.query.sort || 'number',
-    main_type: 'T',
+    main_type: 'T', topic: toArray(route.query.topic),
   }
   try {
     const res = await api.bills({ ...args, limit: PAGE, offset })
@@ -119,7 +145,7 @@ onMounted(() => {
 })
 watch(() => route.query, (q, prev) => {
   f.q = q.q || ''; f.status = q.status || ''
-  f.sort = q.sort || 'number'
+  f.topic = toArray(q.topic); f.sort = q.sort || 'number'
   if (q.sponsor !== (prev && prev.sponsor)) loadSponsorLabel()
   loadFacets(); load()
 })
@@ -168,6 +194,17 @@ onUnmounted(() => clearTimeout(t))
             <option value="">{{ $t('search.all') }}</option>
             <option v-for="s in statuses" :key="s" :value="s">{{ s }}</option>
           </select>
+        </div>
+        <!-- The machine-read policy topic (TOPIC-8). Selecting one returns
+             exactly the bills whose chip shows it: the filter resolves the
+             dominant topic by the same rule, at the same threshold. Absent
+             where the corpus carries no topics. -->
+        <div v-if="topicOptions.length">
+          <label for="b-topic">{{ $t('bills.topic') }}</label>
+          <MultiSelect
+            id="b-topic" v-model="f.topic" :options="topicOptions"
+            :label="$t('bills.topic')" @change="apply"
+          />
         </div>
       </div>
       <button class="btn secondary small" type="button" style="margin-top:.6rem;" @click="clearFilters">

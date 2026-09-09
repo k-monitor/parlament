@@ -35,6 +35,23 @@
 #                    Needs NO model for the readability half (LIX/RIX always land);
 #                    the diversity half (TTR/MATTR) needs the same Modal/HuSpaCy
 #                    setup as the entity pass above.
+#   reclassify-topics  re-run the CAP policy-topic classification (§5.8) over the
+#                    EXISTING DB and swap it in. Same escape hatch again, for a new
+#                    model or changed block sizing. Scope with --period, e.g.
+#                      podman-compose run --rm init reclassify-topics --period 43
+#                    NOTE this is NOT how you change the confidence threshold:
+#                    PARLAMONITOR_PARLACAP_THRESHOLD is applied when a request is
+#                    served, so retuning it needs only a restart of the `web`
+#                    service — no reclassification and no rebuild.
+#                    Sittings already covered by parlacap-cache.json (in the DB
+#                    volume) need no model at all, which is the normal case on a
+#                    server: classify once on a GPU box, copy the cache in. A
+#                    sitting that MISSES the cache is sent to the Modal service
+#                    (PARLAMONITOR_PARLACAP_BACKEND=modal, deploy
+#                    backend/parlacap_modal_app.py) when its cycle is inside
+#                    PARLAMONITOR_MODAL_CYCLES — that is how new sitting days get
+#                    labelled without torch on this host. With no route available
+#                    it is left unlabelled: never guessed, never fatal.
 #   officeholders    scrape the office-holder registry (tisztségviselők) — every
 #                    office term with its real dates, MPs and non-MPs alike — into
 #                    /data; the one-off backfill for a corpus scraped before the
@@ -122,6 +139,13 @@ case "${1:-serve}" in
         shift
         echo "[entrypoint] re-measuring speech readability + diversity in: $DB"
         exec python -m app.loader --remeasure-speeches "$DATA_DIR" "$DB" -v "$@"
+        ;;
+    reclassify-topics)
+        # Operates on the DB in the volume, NOT on /data — no scrape, no reload.
+        # Takes the loader's writer lock, so it is safe while the sync sidecar runs.
+        shift
+        echo "[entrypoint] classifying CAP policy topics in: $DB"
+        exec python -m app.loader --reclassify-topics "$DATA_DIR" "$DB" -v "$@"
         ;;
     announce)
         # Reads the DB (read-only) and its own state file beside it; writes nothing

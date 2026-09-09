@@ -6,7 +6,7 @@ requests>=2.31,<3
 # Optional: better Hungarian sentence segmentation. The pipeline runs without
 # it (regex fallback in parlamonitor/segment.py), so it is not required for a clean
 # scrape — install it for higher-quality sentence boundaries.
-# spacy>=3.7,<3.9
+spacy>=3.7,<3.9
 
 # Route parlament.hu traffic through an SSH host (parlamonitor/ssh_proxy.py).
 # Needed when --ssh-host / PARLAMONITOR_SSH_HOST is used (the Docker `sync`
@@ -25,7 +25,7 @@ paramiko>=3,<4
 # Both are imported lazily and the pipeline degrades to the positional estimate
 # when neither is present, so a plain scrape needs neither (SCR-6).
 # modal>=0.64
-# faster-whisper>=1.1,<2
+faster-whisper>=1.1,<2
 
 # Test-only:
 #   pytest>=8

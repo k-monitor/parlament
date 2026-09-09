@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import readability, seo
+from . import parlacap, readability, seo
 from .analytics import RESERVED_PARAMS, SOURCES, search_analytics
 from .caching import CacheControlMiddleware
 from .config import settings
@@ -101,6 +101,25 @@ def _metric_totals(db: sqlite3.Connection) -> dict:
     return {"scored": scored, "with_diversity": diverse}
 
 
+def _topic_totals(db: sqlite3.Connection) -> dict:
+    """How much of the corpus carries CAP topic predictions.
+
+    ``speeches`` gates the feature flag the same way the metrics count does: the
+    pass needs a model or a shipped cache, so "is this DB annotated at all" is a
+    fact about the data rather than the config, and the SPA must hide the badge
+    instead of rendering a column of blanks.
+
+    Counted over *stored* paragraphs, before any confidence threshold — the
+    threshold is applied per request and would make this number move without the
+    data changing."""
+    try:
+        paragraphs, speeches = db.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT speech_id) FROM speech_topic").fetchone()
+    except sqlite3.OperationalError:      # DB built before the topic pass
+        return {"paragraphs": 0, "speeches": 0}
+    return {"paragraphs": paragraphs, "speeches": speeches}
+
+
 def _corpus_counts(db: sqlite3.Connection) -> dict:
     """The homepage's headline totals, over the cycles the site serves (CYC-7).
 
@@ -160,6 +179,7 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
     build = {r["key"]: r["value"] for r in db.execute(
         "SELECT key, value FROM build_meta")}
     metric_coverage = _metric_totals(db)
+    topic_coverage = _topic_totals(db)
     return {
         "name": "Parlamonitor",
         "source_attribution": {  # LEGAL-1 / TRUST-1
@@ -184,13 +204,20 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
         # representatives module — the tab then vanishes rather than erroring.
         "features": {"constituency_lookup": settings.evk_lookup,
                      "speech_metrics": (settings.speech_metrics
-                                        and bool(metric_coverage["scored"]))},
+                                        and bool(metric_coverage["scored"])),
+                     "speech_topics": (settings.parlacap
+                                       and bool(topic_coverage["speeches"]))},
         # How the per-speech readability / lexical-diversity annotations were
         # measured (READ-7). Every derived number on the site has to be able to
         # say what produced it (TRUST-1 / REP-5), and these two carry parameters
         # (the Hungarian long-word threshold, the MATTR window) that a reader
         # cannot guess and that change what the score means.
         "speech_metrics": {**readability.methodology(), **metric_coverage},
+        # How the CAP topic labels were produced, including the confidence
+        # threshold in force — at 0.90 a third of paragraphs are deliberately left
+        # unlabelled, which changes what the reader is looking at, so the UI has to
+        # be able to say so (TRUST-1 / REP-5).
+        "speech_topics": {**parlacap.methodology(), **topic_coverage},
         "timing_disclaimer": (  # VIE-6 / TIM-3
             "A felszólalások videóidőzítése a v1-ben pozícióalapú becslés "
             "(karakterarányos), ezért közelítő pontosságú."),

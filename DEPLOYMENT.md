@@ -368,6 +368,146 @@ Snapshot-and-swap like the above, cached per sitting, and the **readability half
 needs no model at all** — so this works on a host with no HuSpaCy and no Modal, it
 just leaves TTR/MATTR empty.
 
+#### Classifying CAP policy topics (`reclassify-topics`)
+
+Every speech carries a policy-topic label (§5.8) — one of the 21 [CAP major
+topics](https://www.comparativeagendas.net/pages/master-codebook) plus "Other" —
+produced by [`classla/ParlaCAP-Topic-Classifier`](https://huggingface.co/classla/ParlaCAP-Topic-Classifier),
+an XLM-R-large model fine-tuned on 29 ParlaMint corpora (ParlaMint-HU among them).
+Speeches are classified **per paragraph**, and the paragraph labels are folded into
+one speech-level topic when the API answers a request.
+
+Two things follow from that, and they are what makes this pass different from the
+others on this page:
+
+- **The confidence threshold is not baked in.** Raw per-paragraph predictions are
+  stored; `PARLAMONITOR_PARLACAP_THRESHOLD` (default `0.90`) is applied when a
+  request is served. Retuning it is a **restart of `web`** — not a
+  reclassification, not even a rebuild:
+
+  ```bash
+  podman-compose up -d web        # after editing the env var
+  ```
+
+  Raising it shows fewer, better labels; lowering it shows more, worse ones. On
+  this corpus, measured against a held-out coded sample: `0.60` labels 90 % of
+  paragraphs at 74 % accuracy, `0.90` labels 69 % at 81 %, `0.95` labels 62 % at
+  83 %. A speech no paragraph of which clears the bar simply shows no topic badge.
+
+- **Classification needs a GPU; the server does not.** The pass is cache-driven,
+  so the model runs **once**, wherever a card is, and the result travels as one
+  JSON file. This is the intended workflow.
+
+##### Shipping the cache to the server
+
+`parlacap-cache.json` lives beside the DB (in the `db` volume). It holds one entry
+per sitting, keyed by a fingerprint of that sitting's text **and** the method, so
+it is safe to copy between machines: a sitting whose transcript has since changed
+simply misses and is reclassified, never silently mislabelled.
+
+```bash
+# 1. on the GPU box: classify the corpus (once; ~70 min for the full archive on a
+#    12 GB card, and re-runs are free because every sitting hits the cache)
+cd backend
+pip install torch transformers          # only needed here, never on the server
+python -m app.loader ../data parlamonitor.db --reclassify-topics -v
+
+# 2. ship the cache (~29 MB, compresses to ~7 MB)
+gzip -c parlacap-cache.json > parlacap-cache.json.gz
+scp parlacap-cache.json.gz you@server:~/
+```
+
+```bash
+# 3. on the server: unpack it INTO the DB volume. The serving colors are started
+#    by deploy.sh rather than by compose, so address the volume itself — a
+#    throwaway container works whichever color is currently up.
+ssh you@server && cd ~/parlament
+podman run --rm \
+  -v parlamonitor_dbdata:/db \
+  -v "$HOME:/in:ro" \
+  parlamonitor:latest \
+  sh -c 'gunzip -c /in/parlacap-cache.json.gz > /db/parlacap-cache.json'
+
+# 4. replay it into the DB (no model needed — every sitting is a cache hit) and
+#    swap the freshly annotated DB in
+podman-compose run --rm init reclassify-topics
+```
+
+Step 4 is a plain DB pass — it reads the cache, writes `speech_topic`, and swaps
+the DB in under the loader's writer lock (so it is safe while `sync` runs).
+`torch` is never imported, because no sitting misses. The serving colors reopen
+the swapped DB on their own (the connection pool retires on the file's identity
+changing), so **no restart is needed** for the labels to appear.
+
+> **Check it landed.** `/api/v1/meta` reports coverage and the threshold in force:
+>
+> ```bash
+> curl -s https://your.host/api/v1/meta | jq '.features.speech_topics, .speech_topics'
+> ```
+>
+> `features.speech_topics` is `false` when the pass is off **or** the DB carries no
+> predictions — the SPA then hides the badge rather than rendering blank chips.
+
+> **When a re-run is actually needed.** Only when the *predictions* would change: a
+> different `PARLAMONITOR_PARLACAP_MODEL`, or changed
+> `PARLAMONITOR_PARLACAP_TARGET_WORDS` / `_MAX_WORDS` / `_MAX_LENGTH`, all of which
+> are part of the cache's method tag and correctly invalidate it. The threshold is
+> deliberately *not* in that tag.
+
+##### New sittings: the Modal offload
+
+The archive is a one-off, but sittings keep arriving. The `sync` sidecar's
+`--update` runs the topic pass for the days it loads, and on a server with no
+torch those days would stay unlabelled — so classification of *new* sittings is
+offloaded to Modal, exactly as the word cloud's NER is (WCLOUD-6).
+
+```bash
+# once, from backend/ — bakes the 2.2 GB checkpoint into the image
+pip install modal && modal token new
+modal deploy parlacap_modal_app.py
+modal run parlacap_modal_app.py          # smoke test: prints two labelled snippets
+```
+
+Then point the server at it (`docker-compose.yml`, the `x-nlp-env` block already
+carries `MODAL_TOKEN_*`):
+
+```yaml
+PARLAMONITOR_PARLACAP_BACKEND: modal
+```
+
+What that buys, and what keeps it cheap:
+
+- **Only the newest cycle is ever dispatched.** `PARLAMONITOR_MODAL_CYCLES`
+  (default `latest`, shared with the HuSpaCy and Whisper offloads) gates this pass
+  too. It is the guard that matters most here: the archive is ~600k blocks, and
+  without it a rebuild on the server would try to buy the whole corpus. An
+  out-of-scope sitting that misses the cache is left unlabelled instead — which is
+  the correct answer, because the GPU box already has it.
+- **A sitting day is ~1000 blocks**, seconds on a T4. Containers cap at
+  `PARLAMONITOR_PARLACAP_MODAL_MAX_CONTAINERS` (4) and scale to zero after a
+  minute idle, so an idle deployment costs nothing.
+- **The cache is shared.** The Modal service runs the same `app.parlacap` module
+  against the same pinned model, so its output and its method tag are identical to
+  the local backend's. A day classified on Modal and the archive classified on
+  your GPU box live in one `parlacap-cache.json`; neither invalidates the other,
+  and you can still copy the file in either direction.
+- **Failure is never fatal.** An outage, an expired token or a service deployed on
+  a different model costs that run its *new* topics and nothing else — the build
+  finishes, existing labels stay put, and the next `--update` retries. A service
+  whose method tag disagrees with the host's is refused outright rather than
+  allowed to file predictions under a tag that does not describe them.
+
+> **`PARLAMONITOR_PARLACAP_BACKEND`** follows the same rule as
+> `PARLAMONITOR_WORDCLOUD_BACKEND`: **`auto` never selects Modal.** Spending
+> credit is always an explicit choice — and a GPU box usually holds Modal
+> credentials already (for the HuSpaCy and Whisper offloads), so an `auto` that
+> reached for Modal would quietly bill a 600k-block archive backfill to a service
+> that may not even be deployed. So: your GPU box wants `auto` (it finds the local
+> torch install) or `local`; the server wants `modal`, which is what
+> `docker-compose.yml` defaults it to, since nothing else can work there. `off`
+> stops classifying without disabling the feature, so the DB keeps serving the
+> labels it already has.
+
 #### Backfilling the nationality advocates (`advocates`)
 
 The **szószóló** registries (REP-9) are a new source file per cycle. The `sync`
@@ -789,6 +929,20 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_LIX_LENGTH_POLICY` | `nfc` | `nfc`/`graphemes`/`codepoints`/`hu-letters` word-length counting |
 | `PARLAMONITOR_MATTR_WINDOW` | `100` | MATTR sliding window in lemmas; shorter speeches report no MATTR |
 | `PARLAMONITOR_READABILITY_MIN_WORDS` | `50` | speeches shorter than this are not scored at all |
+| **CAP policy topics** | | (§5.8; classified by `init`/`sync`, [details](#classifying-cap-policy-topics-reclassify-topics)) |
+| `PARLAMONITOR_PARLACAP` | `1` | classify + serve per-speech policy topics; `0` skips the pass and the SPA hides the badge |
+| `PARLAMONITOR_PARLACAP_THRESHOLD` | `0.90` | confidence a paragraph must reach to count toward its speech's topic. **Applied on read** — retuning it is a `web` restart, never a reclassification or a rebuild |
+| `PARLAMONITOR_PARLACAP_MODEL` | `classla/ParlaCAP-Topic-Classifier` | the classifier. Part of the cache's method tag, so changing it re-classifies everything |
+| `PARLAMONITOR_PARLACAP_BACKEND` | `modal` in compose, `auto` in code | where classification runs. **`auto` never selects Modal** (metered spend is always explicit) — it uses a local torch install or declines; `modal` opts in and degrades to local; `local` pins it; `off` stops classifying. Not part of the method tag — both backends produce identical output and share one cache |
+| `PARLAMONITOR_PARLACAP_MODAL_APP` | `parlamonitor-parlacap` | deployed Modal app name (must match `parlacap_modal_app.py`) |
+| `PARLAMONITOR_PARLACAP_MODAL_BATCH` | `1000` | blocks per Modal request; one sitting day is roughly this |
+| `PARLAMONITOR_PARLACAP_MIN_WORDS` | `12` | blocks shorter than this are never sent to the model |
+| `PARLAMONITOR_PARLACAP_TARGET_WORDS` | `60` | size at which a block closes on a paragraph boundary; also in the method tag |
+| `PARLAMONITOR_PARLACAP_MAX_WORDS` | `220` | hard block cap in words, sized to the model's 512 tokens (~1.9 tokens/word here); also in the method tag |
+| `PARLAMONITOR_PARLACAP_MAX_LENGTH` | `512` | tokenizer truncation length; also in the method tag |
+| `PARLAMONITOR_PARLACAP_BATCH_SIZE` | `32` | inference batch (GPU host only) |
+| `PARLAMONITOR_PARLACAP_DEVICE` | _(auto)_ | `cuda`/`cpu`/`cuda:1`; blank picks CUDA when present |
+| `PARLAMONITOR_PARLACAP_FP16` | `1` | half precision on CUDA — halves time and memory; the softmax stays fp32 |
 | **Bluesky announcements** (§8.7) | | posted by the `sync` pass; see [Announcing on Bluesky](#announcing-on-bluesky) |
 | `PARLAMONITOR_BLUESKY_AUTH` | — | `handle:app-password` — the credential **and** the on switch; unset = the bot never runs. Use an [app password](https://bsky.app/settings/app-passwords), never the account password |
 | `PARLAMONITOR_SITE_URL` | _(request's own origin)_ | required for posting: the canonical origin the posts link to (shared with the OG share cards) |

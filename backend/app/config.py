@@ -348,6 +348,80 @@ class Settings:
     speech_metrics: bool = field(default_factory=lambda:
         (os.environ.get("PARLAMONITOR_SPEECH_METRICS", "1").strip().lower()
          not in ("0", "false", "no", "")))
+    # CAP policy-topic classification of speech paragraphs (TOPIC-1..7,
+    # app/parlacap.py). Off switches the whole pass, so the DB carries no topics
+    # and the SPA hides the annotation rather than rendering blanks.
+    parlacap: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_PARLACAP", "1").strip().lower()
+         not in ("0", "false", "no", "")))
+    parlacap_model: str = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_PARLACAP_MODEL", "").strip()
+         or "classla/ParlaCAP-Topic-Classifier"))
+    # Where classification runs: "auto", "modal", "local", or "off". As with
+    # PARLAMONITOR_WORDCLOUD_BACKEND, **"auto" never auto-selects Modal** — that
+    # path is metered, so spending credit is always an explicit choice, and a GPU
+    # box (which usually holds Modal credentials for the other offloads) must not
+    # start billing an archive backfill just because it was left unconfigured.
+    # The production host sets "modal" — it
+    # has neither the disk for the torch stack nor the cores to run a 560M-param
+    # encoder (~1.5 blocks/s on 4 threads, i.e. 11 minutes per sitting day) — while
+    # the GPU box that classified the archive uses "local". Both produce identical
+    # output, so the backend is NOT part of the method tag and the two share one
+    # cache file. Modal is additionally gated by PARLAMONITOR_MODAL_CYCLES (below,
+    # default `latest`), which is what keeps a 600k-block archive backfill off a
+    # metered GPU.
+    parlacap_backend: str = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_PARLACAP_BACKEND", "").strip().lower()
+         or "auto"))
+    parlacap_modal_app: str = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_PARLACAP_MODAL_APP", "").strip()
+         or "parlamonitor-parlacap"))
+    # Blocks per Modal request. Sittings are packed to roughly this many blocks so
+    # a bounded pool of warm containers works through them in parallel; one sitting
+    # day is ~1000 blocks, so the default sends a typical update as one call.
+    parlacap_modal_batch: int = int(
+        os.environ.get("PARLAMONITOR_PARLACAP_MODAL_BATCH", "1000"))
+    # The confidence a paragraph's label must reach to count toward its speech's
+    # topic. Applied at READ time (app/parlacap.aggregate), never baked into the
+    # stored predictions and deliberately absent from the method tag — so retuning
+    # it costs a restart, not a reclassification or even a rebuild. Higher trades
+    # coverage for accuracy: measured on this corpus, 0.60 keeps 90% of paragraphs
+    # at 0.741 accuracy, 0.90 keeps 69% at 0.809, 0.95 keeps 62% at 0.832.
+    parlacap_threshold: float = float(
+        os.environ.get("PARLAMONITOR_PARLACAP_THRESHOLD", "0.90"))
+    # Blocks shorter than this are never sent to the model: below roughly a
+    # sentence there is not enough context to place a topic, and a confident label
+    # on "Köszönöm a szót." is worse than no label at all.
+    parlacap_min_words: int = int(
+        os.environ.get("PARLAMONITOR_PARLACAP_MIN_WORDS", "12"))
+    # Block assembly (app/parlacap.build_blocks). The corpus does not segment
+    # paragraphs consistently across its five cycles — cycle 41 has no paragraph
+    # marks at all and cycles 39-40 mark source *line* breaks, so their
+    # "paragraphs" are line fragments — so classification units are built to a word
+    # budget that prefers paragraph boundaries rather than trusting them. TARGET is
+    # the size a block closes at when a paragraph boundary is available (the median
+    # real paragraph here is ~65 words, so real paragraphs mostly survive 1:1);
+    # MAX is the hard cap, in words, that keeps a block inside the model's 512
+    # tokens (measured at 1.89 tokens/word on this corpus, 2.23 at p95 → 220 words
+    # effectively never truncates). Both are part of the method tag.
+    parlacap_target_words: int = int(
+        os.environ.get("PARLAMONITOR_PARLACAP_TARGET_WORDS", "60"))
+    parlacap_max_words: int = int(
+        os.environ.get("PARLAMONITOR_PARLACAP_MAX_WORDS", "220"))
+    # The model's own limit is 512; lowering it speeds the pass up at the cost of
+    # truncating long paragraphs. Part of the method tag — changing it invalidates
+    # the cache, because it changes what the model saw.
+    parlacap_max_length: int = int(
+        os.environ.get("PARLAMONITOR_PARLACAP_MAX_LENGTH", "512"))
+    parlacap_batch_size: int = int(
+        os.environ.get("PARLAMONITOR_PARLACAP_BATCH_SIZE", "32"))
+    # Blank = pick automatically (CUDA when present). Set to "cpu" to force the
+    # slow path, or "cuda:1" to pin a second card.
+    parlacap_device: str = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_PARLACAP_DEVICE", "").strip())
+    parlacap_fp16: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_PARLACAP_FP16", "1").strip().lower()
+         not in ("0", "false", "no", "")))
     # Shared lemma cache (app/lemma_cache.py). The word cloud and the lexical
     # diversity metric both need HuSpaCy lemmas for the *same* sentences, so the
     # cloud's pass emits them once and they are kept on disk, keyed by sentence id,

@@ -137,6 +137,47 @@ export default {
       'very-high': 'the most varied fifth',
     },
   },
+  // CAP policy topics (TOPIC-1..7). The chip says only the topic; everything that
+  // qualifies it — how much of the speech it speaks for, what it won against, how
+  // much stayed uncertain, and which model decided at which threshold — lives in
+  // the panel that opens on click.
+  topics: {
+    chipTitle: 'Topic: {topic} — click for details',
+    panelLabel: 'Topic of this speech',
+    share: '{pct} of the classified text is about this ({n} passages).',
+    alsoAbout: 'Also touched on',
+    coverage: '{pct} of the speech could be classified confidently; the model '
+      + 'makes no claim about the rest.',
+    otherShare: '{pct} of the classified text is not policy content (greetings, '
+      + 'points of order, personal remarks).',
+    method: 'Classified automatically by the ParlaCAP model, paragraph by '
+      + 'paragraph, at a {threshold}% confidence threshold. Indicative only, not '
+      + 'an official categorisation.',
+    names: {
+      Macroeconomics: 'Macroeconomics',
+      'Civil Rights': 'Civil rights',
+      Health: 'Health',
+      Agriculture: 'Agriculture',
+      Labor: 'Labour and employment',
+      Education: 'Education',
+      Environment: 'Environment',
+      Energy: 'Energy',
+      Immigration: 'Immigration',
+      Transportation: 'Transport',
+      'Law and Crime': 'Law and crime',
+      'Social Welfare': 'Social welfare',
+      Housing: 'Housing and development',
+      'Domestic Commerce': 'Banking and domestic commerce',
+      Defense: 'Defence',
+      Technology: 'Science and technology',
+      'Foreign Trade': 'Foreign trade',
+      'International Affairs': 'Foreign affairs',
+      'Government Operations': 'Government operations',
+      'Public Lands': 'Public lands and water',
+      Culture: 'Culture',
+      Other: 'Other, non-policy',
+    },
+  },
   clipExport: {
     button: 'Download video',
     segmentButton: 'Download this sentence as a video clip',

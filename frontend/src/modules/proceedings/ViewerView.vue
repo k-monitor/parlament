@@ -25,6 +25,7 @@ import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
 import SpeechMetricsBadge from '../../components/SpeechMetricsBadge.vue'
+import SpeechTopicBadge from '../../components/SpeechTopicBadge.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import ExportDialog from '../../components/ExportDialog.vue'
 
@@ -440,6 +441,8 @@ onBeforeUnmount(() => {
                is switched on. Full form here: a single speech has room for the
                whole phrase, where the day list shortens it. -->
           <SpeechMetricsBadge v-if="store.showSpeechMetrics" :metrics="speech.metrics" />
+          <!-- CAP policy topic (TOPIC-1..7); always shown when the speech has one. -->
+          <SpeechTopicBadge :topic="speech.topic" />
           <TimingBadge :timing="speech.timing" />
         </div>
       </div>

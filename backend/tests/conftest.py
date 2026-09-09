@@ -26,6 +26,10 @@ os.environ.setdefault("PARLAMONITOR_HUSPACY_MODEL", "hu_core_news_md")
 # tests opt back in explicitly (with injected fetchers).
 os.environ.setdefault("PARLAMONITOR_ENTITY_LINKS", "0")
 os.environ.setdefault("PARLAMONITOR_KMONITOR_LINKS", "0")
+# CAP topic classification is off by default too: the pass would otherwise pull a
+# 2.2 GB XLM-R checkpoint off the Hub on the first fixture build. test_parlacap.py
+# turns it back on with an injected fake classifier, so no test loads a model.
+os.environ.setdefault("PARLAMONITOR_PARLACAP", "0")
 # Disable search analytics by default so the suite writes no analytics file and
 # spawns no flush thread. The `/search` endpoint's record() call becomes a no-op;
 # test_analytics.py exercises the aggregator directly with its own temp DB.

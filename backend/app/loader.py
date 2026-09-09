@@ -26,9 +26,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import glob
+import gzip
 import hashlib
 import json
 import logging
+import lzma
 import os
 import sqlite3
 from collections import Counter
@@ -40,8 +42,8 @@ try:                                    # POSIX only; the writer lock degrades t
 except ImportError:                     # pragma: no cover - non-POSIX
     fcntl = None
 
-from . import (kmonitor, lemma_cache, nlp, nlp_modal, portfolios, readability,
-               settlements, valasztas, wikidata)
+from . import (kmonitor, lemma_cache, nlp, nlp_modal, parlacap, portfolios,
+               readability, settlements, valasztas, wikidata)
 from .config import settings
 from .parlament_links import bill_page_url
 from .wordfreq import STOPWORDS, count_words
@@ -3329,6 +3331,541 @@ def rebuild_metric_distribution(conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# CAP policy topics, per paragraph (TOPIC-1..7)
+# ---------------------------------------------------------------------------
+
+def _parlacap_cache_path(cache_dir: Path) -> Path:
+    return Path(cache_dir) / "parlacap-cache.json"
+
+
+def _ensure_speech_topic_tables(conn: sqlite3.Connection) -> None:
+    """Create the topic table in place if missing, so the feature also lands
+    through the incremental ``--update`` path (cf. ``_ensure_speech_metrics_tables``)."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS speech_topic (
+            speech_id    TEXT NOT NULL,
+            block        INTEGER NOT NULL,
+            paragraph    INTEGER,
+            session_id   TEXT NOT NULL,
+            label        TEXT NOT NULL,
+            score        REAL NOT NULL,
+            runner_up    TEXT,
+            runner_score REAL,
+            words        INTEGER NOT NULL,
+            PRIMARY KEY (speech_id, block)
+        ) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS idx_speech_topic_session
+            ON speech_topic(session_id);
+        CREATE INDEX IF NOT EXISTS idx_speech_topic_label
+            ON speech_topic(label);
+    """)
+
+
+def _speech_blocks(conn: sqlite3.Connection, sid: str) -> list[tuple[str, int, int, str]]:
+    """A sitting's non-procedural speeches as classification blocks:
+    ``(speech_uid, block_ordinal, first_paragraph, text)``.
+
+    Two things happen here that the raw rows do not give us:
+
+    * **Cleaning.** ``readability.spoken_sentences`` is applied per *speech*, not
+      per block, because it strips the speaker attribution from the speech's first
+      sentence and carries an open parenthesis across sentence boundaries — a stage
+      direction routinely spans several. Splitting first would leave the
+      attribution in block 0 and let a straddling "(Taps.)" leak into the next
+      block as speech.
+    * **Block assembly.** ``parlacap.build_blocks`` decides where the units are;
+      ``sentence.paragraph`` is only a hint, because it means a different thing in
+      each electoral cycle (see that function). NULL — every row of cycle 41 — is
+      passed through as paragraph 0, which is the schema's "render as one block"
+      contract, and the word budget then splits it.
+
+    Order is deterministic (speech, then sentence id) so the fingerprint over this
+    text keeps matching across runs.
+    """
+    rows = conn.execute(
+        "SELECT sp.uid, se.paragraph, se.text FROM sentence se "
+        "JOIN speech sp ON sp.uid = se.speech_id "
+        "WHERE sp.session_id = ? AND sp.procedural = 0 AND se.text IS NOT NULL "
+        "ORDER BY sp.speech_index, se.id", (sid,)).fetchall()
+
+    by_speech: list[tuple[str, list[tuple[int, str]]]] = []
+    for uid, para, text in rows:
+        if not by_speech or by_speech[-1][0] != uid:
+            by_speech.append((uid, []))
+        by_speech[-1][1].append((para if para is not None else 0, text))
+
+    out: list[tuple[str, int, int, str]] = []
+    for uid, pairs in by_speech:
+        cleaned = readability.spoken_sentences([t for (_p, t) in pairs])
+        sentences = [(para, text) for (para, _raw), text in zip(pairs, cleaned) if text]
+        for ordinal, first_para, text in parlacap.build_blocks(sentences):
+            if text:
+                out.append((uid, ordinal, first_para, text))
+    return out
+
+
+def rebuild_speech_topics(conn: sqlite3.Connection,
+                          cache_dir: str | Path | None = None,
+                          only_sessions: set[str] | None = None) -> None:
+    """Classify speeches into CAP major topics, block by block, into
+    ``speech_topic`` (TOPIC-1..7). See ``app/parlacap.py`` for what the model is,
+    and ``parlacap.build_blocks`` for why the unit is a paragraph-sized block
+    rather than the transcript's own paragraph.
+
+    Nothing here applies the confidence threshold: predictions are stored raw and
+    the cut is made on read, so retuning it needs neither this pass nor a rebuild.
+
+    Cached on disk (``parlacap-cache.json``) per sitting, keyed by a fingerprint of
+    its text and the method — the same contract as the word cloud and the speech
+    metrics. The cache is the *deliverable* of this pass, not an optimization:
+    classification wants a GPU and the web server has none, so the intended
+    workflow is to run this where the card is and ship the JSON (DEPLOYMENT.md).
+    A host that misses the cache with no usable model logs and leaves those
+    sittings unlabelled rather than failing the build — degrading exactly like the
+    HuSpaCy passes, since a missing topic hides a badge while a failed build takes
+    the site down.
+    """
+    if not settings.parlacap:
+        return
+    _ensure_speech_topic_tables(conn)
+
+    method = parlacap.method_tag()
+    cache_path = _parlacap_cache_path(cache_dir) if cache_dir else None
+    cache: dict = {"sessions": {}}
+    if cache_path and cache_path.exists():
+        try:
+            loaded = json.loads(cache_path.read_text())
+            if isinstance(loaded.get("sessions"), dict):
+                cache["sessions"] = loaded["sessions"]
+            # Carry every other key through untouched. The iromány pass
+            # (`rebuild_bill_topics`) keeps its half of this same file under
+            # "bills", and the two run independently — a speech-only run that
+            # rewrote the file without them would silently delete the document
+            # topics from the artefact that gets shipped to the server.
+            for key, value in loaded.items():
+                cache.setdefault(key, value)
+        except (OSError, ValueError):
+            logger.warning("Could not read ParlaCAP cache %s; recomputing", cache_path)
+
+    def _flush():
+        if cache_path:
+            try:
+                cache_path.write_text(json.dumps(cache, ensure_ascii=False))
+            except OSError as exc:
+                logger.warning("Could not write ParlaCAP cache %s (%s)",
+                               cache_path, exc)
+
+    sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id DESC")]
+    if only_sessions is not None:
+        sids = [sid for sid in sids if sid in only_sessions]
+
+    def _write(sid: str, entries: list) -> None:
+        """Expand a cache entry's positional rows into ``speech_topic``.
+
+        Rows are stored as ``[uid, block, paragraph, label_idx, score, runner_idx,
+        runner_score, words]`` — label *indices* against ``parlacap.LABELS``, which
+        is what keeps a corpus-sized cache at tens of megabytes instead of hundreds,
+        and is why that tuple is pinned and verified against the model."""
+        if not entries:
+            return
+        conn.executemany(
+            "INSERT OR REPLACE INTO speech_topic(speech_id, block, paragraph, "
+            "session_id, label, score, runner_up, runner_score, words) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [(uid, blk, para, sid, parlacap.LABELS[lab], score,
+              parlacap.LABELS[ru] if ru is not None else None, rus, words)
+             for (uid, blk, para, lab, score, ru, rus, words) in entries])
+
+    # Which sittings may go to a metered GPU at all (PARLAMONITOR_MODAL_CYCLES,
+    # default `latest`). Same guard the HuSpaCy passes use, and it matters more
+    # here: the archive is 600k blocks, so without it a single backfill on a
+    # server would try to buy the whole corpus.
+    rows = conn.execute("SELECT id, period_number FROM session").fetchall()
+    latest = max((p for _sid, p in rows if p is not None), default=None)
+    modal_ok = {sid: settings.modal_cycle_allowed(p, latest) for sid, p in rows}
+
+    # Decide reuse before writing anything, so a sitting we end up not
+    # reclassifying keeps the rows it has rather than being cleared and left empty.
+    reuse: list[str] = []
+    misses: list[tuple[str, str, list]] = []
+    for sid in sids:
+        blocks = _speech_blocks(conn, sid)
+        fp = _session_fingerprint(method, [t for (_u, _b, _p, t) in blocks])
+        entry = cache["sessions"].get(sid)
+        if entry and entry.get("fp") == fp:
+            reuse.append(sid)
+        else:
+            misses.append((sid, fp, blocks))
+
+    if only_sessions is None:
+        conn.execute("DELETE FROM speech_topic")
+    else:
+        conn.executemany("DELETE FROM speech_topic WHERE session_id = ?",
+                         [(s,) for s in sids])
+
+    labelled = 0
+    for sid in reuse:
+        entries = cache["sessions"][sid].get("rows") or []
+        _write(sid, entries)
+        labelled += len(entries)
+
+    def _entries_for(blocks, preds) -> list:
+        return [[uid, blk, para, pred[0], pred[1], pred[2], pred[3],
+                 parlacap.word_count(text)]
+                for (uid, blk, para, text), pred in zip(blocks, preds)
+                if pred is not None]
+
+    processed = 0
+
+    def _store(sid, fp, blocks, preds):
+        """Cache and write one sitting's predictions.
+
+        A sitting with nothing classifiable still gets an entry, so it is not
+        rediscovered as a miss (and re-dispatched) on every future run."""
+        nonlocal labelled, processed
+        entries = _entries_for(blocks, preds)
+        cache["sessions"][sid] = {"fp": fp, "method": method, "rows": entries}
+        _write(sid, entries)
+        labelled += len(entries)
+        processed += 1
+        if processed % 25 == 0:
+            conn.commit()
+            _flush()
+            logger.info("ParlaCAP progress: %d/%d sittings classified",
+                        processed, len(misses))
+
+    # Split the misses by which backend may serve them, so one run can send this
+    # week's sittings to Modal while leaving an out-of-scope archive sitting
+    # unlabelled — rather than the whole run taking the lowest common backend.
+    by_backend: dict[str | None, list] = {}
+    for miss in misses:
+        by_backend.setdefault(
+            parlacap.backend(modal_ok=modal_ok.get(miss[0], True)), []).append(miss)
+
+    unreachable = by_backend.pop(None, [])
+    if unreachable:
+        logger.warning(
+            "ParlaCAP: %d sitting(s) miss the cache and cannot be classified here "
+            "(no Modal deployment reachable for their cycle and no local "
+            "torch/transformers) — leaving them unlabelled. Classify on a GPU host "
+            "and copy %s across.",
+            len(unreachable), _parlacap_cache_path(Path(cache_dir or ".")).name)
+
+    for name, group in by_backend.items():
+        if name == "modal":
+            from . import parlacap_modal
+            blocks_by = {sid: blocks for (sid, _fp, blocks) in group}
+            try:
+                for sid, fp, preds in parlacap_modal.classify(
+                        [(sid, fp, [t for (_u, _b, _p, t) in blocks])
+                         for (sid, fp, blocks) in group]):
+                    _store(sid, fp, blocks_by[sid], preds)
+            except Exception as exc:
+                # Never fatal: a Modal outage, an expired token or a service on the
+                # wrong method must cost this build its *new* topics, not the build.
+                logger.warning("ParlaCAP: Modal classification failed (%s) — "
+                               "%d sitting(s) left unlabelled", exc, len(group))
+            continue
+        for sid, fp, blocks in group:
+            _store(sid, fp, blocks, parlacap.classify(
+                [t for (_u, _b, _p, t) in blocks]))
+
+    conn.commit()
+    _flush()
+    logger.info("ParlaCAP topics: %d sittings (%d classified, %d cached), "
+                "%d blocks labelled", len(sids), processed, len(reuse), labelled)
+
+
+# ---------------------------------------------------------------------------
+# CAP topics for irományok (TOPIC-8)
+# ---------------------------------------------------------------------------
+
+def _ensure_bill_topic_tables(conn: sqlite3.Connection) -> None:
+    """Create the iromány topic table in place if missing, so the feature also
+    lands through the incremental ``--update`` path (cf. the speech counterpart)."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS bill_topic (
+            bill_id      TEXT NOT NULL,
+            block        INTEGER NOT NULL,
+            paragraph    INTEGER,
+            period_number INTEGER,
+            label        TEXT NOT NULL,
+            score        REAL NOT NULL,
+            runner_up    TEXT,
+            runner_score REAL,
+            words        INTEGER NOT NULL,
+            PRIMARY KEY (bill_id, block)
+        ) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS idx_bill_topic_period ON bill_topic(period_number);
+        CREATE INDEX IF NOT EXISTS idx_bill_topic_label ON bill_topic(label);
+    """)
+
+
+_TEXT_DECODERS = {".xz": lzma.decompress, ".gz": gzip.decompress}
+
+
+def _documents_root(documents_dir: str | Path | None,
+                    data_dir: str | Path | None = None) -> Path | None:
+    """Where the scraper's mirrored document text lives, or ``None``.
+
+    ``PARLAMONITOR_DOCUMENTS_DIR`` wins; otherwise it is ``documents/`` under the
+    loader's data directory, which is where the scraper writes it (DOC-1). A
+    server that was never given the mirror simply has neither, which is the
+    ordinary production case — the pass then replays the shipped cache."""
+    for candidate in (documents_dir, settings.documents_dir,
+                      (Path(data_dir) / "documents") if data_dir else None):
+        if candidate:
+            p = Path(candidate)
+            if p.is_dir():
+                return p
+    return None
+
+
+def _document_texts(root: Path | None, urls: set[str]) -> dict[str, str]:
+    """``{document url: extracted text}`` for the URLs we were asked about.
+
+    Reads every cycle's ``index.json`` in the mirror and pulls back the text of
+    the entries whose ``url`` a bill links to. Keyed on the URL rather than on the
+    manifest's ``billId`` so the join is to *the document this iromány links to*,
+    which is what the bill row actually records — and so a manifest written by a
+    different scrape still lines up.
+
+    A document that is missing, unreadable, or was stored without text (an
+    image-only scan) is simply absent from the result: the iromány then has no
+    text to classify, which is not an error."""
+    out: dict[str, str] = {}
+    if root is None or not urls:
+        return out
+    for index_path in sorted(root.glob("*/index.json")):
+        try:
+            manifest = json.loads(index_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning("Document index %s unreadable (%s); skipping",
+                           index_path, exc)
+            continue
+        base = index_path.parent
+        for entry in manifest.get("documents") or []:
+            url, rel = entry.get("url"), entry.get("textFile")
+            if not url or not rel or url not in urls or url in out:
+                continue
+            f = base / rel
+            try:
+                raw = f.read_bytes()
+            except OSError:
+                continue
+            decode = _TEXT_DECODERS.get(f.suffix, lambda b: b)
+            try:
+                out[url] = decode(raw).decode("utf-8", "replace")
+            except (lzma.LZMAError, OSError, ValueError) as exc:
+                logger.warning("Could not read document text %s (%s)", f, exc)
+    return out
+
+
+def rebuild_bill_topics(conn: sqlite3.Connection,
+                        cache_dir: str | Path | None = None,
+                        documents_dir: str | Path | None = None,
+                        data_dir: str | Path | None = None,
+                        only_periods: set[int] | None = None) -> None:
+    """Classify irományok into CAP major topics, block by block, into
+    ``bill_topic`` (TOPIC-8) — the document counterpart of
+    :func:`rebuild_speech_topics`, sharing its model, its cache file, its
+    threshold-on-read contract and its refusal to guess.
+
+    What differs is the **input**. A speech is in the DB; an iromány's text is
+    not — the registry only ever held a *link* to the PDF, so this pass reads the
+    text the scraper's optional ``documents`` stage mirrored and extracted
+    (DOC-1). Which gives three states, all of them normal:
+
+    * **mirror present** (a dev or analysis host): the text is fingerprinted and
+      anything new or changed is classified.
+    * **mirror absent, cache present** (the production server): there is no text
+      to fingerprint, so each iromány's cached rows are **replayed as they
+      stand**. This is the whole delivery story — classify where the documents
+      and the GPU are, ship ``parlacap-cache.json``, replay it on a server that
+      has neither. The entry cannot be verified there, which is precisely why the
+      cache is a trusted build artefact rather than an optimisation.
+    * **neither**: nothing is written and no badge appears. Never an error.
+
+    ``only_periods`` scopes the rebuild to some electoral cycles, leaving other
+    cycles' rows untouched.
+    """
+    if not (settings.parlacap and settings.bill_topics):
+        return
+    _ensure_bill_topic_tables(conn)
+
+    method = parlacap.document_method_tag()
+    cache_path = _parlacap_cache_path(cache_dir) if cache_dir else None
+    cache: dict = {"sessions": {}, "bills": {}}
+    if cache_path and cache_path.exists():
+        try:
+            loaded = json.loads(cache_path.read_text())
+            for key in ("sessions", "bills"):
+                if isinstance(loaded.get(key), dict):
+                    cache[key] = loaded[key]
+            # Keys this loader does not know about must survive a rewrite: the
+            # speech pass and this one share one file and take turns writing it.
+            for key, value in loaded.items():
+                cache.setdefault(key, value)
+        except (OSError, ValueError):
+            logger.warning("Could not read ParlaCAP cache %s; recomputing", cache_path)
+
+    def _flush():
+        if cache_path:
+            try:
+                cache_path.write_text(json.dumps(cache, ensure_ascii=False))
+            except OSError as exc:
+                logger.warning("Could not write ParlaCAP cache %s (%s)",
+                               cache_path, exc)
+
+    sql = ("SELECT id, period_number, text_url FROM bill "
+           "WHERE text_url IS NOT NULL AND text_url <> ''")
+    params: list = []
+    if only_periods:
+        sql += " AND period_number IN (" + ",".join("?" * len(only_periods)) + ")"
+        params = sorted(only_periods)
+    bills = conn.execute(sql, params).fetchall()
+    if not bills:
+        return
+
+    root = _documents_root(documents_dir, data_dir)
+    texts = _document_texts(root, {b[2] for b in bills})
+    logger.info("ParlaCAP irományok: %d with a document link, %d with mirrored "
+                "text%s", len(bills), len(texts),
+                "" if root else " (no document mirror on this host — replaying cache)")
+
+    latest = conn.execute("SELECT MAX(period_number) FROM bill").fetchone()[0]
+
+    def _write(bill_id: str, period: int | None, entries: list) -> None:
+        """Expand a cache entry's positional rows into ``bill_topic``.
+
+        Rows are ``[block, paragraph, label_idx, score, runner_idx, runner_score,
+        words]`` — label *indices* against ``parlacap.LABELS``, exactly as the
+        speech cache stores them and for the same reason."""
+        if not entries:
+            return
+        conn.executemany(
+            "INSERT OR REPLACE INTO bill_topic(bill_id, block, paragraph, "
+            "period_number, label, score, runner_up, runner_score, words) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [(bill_id, blk, para, period, parlacap.LABELS[lab], score,
+              parlacap.LABELS[ru] if ru is not None else None, rus, words)
+             for (blk, para, lab, score, ru, rus, words) in entries])
+
+    # Decide reuse before deleting anything, so an iromány we end up not
+    # reclassifying keeps the rows it has rather than being cleared and left empty.
+    reuse: list[tuple[str, int | None]] = []
+    replay: list[tuple[str, int | None]] = []
+    misses: list[tuple[str, int | None, str, list]] = []
+    untexted = stale = 0
+    for bill_id, period, url in bills:
+        entry = cache["bills"].get(bill_id)
+        text = texts.get(url)
+        if text is None:
+            # No mirror here (or no text for this document). There is nothing to
+            # fingerprint the cache against, so the one check still worth making
+            # is the *method*: stored rows are label indices against
+            # `parlacap.LABELS`, so replaying an entry produced by a different
+            # model would not error anywhere — it would quietly relabel the
+            # corpus. Same reasoning as the Modal method-tag check: refuse.
+            if entry and entry.get("rows") is not None:
+                if entry.get("method") in (None, method):
+                    replay.append((bill_id, period))
+                else:
+                    stale += 1
+            else:
+                untexted += 1
+            continue
+        blocks = parlacap.build_text_blocks(text)
+        fp = _session_fingerprint(method, [t for (_o, _p, t) in blocks])
+        if entry and entry.get("fp") == fp:
+            reuse.append((bill_id, period))
+        else:
+            misses.append((bill_id, period, fp, blocks))
+
+    if only_periods:
+        conn.executemany("DELETE FROM bill_topic WHERE period_number = ?",
+                         [(p,) for p in sorted(only_periods)])
+    else:
+        conn.execute("DELETE FROM bill_topic")
+
+    labelled = 0
+    for bill_id, period in reuse + replay:
+        entries = cache["bills"][bill_id].get("rows") or []
+        _write(bill_id, period, entries)
+        labelled += len(entries)
+
+    processed = 0
+
+    def _store(bill_id, period, fp, blocks, preds):
+        """Cache and write one iromány's predictions.
+
+        A document with nothing classifiable still gets an entry, so it is not
+        rediscovered as a miss (and re-dispatched) on every future run."""
+        nonlocal labelled, processed
+        entries = [[blk, para, pred[0], pred[1], pred[2], pred[3],
+                    parlacap.word_count(text)]
+                   for (blk, para, text), pred in zip(blocks, preds)
+                   if pred is not None]
+        cache["bills"][bill_id] = {"fp": fp, "method": method, "rows": entries}
+        _write(bill_id, period, entries)
+        labelled += len(entries)
+        processed += 1
+        if processed % 50 == 0:
+            conn.commit()
+            _flush()
+            logger.info("ParlaCAP irományok: %d/%d classified", processed, len(misses))
+
+    # Split the misses by which backend may serve them, exactly as the speech pass
+    # does, so this cycle's new irományok can go to Modal while an out-of-scope
+    # archive cycle is left alone rather than dragging the run to a common backend.
+    by_backend: dict[str | None, list] = {}
+    for miss in misses:
+        allowed = settings.modal_cycle_allowed(miss[1], latest)
+        by_backend.setdefault(parlacap.backend(modal_ok=allowed), []).append(miss)
+
+    unreachable = by_backend.pop(None, [])
+    if unreachable:
+        logger.warning(
+            "ParlaCAP: %d iromány document(s) miss the cache and cannot be "
+            "classified here (no Modal deployment reachable for their cycle and "
+            "no local torch/transformers) — leaving them unlabelled.",
+            len(unreachable))
+
+    for name, group in by_backend.items():
+        if name == "modal":
+            from . import parlacap_modal
+            meta = {bid: (period, blocks) for (bid, period, _fp, blocks) in group}
+            try:
+                for bid, fp, preds in parlacap_modal.classify(
+                        [(bid, fp, [t for (_o, _p, t) in blocks])
+                         for (bid, _period, fp, blocks) in group]):
+                    period, blocks = meta[bid]
+                    _store(bid, period, fp, blocks, preds)
+            except Exception as exc:
+                # Never fatal, for the same reason as the speech pass: an outage
+                # costs this build its new topics, not the build.
+                logger.warning("ParlaCAP: Modal classification of irományok "
+                               "failed (%s) — %d left unlabelled", exc, len(group))
+            continue
+        for bid, period, fp, blocks in group:
+            _store(bid, period, fp, blocks,
+                   parlacap.classify([t for (_o, _p, t) in blocks]))
+
+    conn.commit()
+    _flush()
+    if stale:
+        logger.warning(
+            "ParlaCAP: %d cached iromány prediction(s) were made by a different "
+            "method than this host expects (%s) and there is no document text "
+            "here to reclassify from — left unlabelled rather than replayed under "
+            "the wrong labels. Re-run the pass where the document mirror is.",
+            stale, method)
+    logger.info("ParlaCAP iromány topics: %d classified, %d cached, %d replayed "
+                "from cache without text, %d with no text at all; %d blocks "
+                "labelled", processed, len(reuse), len(replay), untexted, labelled)
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -3486,6 +4023,15 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         # like the passes above; the readability half needs no model, so it lands
         # even under --skip-wordcloud (which only drops the lemma pass).
         rebuild_speech_metrics(conn, db_path.parent, lemmas=not skip_wordcloud)
+        # CAP topics (TOPIC-1..7). Cache-driven: on a host without torch this
+        # writes whatever `parlacap-cache.json` already covers and leaves the
+        # rest unlabelled, so a server build never needs the model.
+        rebuild_speech_topics(conn, db_path.parent)
+        # The same pass over the irományok's own document text (TOPIC-8). Reads
+        # the scraper's optional document mirror where there is one and replays
+        # the shipped cache where there is not, so a server build needs neither
+        # the documents nor the model.
+        rebuild_bill_topics(conn, db_path.parent, data_dir=data_dir)
         rebuild_aggregates(conn)
         # Settlement mentions (§6D). Needs no model and no other pass's output — only
         # the register (cached) and the transcript, which is where gate 2's ambiguity
@@ -3716,8 +4262,13 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             registry = json.loads(p.read_text())
             _load_period_meta(conn, registry.get("meta", {}))
             load_advocates(conn, registry)
+        reloaded_bill_periods: set[int] = set()
         for p in changed["bills-*.json"]:
-            load_bills(conn, json.loads(p.read_text()))
+            registry = json.loads(p.read_text())
+            load_bills(conn, registry)
+            cycle = (registry.get("meta") or {}).get("cycle")
+            if cycle is not None:
+                reloaded_bill_periods.add(int(cycle))
         for p in changed["votes-*.json"]:
             load_votes(conn, json.loads(p.read_text()))
 
@@ -3757,6 +4308,14 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             rebuild_speech_metrics(conn, db_path.parent,
                                    only_sessions=set(loaded_sessions),
                                    lemmas=not skip_wordcloud)
+            rebuild_speech_topics(conn, db_path.parent,
+                                  only_sessions=set(loaded_sessions))
+        # Iromány topics follow the *bills* file, not the sittings: a poll that
+        # brought in new irományok and no new sitting must still classify them,
+        # and one that changed neither must not walk the corpus (TOPIC-8).
+        if reloaded_bill_periods:
+            rebuild_bill_topics(conn, db_path.parent, data_dir=data_dir,
+                                only_periods=reloaded_bill_periods)
         # A removal needs no per-sitting pass (its rows are gone) but does need the
         # corpus-wide aggregates — word document frequencies and the §6C portfolio
         # links among them — recomputed from what remains.
@@ -3952,6 +4511,86 @@ def _remeasure_speeches(db_path: str | Path, *, period: int | None = None) -> bo
     return True
 
 
+def reclassify_topics(db_path: str | Path, *, period: int | None = None,
+                      data_dir: str | Path | None = None) -> bool:
+    """Re-run the CAP topic pass over an EXISTING DB, in place (TOPIC-1..7).
+
+    The topic counterpart of :func:`remeasure_speeches`, and it is the command the
+    GPU host runs: ``--update`` only revisits sittings whose *source file* changed,
+    so a first classification of an already-loaded corpus is a no-op for it even
+    though every speech is unlabelled.
+
+    Note what this is **not** for. Retuning the confidence threshold needs nothing
+    here at all — predictions are stored raw and the cut is made on read, so a new
+    ``PARLAMONITOR_PARLACAP_THRESHOLD`` takes effect on the next server restart.
+    Run this only when the *predictions* would change: a new model, a different
+    truncation length or minimum paragraph length, or a corpus that has never been
+    classified.
+
+    ``period`` scopes it to one electoral cycle; ``None`` covers every sitting.
+    Sittings whose cache entry still fingerprint-matches are reused, so re-running
+    it is cheap and a partial run can simply be resumed.
+
+    It classifies **irományok** as well (TOPIC-8), reading their document text from
+    the scraper's mirror under ``data_dir``; where there is no mirror that half
+    replays the cache and nothing else.
+    """
+    with _writer_lock(Path(db_path)):
+        return _reclassify_topics(db_path, period=period, data_dir=data_dir)
+
+
+def _reclassify_topics(db_path: str | Path, *, period: int | None = None,
+                       data_dir: str | Path | None = None) -> bool:
+    db_path = Path(db_path)
+    if not db_path.exists():
+        logger.error("No DB at %s — build it first", db_path)
+        return False
+
+    tmp_path = db_path.with_suffix(db_path.suffix + ".building")
+    _remove_db_files(tmp_path)
+    src = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    conn = connect(tmp_path)
+    try:
+        src.backup(conn)
+    finally:
+        src.close()
+
+    ok = False
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        only: set[str] | None = None
+        if period is not None:
+            only = {r[0] for r in conn.execute(
+                "SELECT id FROM session WHERE period_number = ?", (period,))}
+            if not only:
+                logger.warning("No sittings in period %s — nothing to classify", period)
+                return False
+            logger.info("Classifying %d sitting(s) in period %s", len(only), period)
+        rebuild_speech_topics(conn, db_path.parent, only_sessions=only)
+        # The iromány half of the same pass (TOPIC-8). Scoped by cycle rather than
+        # by sitting: an iromány belongs to a cycle, not to a sitting day.
+        rebuild_bill_topics(conn, db_path.parent, data_dir=data_dir,
+                            only_periods={period} if period is not None else None)
+        n_rows, n_speeches = conn.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT speech_id) FROM speech_topic").fetchone()
+        n_blocks, n_bills = conn.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT bill_id) FROM bill_topic").fetchone()
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.commit()
+        ok = True
+    finally:
+        conn.close()
+        if not ok:
+            _remove_db_files(tmp_path)
+
+    _swap_in(tmp_path, db_path)
+    logger.info("Classified topics into %s (%d paragraphs across %d speeches; "
+                "%d blocks across %d irományok)",
+                db_path, n_rows, n_speeches, n_blocks, n_bills)
+    return True
+
+
 def _load_period_meta(conn: sqlite3.Connection, meta: dict) -> None:
     num = meta.get("cycle")
     if num is None:
@@ -4050,6 +4689,12 @@ def main(argv=None) -> int:
                          "--period to scope it to one cycle. Same escape hatch as "
                          "--reextract-entities, for a saphes upgrade, a changed "
                          "threshold/window, or a lemmatizer becoming reachable")
+    ap.add_argument("--reclassify-topics", action="store_true",
+                    help="re-run the CAP policy-topic classification over the "
+                         "existing DB (TOPIC-1..7) and refresh parlacap-cache.json. "
+                         "Needs torch+transformers (a GPU host) for sittings that "
+                         "miss the cache; changing the confidence threshold needs "
+                         "no run at all, only a restart")
     ap.add_argument("--period", type=int,
                     help="electoral cycle number to scope --reextract-entities / "
                          "--remeasure-speeches to (e.g. 43); omit to cover every "
@@ -4062,20 +4707,27 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("parlamonitor.loader").setLevel(logging.INFO)
-    in_place = args.reextract_entities or args.remeasure_speeches
+    in_place = (args.reextract_entities or args.remeasure_speeches
+                or args.reclassify_topics)
     if args.period is not None and not in_place:
-        ap.error("--period is only valid with --reextract-entities or "
-                 "--remeasure-speeches")
+        ap.error("--period is only valid with --reextract-entities, "
+                 "--remeasure-speeches or --reclassify-topics")
     if in_place:
         if args.update or args.session:
-            ap.error("--reextract-entities / --remeasure-speeches operate on the "
-                     "existing DB; they cannot be combined with --update or --session")
+            ap.error("--reextract-entities / --remeasure-speeches / "
+                     "--reclassify-topics operate on the existing DB; they cannot "
+                     "be combined with --update or --session")
         # data_dir is unused here (nothing is reloaded) but stays a required
         # positional so every loader invocation has the same shape.
         if args.reextract_entities:
             reextract_entities(args.db_path, period=args.period)
         if args.remeasure_speeches:
             remeasure_speeches(args.db_path, period=args.period)
+        if args.reclassify_topics:
+            # data_dir matters here after all: the iromány half of the pass reads
+            # its text from the scraper's document mirror under it (TOPIC-8).
+            reclassify_topics(args.db_path, period=args.period,
+                              data_dir=args.data_dir)
     elif args.update:
         if args.session:
             ap.error("--session is only valid for a full build, not --update")

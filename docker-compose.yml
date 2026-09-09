@@ -73,6 +73,28 @@ x-nlp-env: &nlp-env
   # backend as the word cloud — set _WORDCLOUD_BACKEND=modal to offload) and
   # resolve each name to Wikidata/Wikipedia. Set to 0 to disable.
   PARLAMONITOR_ENTITY_LINKS: ${PARLAMONITOR_ENTITY_LINKS:-1}
+  # CAP policy topics (§5.8). Classification is XLM-R-large, which this host has
+  # no business running — `modal` sends the sittings `sync` loads to the deployed
+  # parlacap_modal_app.py (scoped by PARLAMONITOR_MODAL_CYCLES above, so only the
+  # newest cycle is ever metered; the archive is classified once on a GPU box and
+  # its parlacap-cache.json copied into the db volume — see DEPLOYMENT.md).
+  # Defaults to `modal` because on THIS host nothing else can work — `auto` never
+  # auto-selects Modal (spending credit is always explicit) and would leave new
+  # sittings unlabelled here. Without MODAL_TOKEN_* it warns once per update and
+  # degrades to leaving them unlabelled, which is the same outcome, logged. `off`
+  # stops classifying without hiding the labels the DB already carries.
+  PARLAMONITOR_PARLACAP_BACKEND: ${PARLAMONITOR_PARLACAP_BACKEND:-modal}
+  PARLAMONITOR_PARLACAP_MODAL_APP: ${PARLAMONITOR_PARLACAP_MODAL_APP:-parlamonitor-parlacap}
+  # The confidence a paragraph must reach to count toward its speech's topic.
+  # Applied when a request is SERVED, so retuning it needs only a restart of the
+  # serving colors — never a reclassification and never a rebuild.
+  PARLAMONITOR_PARLACAP_THRESHOLD: ${PARLAMONITOR_PARLACAP_THRESHOLD:-0.90}
+  # Also label the irományok themselves, from the text of the document each one
+  # links to (TOPIC-8). On this host that is always a cache replay: the server
+  # mirrors no documents (PARLAMONITOR_DOCUMENTS is off, DOC-1), so the rows come
+  # from the same parlacap-cache.json shipped for the speech topics. With no
+  # cache the pass writes nothing and the chip hides itself — never an error.
+  PARLAMONITOR_BILL_TOPICS: ${PARLAMONITOR_BILL_TOPICS:-1}
 
 # Whisper forced-alignment sentence-timing config for the scraping side (sync).
 # PARLAMONITOR_TIMING_BACKEND=auto uses Whisper on Modal when the MODAL_TOKEN_* above
@@ -201,6 +223,13 @@ services:
       PARLAMONITOR_SSH_KNOWN_HOSTS: ${PARLAMONITOR_SSH_KNOWN_HOSTS:-}
       # Refresh the per-MP registry at most this often (seconds); 12h default.
       PARLAMONITOR_SYNC_REPS_MAX_AGE: ${PARLAMONITOR_SYNC_REPS_MAX_AGE:-43200}
+      # Mirror of the iromány document files (DOC-1). `off` — the default — is
+      # what keeps the server's disk as it is: `pdf`/`all` is ~870 MB per cycle,
+      # and the site links documents on parlament.hu rather than serving copies.
+      # `text` (~4 MB per cycle) additionally needs poppler-utils in the image.
+      PARLAMONITOR_DOCUMENTS: ${PARLAMONITOR_DOCUMENTS:-off}
+      PARLAMONITOR_DOCUMENTS_COMPRESSION: ${PARLAMONITOR_DOCUMENTS_COMPRESSION:-xz}
+      PARLAMONITOR_DOCUMENTS_MAX_MB: ${PARLAMONITOR_DOCUMENTS_MAX_MB:-0}
     volumes:
       # Read-write here: the sync writes fresh scraper output + portraits.
       - ./data:/data

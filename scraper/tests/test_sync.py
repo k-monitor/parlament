@@ -523,3 +523,53 @@ def test_empty_office_registry_never_overwrites_what_is_held(patched):
     _expire_office_cadence(paths)
     assert _run_offices(fel, paths)["officeHolders"] is False
     assert paths.officeholders_file().read_text() == before
+
+
+# --- the document mirror in a sync pass (DOC-1) -----------------------------
+# The live server runs `sync`, and mirroring the iromány files would add ~870 MB
+# per cycle to its disk. So the one thing that must hold unconditionally is that
+# a sync configured no differently than before writes no documents at all.
+
+def test_sync_mirrors_no_documents_by_default(patched, monkeypatch):
+    paths, _ = patched
+    monkeypatch.delenv("PARLAMONITOR_DOCUMENTS", raising=False)
+    called = []
+    monkeypatch.setattr(sync, "fetch_documents",
+                        lambda *a, **kw: called.append(a) or {})
+    fel = FakeFelicitas(days=[_day("u1", "2026-05-09", 1, 3600)],
+                        speeches={"u1": [_sp("a", 10, 1)]})
+    summary = _run(fel, paths)
+    assert called == []
+    assert summary["documents"] is False
+    assert not (paths.data / "documents").exists()
+
+
+def test_sync_runs_the_mirror_once_asked(patched, monkeypatch):
+    paths, _ = patched
+    monkeypatch.setattr(sync, "load_registry", lambda p, c: {"data": []})
+    seen = {}
+    monkeypatch.setattr(sync, "fetch_documents",
+                        lambda http, p, c, reg, **kw: seen.update(kw) or {"fetched": 0})
+    fel = FakeFelicitas(days=[_day("u1", "2026-05-09", 1, 3600)],
+                        speeches={"u1": [_sp("a", 10, 1)]})
+    fel.http = object()          # the mirror fetches over the client's transport
+    summary = sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                            skip_reps=True, documents="text")
+    assert summary["documents"] == {"fetched": 0}
+    assert seen["retention"] == "text" and seen["compression"] == "xz"
+
+
+def test_a_failing_mirror_never_sinks_the_sync(patched, monkeypatch):
+    """SCR-5: the document stage is the newest and least essential thing in the
+    pass; a missing registry or a broken fetch must cost the run a log line, not
+    the sittings it just scraped."""
+    paths, scraped = patched
+    def boom(*a, **kw):
+        raise FileNotFoundError("bills-43.json not found")
+    monkeypatch.setattr(sync, "load_registry", boom)
+    fel = FakeFelicitas(days=[_day("u1", "2026-05-09", 1, 3600)],
+                        speeches={"u1": [_sp("a", 10, 1)]})
+    summary = sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                            skip_reps=True, documents="text")
+    assert summary["sessions"] == ["43001"]
+    assert any("documents:" in e for e in summary["errors"])

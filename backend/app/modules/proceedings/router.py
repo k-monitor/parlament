@@ -25,7 +25,7 @@ from ...nlp import LINKABLE_LABELS
 # announcer, whose "fully processed" MUST mean what the site's badge means.
 from ...publication import processing_state
 from ...query_cache import cached_aggregate
-from ... import readability
+from ... import parlacap, readability
 from ...search import build_match
 from ...wordfreq import count_words, tfidf_scores
 
@@ -787,6 +787,55 @@ def _speech_metrics(db: sqlite3.Connection, uid: str) -> dict | None:
     return _metrics_dict(row, _metric_cuts(db)) if row else None
 
 
+# ---------------------------------------------------------------------------
+# CAP policy topics (TOPIC-1..7)
+# ---------------------------------------------------------------------------
+
+def _has_speech_topics(db: sqlite3.Connection) -> bool:
+    """Whether the (regenerable) DB carries the topic table — false on a DB built
+    before this feature, or on one whose build had neither the cache nor a model."""
+    return bool(db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='speech_topic'"
+    ).fetchone())
+
+
+def _topics_for(db: sqlite3.Connection, uids: list[str]) -> dict[str, dict]:
+    """Speech-level topics for a batch of speeches, ``{uid: topic}``.
+
+    Aggregated **on read** rather than looked up: nothing about a speech's topic is
+    stored, because the confidence threshold that decides which paragraphs count is
+    an operator setting (``PARLAMONITOR_PARLACAP_THRESHOLD``) that must be
+    retunable without reclassifying — or even rebuilding — the corpus. The cost is
+    one indexed query over the day's block rows (a sitting day of 200 speeches
+    is roughly a thousand of them) and a fold in Python, which is cheaper than the
+    join it replaces.
+
+    Speeches with no confident block are simply absent from the result, which
+    is how they end up with ``topic: null`` and no badge.
+    """
+    if not uids or not _has_speech_topics(db):
+        return {}
+    out: dict[str, dict] = {}
+    # Chunked to stay under SQLite's variable limit on a long sitting day.
+    for start in range(0, len(uids), 400):
+        chunk = uids[start:start + 400]
+        rows = db.execute(
+            "SELECT speech_id, block, label, score, runner_up, runner_score, "
+            "words FROM speech_topic WHERE speech_id IN ("
+            + ",".join("?" * len(chunk)) + ") ORDER BY speech_id, block",
+            chunk).fetchall()
+        by_speech: dict[str, list] = {}
+        for r in rows:
+            by_speech.setdefault(r["speech_id"], []).append(
+                (r["block"], r["label"], r["score"], r["runner_up"],
+                 r["runner_score"], r["words"]))
+        for uid, para_rows in by_speech.items():
+            agg = parlacap.aggregate(para_rows)
+            if agg:
+                out[uid] = agg
+    return out
+
+
 @router.get("/sessions/{session_id}")
 def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
     """A sitting day: agenda items in order, each with its speeches (use case 2)."""
@@ -819,10 +868,15 @@ def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
            WHERE sp.session_id = ? ORDER BY sp.speech_index""",
         (session_id,)).fetchall()
     cuts = _metric_cuts(db) if metrics else {}
+    # Topics travel with the list too, but as one extra query rather than a join:
+    # they live at paragraph granularity and are folded up per speech on read (see
+    # `_topics_for`), so there is no one row per speech to join against.
+    topics = _topics_for(db, [sp["uid"] for sp in speeches if not sp["procedural"]])
     by_agenda: dict = {a["id"]: [] for a in agenda}
     for sp in speeches:
         by_agenda.setdefault(sp["agenda_item_id"], []).append(
-            _speech_brief(sp, _metrics_dict(_MetricView(sp), cuts) if metrics else None))
+            _speech_brief(sp, _metrics_dict(_MetricView(sp), cuts) if metrics else None,
+                          topics.get(sp["uid"])))
     # Same completeness signal the sittings list carries (SIT-2), counted off the
     # speech rows already fetched rather than re-queried: the page heading marks a
     # day whose transcript or per-speech video is still arriving.
@@ -1119,7 +1173,7 @@ def get_speech(uid: str, db: sqlite3.Connection = Depends(get_db)):
         "SELECT id, ord, text, time_start, time_end FROM sentence "
         "WHERE speech_id = ? ORDER BY ord", (uid,)).fetchall()
     nb = _speech_neighbours(db, sp["session_id"], sp["speech_index"])
-    speech = _speech_full(sp, _speech_metrics(db, uid))
+    speech = _speech_full(sp, _speech_metrics(db, uid), _topics_for(db, [uid]).get(uid))
     # Source the player on a clip of just this speech (VIE-9), derived from the
     # day stream + the speech's real offsets; falls back to the whole-day stream.
     clip = per_speech_clip(session["video_uri"], session["video_playseq"],
@@ -1294,7 +1348,8 @@ def _agenda_dict(a) -> dict:
             "native_type": a["native_type"]}
 
 
-def _speech_brief(sp, metrics: dict | None = None) -> dict:
+def _speech_brief(sp, metrics: dict | None = None,
+                  topic: dict | None = None) -> dict:
     return {
         "uid": sp["uid"], "origin_id": sp["origin_id"],
         "speech_index": sp["speech_index"],
@@ -1312,10 +1367,15 @@ def _speech_brief(sp, metrics: dict | None = None) -> dict:
         # Readability + lexical diversity (READ-1..7); None when the speech is not
         # measurable (procedural, no transcript, or below the length floor).
         "metrics": metrics,
+        # CAP policy topic (TOPIC-1..7); None when no paragraph of the speech was
+        # classified confidently enough to name one — which is the intended answer
+        # for roughly a third of speeches, not a gap to be filled.
+        "topic": topic,
     }
 
 
-def _speech_full(sp, metrics: dict | None = None) -> dict:
+def _speech_full(sp, metrics: dict | None = None,
+                 topic: dict | None = None) -> dict:
     return {
         "uid": sp["uid"], "origin_id": sp["origin_id"],
         "session_id": sp["session_id"], "period": sp["period_number"],
@@ -1337,4 +1397,6 @@ def _speech_full(sp, metrics: dict | None = None) -> dict:
                    "estimated": _is_estimated(sp["align_method"])},
         # Readability + lexical diversity (READ-1..7); None when not measurable.
         "metrics": metrics,
+        # CAP policy topic (TOPIC-1..7); None when nothing cleared the threshold.
+        "topic": topic,
     }

@@ -195,6 +195,35 @@ Primary use cases:
   > queried, freeing its number in the same pass; the loader drops the DB row whose
   > processed file is gone (ING-5).
 
+- **DOC-1 (SHOULD).** The iromány scrape (§6A) records where each document
+  *is* — the iromány's own text link, each non-self-standing motion's, and the
+  justification/background files on its detail sheet — but holds none of the
+  documents themselves, which is enough to **cite** a document and not enough to
+  **analyse** one. For NLP over the legislative text, the scraper SHOULD be able
+  to mirror those files and extract their text, and **what it retains MUST be
+  deployment config** (OPS-4), defaulting to **retaining nothing**: the corpus is
+  large (cycle 43 alone is 861 documents / 868 MB of PDF) and a live deployment
+  has no use for it, so turning it on is a dev/analysis choice, never the
+  default. Storing the **extracted text alone** is the intended opt-in — it is
+  0.5% of the PDFs' size (4 MB per cycle, xz-compressed) and is the only part any
+  NLP pass reads; compressing the **PDFs** is explicitly *not* worth doing, as
+  their streams are already deflated and every general-purpose compressor lands
+  near 82% of the original (a lossless structural rebuild does worse; only lossy
+  image re-encoding beats it, at the cost of the archival copy). Extraction MAY
+  depend on an external tool, whose absence MUST degrade rather than fail
+  (SCR-6), and a document that yields no text (an image-only scan — 8 of cycle
+  43's 861) MUST be recorded as such rather than retried as a failure (SCR-5). The
+  mirror MUST be **incremental** (SCR-2): published documents are static, so a
+  repeat pass costs no requests.
+  > **✅ realized.** `parlamonitor documents --cycle <n> --documents text` (and
+  > the same knobs on `sync`); `PARLAMONITOR_DOCUMENTS` = `off` (default) /
+  > `text` / `pdf` / `all`, `…_COMPRESSION` = `xz` (default) / `gzip` / `none`,
+  > `…_MAX_MB` caps a single document while streaming. The store is
+  > `data/documents/<cycle>/{text,pdf}/` plus an `index.json` manifest carrying
+  > each document's source URL, owning bill, kind, SHA-256, page count and
+  > artefact paths. Text comes from `pdftotext` (poppler); an unrecognised
+  > retention value reads as `off`, so a typo can never turn the storage on.
+
 ### 3.3 Ingestion into the database
 
 - **ING-1 (MUST).** A loader transforms scraper output (the per-sitting session
@@ -1055,6 +1084,132 @@ section — **Elemzések** — with its own entry in the top bar.
   so an **in-place re-measure** command exists for it. The parameters are
   **configurable, not hard-coded** (OPS-4) and are **published in the site
   manifest** so every annotation can state how it was produced (TRUST-1 / REP-5).
+
+### 5.8 Speech policy topics (CAP)
+
+- **TOPIC-1 (SHOULD).** Each **speech** carries the **policy topic** it is about,
+  wherever a speech appears as an item the reader can act on: the sitting-day
+  speech list (§5.5) and the viewer (§5.2). This is the question a reader scans a
+  sitting day with — *what was this about?* — which the agenda title answers only
+  for the item, not for the speech, and which the transcript answers only by being
+  read. Unlike the language metrics (§5.7) it is therefore **shown by default**
+  rather than behind an opt-in.
+- **TOPIC-2 (the scheme).** Topics come from the **CAP (Comparative Agendas
+  Project) master codebook** — 21 major topics plus "Other" — rather than an
+  invented taxonomy. It is the scheme comparative political research already uses,
+  which makes the labels joinable with other countries' parliamentary corpora and
+  gives each one a published definition a reader can check. The **CAP code**
+  travels with the name for that reason.
+  > **✅ realized** with
+  > [`classla/ParlaCAP-Topic-Classifier`](https://huggingface.co/classla/ParlaCAP-Topic-Classifier),
+  > an XLM-R-large model further pretrained on parliamentary proceedings and
+  > fine-tuned on 29 ParlaMint 4.1 corpora — ParlaMint-HU among them, so Hungarian
+  > plenary speech is in-domain rather than merely covered by the tokenizer.
+- **TOPIC-3 (the unit is a block of paragraph size).** Classification runs over
+  **paragraph-sized blocks**, not whole speeches and not sentences. The model
+  truncates at 512 tokens while 58 % of this corpus's speeches are longer, and the
+  half it would read is the salutation rather than the argument — measured here,
+  head-truncation and whole-speech averaging disagree on 19.5 % of long speeches. A
+  single sentence, at the other end, carries too little context to place a topic.
+  Because the corpus marks paragraphs **inconsistently across cycles** (real
+  paragraphs in 42–43, none at all in 41, source line breaks in 39–40), blocks are
+  assembled to a **word budget that prefers paragraph boundaries** where they are
+  real, so the annotation's quality does not depend on which cycle is being read.
+- **TOPIC-4 (speech-level aggregation).** A speech's topic is the **word-weighted
+  majority** of its confident blocks: a speech is about what it spends its words
+  on, so a one-line aside cannot outvote three paragraphs of argument. CAP's
+  "Other" — procedural, rhetorical and interpersonal speech — is a real prediction
+  but **never a subject**, so it is reported alongside the topic (how much of the
+  speech was not policy) and excluded from the vote.
+- **TOPIC-5 (confidence, and the right to say nothing).** A block counts only if
+  its confidence clears a **configurable threshold** (default **0.90**). A speech
+  with no block above it carries **no topic at all** — silence, not a "misc"
+  bucket. Measured on a held-out coded sample of this corpus, the threshold trades
+  coverage for accuracy along a curve (0.60 → 90 % of paragraphs at 74 % accuracy;
+  0.90 → 69 % at 81 %; 0.95 → 62 % at 83 %), and an unlabelled speech costs a reader
+  a filter while a wrongly labelled one costs them trust (TRUST-1).
+- **TOPIC-6 (the threshold is a read-time policy).** Raw per-block predictions are
+  stored; the threshold is applied **when a request is served**. Retuning it must
+  therefore cost a **restart, never a reclassification or a rebuild** — it is a
+  presentation choice about how much uncertainty to show, not a measurement, and an
+  operator has to be able to move it while looking at the result. It is
+  deliberately **not** part of the cache's method tag.
+- **TOPIC-7 (cost, provenance & degradation).** Classification runs **at load
+  time, never per request**, and its per-sitting output is **cached on disk** keyed
+  by a fingerprint of the transcript *and* the method — like the word cloud, the
+  entity pass and the language metrics. The model needs a GPU and the web server
+  has none, so the cache is the pass's **portable deliverable**: classify once
+  where a card is, ship the file, replay it into the DB with no model present.
+  Ongoing sittings are handled by **offloading classification to a GPU service**
+  (the same arrangement the word cloud's NER uses, WCLOUD-6), scoped by the same
+  metered-cycle guard so only the newest cycle is ever dispatched and a
+  full-archive backfill can never be bought by accident. Both routes run the same
+  model and produce the same method tag, so they share one cache and neither
+  invalidates the other — where a sitting was classified is not a property of the
+  prediction. A host that misses the cache with no route available leaves those
+  speeches **unlabelled rather than failing the build**, and never writes a guess;
+  an offload that is down, unauthenticated or deployed on a different model costs
+  a run its new topics and nothing else. **Procedural chairing
+  speeches are excluded outright** (STAT-1) — the model reads an announcement as
+  being about whatever bill it names, so the exclusion is structural rather than
+  left to the threshold. The parameters are **configurable, not hard-coded**
+  (OPS-4) and **published in the site manifest**, the threshold in force included,
+  so every label can state how it was produced (TRUST-1 / REP-5).
+  > **Not yet built (§10):** per-representative topic profiles and topic facets
+  > in search. The stored unit is deliberately the block, and the label is
+  > indexed, so both are queries against what already exists rather than a
+  > reclassification. (Topic classification of **irományok** was the third of
+  > these and is now TOPIC-8 below.)
+- **TOPIC-8 (SHOULD).** The same labels are carried by **irományok**, wherever one
+  appears as an item the reader can act on: the bills list, the *Egyéb irományok*
+  list (BILL-9) and the iromány detail view. It answers the same question the
+  speech topic does — *what is this about?* — which for a document the title
+  answers only when the title is plain, and an iromány's title is routinely a
+  citation ("Az általános forgalmi adóról szóló 2007. évi CXXVII. törvény
+  módosításáról") that names the law being amended rather than the subject.
+  - **The input is the document, not the title or the metadata.** The registry
+    holds only a *link* to the PDF, so this rests on the scraper's mirrored,
+    text-extracted documents (DOC-1) and covers exactly the irományok that have
+    one. Where an iromány has no text — an image-only scan, or a document that
+    was never mirrored — it carries **no topic**, never a guess from its title.
+  - **The unit is a block of the document**, recovered from the extracted PDF
+    layout (paragraphs are real there, unlike the transcript's paragraph column)
+    and assembled to the same word budget as a speech's, with an over-long
+    paragraph split rather than truncated. The **cover sheet is kept**: it is
+    administrative, but it also names the subject, and dropping it is measurably
+    worse — over cycle 43 it changes 3 verdicts and silences 32 documents.
+  - Everything else is **deliberately identical** to the speech pass: the same
+    model, the same read-time threshold (TOPIC-5/6), the same word-weighted
+    aggregation with "Other" reportable but never winning (TOPIC-4), the same
+    on-disk cache and the same refusal to fail a build (TOPIC-7). A topic must
+    mean the same thing whichever text it was read off, so the reader is shown
+    the same chip and the same breakdown, worded for a document.
+  - **The lists are filterable by topic**, combining with the existing filters and
+    carried in the URL like them (BILL-1). The filter matches an iromány's
+    **dominant** topic — the one its chip shows — never merely a topic the
+    document touches somewhere: a filter that sits beside a visible label and
+    selects rows carrying a *different* label is worse than no filter. It follows
+    that the selection is resolved by the same rule and the same threshold as the
+    chip, at request time, so retuning the threshold moves the filter and the
+    labels together (TOPIC-6) rather than desynchronising them. The picker offers
+    only the topics **present in the current scope**, each with its **hit count**,
+    so it never presents a choice that leads to an empty list; where the corpus
+    carries no topics the control is absent rather than dead. A topic filter the
+    deployment cannot honour MUST return **nothing**, never the unfiltered list —
+    silently dropping it would show the reader every iromány under one label.
+  > **✅ realized.** `bill_topic` rows written by `loader.rebuild_bill_topics`
+  > from `parlacap.build_text_blocks`; served as `topic` on the bills list and
+  > detail, rendered by the shared `TopicBadge.vue` (`kind="bill"`).
+  > `PARLAMONITOR_BILL_TOPICS` switches the pass; `PARLAMONITOR_DOCUMENTS_DIR`
+  > points at the mirror. Filtering is `?topic=` (repeatable) on the list, with
+  > `/bills/facets` returning the topics in scope and their counts; both resolve
+  > the dominant topic through `parlacap.DOMINANT_TOPIC_SQL`, which is the SQL
+  > expression of `parlacap.aggregate`'s tie-break and is tested against it. Measured on cycle 43: **320 of 356** documents with
+  > text get a topic at the 0.90 threshold (90 % coverage, against 69 % for
+  > speeches — a document is longer and far more topically focused than a
+  > speech). The predictions live in the same `parlacap-cache.json` under a
+  > `bills` key, so the one shipped file still carries both passes, and a server
+  > with no document mirror replays it as it stands.
 
 ---
 

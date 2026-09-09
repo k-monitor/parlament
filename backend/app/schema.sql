@@ -730,6 +730,76 @@ CREATE TABLE metric_distribution (
     PRIMARY KEY (metric, q)
 ) WITHOUT ROWID;
 
+-- CAP policy topics, one row per classified paragraph (TOPIC-1..7). Written by
+-- `loader.rebuild_speech_topics` from the ParlaCAP classifier (app/parlacap.py).
+--
+-- Stored RAW, at paragraph granularity, with no threshold applied: the confidence
+-- cut that decides which paragraphs count is a presentation policy applied on read
+-- (`parlacap.aggregate`, PARLAMONITOR_PARLACAP_THRESHOLD), so the operator can
+-- retune it with a restart instead of a reclassification. Speech-level topics are
+-- likewise derived on read rather than stored, for the same reason — there is no
+-- `speech_topic` table on purpose.
+--
+-- Only non-procedural speeches are classified (STAT-1): the model reads a chairing
+-- announcement as being about whatever bill it names, so those rows are excluded
+-- structurally rather than filtered by confidence.
+CREATE TABLE speech_topic (
+    speech_id    TEXT NOT NULL REFERENCES speech(uid),
+    -- 0-based ordinal of the classified BLOCK within the speech, not the source
+    -- paragraph: `sentence.paragraph` means something different in each electoral
+    -- cycle (real paragraphs in 42-43, NULL in 41, source line breaks in 39-40),
+    -- so blocks are assembled to a word budget that prefers paragraph boundaries
+    -- where they are real. See `parlacap.build_blocks`.
+    block        INTEGER NOT NULL,
+    paragraph    INTEGER,           -- source sentence.paragraph the block starts at
+    session_id   TEXT NOT NULL REFERENCES session(id),
+    label        TEXT NOT NULL,     -- CAP major topic name, or 'Other'
+    score        REAL NOT NULL,     -- top-1 softmax probability
+    -- The block's second-best label. Not read by the UI (the speech panel shows the
+    -- competing topics from the aggregate instead), kept because it is the cheap
+    -- half of a calibration audit: how often the right answer was ranked second.
+    runner_up    TEXT,
+    runner_score REAL,
+    words        INTEGER NOT NULL,  -- aggregation weight: a speech is about what
+                                    -- it spends its words on, not its blocks
+    PRIMARY KEY (speech_id, block)
+) WITHOUT ROWID;
+
+CREATE INDEX idx_speech_topic_session ON speech_topic(session_id);
+-- Serves the label-first queries the future filters/aggregations will want
+-- (§10: per-person topic profiles, topic search facets).
+CREATE INDEX idx_speech_topic_label ON speech_topic(label);
+
+-- The same, for irományok (TOPIC-8). Written by `loader.rebuild_bill_topics` from
+-- the text of the document the iromány links to (`text_url`), mirrored and
+-- extracted by the scraper's optional `documents` stage (DOC-1).
+--
+-- Everything about the contract matches `speech_topic` above, deliberately: raw
+-- per-block predictions, no threshold baked in, the document-level topic derived
+-- on read by the same `parlacap.aggregate`. What differs is only where the blocks
+-- came from — an iromány has no sentence table, so its paragraphs are recovered
+-- from the extracted PDF layout (`parlacap.build_text_blocks`).
+--
+-- `block` is an ordinal within the document, not a page or a source paragraph.
+-- The table is absent on a DB built before this pass, and empty on one whose
+-- build had neither the shipped cache nor a document store — both are ordinary
+-- states that hide the badge rather than break the page.
+CREATE TABLE bill_topic (
+    bill_id      TEXT NOT NULL REFERENCES bill(id),
+    block        INTEGER NOT NULL,
+    paragraph    INTEGER,           -- recovered paragraph the block starts at
+    period_number INTEGER,          -- the iromány's cycle, for scoped rebuilds
+    label        TEXT NOT NULL,     -- CAP major topic name, or 'Other'
+    score        REAL NOT NULL,     -- top-1 softmax probability
+    runner_up    TEXT,
+    runner_score REAL,
+    words        INTEGER NOT NULL,  -- aggregation weight
+    PRIMARY KEY (bill_id, block)
+) WITHOUT ROWID;
+
+CREATE INDEX idx_bill_topic_period ON bill_topic(period_number);
+CREATE INDEX idx_bill_topic_label ON bill_topic(label);
+
 -- ---------------------------------------------------------------------------
 -- Portfolios (tárcák) — the government side of the corpus (§6C)
 -- ---------------------------------------------------------------------------

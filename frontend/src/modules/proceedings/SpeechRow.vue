@@ -18,6 +18,7 @@ import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
 import SpeechMetricsBadge from '../../components/SpeechMetricsBadge.vue'
+import TopicBadge from '../../components/TopicBadge.vue'
 import ShareButton from '../../components/ShareButton.vue'
 
 // `playable` is false for a not-yet-processed sitting day: there is no per-speech
@@ -97,6 +98,19 @@ function paraText(p) {
         <SpeakerLink :speaker="speech.speaker" />
         <FactionBadge :faction="speech.faction" />
         <span class="badge subtle" v-if="speech.speech_type">{{ speech.speech_type }}</span>
+        <!-- CAP policy topic (TOPIC-1..7). Unlike the readability chips this is not
+             behind the reader's opt-in: it answers "what is this speech about",
+             which is the question a sitting-day list is scanned with, so it earns
+             its place on every row by default. It rides with the speaker's badges
+             rather than in the right-hand meta group because that group is
+             right-aligned against the duration: there the chips lined up on their
+             right edges and their left edges scattered over ~130px (the labels run
+             80-229px wide, and the timing badge appears on only some rows), which
+             on outlined pills down a 300-row page read as breakage. Here it simply
+             flows after the speech type, left-aligned like every other badge.
+             Absent for procedural speeches and for any speech the classifier was
+             not confident enough about. -->
+        <TopicBadge :topic="speech.topic" compact />
       </div>
       <!-- Meta: the video-only note, timing and duration. On desktop it sits
            inline before the actions; on mobile it drops to its own line under the
@@ -182,11 +196,20 @@ function paraText(p) {
 .speech-actions { flex: 0 0 auto; display: flex; align-items: center; gap: .4rem; }
 .nowrap { white-space: nowrap; }
 
-/* Mobile: stack into an identity block (top-left) with the play controls pinned
-   top-right, and the meta line (video-only note · timing · duration) on its own
-   row underneath — so a wrapped two-line name and the long "video only" note no
-   longer collide or float, vertically centred, in the middle of the row. */
-@media (max-width: 560px) {
+/* Narrow: stack into an identity block (top-left) with the play controls pinned
+   top-right, and the meta line (video-only note · topic · timing · duration) on
+   its own row underneath — so a wrapped two-line name and the long "video only"
+   note no longer collide or float, vertically centred, in the middle of the row.
+
+   The threshold is 660px rather than the 560px this started at because the topic
+   chip (TOPIC-1) joined the meta line. Measured on a real sitting day, between
+   about 590 and 650px the chip was the one thing that pushed a row to wrap, so
+   rows *with* a topic stood at 94px while rows without stayed at 64px — a
+   300-speech day scanned as a ragged mix of two heights. Stacking a little
+   earlier costs those widths one predictable line each and gives the rhythm
+   back. (Above 660 the chip is affordable: it drops to its glyph at 840, which
+   is what keeps 660–840 flat.) */
+@media (max-width: 660px) {
   .speech-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -198,6 +221,19 @@ function paraText(p) {
   .speech-meta { grid-area: meta; flex-wrap: wrap; }
   .speech-actions { grid-area: actions; align-self: start; }
 }
+/* On phones the long speech-type badge ("napirend előttihez hozzászólás", 183px
+   in a 198px column) fills a line on its own, so a topic glyph landing after it
+   takes another. Ordering the badge last lets the glyph share the line with the
+   faction chip, which has room to spare.
+
+   Measured per row, the same rows with and without the chip: at 360px this cuts
+   the rows that gain a line from 93 of 108 to 39, at 375px from 66 to 41 and at
+   390px from 46 to 35. Above 480px the glyph already fits beside the badge and the
+   rule is unnecessary. */
+@media (max-width: 480px) {
+  .speech-main .badge.subtle { order: 1; }
+}
+
 /* Highlight only the header row when open (or hovered) — the transcript itself
    stays on the plain surface so a long block reads at full contrast (~9.5:1
    with --ink) instead of washed out on the pink tint. */

@@ -15,6 +15,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ... import parlacap
 from ... import portfolios as portfolio_map
 from ...analytics import search_analytics
 from ...db import (get_db, like_contains, period_in_scope, period_key,
@@ -50,6 +51,55 @@ _DEBATE_STARTS = {
     "általános vita megkezdve": {"end": "általános vita lezárva", "label": "általános vita"},
     "összevont vita megkezdve": {"end": "összevont vita lezárva", "label": "összevont vita"},
 }
+
+
+# ---------------------------------------------------------------------------
+# CAP policy topics for irományok (TOPIC-8)
+# ---------------------------------------------------------------------------
+
+def _has_bill_topics(db: sqlite3.Connection) -> bool:
+    """Whether the (regenerable) DB carries the iromány topic table — false on one
+    built before this feature, or whose build had neither a document mirror nor a
+    shipped cache to replay."""
+    return bool(db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='bill_topic'"
+    ).fetchone())
+
+
+def _topics_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, dict]:
+    """Document-level topics for a batch of irományok, ``{bill_id: topic}``.
+
+    Aggregated **on read**, through the very same :func:`parlacap.aggregate` the
+    speech list uses, for the very same reason: the confidence threshold that
+    decides which blocks count is an operator setting that must be retunable with
+    a restart rather than a reclassification (TOPIC-6). The payload shape is
+    identical too, so one badge component renders both.
+
+    An iromány with no confident block is simply absent from the result and ends
+    up with ``topic: null`` — which is the honest answer for the ~10 % of cycle-43
+    documents whose text is too short, too procedural or too scanned to place.
+    """
+    if not bill_ids or not _has_bill_topics(db):
+        return {}
+    out: dict[str, dict] = {}
+    # Chunked to stay under SQLite's variable limit on a full page of results.
+    for start in range(0, len(bill_ids), 400):
+        chunk = bill_ids[start:start + 400]
+        rows = db.execute(
+            "SELECT bill_id, block, label, score, runner_up, runner_score, "
+            "words FROM bill_topic WHERE bill_id IN ("
+            + ",".join("?" * len(chunk)) + ") ORDER BY bill_id, block",
+            chunk).fetchall()
+        by_bill: dict[str, list] = {}
+        for r in rows:
+            by_bill.setdefault(r["bill_id"], []).append(
+                (r["block"], r["label"], r["score"], r["runner_up"],
+                 r["runner_score"], r["words"]))
+        for bid, block_rows in by_bill.items():
+            agg = parlacap.aggregate(block_rows)
+            if agg:
+                out[bid] = agg
+    return out
 
 
 def _any_of(where: list, params: dict, column: str, values: list[str], prefix: str) -> None:
@@ -152,6 +202,42 @@ def _responders_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, di
     return out
 
 
+def _topic_filter(db: sqlite3.Connection, where: list, params: dict,
+                  topics: list[str] | None, period: Optional[List[int]]) -> bool:
+    """Restrict the list to irományok whose **dominant** topic is one of ``topics``.
+
+    Not "has a block labelled X": that would return a document whose chip says
+    something else, which is the one thing a filter next to a visible label must
+    never do. The dominant topic is resolved by the same rule
+    (:data:`parlacap.DOMINANT_TOPIC_SQL`) that produces the chip, at the same
+    read-time threshold — so filtering by Egészségügy returns exactly the rows
+    showing the Egészségügy chip, and retuning the threshold moves both together.
+
+    The subquery is scoped by cycle wherever the request is (which, with the
+    global cycle selector, is nearly always), so it walks an index rather than
+    every block in the corpus. Returns False when the filter cannot be honoured —
+    a DB with no topic table — so the caller can answer "no matches" rather than
+    silently ignoring the filter and returning everything.
+    """
+    wanted = [t for t in (topics or []) if t]
+    if not wanted:
+        return True
+    if not _has_bill_topics(db):
+        return False
+    scope = ""
+    per_sql = period_sql(period, "period_number")
+    if per_sql:
+        scope = f"AND {per_sql}"
+    keys = [f"topic{i}" for i in range(len(wanted))]
+    where.append(
+        "b.id IN (SELECT bill_id FROM ("
+        + parlacap.dominant_topic_sql(scope)
+        + ") WHERE label IN (" + ",".join(":" + k for k in keys) + "))")
+    params.update(parlacap.topic_params())
+    params.update(dict(zip(keys, wanted)))
+    return True
+
+
 @router.get("")
 def list_bills(
     q: Optional[str] = None,
@@ -165,6 +251,10 @@ def list_bills(
         None, description="Iromány type (category); repeat to match any of several"),
     status: Optional[List[str]] = Query(
         None, description="Status; repeat to match any of several"),
+    topic: Optional[List[str]] = Query(
+        None, description="CAP major topic name (the model's English label, e.g. "
+                          "`Health`); repeat to match any of several. Matches an "
+                          "iromány's *dominant* topic — the one its chip shows"),
     sponsor: Optional[str] = None,           # person_id — bills by this MP
     portfolio: Optional[str] = None,         # portfolio slug (§6C) — see below
     portfolio_role: str = Query(
@@ -197,6 +287,10 @@ def list_bills(
     per_sql = period_sql(period, "b.period_number")
     if per_sql:
         where.append(per_sql)
+    # A topic filter this DB cannot honour (no topic table) must return nothing,
+    # not everything: silently dropping a filter is worse than an empty page.
+    if not _topic_filter(db, where, params, topic, period):
+        where.append("0=1")
     if main_type:
         where.append("b.main_type = :mt"); params["mt"] = main_type
     if main_type_not:
@@ -277,8 +371,9 @@ def list_bills(
         source="bills", query=q, period=period_list(period), sort=sort,
         main_type=main_type, main_type_not=main_type_not,
         main_type_in=main_type_in, main_type_not_in=main_type_not_in,
-        type=type, status=status, sponsor=sponsor, portfolio=portfolio,
-        portfolio_role=portfolio_role, portfolio_period=portfolio_period,
+        type=type, status=status, topic=topic, sponsor=sponsor,
+        portfolio=portfolio, portfolio_role=portfolio_role,
+        portfolio_period=portfolio_period,
         answer_verdict=answer_verdict, results=total, offset=offset)
 
     rows = db.execute(
@@ -289,6 +384,7 @@ def list_bills(
         {**params, "limit": limit, "offset": offset}).fetchall()
     sponsors = _sponsors_for(db, [r["id"] for r in rows])
     responders = _responders_for(db, [r["id"] for r in rows])
+    topics = _topics_for(db, [r["id"] for r in rows])
     return {
         "total": total, "limit": limit, "offset": offset,
         "bills": [
@@ -299,9 +395,59 @@ def list_bills(
                 "source_url": r["source_url"], "period_number": r["period_number"],
                 "sponsors": sponsors.get(r["id"], []),
                 "responder": responders.get(r["id"]),
+                "topic": topics.get(r["id"]),
             } for r in rows
         ],
     }
+
+
+def _topic_facet(db: sqlite3.Connection, period: Optional[List[int]],
+                 main_type: Optional[str], main_type_not: Optional[str],
+                 sponsor: Optional[str]) -> list[dict]:
+    """The CAP topics actually present in this slice, with how many irományok
+    carry each — ``[{"label", "code", "count"}]``, commonest first.
+
+    Counted over *dominant* topics, so the numbers are the sizes of the filter's
+    own result sets rather than a block tally that would not add up to anything
+    the reader can see. Offering only the topics that occur keeps the picker from
+    listing 21 options where a cycle used nine, and the count tells a reader
+    which of them is worth opening (a facet with 1 hit rarely is).
+
+    It rebuilds the sibling filters here instead of reusing the caller's WHERE:
+    that one binds positionally and the topic SQL binds by name, and SQLite
+    refuses to mix the two styles in one statement.
+
+    Empty on a DB with no topic table, which is what makes the control disappear
+    rather than render a dead dropdown."""
+    if not _has_bill_topics(db):
+        return []
+    scope = ""
+    inner_period = period_sql(period, "period_number")
+    if inner_period:
+        scope = f"AND {inner_period}"
+
+    where = ["1=1"]
+    params: dict = dict(parlacap.topic_params())
+    outer_period = period_sql(period, "b.period_number")
+    if outer_period:
+        where.append(outer_period)
+    if main_type:
+        where.append("b.main_type = :f_mt"); params["f_mt"] = main_type
+    if main_type_not:
+        where.append("(b.main_type IS NULL OR b.main_type != :f_mtn)")
+        params["f_mtn"] = main_type_not
+    if sponsor:
+        where.append("EXISTS (SELECT 1 FROM bill_sponsor bs "
+                     "WHERE bs.bill_id = b.id AND bs.person_id = :f_sp)")
+        params["f_sp"] = sponsor
+
+    rows = db.execute(
+        "SELECT t.label AS label, COUNT(*) AS c FROM ("
+        + parlacap.dominant_topic_sql(scope)
+        + ") t JOIN bill b ON b.id = t.bill_id WHERE " + " AND ".join(where)
+        + " GROUP BY t.label ORDER BY c DESC, t.label", params).fetchall()
+    return [{"label": r["label"], "code": parlacap.CAP_CODES.get(r["label"]),
+             "count": r["c"]} for r in rows]
 
 
 @router.get("/facets")
@@ -338,7 +484,9 @@ def bill_facets(period: Optional[List[int]] = Query(
         types = [{"main_type": r["main_type"], "type": r["type"]} for r in db.execute(
             f"SELECT DISTINCT b.main_type, b.type FROM bill b {where_sql} "
             f"ORDER BY b.main_type, b.type", params)]
-        return {"statuses": statuses, "types": types}
+        return {"statuses": statuses, "types": types,
+                "topics": _topic_facet(db, period, main_type, main_type_not,
+                                       sponsor)}
 
     return cached_aggregate("bill_facets", key, _compute)
 
@@ -861,6 +1009,7 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     if not b or not period_in_scope(b["period_number"]):
         raise HTTPException(404, "Bill not found")
     sponsors = _sponsors_for(db, [bill_id]).get(bill_id, [])
+    topic = _topics_for(db, [bill_id]).get(bill_id)
 
     events = _rows(db,
         """SELECT e.event_date, e.name, e.person_id, e.related_label,
@@ -924,6 +1073,9 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "no_text": bool(b["no_text"]), "period_number": b["period_number"],
         "stages": _stages(b["stages_json"]),
         "sponsors": sponsors,
+        # What the model read the iromány's own document text as being about
+        # (TOPIC-8); null where it had nothing confident to say.
+        "topic": topic,
         # extra header fields from the detail sheet
         "subtype": b["subtype"], "character": b["character"],
         "negotiation_mode": b["negotiation_mode"], "status_type": b["status_type"],

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass
 
 import requests
 
@@ -50,6 +51,20 @@ class CaptchaWall(BaseException):
     would go on to sit through hours of its own before failing the same way.
     Only :func:`parlamonitor.cli.main` catches it, to end the run.
     """
+
+
+@dataclass(frozen=True)
+class CappedFetch:
+    """One :meth:`HttpClient.get_capped` result.
+
+    ``data`` is ``None`` when the resource 404'd (``status`` 404) or when it was
+    abandoned for exceeding the cap (``over_cap``) — the two are distinguished
+    so a caller can record *why* a document is missing rather than guessing."""
+
+    data: bytes | None
+    content_type: str
+    status: int
+    over_cap: bool
 
 
 # Sniff only the head of an HTML body: enough to catch the challenge page, not
@@ -206,6 +221,51 @@ class HttpClient:
         if r.status_code == 404:
             return None
         return r.content
+
+    def get_capped(self, url: str, *, max_bytes: int = 0,
+                   **kw) -> "CappedFetch":
+        """Stream a binary resource, giving up on it once it exceeds ``max_bytes``.
+
+        For the iromány document mirror (DOC-1), where the size tail is heavy —
+        a handful of scans run to tens of MB — and an over-cap document must
+        cost us the *headers*, not the whole download. ``max_bytes`` of ``0``
+        means no cap, in which case this is just :meth:`get_bytes` with the
+        content type reported alongside.
+
+        A 404 is an answer, not a failure (``status`` 404, ``data`` ``None``),
+        matching :meth:`get_bytes`; the CAPTCHA interstitial is still detected,
+        because it arrives as a small HTML body we can afford to read."""
+        return self._with_retries(
+            f"GET {url}", lambda: self._send_capped(url, max_bytes, **kw))
+
+    def _send_capped(self, url: str, max_bytes: int, **kw) -> "CappedFetch":
+        r = self.session.get(url, timeout=self.config.timeout, stream=True, **kw)
+        try:
+            if r.status_code >= 500:
+                raise HttpError(f"HTTP {r.status_code} for {url}")
+            ctype = r.headers.get("Content-Type") or ""
+            if r.status_code == 404:
+                return CappedFetch(None, ctype, 404, False)
+            # An HTML body where a PDF was expected is either the CAPTCHA wall or
+            # an error page; both are small, so reading them costs nothing.
+            if "html" in ctype.lower():
+                if looks_like_captcha(r):
+                    raise CaptchaBlocked(
+                        f"CAPTCHA challenge page returned for {url}")
+                return CappedFetch(r.content, ctype, r.status_code, False)
+            # Trust a declared over-cap length and never start the body at all.
+            declared = r.headers.get("Content-Length")
+            if max_bytes and declared and declared.isdigit() \
+                    and int(declared) > max_bytes:
+                return CappedFetch(None, ctype, r.status_code, True)
+            buf = bytearray()
+            for chunk in r.iter_content(chunk_size=65536):
+                buf.extend(chunk)
+                if max_bytes and len(buf) > max_bytes:
+                    return CappedFetch(None, ctype, r.status_code, True)
+            return CappedFetch(bytes(buf), ctype, r.status_code, False)
+        finally:
+            r.close()
 
     def exists(self, url: str, **kw) -> bool:
         """Does this resource exist? A HEAD, so nothing is downloaded to find out.

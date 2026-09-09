@@ -23,6 +23,15 @@ huspacy>=0.5
 # needed on the host; the heavy spaCy/model live in the Modal image (modal_app.py).
 # Optional — the build falls back to local huspacy/regex when it is absent.
 modal>=0.64
+# CAP policy-topic classification of speeches (TOPIC-1..7, app/parlacap.py) needs
+# `torch` and `transformers` — deliberately NOT listed here. They are ~2.5 GB of
+# wheels plus a 2.2 GB checkpoint, and the web server has no use for either: the
+# pass is cache-driven, so a server replays `parlacap-cache.json` into the DB with
+# neither package installed, and a sitting that misses the cache is left unlabelled
+# rather than failing the build. Install them only on the machine that classifies:
+#   pip install torch transformers
+# See DEPLOYMENT.md, "Classifying CAP policy topics".
+#
 # Equal-area hexagonal binning for the segmented settlement map (§6D TEL-15). A
 # small, pure wheel — no build toolchain, no model, no network. Optional: without it
 # the loader skips the cell table, the /settlements/map/segments endpoint reports the

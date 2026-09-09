@@ -28,6 +28,11 @@ politeness/transport knobs come from the environment or flags, never hard-coded
     # archive parlament.hu still serves from that term
     python -m parlamonitor bills --cycle 35 --archive ./data
 
+    # The document FILES behind those irományok — text extracted for NLP.
+    # Off by default everywhere (it is ~870 MB of PDF per cycle); `--documents
+    # text` keeps only the extracted text, which is ~4 MB.
+    python -m parlamonitor documents --cycle 43 --documents text ./data
+
     # Nationality advocates (szószólók) — one cycle, or backfill every cycle
     python -m parlamonitor advocates --cycle 43 ./data
     python -m parlamonitor advocates --all-cycles ./data
@@ -47,7 +52,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import whisper_align
-from .config import (Paths, RuntimeConfig, session_cycle, timing_backend,
+from .config import (DOCUMENT_RETENTIONS, Paths, RuntimeConfig,
+                     documents_compression, documents_max_mb,
+                     documents_retention, session_cycle, timing_backend,
                      whisper_language, whisper_model)
 from .felicitas import FelicitasClient
 from .http_client import CaptchaWall, HttpClient
@@ -56,6 +63,7 @@ from .advocates.scrape import advocate_cycles, fetch_advocates, save_advocates
 from .bills.legacy import CYCLE as ARCHIVE_CYCLE
 from .bills.legacy import faction_ids_from_registries, fetch_legacy_bills
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
+from .documents.scrape import fetch_documents, load_registry
 from .officeholders.scrape import fetch_office_holders, save_office_holders
 from .votes.scrape import fetch_votes, save_votes
 from .proceedings.scrape import download_period
@@ -403,6 +411,45 @@ def cmd_bills(args) -> None:
     })
 
 
+def cmd_documents(args) -> None:
+    """Mirror the cycle's iromány document files and extract their text (DOC-1).
+
+    Reads the links out of the saved ``bills-<cycle>.json``, so it is always run
+    *after* ``bills``. It stores nothing unless asked to: retention defaults to
+    ``off`` (``PARLAMONITOR_DOCUMENTS``), which is what keeps the live server's
+    disk usage unchanged while a dev box opts in with ``--documents text``."""
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    retention = args.documents or documents_retention()
+    if retention == "off":
+        logger.info("Document mirroring is off (PARLAMONITOR_DOCUMENTS / "
+                    "--documents); nothing downloaded or stored")
+        return
+    compression = args.documents_compression or documents_compression()
+    max_mb = documents_max_mb() if args.documents_max_mb is None \
+        else args.documents_max_mb
+
+    registry = load_registry(paths, args.cycle)
+    http = HttpClient(RuntimeConfig.from_env(
+        sleep=args.sleep, retry_count=args.retry_count, proxy=args.proxy,
+        captcha_retries=args.captcha_retries, ssh_host=args.ssh_host,
+        ssh_port=args.ssh_port, ssh_user=args.ssh_user, ssh_key=args.ssh_key,
+        ssh_known_hosts=args.ssh_known_hosts))
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            meta = fetch_documents(http, paths, args.cycle, registry,
+                                   retention=retention, compression=compression,
+                                   max_mb=max_mb, force=args.force,
+                                   limit=args.limit)
+    finally:
+        http.close()
+
+    _write_log(paths, {"command": "documents",
+                       "ranAt": datetime.now(timezone.utc).isoformat(
+                           timespec="seconds"),
+                       **meta})
+
+
 def _cmd_bills_archive(args, paths: Paths) -> None:
     """``bills --archive``: cycle 35 off the static 1994-98 site, which is the
     only place those irományok exist (the Felicitas API returns none)."""
@@ -473,6 +520,16 @@ def cmd_votes(args) -> None:
     })
 
 
+def _documents_summary(documents) -> object:
+    """The document stage's line in a sync summary: ``False`` when it is off (the
+    default), else just the counts that say whether the pass did any work — the
+    full manifest meta belongs in the ingest log, not in a one-line status."""
+    if not documents:
+        return False
+    return {k: documents.get(k) for k in
+            ("fetched", "reused", "errors", "bytesStored")}
+
+
 def cmd_sync(args) -> None:
     """Low-load continuous sync of the latest cycle (SCR-2/SCR-4).
 
@@ -495,7 +552,10 @@ def cmd_sync(args) -> None:
                 reps_max_age=reps_max_age, skip_bills=args.skip_bills,
                 skip_votes=args.skip_votes, skip_reps=args.skip_reps,
                 skip_advocates=args.skip_advocates,
-                skip_office_holders=args.skip_officeholders)
+                skip_office_holders=args.skip_officeholders,
+                documents=args.documents,
+                documents_compression=args.documents_compression,
+                documents_max_mb=args.documents_max_mb)
             # Top up portraits for non-roster speakers of this cycle (ministers /
             # nationality advocates who aren't in the MP roster). Cheap on an idle
             # poll: already-downloaded ids are skipped and 404s are negative-cached,
@@ -512,10 +572,11 @@ def cmd_sync(args) -> None:
                        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                        "backend": "felicitas-json"})
     logger.info("Sync done: %d sitting(s) changed, %d removed, bills=%s votes=%s "
-                "reps=%s advocates=%s, %d error(s)",
+                "reps=%s advocates=%s docs=%s, %d error(s)",
                 len(summary["sessions"]), len(summary["removedSessions"]),
                 summary["bills"], summary["votes"],
                 summary["representatives"], summary["advocates"],
+                _documents_summary(summary["documents"]),
                 len(summary["errors"]))
     # Machine-readable one-liner for a wrapping script / cron log.
     print(json.dumps({"changed": summary["changed"],
@@ -524,6 +585,7 @@ def cmd_sync(args) -> None:
                       "bills": summary["bills"], "votes": summary["votes"],
                       "representatives": summary["representatives"],
                       "advocates": summary["advocates"],
+                      "documents": _documents_summary(summary["documents"]),
                       "errors": summary["errors"]}))
     if summary["errors"]:
         sys.exit(1)
@@ -577,6 +639,27 @@ def build_parser() -> argparse.ArgumentParser:
                         help="known_hosts file (default: trust on first use)")
         sp.add_argument("--force-lock", action="store_true",
                         help="run even while another run holds the lockfile")
+
+    def _documents_opts(sp):
+        """Retention knobs for the iromány document mirror (DOC-1).
+
+        Shared by `documents` and `sync` so the stage is configured the same way
+        whichever runs it. All three default to ``None`` → fall back to the
+        environment, whose own default is `off`: nothing is stored unless this
+        run was explicitly told to store it."""
+        sp.add_argument("--documents", choices=DOCUMENT_RETENTIONS, default=None,
+                        help="what to keep of each iromány document file: "
+                             "off (default) | text (extracted text only, ~4 MB "
+                             "per cycle) | pdf (~870 MB) | all. Env: "
+                             "PARLAMONITOR_DOCUMENTS")
+        sp.add_argument("--documents-compression", choices=("xz", "gzip", "none"),
+                        default=None,
+                        help="codec for the stored text (default xz). Env: "
+                             "PARLAMONITOR_DOCUMENTS_COMPRESSION")
+        sp.add_argument("--documents-max-mb", type=float, default=None,
+                        help="skip any single document larger than this (0 = no "
+                             "limit, the default). Env: "
+                             "PARLAMONITOR_DOCUMENTS_MAX_MB")
 
     sp = sub.add_parser("proceedings", help="scrape plenary proceedings")
     _common(sp)
@@ -686,6 +769,19 @@ def build_parser() -> argparse.ArgumentParser:
                          "(smoke run)")
     sp.set_defaults(func=cmd_bills)
 
+    sp = sub.add_parser("documents",
+                        help="mirror the cycle's iromány document files and "
+                             "extract their text (off unless --documents is set)")
+    _common(sp)
+    _documents_opts(sp)
+    sp.add_argument("--force", action="store_true",
+                    help="re-fetch every document, ignoring what is already "
+                         "stored (default: skip documents already in the index)")
+    sp.add_argument("--limit", type=int, default=None,
+                    help="stop after this many freshly-fetched documents "
+                         "(smoke run)")
+    sp.set_defaults(func=cmd_documents)
+
     sp = sub.add_parser("votes", help="scrape the cycle's roll-call votes (szavazások)")
     _common(sp)
     sp.add_argument("--from", dest="date_from", default=None,
@@ -722,6 +818,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="skip the nationality-advocate refresh")
     sp.add_argument("--skip-officeholders", action="store_true",
                     help="skip the office-holder (tisztségviselők) refresh")
+    _documents_opts(sp)
     sp.set_defaults(func=cmd_sync)
 
     sp = sub.add_parser("speaker-photos",

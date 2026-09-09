@@ -137,6 +137,60 @@ export default {
       'very-high': 'the most varied fifth',
     },
   },
+  // CAP policy topics (TOPIC-1..7). The chip says only the topic; everything that
+  // qualifies it — how much of the speech it speaks for, what it won against, how
+  // much stayed uncertain, and which model decided at which threshold — lives in
+  // the panel that opens on click.
+  topics: {
+    chipTitle: 'Topic: {topic} — click for details',
+    panelLabel: 'Topic of this speech',
+    share: '{pct} of the classified text is about this ({n} passages).',
+    alsoAbout: 'Also touched on',
+    coverage: '{pct} of the speech could be classified confidently; the model '
+      + 'makes no claim about the rest.',
+    otherShare: '{pct} of the classified text is not policy content (greetings, '
+      + 'points of order, personal remarks).',
+    method: 'Classified automatically by the ParlaCAP model, paragraph by '
+      + 'paragraph, at a {threshold}% confidence threshold. Indicative only, not '
+      + 'an official categorisation.',
+    // The same model over an iromány, but the text is a submitted document
+    // rather than a speech, so the wording differs. Only the lines that change
+    // live here; the rest fall back to the shared keys above.
+    bill: {
+      panelLabel: 'Topic of this document',
+      coverage: '{pct} of the document could be classified confidently; the '
+        + 'model makes no claim about the rest.',
+      otherShare: '{pct} of the classified text is not policy content (cover '
+        + 'sheet, registry stamps, signatures, procedural formulae).',
+      method: 'Classified automatically by the ParlaCAP model from the text of '
+        + 'the submitted document, block by block, at a {threshold}% confidence '
+        + 'threshold. Indicative only, not an official categorisation.',
+    },
+    names: {
+      Macroeconomics: 'Macroeconomics',
+      'Civil Rights': 'Civil rights',
+      Health: 'Health',
+      Agriculture: 'Agriculture',
+      Labor: 'Labour and employment',
+      Education: 'Education',
+      Environment: 'Environment',
+      Energy: 'Energy',
+      Immigration: 'Immigration',
+      Transportation: 'Transport',
+      'Law and Crime': 'Law and crime',
+      'Social Welfare': 'Social welfare',
+      Housing: 'Housing and development',
+      'Domestic Commerce': 'Banking and domestic commerce',
+      Defense: 'Defence',
+      Technology: 'Science and technology',
+      'Foreign Trade': 'Foreign trade',
+      'International Affairs': 'Foreign affairs',
+      'Government Operations': 'Government operations',
+      'Public Lands': 'Public lands and water',
+      Culture: 'Culture',
+      Other: 'Other, non-policy',
+    },
+  },
   clipExport: {
     button: 'Download video',
     segmentButton: 'Download this sentence as a video clip',
@@ -557,6 +611,9 @@ export default {
     title: 'Bills', subtitle: 'Bills submitted to the National Assembly.',
     figyusz: 'Use Figyusz! notifications to follow parliamentary documents!',
     searchPlaceholder: 'Search the title or bill number…', period: 'Cycle', status: 'Status',
+    // The machine-read label (TOPIC-8); the filter returns exactly the rows
+    // whose chip shows it.
+    topic: 'Topic',
     sortNumber: 'By bill number', sortDate: 'By submission', count: 'bills',
     bySponsor: 'Submitter', viewProfile: 'View profile', clearSponsor: 'Clear filter',
     noResults: 'No matching bills.', submitters: 'Submitters',
@@ -623,6 +680,7 @@ export default {
     clearSponsor: 'Clear filter',
     searchPlaceholder: 'Search the title or document number…',
     type: 'Type', period: 'Cycle', status: 'Status',
+    topic: 'Topic',
     verdict: 'Answer accepted',
     verdictAccepted: 'the MP accepted the answer',
     verdictRejected: 'the MP rejected the answer',

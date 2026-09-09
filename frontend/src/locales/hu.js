@@ -201,6 +201,59 @@ export default {
       'very-high': 'a legváltozatosabb ötödben',
     },
   },
+  // CAP szakpolitikai témák (TOPIC-1..7). A chipen csak a téma neve áll; minden, ami
+  // árnyalja — hogy a felszólalás mekkora részét fedi le, mi ellen "nyert", mennyi
+  // maradt bizonytalan, és melyik modell milyen küszöbbel döntött — a kattintásra
+  // nyíló panelbe került. A témanevek a CAP magyar kódkönyvének elnevezéseit követik.
+  topics: {
+    chipTitle: 'Téma: {topic} – kattintson a részletekért',
+    panelLabel: 'A felszólalás témája',
+    share: 'A besorolt szöveg {pct}-a erről szól ({n} szövegrész).',
+    alsoAbout: 'Emellett szóba került',
+    coverage: 'A felszólalás szövegének {pct}-át lehetett kellő biztonsággal '
+      + 'besorolni; a többiről a modell nem nyilatkozik.',
+    otherShare: 'A besorolt rész {pct}-a nem szakpolitikai (üdvözlés, ügyrend, '
+      + 'személyes megjegyzés).',
+    method: 'Gépi besorolás a ParlaCAP modellel, bekezdésenként, {threshold}%-os '
+      + 'megbízhatósági küszöbbel. Tájékoztató jellegű, nem hivatalos minősítés.',
+    // Az irományokra ugyanaz a modell fut, de nem felszólalásra: a szöveg a
+    // benyújtott dokumentumból származik, így a szóhasználat is más. Csak az
+    // eltérő mondatok szerepelnek itt; a többit a fenti közös kulcsok adják.
+    bill: {
+      panelLabel: 'Az iromány témája',
+      coverage: 'Az iromány szövegének {pct}-át lehetett kellő biztonsággal '
+        + 'besorolni; a többiről a modell nem nyilatkozik.',
+      otherShare: 'A besorolt rész {pct}-a nem szakpolitikai tartalom (fejléc, '
+        + 'iktatás, aláírás, eljárási formula).',
+      method: 'Gépi besorolás a ParlaCAP modellel, a benyújtott dokumentum '
+        + 'szövege alapján, szövegrészenként, {threshold}%-os megbízhatósági '
+        + 'küszöbbel. Tájékoztató jellegű, nem hivatalos minősítés.',
+    },
+    names: {
+      Macroeconomics: 'Makrogazdaság',
+      'Civil Rights': 'Emberi és állampolgári jogok',
+      Health: 'Egészségügy',
+      Agriculture: 'Mezőgazdaság',
+      Labor: 'Munkaügy és foglalkoztatás',
+      Education: 'Oktatás',
+      Environment: 'Környezetvédelem',
+      Energy: 'Energiaügy',
+      Immigration: 'Bevándorlás',
+      Transportation: 'Közlekedés',
+      'Law and Crime': 'Jog és bűnügyek',
+      'Social Welfare': 'Szociális ügyek',
+      Housing: 'Lakhatás és városfejlesztés',
+      'Domestic Commerce': 'Belkereskedelem és bankügy',
+      Defense: 'Honvédelem',
+      Technology: 'Tudomány és technológia',
+      'Foreign Trade': 'Külkereskedelem',
+      'International Affairs': 'Külügy és nemzetközi kapcsolatok',
+      'Government Operations': 'Kormányzat és közigazgatás',
+      'Public Lands': 'Állami földterületek és vízügy',
+      Culture: 'Kultúra',
+      Other: 'Egyéb, nem szakpolitikai',
+    },
+  },
   clipExport: {
     button: 'Videó letöltése',
     segmentButton: 'Ez a mondat letöltése videórészletként',
@@ -661,6 +714,9 @@ export default {
     searchPlaceholder: 'Keresés a címben vagy irományszámban…',
     period: 'Ciklus',
     status: 'Állapot',
+    // Gépi besorolás (TOPIC-8) — a szűrő pontosan azokat adja vissza, amelyeken
+    // ez a címke látszik.
+    topic: 'Téma',
     sortNumber: 'Irományszám szerint',
     sortDate: 'Benyújtás szerint',
     count: 'törvényjavaslat',
@@ -739,6 +795,7 @@ export default {
     type: 'Típus',
     period: 'Ciklus',
     status: 'Állapot',
+    topic: 'Téma',
     verdict: 'Válasz elfogadása',
     verdictAccepted: 'a képviselő elfogadta a választ',
     verdictRejected: 'a képviselő elutasította a választ',

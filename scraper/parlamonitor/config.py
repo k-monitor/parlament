@@ -10,6 +10,11 @@ reference pipeline so its outputs stay comparable:
         <session>-session.json                    # the published session record
         representatives-<cycle>.json              # the MP registry for a cycle
         advocates-<cycle>.json                    # the nationality-advocate registry
+      documents/
+        <cycle>/
+          text/<docid>.txt.xz                     # extracted document text (DOC-1)
+          pdf/<docid>.pdf                         # the source PDF, when retained
+          index.json                              # per-document manifest
       logs/
         ingest-<timestamp>.json                   # per-run ingestion log (SCR-3)
       parlamonitor.lock                               # concurrency lockfile (SCR-1)
@@ -87,6 +92,67 @@ def whisper_batch_size(device: str) -> int:
 def whisper_modal_app() -> str:
     return (os.environ.get("PARLAMONITOR_WHISPER_MODAL_APP")
             or "parlamonitor-whisper").strip()
+
+
+# --- iromány document files (DOC-1) ----------------------------------------
+# The irományok registry only ever held *links* to the document PDFs. Mirroring
+# the files themselves is what makes NLP over the actual document text possible
+# — but it is also the single biggest thing the pipeline can put on disk: cycle
+# 43 alone is 861 documents / ~870 MB of PDF, and a full four-year cycle is many
+# times that. The live server has no use for either the PDFs or the text, so the
+# whole stage is **off unless asked for**, exactly like the Modal budget guard
+# above: a dev box opts in, production stays byte-for-byte as it was.
+#
+# Keeping only the extracted text is ~200x smaller than keeping the PDFs
+# (4 MB vs 868 MB for cycle 43) and is all the NLP actually consumes, so
+# `text` — not `all` — is what an opt-in should normally choose.
+
+DOCUMENT_RETENTIONS = ("off", "text", "pdf", "all")
+
+
+def documents_retention() -> str:
+    """``off`` (default) | ``text`` | ``pdf`` | ``all`` — what the document
+    stage keeps on disk.
+
+    ``off`` downloads nothing at all; ``text`` keeps only the extracted (and
+    compressed) text; ``pdf`` keeps only the source file; ``all`` keeps both.
+    An unrecognised value reads as ``off`` — like the Modal guard, this setting
+    exists to *bound* what we store, so a typo must never turn storage on."""
+    raw = (os.environ.get("PARLAMONITOR_DOCUMENTS") or "off").strip().lower()
+    if raw in ("", "none", "no", "0", "false"):
+        return "off"
+    if raw in ("both", "pdf+text", "text+pdf", "yes", "1", "true"):
+        return "all"
+    return raw if raw in DOCUMENT_RETENTIONS else "off"
+
+
+def documents_compression() -> str:
+    """``xz`` (default) | ``gzip`` | ``none`` for the stored document text.
+
+    ``xz`` is stdlib ``lzma`` and the best of the options measured over all
+    861 cycle-43 documents (16.3 MB of extracted text → 3.96 MB, against
+    4.65 MB gzipped and 3.97 MB for ``zstd -19``); ``gzip`` is there for a store
+    other tools read without ceremony, and ``none`` for reading it by hand."""
+    raw = (os.environ.get("PARLAMONITOR_DOCUMENTS_COMPRESSION") or "xz").strip().lower()
+    if raw in ("lzma", "xz"):
+        return "xz"
+    if raw in ("gz", "gzip"):
+        return "gzip"
+    return "none" if raw in ("none", "off", "raw", "") else "xz"
+
+
+def documents_max_mb() -> float:
+    """Skip documents larger than this many MB (``0`` = no limit, the default).
+
+    The tail is heavy — the largest single iromány in cycle 43 is 58 MB — and an
+    oversized scan is also the least useful document to hold, so a dev box with
+    a small disk can cap it. The cap is applied while streaming, so an
+    over-cap document is never fully downloaded."""
+    raw = os.environ.get("PARLAMONITOR_DOCUMENTS_MAX_MB")
+    try:
+        return max(0.0, float(raw)) if raw not in (None, "") else 0.0
+    except ValueError:
+        return 0.0
 
 
 # --- Modal budget scope ----------------------------------------------------
@@ -259,3 +325,24 @@ class Paths:
 
     def votes_file(self, cycle: int) -> Path:
         return self.processed / f"votes-{int(cycle)}.json"
+
+    # --- iromány document files (DOC-1) -------------------------------------
+    # Deliberately NOT under ``processed/``: these are a mirror of upstream
+    # binaries plus text derived from them, they are optional (see
+    # :func:`documents_retention`), and they dwarf everything else on disk — so
+    # they live in a tree of their own that can simply be deleted.
+
+    def documents_dir(self, cycle: int) -> Path:
+        return self.data / "documents" / str(int(cycle))
+
+    def documents_index(self, cycle: int) -> Path:
+        """Per-document manifest: what was fetched, its hash, where it is
+        stored, and why anything was skipped. Also the incremental cache — a
+        document already recorded here is not re-fetched (SCR-2)."""
+        return self.documents_dir(cycle) / "index.json"
+
+    def document_text_dir(self, cycle: int) -> Path:
+        return self.documents_dir(cycle) / "text"
+
+    def document_pdf_dir(self, cycle: int) -> Path:
+        return self.documents_dir(cycle) / "pdf"

@@ -17,6 +17,7 @@ kept only as reference material; nothing here imports it at runtime.
 | `processed/representatives-<cycle>.json` | `parlamonitor.representatives` | the MP registry for a cycle: bio, faction & committee history, constituency, education, and per-cycle speech / bill-submission counts. |
 | `processed/advocates-<cycle>.json` | `parlamonitor.advocates` | the **nationality-advocate** registry (*nemzetiségi szószólók*) for a cycle: same record shape as an MP plus the `nationality` they speak for. They are not in the MP roster, but share its id space — so the file is additive and needs no re-run of the MP stage. |
 | `processed/officeholders.json` | `parlamonitor.officeholders` | the **office-holder** registry (*tisztségviselők*): every recorded term of government / House office with its **real** start and end date (open while still held) and the portal's own office **category**, grouped by person. Cycle-less, and the only source that dates the office of a **non-MP** minister or state secretary — who is in no roster at all. The category is not in the data: it is *which* per-category listing returned the row, so the stage asks for each category in turn (six paged listings) and tags what comes back. |
+| `documents/<cycle>/` | `parlamonitor.documents` | **optional** mirror of the iromány document *files* themselves — the extracted text (`text/<docid>.txt.xz`), the source PDF (`pdf/<docid>.pdf`), or both, plus an `index.json` manifest. **Off by default**; see [Document files](#document-files-doc-1). |
 | `logs/ingest-<ts>.json` | both | per-run ingestion log (run time, sittings added, errors, backend). |
 
 Each speech's speaker carries a `personID` (`kepviseloId`) that joins directly
@@ -149,6 +150,10 @@ python -m parlamonitor bills --cycle 43 ./data
 
 # …except 1994-98, which the API has none of — see below
 python -m parlamonitor bills --cycle 35 --archive ./data
+
+# The document FILES those irományok link to, text extracted for NLP.
+# Stores nothing unless asked: see "Document files" below.
+python -m parlamonitor documents --cycle 43 --documents text ./data
 ```
 
 Adding advocates to an **already-scraped** corpus needs nothing else: the
@@ -173,6 +178,9 @@ tracks processed files individually, and adds the two `person` columns in place)
 | `--ssh-known-hosts` | `PARLAMONITOR_SSH_KNOWN_HOSTS` | — | `known_hosts` file (else trust-on-first-use) |
 | — | `PARLAMONITOR_SSH_KEY_PASSPHRASE` | — | passphrase for an encrypted key |
 | `--timing-backend` | `PARLAMONITOR_TIMING_BACKEND` | `auto` | sentence timing: `auto`/`whisper-modal`/`whisper-local`/`character` (TIM-1). `auto` resolves to the first backend actually present, then `character` — which reads **no** cache at all, so name a backend explicitly to use [copied words](#reusing-a-cached-transcription) |
+| `--documents` | `PARLAMONITOR_DOCUMENTS` | `off` | what the [document mirror](#document-files-doc-1) keeps: `off` / `text` / `pdf` / `all`. The storage guard — an unrecognised value reads as `off`, so a typo can never turn ~870 MB per cycle on |
+| `--documents-compression` | `PARLAMONITOR_DOCUMENTS_COMPRESSION` | `xz` | codec for the stored text: `xz` / `gzip` / `none` |
+| `--documents-max-mb` | `PARLAMONITOR_DOCUMENTS_MAX_MB` | `0` | skip any single document above this size (`0` = no limit); enforced while streaming, so an over-cap file is never fully downloaded |
 | — | `PARLAMONITOR_MODAL_CYCLES` | `latest` | which cycles may be transcribed on **Modal** (`latest`/`all`/`43,42`) — the metered-GPU guard; out-of-scope days keep their cached words, or fall back to the positional estimate |
 
 #### SSH tunnel proxy
@@ -253,6 +261,109 @@ entirely for a fast list-only refresh.
 
 Schedule it from cron/systemd (OPS-2); each run appends an ingestion log under
 `data/logs/` (SCR-3).
+
+### Document files (DOC-1)
+
+The `bills` stage records where each document *is* (`textUrl` on the iromány and
+on every non-self-standing motion, plus the justification/background files on
+its detail sheet) but never fetches it. `documents` mirrors those files and
+extracts their text, which is what makes NLP over the legislative text possible.
+
+```bash
+# Off by default — this stores nothing and makes no requests:
+python -m parlamonitor documents --cycle 43 ./data
+
+# The useful opt-in: keep the extracted text, throw the PDFs away
+python -m parlamonitor documents --cycle 43 --documents text ./data
+
+# Keep the source files too (two orders of magnitude more disk)
+python -m parlamonitor documents --cycle 43 --documents all ./data
+
+# Smoke run, and a size cap for a small disk
+python -m parlamonitor documents --cycle 43 --documents text --limit 20 \
+    --documents-max-mb 5 ./data
+```
+
+It reads the links out of the saved `bills-<cycle>.json`, so run `bills` first.
+The same three knobs exist on `sync`, so a watcher can keep the mirror current.
+
+#### Why it is off by default, and why `text` is the right opt-in
+
+A full pass over cycle 43 downloaded all **861** documents — **868 MB** of PDF,
+6 607 pages — and extracted their text:
+
+| What is kept | Cycle 43 | vs. the PDFs |
+| ------------ | -------- | ------------ |
+| the PDFs as they come | **868 MB** | — |
+| …`qpdf`-rebuilt (lossless) † | 764 MB | −12% |
+| …gzip / xz / zstd / brotli around them † | 710–725 MB | −16…−18% |
+| …Ghostscript re-distilled, 150 dpi (lossy) † | 451 MB | −48% |
+| …Ghostscript re-distilled, 72 dpi (lossy) † | 291 MB | −66% |
+| the extracted text, uncompressed | 16.3 MB | −98% |
+| …gzipped | 4.65 MB | −99.5% |
+| **the extracted text, xz — what is stored** | **3.96 MB** | **−99.5%** (219x) |
+
+Everything but the four rows marked † is measured over the whole corpus; those
+four are ratios from a 72-document / 80 MB stratified sample, since keeping the
+PDFs around to compress them is the very thing the stage avoids.
+
+Two things follow. First, **compressing the PDFs is not worth doing**: their
+streams are already deflated, so every general-purpose compressor lands within a
+few points of 82% and a lossless structural rebuild does worse than that.
+Only re-encoding the images helps, and that is lossy — it degrades the archival
+copy to save a third of a lot.
+
+Second, **the text is ~200x smaller than the files it came from** and is the
+only part any NLP pass reads. So the ladder is `off` (default, the live server)
+→ `text` (~4 MB per cycle) → `pdf`/`all` (~868 MB) — and `text` is what an
+opt-in should normally pick. Note that `text` still *downloads* every PDF; the
+saving is disk, not bandwidth or politeness budget — a first full pass is 861
+requests and took ~21 minutes at `--sleep 0.5`.
+
+`xz` is the default codec because it is both stdlib (`lzma`) and the best of the
+measured options on this corpus: 16.3 MB of extracted text becomes 3.96 MB,
+against 4.65 MB for gzip and 3.97 MB for `zstd -19`.
+
+Compressing each document on its own does cost real ratio — one solid `.tar.xz`
+of the same text is 2.25 MB, so per-document streams are **76% larger**, because
+most irományok are small and none of them get to share a dictionary. It is still
+the right trade here: the absolute difference is 1.7 MB, and being able to read
+(or re-extract) one document without unpacking the corpus is worth more. If the
+store ever grows to where that matters — every cycle mirrored, not just the
+latest — a shared `zstd` dictionary would recover most of it while keeping random
+access.
+
+On disk the store is larger than the byte totals suggest: 861 mostly ~1 KB files
+against a 4 KB block size means cycle 43 occupies **6.7 MB** of actual disk.
+
+#### What is in the store
+
+```
+data/documents/43/
+  index.json                     manifest + incremental cache
+  text/irom43-00448-00448-cf49ae25.txt.xz
+  pdf/irom43-00448-00448-cf49ae25.pdf     (only under `pdf` / `all`)
+```
+
+The id is the URL path made readable, plus 8 hex of the URL's SHA-1 — the guest
+background files have titles long enough to collide once truncated. Each
+manifest entry carries the source URL, the owning bill (`billId`/`billNumber`),
+the document kind (`main` / `motion` / `justification` / `background`), the
+SHA-256 of the bytes, page count, and where the artefacts landed. Read the text
+back with `documents.scrape.read_text`, which handles whichever codec was used.
+
+Text extraction shells out to **`pdftotext`** (poppler-utils) — the same way the
+local Whisper backend leans on `ffmpeg`. Where it is missing the stage says so
+and keeps going (SCR-6). About 1 document in 70 is an image-only scan and yields
+no text; that is recorded (`textChars: 0`) as an answer, not retried as a
+failure — 8 of cycle 43's 861 documents. Extracting the whole cycle takes a few
+seconds of CPU; the network is the slow part.
+
+Re-runs are incremental (SCR-2): documents on parlament.hu are static once
+published, so anything already in the manifest with its files still on disk is
+skipped, and a repeat pass over cycle 43 costs no requests at all. A 404 or an
+over-cap document is *settled* and not asked about again; only a genuine fetch
+error is retried next run. `--force` re-fetches everything.
 
 ### The 1994-98 irományok (`bills --archive`)
 
@@ -390,6 +501,9 @@ parlamonitor/
     legacy.py          the 1994-98 static iromány archive → bills-35.json
   votes/
     scrape.py          szavazások list + per-vote detail → votes-<cycle>.json
+  documents/
+    scrape.py          the iromány document FILES + extracted text
+                       → documents/<cycle>/ (optional; off by default)
   cli.py               workflow orchestration (stages, lockfile, ingest log)
 whisper_modal_app.py   the Modal app deployed for the GPU backend
 check_whisper_cache.py which copied whisper-<session>.json caches are usable
@@ -398,6 +512,8 @@ tests/
   test_advocates.py    offline tests: szószóló registry shape + cycle discovery
   test_bills_legacy.py offline tests: the static 1994-98 iromány archive
   test_officeholders.py offline tests: office-term grouping + open-ended terms
+  test_documents.py    offline tests: the document mirror — retention, the
+                       incremental index, graceful degradation
 ```
 
 ## Tests

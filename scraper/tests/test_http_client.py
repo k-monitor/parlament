@@ -235,3 +235,103 @@ def test_lockfile_blocks_a_second_run_while_actually_held(tmp_path):
                 pass
         with acquire(lock, force=True):  # the operator's escape hatch still works
             pass
+
+
+# --- capped streaming fetch (get_capped, DOC-1) -----------------------------
+# The document mirror pulls files whose size distribution has a long tail (the
+# largest cycle-43 iromány is 58 MB), so it streams with a cap. What matters is
+# that the cap is enforced *before* the whole body is pulled down, that the
+# CAPTCHA wall is still detected on this path, and that "404" and "too big" stay
+# distinguishable — the caller records them as different outcomes.
+
+class _StreamResponse(requests.Response):
+    """A Response whose body arrives in chunks, counting what was consumed."""
+
+    def __init__(self, chunks, *, status=200, ctype="application/pdf",
+                 declared=None):
+        super().__init__()
+        self.status_code = status
+        self.url = "https://www.parlament.hu/irom43/00001/00001.pdf"
+        self.headers["Content-Type"] = ctype
+        if declared is not None:
+            self.headers["Content-Length"] = str(declared)
+        self._chunks = list(chunks)
+        self.consumed = 0
+
+    def iter_content(self, chunk_size=1, **kw):
+        for c in self._chunks:
+            self.consumed += len(c)
+            yield c
+
+    def close(self):
+        pass
+
+
+def _capped_client(response, monkeypatch):
+    client = HttpClient(RuntimeConfig(sleep=0, retry_count=0))
+    monkeypatch.setattr(client.session, "get", lambda *a, **kw: response)
+    return client
+
+
+def test_get_capped_returns_the_body_under_the_cap(monkeypatch):
+    r = _StreamResponse([b"%PDF-", b"body"])
+    got = _capped_client(r, monkeypatch).get_capped(r.url, max_bytes=1000)
+    assert got.data == b"%PDF-body"
+    assert got.over_cap is False and got.status == 200
+
+
+def test_get_capped_abandons_a_body_that_grows_past_the_cap(monkeypatch):
+    """No Content-Length to go on, so the cap has to bite mid-stream — and stop
+    there rather than reading the rest of a 58 MB scan."""
+    r = _StreamResponse([b"x" * 100] * 10)
+    got = _capped_client(r, monkeypatch).get_capped(r.url, max_bytes=250)
+    assert got.data is None and got.over_cap is True
+    assert r.consumed == 300            # stopped at the third chunk, not the tenth
+
+
+def test_get_capped_trusts_a_declared_over_cap_length_and_reads_nothing(monkeypatch):
+    r = _StreamResponse([b"x" * 100], declared=50_000_000)
+    got = _capped_client(r, monkeypatch).get_capped(r.url, max_bytes=1000)
+    assert got.data is None and got.over_cap is True
+    assert r.consumed == 0              # the body was never started
+
+
+def test_get_capped_without_a_cap_reads_everything(monkeypatch):
+    r = _StreamResponse([b"x" * 100] * 10, declared=1000)
+    got = _capped_client(r, monkeypatch).get_capped(r.url, max_bytes=0)
+    assert got.data == b"x" * 1000 and got.over_cap is False
+
+
+def test_get_capped_reports_a_404_as_an_answer(monkeypatch):
+    r = _StreamResponse([], status=404)
+    got = _capped_client(r, monkeypatch).get_capped(r.url, max_bytes=1000)
+    assert got.data is None and got.status == 404
+    assert got.over_cap is False        # missing, not oversized
+
+
+def test_get_capped_still_sees_the_captcha_wall(monkeypatch):
+    """The wall arrives as HTML where a PDF was expected; it must be recognised
+    here too, or the mirror would happily store challenge pages as documents."""
+    r = _StreamResponse([], ctype="text/html")
+    r._content = CAPTCHA_HTML
+    client = HttpClient(RuntimeConfig(sleep=0, retry_count=0, captcha_retries=0))
+    monkeypatch.setattr(client.session, "get", lambda *a, **kw: r)
+    monkeypatch.setattr(http_client.time, "sleep", lambda s: None)
+    with pytest.raises(CaptchaWall):
+        client.get_capped(r.url, max_bytes=1000)
+
+
+def test_get_capped_retries_a_5xx(monkeypatch):
+    calls = []
+
+    def _get(*a, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            return _StreamResponse([], status=503)
+        return _StreamResponse([b"%PDF-ok"])
+
+    client = HttpClient(RuntimeConfig(sleep=0, retry_count=2))
+    monkeypatch.setattr(client.session, "get", _get)
+    monkeypatch.setattr(http_client.time, "sleep", lambda s: None)
+    assert client.get_capped("https://www.parlament.hu/x", max_bytes=0).data == b"%PDF-ok"
+    assert len(calls) == 2

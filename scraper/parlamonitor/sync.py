@@ -55,7 +55,10 @@ from . import whisper_align
 from .advocates.scrape import fetch_advocates, save_advocates
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
 from .config import Paths, session_id, timing_backend as _default_timing_backend
-from .config import whisper_language, whisper_model
+from .config import documents_compression as _documents_compression
+from .config import documents_max_mb as _documents_max_mb
+from .config import documents_retention, whisper_language, whisper_model
+from .documents.scrape import fetch_documents, load_registry
 from .felicitas import FelicitasClient
 from .officeholders.scrape import fetch_office_holders, save_office_holders
 from .proceedings.scrape import (_write_json, cycle_days, prune_cancelled,
@@ -377,6 +380,23 @@ def _sync_bills(felicitas: FelicitasClient, paths: Paths, cycle: int, state: dic
     return True
 
 
+def _sync_documents(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
+                    retention: str, compression: str, max_mb: float,
+                    force: bool) -> dict | bool:
+    """Top up the iromány document mirror for this cycle (DOC-1).
+
+    Off unless the run was configured for it, which is what keeps a live sync's
+    disk usage exactly as it was. When it is on, the cost of an idle pass is
+    nothing: the stage is incremental against its own index, so only documents
+    that appeared since the last pass are actually downloaded."""
+    if retention == "off":
+        return False
+    registry = load_registry(paths, cycle)
+    return fetch_documents(felicitas.http, paths, cycle, registry,
+                           retention=retention, compression=compression,
+                           max_mb=max_mb, force=force)
+
+
 def _sync_votes(felicitas: FelicitasClient, paths: Paths, cycle: int, state: dict,
                 *, force: bool, with_detail: bool) -> bool:
     start, end = _cycle_range(felicitas, cycle)
@@ -482,7 +502,10 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
              skip_bills: bool = False, skip_votes: bool = False,
              skip_reps: bool = False, skip_advocates: bool = False,
              skip_office_holders: bool = False,
-             timing_backend: str | None = None) -> dict:
+             timing_backend: str | None = None,
+             documents: str | None = None,
+             documents_compression: str | None = None,
+             documents_max_mb: float | None = None) -> dict:
     """One cheap sync pass over ``cycle``. Each domain is isolated so one failing
     query never aborts the others (SCR-5). Returns a summary of what changed."""
     paths.ensure()
@@ -491,7 +514,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
     summary = {"cycle": cycle, "checkedAt": _now(),
                "sessions": [], "removedSessions": [], "bills": False,
                "votes": False, "representatives": False, "advocates": False,
-               "officeHolders": False, "errors": []}
+               "officeHolders": False, "documents": False, "errors": []}
 
     try:
         summary["sessions"], summary["removedSessions"] = _sync_proceedings(
@@ -508,6 +531,21 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
         except Exception as e:
             logger.exception("Bills sync failed")
             summary["errors"].append(f"bills: {e}")
+
+    # After bills, because it mirrors the files that registry links to.
+    retention = documents if documents is not None else documents_retention()
+    if retention != "off":
+        try:
+            summary["documents"] = _sync_documents(
+                felicitas, paths, cycle, retention=retention,
+                compression=(documents_compression
+                             or _documents_compression()),
+                max_mb=(documents_max_mb if documents_max_mb is not None
+                        else _documents_max_mb()),
+                force=force)
+        except Exception as e:
+            logger.exception("Document mirror sync failed")
+            summary["errors"].append(f"documents: {e}")
 
     if not skip_votes:
         try:

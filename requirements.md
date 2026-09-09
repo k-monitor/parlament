@@ -195,6 +195,35 @@ Primary use cases:
   > queried, freeing its number in the same pass; the loader drops the DB row whose
   > processed file is gone (ING-5).
 
+- **DOC-1 (SHOULD).** The iromány scrape (§6A) records where each document
+  *is* — the iromány's own text link, each non-self-standing motion's, and the
+  justification/background files on its detail sheet — but holds none of the
+  documents themselves, which is enough to **cite** a document and not enough to
+  **analyse** one. For NLP over the legislative text, the scraper SHOULD be able
+  to mirror those files and extract their text, and **what it retains MUST be
+  deployment config** (OPS-4), defaulting to **retaining nothing**: the corpus is
+  large (cycle 43 alone is 861 documents / 868 MB of PDF) and a live deployment
+  has no use for it, so turning it on is a dev/analysis choice, never the
+  default. Storing the **extracted text alone** is the intended opt-in — it is
+  0.5% of the PDFs' size (4 MB per cycle, xz-compressed) and is the only part any
+  NLP pass reads; compressing the **PDFs** is explicitly *not* worth doing, as
+  their streams are already deflated and every general-purpose compressor lands
+  near 82% of the original (a lossless structural rebuild does worse; only lossy
+  image re-encoding beats it, at the cost of the archival copy). Extraction MAY
+  depend on an external tool, whose absence MUST degrade rather than fail
+  (SCR-6), and a document that yields no text (an image-only scan — 8 of cycle
+  43's 861) MUST be recorded as such rather than retried as a failure (SCR-5). The
+  mirror MUST be **incremental** (SCR-2): published documents are static, so a
+  repeat pass costs no requests.
+  > **✅ realized.** `parlamonitor documents --cycle <n> --documents text` (and
+  > the same knobs on `sync`); `PARLAMONITOR_DOCUMENTS` = `off` (default) /
+  > `text` / `pdf` / `all`, `…_COMPRESSION` = `xz` (default) / `gzip` / `none`,
+  > `…_MAX_MB` caps a single document while streaming. The store is
+  > `data/documents/<cycle>/{text,pdf}/` plus an `index.json` manifest carrying
+  > each document's source URL, owning bill, kind, SHA-256, page count and
+  > artefact paths. Text comes from `pdftotext` (poppler); an unrecognised
+  > retention value reads as `off`, so a typo can never turn the storage on.
+
 ### 3.3 Ingestion into the database
 
 - **ING-1 (MUST).** A loader transforms scraper output (the per-sitting session

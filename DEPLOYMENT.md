@@ -254,6 +254,53 @@ PARLAMONITOR_HUSPACY_MODEL=hu_core_news_md modal deploy modal_app.py
 **Without Docker** (host scrapes/loads directly): the same three env vars +
 `python -m app.loader --update <data> <db>` (or `build`) offload to Modal.
 
+#### Mirroring the iromány document files (`PARLAMONITOR_DOCUMENTS`)
+
+The scraper can mirror the actual document files behind the irományok — the
+bill texts, amendments, committee reports, justification and background files —
+and extract their text for NLP (DOC-1). **It is off by default and should stay
+off on the server.** It is the largest thing the pipeline can put on disk:
+cycle 43 alone is 861 documents totalling ~870 MB of PDF, and it buys the live
+site nothing, because the bill views link to `parlament.hu` for the document
+rather than serving a copy (LEGAL-1 / BILL-2). (Measured: a full pass over
+cycle 43 downloaded 861 documents / 868 MB and stored 3.96 MB of xz-compressed
+text — 6.7 MB of actual disk, once 4 KB blocks are counted.)
+
+Where it *is* wanted — a dev box or an analysis host doing NLP over the
+legislative text — turn it on with the retention that matches the use:
+
+```dotenv
+PARLAMONITOR_DOCUMENTS=text        # extracted text only  — ~4 MB per cycle
+# PARLAMONITOR_DOCUMENTS=all       # text + the source PDFs — ~872 MB per cycle
+# PARLAMONITOR_DOCUMENTS_MAX_MB=10 # …and skip the outsized scans
+```
+
+or run the stage by hand without touching the sync's configuration at all:
+
+```bash
+docker compose run --rm sync documents --cycle 43 --documents text /data
+```
+
+Keeping only the text is the intended opt-in: it is ~1% of the size of the PDFs
+it came from and is the only part any NLP pass reads. Compressing the PDFs
+instead is not worth it — their streams are already deflated, so gzip/xz/zstd
+all land near 82% of the original. Note that `text` still *downloads* every
+PDF; the saving is disk, not bandwidth or politeness budget (SCR-4 applies
+either way: a first full pass over cycle 43 is 861 requests, ~21 min at
+`PARLAMONITOR_SLEEP=0.5`, and pulls the whole 868 MB down the wire).
+
+Text extraction needs **`pdftotext`** (poppler-utils), which the runtime image
+does **not** carry — it is a slim image and this stage is off by default. Enable
+`text`/`all` in a container and the run still completes, but logs that it could
+extract nothing; add the package to the `runtime` stage of the `Dockerfile`
+(`apt-get install -y --no-install-recommends poppler-utils`) if you want it
+there. On a dev checkout running the scraper directly, install it from your
+distro's packages.
+
+The mirror is incremental: published documents never change, so a second pass
+costs no requests. Its store is `data/documents/<cycle>/`, entirely regenerable
+— deleting it is always safe.
+
 #### Which cycles may spend Modal credit (`PARLAMONITOR_MODAL_CYCLES`)
 
 Modal time is metered, and the one thing that can drain a month's credit in a
@@ -913,6 +960,10 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_SSH_KEY_FILE` | — | host path to the private key (bind-mounted read-only into `sync`) |
 | `PARLAMONITOR_SSH_KEY_PASSPHRASE` | — | passphrase, if the key is encrypted |
 | `PARLAMONITOR_SSH_KNOWN_HOSTS` | — | known_hosts path for strict host-key checking (default: trust-on-first-use) |
+| **Iromány document mirror** | | (DOC-1; off by default — see [document files](#mirroring-the-iromany-document-files-parlamonitor_documents)) |
+| `PARLAMONITOR_DOCUMENTS` | `off` | what to keep of each iromány document file: `off` / `text` / `pdf` / `all`. **Leave it `off` on the server** — `pdf`/`all` is ~870 MB per cycle |
+| `PARLAMONITOR_DOCUMENTS_COMPRESSION` | `xz` | codec for the stored text: `xz` / `gzip` / `none` |
+| `PARLAMONITOR_DOCUMENTS_MAX_MB` | `0` | skip any single document above this size (`0` = no limit) |
 | **Word-cloud NLP** | | (used by `init` + `sync`) |
 | `PARLAMONITOR_WORDCLOUD_BACKEND` | `auto` | `auto`/`huspacy`/`regex`/`modal` term extraction (WCLOUD-6) |
 | `PARLAMONITOR_HUSPACY_MODEL` | `hu_core_news_trf` | model for the newest cycle — must match the primary Modal image |

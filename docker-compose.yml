@@ -217,6 +217,13 @@ services:
       PARLAMONITOR_SSH_KNOWN_HOSTS: ${PARLAMONITOR_SSH_KNOWN_HOSTS:-}
       # Refresh the per-MP registry at most this often (seconds); 12h default.
       PARLAMONITOR_SYNC_REPS_MAX_AGE: ${PARLAMONITOR_SYNC_REPS_MAX_AGE:-43200}
+      # Mirror of the iromány document files (DOC-1). `off` — the default — is
+      # what keeps the server's disk as it is: `pdf`/`all` is ~870 MB per cycle,
+      # and the site links documents on parlament.hu rather than serving copies.
+      # `text` (~4 MB per cycle) additionally needs poppler-utils in the image.
+      PARLAMONITOR_DOCUMENTS: ${PARLAMONITOR_DOCUMENTS:-off}
+      PARLAMONITOR_DOCUMENTS_COMPRESSION: ${PARLAMONITOR_DOCUMENTS_COMPRESSION:-xz}
+      PARLAMONITOR_DOCUMENTS_MAX_MB: ${PARLAMONITOR_DOCUMENTS_MAX_MB:-0}
     volumes:
       # Read-write here: the sync writes fresh scraper output + portraits.
       - ./data:/data

@@ -120,6 +120,22 @@ def _topic_totals(db: sqlite3.Connection) -> dict:
     return {"paragraphs": paragraphs, "speeches": speeches}
 
 
+def _bill_topic_totals(db: sqlite3.Connection) -> dict:
+    """How many irományok carry CAP topic predictions (TOPIC-8).
+
+    Gates the badge exactly as the speech count does: the pass needs a document
+    mirror or a shipped cache, so whether this DB is annotated is a fact about
+    the data rather than the config, and the SPA must hide the chip instead of
+    rendering a column of blanks. Counted before any confidence threshold, which
+    is applied per request."""
+    try:
+        blocks, bills = db.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT bill_id) FROM bill_topic").fetchone()
+    except sqlite3.OperationalError:      # DB built before the iromány topic pass
+        return {"blocks": 0, "bills": 0}
+    return {"blocks": blocks, "bills": bills}
+
+
 def _corpus_counts(db: sqlite3.Connection) -> dict:
     """The homepage's headline totals, over the cycles the site serves (CYC-7).
 
@@ -180,6 +196,7 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
         "SELECT key, value FROM build_meta")}
     metric_coverage = _metric_totals(db)
     topic_coverage = _topic_totals(db)
+    bill_topic_coverage = _bill_topic_totals(db)
     return {
         "name": "Parlamonitor",
         "source_attribution": {  # LEGAL-1 / TRUST-1
@@ -206,7 +223,9 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
                      "speech_metrics": (settings.speech_metrics
                                         and bool(metric_coverage["scored"])),
                      "speech_topics": (settings.parlacap
-                                       and bool(topic_coverage["speeches"]))},
+                                       and bool(topic_coverage["speeches"])),
+                     "bill_topics": (settings.parlacap and settings.bill_topics
+                                     and bool(bill_topic_coverage["bills"]))},
         # How the per-speech readability / lexical-diversity annotations were
         # measured (READ-7). Every derived number on the site has to be able to
         # say what produced it (TRUST-1 / REP-5), and these two carry parameters
@@ -218,6 +237,11 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
         # unlabelled, which changes what the reader is looking at, so the UI has to
         # be able to say so (TRUST-1 / REP-5).
         "speech_topics": {**parlacap.methodology(), **topic_coverage},
+        # The same labels over the irományok's own document text (TOPIC-8). Same
+        # model, same threshold, different unit — so the UI can say what it is
+        # looking at rather than reusing the speech wording (TRUST-1 / REP-5).
+        "bill_topics": {**parlacap.methodology(), "unit": "document block",
+                        **bill_topic_coverage},
         "timing_disclaimer": (  # VIE-6 / TIM-3
             "A felszólalások videóidőzítése a v1-ben pozícióalapú becslés "
             "(karakterarányos), ezért közelítő pontosságú."),

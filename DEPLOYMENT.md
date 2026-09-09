@@ -301,6 +301,37 @@ The mirror is incremental: published documents never change, so a second pass
 costs no requests. Its store is `data/documents/<cycle>/`, entirely regenerable
 — deleting it is always safe.
 
+#### Classifying irományok
+
+The iromány half of the pass (TOPIC-8) runs inside the same
+`--reclassify-topics` command and lands in the same `parlacap-cache.json` (under
+a `bills` key, alongside `sessions`), so the workflow above already covers it —
+with one prerequisite: **it reads the document text the scraper mirrors**, so the
+GPU box needs that mirror before it can classify anything.
+
+```bash
+# on the box that will classify: mirror the documents first (DOC-1), then run
+# the pass. `text` retention is enough — ~4 MB per cycle.
+cd scraper
+PARLAMONITOR_DOCUMENTS=text python -m parlamonitor documents --cycle 43 ../data
+cd ../backend
+python -m app.loader ../data parlamonitor.db --reclassify-topics --period 43 -v
+```
+
+Note the `../data` positional: that is where the pass looks for
+`documents/<cycle>/`, and `PARLAMONITOR_DOCUMENTS_DIR` overrides it. Cycle 43 is
+356 documents / ~10 800 blocks and takes about two minutes on a 12 GB card.
+
+On the **server** nothing changes and nothing extra is shipped: the same
+`parlacap-cache.json` now carries both halves, and because a server has no
+document mirror to fingerprint against, each iromány's cached rows are replayed
+as they stand. A server that is given no cache simply shows no chips —
+`features.bill_topics` in `/api/v1/meta` goes false and the UI hides them,
+exactly as it does for speeches.
+
+Set `PARLAMONITOR_BILL_TOPICS=0` to switch the iromány pass off while leaving the
+speech topics alone.
+
 #### Which cycles may spend Modal credit (`PARLAMONITOR_MODAL_CYCLES`)
 
 Modal time is metered, and the one thing that can drain a month's credit in a
@@ -423,6 +454,13 @@ produced by [`classla/ParlaCAP-Topic-Classifier`](https://huggingface.co/classla
 an XLM-R-large model fine-tuned on 29 ParlaMint corpora (ParlaMint-HU among them).
 Speeches are classified **per paragraph**, and the paragraph labels are folded into
 one speech-level topic when the API answers a request.
+
+**Irományok are classified too** (TOPIC-8), by the same model at the same
+threshold, from the text of the document each one links to. One extra
+prerequisite applies to that half and is covered [below](#classifying-iromanyok):
+it reads the scraper's [document mirror](#mirroring-the-iromany-document-files-parlamonitor_documents),
+so it only produces anything on a host that has one — everywhere else it replays
+the shipped cache.
 
 Two things follow from that, and they are what makes this pass different from the
 others on this page:
@@ -994,6 +1032,8 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_PARLACAP_BATCH_SIZE` | `32` | inference batch (GPU host only) |
 | `PARLAMONITOR_PARLACAP_DEVICE` | _(auto)_ | `cuda`/`cpu`/`cuda:1`; blank picks CUDA when present |
 | `PARLAMONITOR_PARLACAP_FP16` | `1` | half precision on CUDA — halves time and memory; the softmax stays fp32 |
+| `PARLAMONITOR_BILL_TOPICS` | `1` | also classify **irományok** from their document text (TOPIC-8); `0` leaves speech topics untouched and hides the chip on bill pages |
+| `PARLAMONITOR_DOCUMENTS_DIR` | _(data dir)_ | where the scraper's mirrored document text lives; unset → `documents/` under the loader's data directory. A server that has no mirror needs nothing here — it replays the cache |
 | **Bluesky announcements** (§8.7) | | posted by the `sync` pass; see [Announcing on Bluesky](#announcing-on-bluesky) |
 | `PARLAMONITOR_BLUESKY_AUTH` | — | `handle:app-password` — the credential **and** the on switch; unset = the bot never runs. Use an [app password](https://bsky.app/settings/app-passwords), never the account password |
 | `PARLAMONITOR_SITE_URL` | _(request's own origin)_ | required for posting: the canonical origin the posts link to (shared with the OG share cards) |

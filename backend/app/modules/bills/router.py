@@ -15,6 +15,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ... import parlacap
 from ... import portfolios as portfolio_map
 from ...analytics import search_analytics
 from ...db import (get_db, like_contains, period_in_scope, period_key,
@@ -50,6 +51,55 @@ _DEBATE_STARTS = {
     "általános vita megkezdve": {"end": "általános vita lezárva", "label": "általános vita"},
     "összevont vita megkezdve": {"end": "összevont vita lezárva", "label": "összevont vita"},
 }
+
+
+# ---------------------------------------------------------------------------
+# CAP policy topics for irományok (TOPIC-8)
+# ---------------------------------------------------------------------------
+
+def _has_bill_topics(db: sqlite3.Connection) -> bool:
+    """Whether the (regenerable) DB carries the iromány topic table — false on one
+    built before this feature, or whose build had neither a document mirror nor a
+    shipped cache to replay."""
+    return bool(db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='bill_topic'"
+    ).fetchone())
+
+
+def _topics_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, dict]:
+    """Document-level topics for a batch of irományok, ``{bill_id: topic}``.
+
+    Aggregated **on read**, through the very same :func:`parlacap.aggregate` the
+    speech list uses, for the very same reason: the confidence threshold that
+    decides which blocks count is an operator setting that must be retunable with
+    a restart rather than a reclassification (TOPIC-6). The payload shape is
+    identical too, so one badge component renders both.
+
+    An iromány with no confident block is simply absent from the result and ends
+    up with ``topic: null`` — which is the honest answer for the ~10 % of cycle-43
+    documents whose text is too short, too procedural or too scanned to place.
+    """
+    if not bill_ids or not _has_bill_topics(db):
+        return {}
+    out: dict[str, dict] = {}
+    # Chunked to stay under SQLite's variable limit on a full page of results.
+    for start in range(0, len(bill_ids), 400):
+        chunk = bill_ids[start:start + 400]
+        rows = db.execute(
+            "SELECT bill_id, block, label, score, runner_up, runner_score, "
+            "words FROM bill_topic WHERE bill_id IN ("
+            + ",".join("?" * len(chunk)) + ") ORDER BY bill_id, block",
+            chunk).fetchall()
+        by_bill: dict[str, list] = {}
+        for r in rows:
+            by_bill.setdefault(r["bill_id"], []).append(
+                (r["block"], r["label"], r["score"], r["runner_up"],
+                 r["runner_score"], r["words"]))
+        for bid, block_rows in by_bill.items():
+            agg = parlacap.aggregate(block_rows)
+            if agg:
+                out[bid] = agg
+    return out
 
 
 def _any_of(where: list, params: dict, column: str, values: list[str], prefix: str) -> None:
@@ -289,6 +339,7 @@ def list_bills(
         {**params, "limit": limit, "offset": offset}).fetchall()
     sponsors = _sponsors_for(db, [r["id"] for r in rows])
     responders = _responders_for(db, [r["id"] for r in rows])
+    topics = _topics_for(db, [r["id"] for r in rows])
     return {
         "total": total, "limit": limit, "offset": offset,
         "bills": [
@@ -299,6 +350,7 @@ def list_bills(
                 "source_url": r["source_url"], "period_number": r["period_number"],
                 "sponsors": sponsors.get(r["id"], []),
                 "responder": responders.get(r["id"]),
+                "topic": topics.get(r["id"]),
             } for r in rows
         ],
     }
@@ -861,6 +913,7 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     if not b or not period_in_scope(b["period_number"]):
         raise HTTPException(404, "Bill not found")
     sponsors = _sponsors_for(db, [bill_id]).get(bill_id, [])
+    topic = _topics_for(db, [bill_id]).get(bill_id)
 
     events = _rows(db,
         """SELECT e.event_date, e.name, e.person_id, e.related_label,
@@ -924,6 +977,9 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "no_text": bool(b["no_text"]), "period_number": b["period_number"],
         "stages": _stages(b["stages_json"]),
         "sponsors": sponsors,
+        # What the model read the iromány's own document text as being about
+        # (TOPIC-8); null where it had nothing confident to say.
+        "topic": topic,
         # extra header fields from the detail sheet
         "subtype": b["subtype"], "character": b["character"],
         "negotiation_mode": b["negotiation_mode"], "status_type": b["status_type"],

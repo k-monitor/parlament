@@ -146,6 +146,10 @@ _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 # that is applied at read time and must not invalidate the cache.
 _METHOD_VERSION = "v1"
 
+# The same, for the document pass (TOPIC-8): bump when paragraph recovery or the
+# over-long-paragraph split changes what a stored document prediction would be.
+_DOC_METHOD_VERSION = "v1"
+
 
 def word_count(text: str) -> int:
     return len(_WORD_RE.findall(text or ""))
@@ -241,6 +245,106 @@ def build_blocks(sentences, target: int | None = None,
         ordinal, first_para, text = blocks[-1]
         blocks[-1] = (ordinal, first_para, f"{text} {tail}".strip())
     return blocks
+
+
+# ---------------------------------------------------------------------------
+# document text (TOPIC-8): the same classifier over iromány PDFs
+# ---------------------------------------------------------------------------
+# A speech reaches us as sentences with a paragraph column; an iromány reaches us
+# as whatever `pdftotext` made of a PDF — hard-wrapped lines, a blank line between
+# paragraphs, and a scanned cover sheet's worth of stamp noise at the top. So the
+# unit has to be recovered from the layout before the same block assembly can run
+# over it. Everything downstream (the word budget, the threshold, the aggregation)
+# is deliberately shared with the speech path: a topic must mean the same thing
+# whichever kind of text it was read off.
+
+_PARA_SPLIT_RE = re.compile(r"\n\s*\n")
+# A sentence-ish boundary, used only to break up a paragraph that is too long for
+# the model to read whole. Requires the next line to start like a new sentence, so
+# the legal-citation full stops that fill this corpus ("2013. évi XXXVI. törvény",
+# "1. §") do not split it into fragments.
+_SENT_SPLIT_RE = re.compile(r'(?<=[.!?:])\s+(?=[A-ZÁÉÍÓÖŐÚÜŰ„"(\[])')
+
+
+def document_paragraphs(text: str) -> list[str]:
+    """Recover an iromány's paragraphs from extracted PDF text.
+
+    ``pdftotext`` hard-wraps to the PDF's own line breaks and separates paragraphs
+    with a blank line, so a paragraph is a run of non-blank lines joined back into
+    one string. Nothing is filtered here: the cover sheet's stamp fragments
+    ("Országgyűlés Hivatala", "Érkezett:", the OCR noise around a signature) come
+    through as very short paragraphs and are handled downstream, where
+    ``parlacap_min_words`` already declines to classify them on their own."""
+    out: list[str] = []
+    for para in _PARA_SPLIT_RE.split(text or ""):
+        joined = " ".join(l.strip() for l in para.splitlines() if l.strip())
+        joined = re.sub(r"\s+", " ", joined).strip()
+        if joined:
+            out.append(joined)
+    return out
+
+
+def _split_oversized(para: str, maximum: int) -> list[str]:
+    """Break a paragraph the model could not read whole into readable pieces.
+
+    :func:`build_blocks` lets a single over-long *sentence* stand as its own
+    oversized block, on the grounds that any split inside it is arbitrary. That is
+    the right call for speech, where the unit is a sentence; it is the wrong one
+    here, because a document's paragraph routinely runs past the token limit (a
+    single recital in a beszámoló can be 400+ words) and letting it stand whole
+    means the tokenizer silently drops its second half. Splitting on sentence
+    boundaries first, and only then on a word budget, keeps all of the text in
+    front of the model."""
+    if word_count(para) <= maximum:
+        return [para]
+    pieces: list[str] = []
+    for part in _SENT_SPLIT_RE.split(para):
+        if not part.strip():
+            continue
+        if word_count(part) <= maximum:
+            pieces.append(part.strip())
+            continue
+        words = part.split()
+        for i in range(0, len(words), maximum):
+            pieces.append(" ".join(words[i:i + maximum]))
+    return pieces or [para]
+
+
+def build_text_blocks(text: str, target: int | None = None,
+                      maximum: int | None = None) -> list[tuple[int, int, str]]:
+    """Group an iromány's extracted text into classification blocks.
+
+    Returns the same ``[(block_ordinal, first_paragraph_index, text)]`` shape the
+    speech path produces, and reaches it through the same :func:`build_blocks`
+    word budget — the paragraphs recovered from the PDF simply take the place of
+    the transcript's paragraph column, and here they are real rather than a
+    per-cycle guess.
+
+    **The cover sheet is deliberately kept.** Every iromány opens with an
+    administrative block — the registry stamp, the addressee, and *the subject line*
+    — and the obvious instinct is to strip it as boilerplate. Measured over all 356
+    cycle-43 documents, dropping the first block changes the verdict on 3 of them
+    (none of the three clearly for the better) and **silences 32** outright: for a
+    short personnel or procedural iromány the cover sheet is the only text that
+    names what the document is about. It stays.
+    """
+    target = settings.parlacap_target_words if target is None else target
+    maximum = settings.parlacap_max_words if maximum is None else maximum
+    units: list[tuple[int, str]] = []
+    for i, para in enumerate(document_paragraphs(text)):
+        for piece in _split_oversized(para, maximum):
+            units.append((i, piece))
+    return build_blocks(units, target, maximum)
+
+
+def document_method_tag(model: str | None = None) -> str:
+    """:func:`method_tag` for the document pass.
+
+    Distinct from the speech tag even at identical settings: the same model over
+    the same words would still be split differently (paragraphs recovered from PDF
+    layout, over-long paragraphs sub-split), so a cache entry from one pass must
+    never be mistaken for the other's."""
+    return method_tag(model) + f":doc{_DOC_METHOD_VERSION}"
 
 
 def methodology() -> dict:

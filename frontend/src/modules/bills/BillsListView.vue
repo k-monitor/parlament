@@ -10,6 +10,7 @@ import { formatDate } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
+import TopicBadge from '../../components/TopicBadge.vue'
 import Pagination from '../../components/Pagination.vue'
 
 const route = useRoute()
@@ -203,6 +204,10 @@ onUnmounted(() => clearTimeout(t))
             <router-link :to="{ name: 'bill', params: { id: b.id } }" class="billnum" @click="clicks.hit(i)">{{ b.bill_number }}</router-link>
             <span class="badge" v-if="b.status">{{ b.status }}</span>
             <span class="muted small" v-if="b.submitted_date">{{ formatDate(b.submitted_date) }}</span>
+            <!-- What the model read the iromány's own text as being about
+                 (TOPIC-8). `compact` for the same reason the sitting-day list
+                 uses it: below ~840px the full name costs the row a line. -->
+            <TopicBadge :topic="b.topic" kind="bill" compact />
           </div>
           <router-link :to="{ name: 'bill', params: { id: b.id } }" class="billtitle" @click="clicks.hit(i)">{{ b.title }}</router-link>
           <div class="sponsors small" v-if="b.sponsors.length">

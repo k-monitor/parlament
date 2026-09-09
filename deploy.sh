@@ -242,6 +242,14 @@ color_env=(
 [ -n "${PARLAMONITOR_QUERY_CACHE_TTL:-}" ]    && color_env+=(-e "PARLAMONITOR_QUERY_CACHE_TTL=${PARLAMONITOR_QUERY_CACHE_TTL}")
 [ -n "${PARLAMONITOR_QUERY_CACHE_SIZE:-}" ]   && color_env+=(-e "PARLAMONITOR_QUERY_CACHE_SIZE=${PARLAMONITOR_QUERY_CACHE_SIZE}")
 [ -n "${PARLAMONITOR_MAX_SEARCH_TOTAL:-}" ]   && color_env+=(-e "PARLAMONITOR_MAX_SEARCH_TOTAL=${PARLAMONITOR_MAX_SEARCH_TOTAL}")
+# CAP topic presentation (§5.8 TOPIC-6 / TOPIC-8). Both are read-side settings —
+# raw per-block predictions are stored and the cut is made when a request is
+# served — so they belong to the serving color and take effect on the next swap,
+# with no reclassification and no rebuild. That is exactly what DEPLOYMENT.md
+# promises for the threshold, and it only holds if the value reaches the
+# container, so forward them here.
+[ -n "${PARLAMONITOR_PARLACAP_THRESHOLD:-}" ] && color_env+=(-e "PARLAMONITOR_PARLACAP_THRESHOLD=${PARLAMONITOR_PARLACAP_THRESHOLD}")
+[ -n "${PARLAMONITOR_BILL_TOPICS:-}" ]        && color_env+=(-e "PARLAMONITOR_BILL_TOPICS=${PARLAMONITOR_BILL_TOPICS}")
 
 # --- start the idle color from the new image --------------------------------
 echo "==> starting $TARGET_CTR"

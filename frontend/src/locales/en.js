@@ -153,6 +153,19 @@ export default {
     method: 'Classified automatically by the ParlaCAP model, paragraph by '
       + 'paragraph, at a {threshold}% confidence threshold. Indicative only, not '
       + 'an official categorisation.',
+    // The same model over an iromány, but the text is a submitted document
+    // rather than a speech, so the wording differs. Only the lines that change
+    // live here; the rest fall back to the shared keys above.
+    bill: {
+      panelLabel: 'Topic of this document',
+      coverage: '{pct} of the document could be classified confidently; the '
+        + 'model makes no claim about the rest.',
+      otherShare: '{pct} of the classified text is not policy content (cover '
+        + 'sheet, registry stamps, signatures, procedural formulae).',
+      method: 'Classified automatically by the ParlaCAP model from the text of '
+        + 'the submitted document, block by block, at a {threshold}% confidence '
+        + 'threshold. Indicative only, not an official categorisation.',
+    },
     names: {
       Macroeconomics: 'Macroeconomics',
       'Civil Rights': 'Civil rights',

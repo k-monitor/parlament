@@ -89,6 +89,12 @@ x-nlp-env: &nlp-env
   # Applied when a request is SERVED, so retuning it needs only a restart of the
   # serving colors — never a reclassification and never a rebuild.
   PARLAMONITOR_PARLACAP_THRESHOLD: ${PARLAMONITOR_PARLACAP_THRESHOLD:-0.90}
+  # Also label the irományok themselves, from the text of the document each one
+  # links to (TOPIC-8). On this host that is always a cache replay: the server
+  # mirrors no documents (PARLAMONITOR_DOCUMENTS is off, DOC-1), so the rows come
+  # from the same parlacap-cache.json shipped for the speech topics. With no
+  # cache the pass writes nothing and the chip hides itself — never an error.
+  PARLAMONITOR_BILL_TOPICS: ${PARLAMONITOR_BILL_TOPICS:-1}
 
 # Whisper forced-alignment sentence-timing config for the scraping side (sync).
 # PARLAMONITOR_TIMING_BACKEND=auto uses Whisper on Modal when the MODAL_TOKEN_* above

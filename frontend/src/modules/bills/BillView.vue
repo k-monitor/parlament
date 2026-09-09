@@ -12,6 +12,7 @@ import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import HlsPlayer from '../../components/HlsPlayer.vue'
 import ShareButton from '../../components/ShareButton.vue'
+import TopicBadge from '../../components/TopicBadge.vue'
 
 const props = defineProps({ id: String })
 
@@ -130,6 +131,9 @@ watch(() => props.id, load)
           <span class="bnum">{{ bill.bill_number }}</span>
           <span class="badge status" v-if="bill.status">{{ bill.status }}</span>
           <span class="muted small" v-if="bill.type">{{ bill.type }}</span>
+          <!-- No `compact`: one chip with a header to itself, so the topic name
+               stays legible at every width (cf. the list, which is dense). -->
+          <TopicBadge :topic="bill.topic" kind="bill" />
           <ShareButton :title="bill.title" align="right" style="margin-left:auto" />
         </div>
         <h1>{{ bill.title }}</h1>

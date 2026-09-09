@@ -1,6 +1,13 @@
 <script setup>
-// The CAP policy topic of a speech (TOPIC-1..7): one bubble naming what the speech
-// was about, which opens on click into how that was decided.
+// The CAP policy topic of a speech (TOPIC-1..7) or of an iromány (TOPIC-8): one
+// bubble naming what the text was about, which opens on click into how that was
+// decided.
+//
+// One component for both because the two are the same claim, produced by the same
+// model at the same threshold and aggregated by the same code — a reader who has
+// learnt what this chip means on a sitting day must not have to relearn it on a
+// bill page. Only the wording differs (a speech has paragraphs and greetings; a
+// document has blocks and a cover sheet), and that is a `kind` away.
 //
 // The label is not a measurement of the speech, it is a *model's reading* of it, so
 // the two are presented differently. The chip states one thing — the topic — because
@@ -22,10 +29,12 @@
 // glyph distinguishes topics at a glance and the word carries the meaning — the same
 // choice, for the same reason, as SpeechMetricsBadge.
 //
-// A speech with no `topic` renders nothing. That is the intended answer for roughly
+// Nothing with no `topic` renders anything. That is the intended answer for roughly
 // a fifth of speeches — procedural ones are never classified at all, and a speech
 // whose every block fell below the confidence threshold has no topic the site is
-// willing to assert. Silence is the honest output there, not a "misc" bucket.
+// willing to assert — and for about a tenth of irományok, whose document is a scan,
+// a bare personnel motion, or too short to place. Silence is the honest output
+// there, not a "misc" bucket.
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { store } from '../store.js'
@@ -79,13 +88,30 @@ const GLYPHS = {
 const props = defineProps({
   topic: { type: Object, default: null },
   compact: { type: Boolean, default: false },
+  // Which text this label was read off. Selects the wording (and the backend
+  // feature flag), never the behaviour: a topic means the same thing either way.
+  kind: { type: String, default: 'speech' },   // 'speech' | 'bill'
 })
 
 const { t, te } = useI18n()
 
 // Two off switches, as everywhere else: the backend's own flag (false when the pass
-// is off or the DB carries no predictions) and "this speech has no topic".
-const on = computed(() => store.featureEnabled('speech_topics') && !!props.topic)
+// is off or the DB carries no predictions) and "this item has no topic". The two
+// passes are flagged separately because they can genuinely differ — a server can
+// carry speech topics and no iromány ones, which is exactly what happens before
+// the document cache is first shipped across.
+const feature = computed(() =>
+  (props.kind === 'bill' ? 'bill_topics' : 'speech_topics'))
+const on = computed(() => store.featureEnabled(feature.value) && !!props.topic)
+
+// Wording that differs between the two: a speech has paragraphs, greetings and a
+// speaker; an iromány has blocks, a cover sheet and no voice. `topics.bill.*`
+// overrides the shared `topics.*` string where one exists, so a key that reads the
+// same for both is written once.
+function tk(key, params) {
+  const scoped = `topics.${props.kind}.${key}`
+  return te(scoped) ? t(scoped, params) : t(`topics.${key}`, params)
+}
 
 // Topic names are translated by their English label; an unknown one (a model whose
 // label space grew) falls back to the label itself rather than rendering a raw i18n
@@ -104,7 +130,8 @@ const pct = (v) => `${Math.round((v || 0) * 100)}%`
 // it must be read from the server rather than hardcoded here. The topic object also
 // carries the threshold its own aggregation used; prefer that, since it is the one
 // that produced *this* answer.
-const meta = computed(() => store.meta?.speech_topics || {})
+const meta = computed(() =>
+  (props.kind === 'bill' ? store.meta?.bill_topics : store.meta?.speech_topics) || {})
 const threshold = computed(() => props.topic?.threshold ?? meta.value.threshold ?? 0.9)
 
 // Competing topics, minus the winner — what the chip's one word won against.
@@ -213,7 +240,7 @@ onBeforeUnmount(() => watchViewport(false))
     <Teleport to="body">
       <div
         v-if="open" ref="panel" class="topic-panel" :class="pos.placement" role="dialog"
-        :aria-label="$t('topics.panelLabel')"
+        :aria-label="tk('panelLabel')"
         :style="{ left: pos.left + 'px', top: pos.top + 'px' }"
         @keydown.esc="hide"
       >
@@ -247,14 +274,14 @@ onBeforeUnmount(() => watchViewport(false))
         <!-- The two honesty lines: how much of the speech was confident enough to
              count at all, and how much of it was procedural rather than policy. -->
         <ul class="tp-facts">
-          <li>{{ $t('topics.coverage', { pct: pct(topic.coverage) }) }}</li>
+          <li>{{ tk('coverage', { pct: pct(topic.coverage) }) }}</li>
           <li v-if="topic.other_share > 0.05">
-            {{ $t('topics.otherShare', { pct: pct(topic.other_share) }) }}
+            {{ tk('otherShare', { pct: pct(topic.other_share) }) }}
           </li>
         </ul>
 
         <p class="tp-method">
-          {{ $t('topics.method', { threshold: Math.round(threshold * 100) }) }}
+          {{ tk('method', { threshold: Math.round(threshold * 100) }) }}
         </p>
       </div>
     </Teleport>

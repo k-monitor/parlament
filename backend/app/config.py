@@ -422,6 +422,22 @@ class Settings:
     parlacap_fp16: bool = field(default_factory=lambda:
         (os.environ.get("PARLAMONITOR_PARLACAP_FP16", "1").strip().lower()
          not in ("0", "false", "no", "")))
+    # Classify irományok as well as speeches (TOPIC-8). Separate from `parlacap`
+    # above because the two have different inputs and different prerequisites: the
+    # speech pass reads the DB, while this one reads the *document text* the
+    # scraper's optional `documents` stage mirrors (DOC-1) — or, on a server that
+    # has no such store, replays whatever the shipped cache already covers. Left on
+    # by default precisely because that degradation is total: with neither
+    # documents nor cache the pass writes nothing and the badge simply never shows.
+    bill_topics: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_BILL_TOPICS", "1").strip().lower()
+         not in ("0", "false", "no", "")))
+    # Where the scraper's mirrored document text lives (`documents/<cycle>/` with
+    # its index.json). Unset → `documents/` under the loader's data directory,
+    # which is where the scraper writes it. A server that was never given the
+    # mirror leaves this unset and simply finds nothing, which is the normal case.
+    documents_dir: str | None = field(default_factory=lambda:
+        os.environ.get("PARLAMONITOR_DOCUMENTS_DIR") or None)
     # Shared lemma cache (app/lemma_cache.py). The word cloud and the lexical
     # diversity metric both need HuSpaCy lemmas for the *same* sentences, so the
     # cloud's pass emits them once and they are kept on disk, keyed by sentence id,

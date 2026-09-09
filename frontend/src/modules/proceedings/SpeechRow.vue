@@ -18,7 +18,7 @@ import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
 import SpeechMetricsBadge from '../../components/SpeechMetricsBadge.vue'
-import SpeechTopicBadge from '../../components/SpeechTopicBadge.vue'
+import TopicBadge from '../../components/TopicBadge.vue'
 import ShareButton from '../../components/ShareButton.vue'
 
 // `playable` is false for a not-yet-processed sitting day: there is no per-speech
@@ -110,7 +110,7 @@ function paraText(p) {
              flows after the speech type, left-aligned like every other badge.
              Absent for procedural speeches and for any speech the classifier was
              not confident enough about. -->
-        <SpeechTopicBadge :topic="speech.topic" compact />
+        <TopicBadge :topic="speech.topic" compact />
       </div>
       <!-- Meta: the video-only note, timing and duration. On desktop it sits
            inline before the actions; on mobile it drops to its own line under the

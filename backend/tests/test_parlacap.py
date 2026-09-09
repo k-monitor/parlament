@@ -487,3 +487,295 @@ def test_modal_and_local_share_one_cache(monkeypatch):
     for instance in _live_settings():
         monkeypatch.setattr(instance, "parlacap_backend", "modal")
     assert parlacap.method_tag() == before
+
+
+# ---------------------------------------------------------------------------
+# irományok: the same classifier over document text (TOPIC-8)
+# ---------------------------------------------------------------------------
+# The properties that matter here are the ones the speech pass does not already
+# cover: paragraphs have to be *recovered* from extracted PDF layout rather than
+# read off a column, and the input can be absent entirely — a production server
+# mirrors no documents at all and must still replay what was shipped to it.
+
+import lzma  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+
+def _mirror(data_dir, docs, *, cycle=43, compress=True):
+    """Write a synthetic scraper document mirror (DOC-1) for ``{url: text}``."""
+    root = Path(data_dir) / "documents" / str(cycle)
+    (root / "text").mkdir(parents=True, exist_ok=True)
+    entries = []
+    for i, (url, text) in enumerate(docs.items()):
+        name = f"doc{i}.txt" + (".xz" if compress else "")
+        blob = text.encode("utf-8")
+        (root / "text" / name).write_bytes(lzma.compress(blob) if compress else blob)
+        entries.append({"id": f"doc{i}", "url": url, "kind": "main",
+                        "status": "ok", "textFile": f"text/{name}",
+                        "textChars": len(text)})
+    (root / "index.json").write_text(
+        json.dumps({"meta": {"cycle": cycle}, "documents": entries},
+                   ensure_ascii=False))
+    return root
+
+
+# The URL the shared bills fixture gives T/100, and a body long enough that the
+# lowered test floor classifies it.
+_T100 = "https://www.parlament.hu/irom43/00100/00100.pdf"
+_DOC_TEXT = ("Országgyűlés Hivatala\nIrományszám: T/100\nÉrkezett:\n\n"
+             "2026 MÁJ 03.\n\n"
+             "Tisztelt Elnök Úr! Az Alaptörvény alapján a mellékelt\n"
+             "törvényjavaslatot kívánom benyújtani.\n\n"
+             "1. § A költségvetés fő összegei a következők szerint alakulnak.\n"
+             "A bevételi főösszeg és a kiadási főösszeg egyaránt emelkedik.\n")
+
+
+# --- recovering the unit from PDF layout -----------------------------------
+
+def test_document_paragraphs_rejoin_hard_wrapped_lines():
+    """pdftotext wraps to the PDF's own line breaks; a paragraph is the run of
+    lines between blank ones, or every sentence would arrive as a fragment."""
+    paras = parlacap.document_paragraphs(
+        "Első sor\nugyanannak a bekezdésnek a folytatása.\n\nMásik bekezdés.\n")
+    assert paras == ["Első sor ugyanannak a bekezdésnek a folytatása.",
+                     "Másik bekezdés."]
+
+
+def test_document_paragraphs_keep_the_cover_sheet():
+    """Measured over all 356 cycle-43 documents, dropping the opening block
+    silences 32 irományok to change 3. The stamp fragments stay; they are short,
+    so the minimum-length floor already declines to classify them alone."""
+    paras = parlacap.document_paragraphs(_DOC_TEXT)
+    assert paras[0].startswith("Országgyűlés Hivatala")
+    assert any("költségvetés" in p for p in paras)
+
+
+def test_oversized_paragraph_is_split_rather_than_truncated():
+    """A document's paragraph routinely runs past the model's token limit, and
+    letting it stand whole would silently drop its second half."""
+    long_para = " ".join(f"szó{i}" for i in range(500)) + "."
+    blocks = parlacap.build_text_blocks(long_para, target=60, maximum=100)
+    assert len(blocks) >= 5
+    assert all(parlacap.word_count(t) <= 100 for (_o, _p, t) in blocks)
+    # nothing was lost on the way
+    assert sum(parlacap.word_count(t) for (_o, _p, t) in blocks) >= 500
+
+
+def test_long_paragraph_splits_on_sentences_before_word_count():
+    two = ("Ez az első mondat, amely elég hosszú ahhoz, hogy önmagában is "
+           "kitöltse a keretet. Ez pedig a második mondat, ugyanilyen hosszú "
+           "és ugyanilyen önálló.")
+    pieces = parlacap._split_oversized(two, maximum=14)
+    assert pieces[0].endswith("keretet.")
+
+
+def test_document_method_tag_differs_from_the_speech_one():
+    """The two passes share one cache file; an entry from one must never be
+    mistaken for the other's, even at identical model settings."""
+    assert parlacap.document_method_tag() != parlacap.method_tag()
+    assert parlacap.document_method_tag().startswith(parlacap.method_tag())
+
+
+# --- the loader pass --------------------------------------------------------
+
+@pytest.fixture
+def bill_topics_on(topics_on, monkeypatch):
+    """``topics_on`` plus the iromány half enabled."""
+    for instance in _live_settings():
+        monkeypatch.setattr(instance, "bill_topics", True)
+    return topics_on
+
+
+def test_bill_pass_writes_rows_and_reuses_its_cache(conn, tmp_path, data_dir,
+                                                    bill_topics_on):
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    rows = conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0]
+    assert rows > 0
+    assert conn.execute(
+        "SELECT DISTINCT bill_id FROM bill_topic").fetchone()[0] == "bill-uuid-1"
+
+    calls = bill_topics_on.calls
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    assert bill_topics_on.calls == calls           # served from disk
+    assert conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0] == rows
+
+
+def test_bill_rows_carry_the_cycle_for_scoped_rebuilds(conn, tmp_path, data_dir,
+                                                       bill_topics_on):
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    assert conn.execute(
+        "SELECT DISTINCT period_number FROM bill_topic").fetchone()[0] == 43
+
+
+def test_cache_replays_on_a_host_with_no_document_mirror(conn, tmp_path, data_dir,
+                                                         bill_topics_on, monkeypatch):
+    """The delivery story, and the one that differs from the speech pass: the
+    production server has no documents to fingerprint against, so a cached entry
+    is replayed as it stands rather than re-derived."""
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    expected = conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0]
+    assert expected > 0
+
+    conn.execute("DELETE FROM bill_topic")
+    monkeypatch.setattr(parlacap, "backend", lambda **kw: None)
+    # No mirror anywhere, and no model — exactly a web server after a `docker
+    # compose run init`, with only parlacap-cache.json copied across.
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=tmp_path / "nowhere")
+    assert conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0] == expected
+
+
+def test_no_mirror_and_no_cache_leaves_irományok_unlabelled(conn, tmp_path,
+                                                            bill_topics_on, monkeypatch):
+    monkeypatch.setattr(parlacap, "backend", lambda **kw: None)
+    loader.rebuild_bill_topics(conn, tmp_path / "empty",
+                               data_dir=tmp_path / "nowhere")
+    assert conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0] == 0
+
+
+def test_the_two_passes_share_one_cache_without_clobbering_it(conn, tmp_path,
+                                                              data_dir, bill_topics_on):
+    """Both write ``parlacap-cache.json``; whichever runs second must keep the
+    first's half, or shipping the file would deliver only one of the two."""
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_speech_topics(conn, tmp_path)
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    cache = json.loads((tmp_path / "parlacap-cache.json").read_text())
+    assert cache["sessions"] and cache["bills"]
+
+    # …and the speech pass running again does not drop the bills half.
+    loader.rebuild_speech_topics(conn, tmp_path)
+    cache = json.loads((tmp_path / "parlacap-cache.json").read_text())
+    assert cache["bills"]
+
+
+def test_bill_cache_stores_label_indices_not_names(conn, tmp_path, data_dir,
+                                                   bill_topics_on):
+    """Same size argument as the speech cache: indices against the pinned LABELS
+    tuple, which is what keeps a corpus-sized file shippable."""
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    entry = json.loads((tmp_path / "parlacap-cache.json").read_text())["bills"]
+    rows = entry["bill-uuid-1"]["rows"]
+    assert rows and all(isinstance(r[2], int) for r in rows)
+    assert entry["bill-uuid-1"]["method"] == parlacap.document_method_tag()
+
+
+def test_uncompressed_and_gzipped_document_text_are_both_read(conn, tmp_path,
+                                                              data_dir, bill_topics_on):
+    """The mirror's codec is an operator setting (xz / gzip / none); the loader
+    must not care which was chosen."""
+    _mirror(data_dir, {_T100: _DOC_TEXT}, compress=False)
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    assert conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0] > 0
+
+
+def test_changed_document_text_busts_the_cache(conn, tmp_path, data_dir,
+                                               bill_topics_on):
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    calls = bill_topics_on.calls
+    _mirror(data_dir, {_T100: _DOC_TEXT + "\n\nÚj bekezdés a módosított iromány végén.\n"})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    assert bill_topics_on.calls > calls
+
+
+def test_disabled_bill_pass_writes_nothing(conn, tmp_path, data_dir, topics_on,
+                                           monkeypatch):
+    for instance in _live_settings():
+        monkeypatch.setattr(instance, "bill_topics", False)
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    # The table itself is part of schema.sql, so it exists on any fresh build;
+    # what the switch must guarantee is that nothing was classified into it.
+    assert conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0] == 0
+    assert not (tmp_path / "parlacap-cache.json").exists()
+
+
+def test_only_the_latest_cycle_reaches_modal_for_irományok(conn, tmp_path, data_dir,
+                                                           bill_topics_on, monkeypatch):
+    """The metered-spend guard applies here too: the archive is far larger than
+    the newest cycle, and a backfill must never be bought by accident."""
+    seen = []
+    monkeypatch.setattr(parlacap, "backend",
+                        lambda **kw: seen.append(kw.get("modal_ok")) or None)
+    conn.execute("UPDATE bill SET period_number = 39 WHERE id = 'bill-uuid-1'")
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    assert seen and all(ok is False for ok in seen)
+
+
+# --- the API ----------------------------------------------------------------
+
+def test_bill_carries_its_topic(client, conn, tmp_path, data_dir, bill_topics_on):
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    conn.commit()
+
+    detail = client.get("/api/v1/bills/bill-uuid-1").json()
+    assert detail["topic"]["label"] == "Health"
+    assert detail["topic"]["code"] == parlacap.CAP_CODES["Health"]
+
+    listing = client.get("/api/v1/bills?period=43").json()
+    topics = {b["bill_number"]: b["topic"] for b in listing["bills"]}
+    assert topics["T/100"]["label"] == "Health"
+    # An iromány whose document was never mirrored says nothing rather than
+    # borrowing a neighbour's label.
+    assert topics["T/101"] is None
+
+
+def test_meta_publishes_the_iromány_methodology(client, conn, tmp_path, data_dir,
+                                                bill_topics_on):
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    conn.commit()
+
+    meta = client.get("/api/v1/meta").json()
+    assert meta["features"]["bill_topics"] is True
+    assert meta["bill_topics"]["bills"] >= 1
+    assert meta["bill_topics"]["unit"] == "document block"
+    assert meta["bill_topics"]["threshold"] == settings.parlacap_threshold
+
+
+def test_meta_hides_the_badge_when_nothing_is_classified(client):
+    """A DB with no iromány topics must switch the chip off rather than render a
+    column of blanks — the same contract as the speech flag."""
+    meta = client.get("/api/v1/meta").json()
+    assert meta["features"]["bill_topics"] is False
+
+
+def test_replay_refuses_a_cache_from_a_different_method(conn, tmp_path, data_dir,
+                                                        bill_topics_on, monkeypatch):
+    """The replay path cannot fingerprint (there is no text on that host), so the
+    method tag is the only guard left — and it matters, because stored rows are
+    label *indices*: replaying a different model's predictions would not error
+    anywhere, it would silently relabel every iromány."""
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    assert conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0] > 0
+
+    cache_file = tmp_path / "parlacap-cache.json"
+    cache = json.loads(cache_file.read_text())
+    for entry in cache["bills"].values():
+        entry["method"] = "parlacap:some/other-model:len512:min12:blk60-220:v1:docv1"
+    cache_file.write_text(json.dumps(cache))
+
+    conn.execute("DELETE FROM bill_topic")
+    monkeypatch.setattr(parlacap, "backend", lambda **kw: None)
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=tmp_path / "nowhere")
+    assert conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0] == 0
+
+
+def test_replay_accepts_a_matching_method(conn, tmp_path, data_dir,
+                                          bill_topics_on, monkeypatch):
+    """…while the ordinary shipped cache, made by this same method, still lands."""
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    expected = conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0]
+
+    conn.execute("DELETE FROM bill_topic")
+    monkeypatch.setattr(parlacap, "backend", lambda **kw: None)
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=tmp_path / "nowhere")
+    assert conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0] == expected

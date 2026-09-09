@@ -19,6 +19,7 @@ import { formatDate } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
+import TopicBadge from '../../components/TopicBadge.vue'
 import MultiSelect from '../../components/MultiSelect.vue'
 import Pagination from '../../components/Pagination.vue'
 
@@ -249,6 +250,9 @@ onUnmounted(() => clearTimeout(t))
             <span class="badge" v-if="b.type">{{ b.type }}</span>
             <span class="badge status" v-if="b.status">{{ b.status }}</span>
             <span class="muted small" v-if="b.submitted_date">{{ formatDate(b.submitted_date) }}</span>
+            <!-- Most classified irományok are kérdések and interpellációk, so
+                 this is the list where the topic earns its place (TOPIC-8). -->
+            <TopicBadge :topic="b.topic" kind="bill" compact />
           </div>
           <router-link :to="{ name: 'document', params: { id: b.id } }" class="billtitle" @click="clicks.hit(i)">{{ b.title }}</router-link>
           <div class="sponsors small" v-if="b.sponsors.length || b.responder">

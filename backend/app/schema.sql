@@ -770,6 +770,36 @@ CREATE INDEX idx_speech_topic_session ON speech_topic(session_id);
 -- (§10: per-person topic profiles, topic search facets).
 CREATE INDEX idx_speech_topic_label ON speech_topic(label);
 
+-- The same, for irományok (TOPIC-8). Written by `loader.rebuild_bill_topics` from
+-- the text of the document the iromány links to (`text_url`), mirrored and
+-- extracted by the scraper's optional `documents` stage (DOC-1).
+--
+-- Everything about the contract matches `speech_topic` above, deliberately: raw
+-- per-block predictions, no threshold baked in, the document-level topic derived
+-- on read by the same `parlacap.aggregate`. What differs is only where the blocks
+-- came from — an iromány has no sentence table, so its paragraphs are recovered
+-- from the extracted PDF layout (`parlacap.build_text_blocks`).
+--
+-- `block` is an ordinal within the document, not a page or a source paragraph.
+-- The table is absent on a DB built before this pass, and empty on one whose
+-- build had neither the shipped cache nor a document store — both are ordinary
+-- states that hide the badge rather than break the page.
+CREATE TABLE bill_topic (
+    bill_id      TEXT NOT NULL REFERENCES bill(id),
+    block        INTEGER NOT NULL,
+    paragraph    INTEGER,           -- recovered paragraph the block starts at
+    period_number INTEGER,          -- the iromány's cycle, for scoped rebuilds
+    label        TEXT NOT NULL,     -- CAP major topic name, or 'Other'
+    score        REAL NOT NULL,     -- top-1 softmax probability
+    runner_up    TEXT,
+    runner_score REAL,
+    words        INTEGER NOT NULL,  -- aggregation weight
+    PRIMARY KEY (bill_id, block)
+) WITHOUT ROWID;
+
+CREATE INDEX idx_bill_topic_period ON bill_topic(period_number);
+CREATE INDEX idx_bill_topic_label ON bill_topic(label);
+
 -- ---------------------------------------------------------------------------
 -- Portfolios (tárcák) — the government side of the corpus (§6C)
 -- ---------------------------------------------------------------------------

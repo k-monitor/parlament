@@ -1155,10 +1155,45 @@ section — **Elemzések** — with its own entry in the top bar.
   left to the threshold. The parameters are **configurable, not hard-coded**
   (OPS-4) and **published in the site manifest**, the threshold in force included,
   so every label can state how it was produced (TRUST-1 / REP-5).
-  > **Not yet built (§10):** per-representative topic profiles, topic
-  > classification of bills, and topic facets in search. The stored unit is
-  > deliberately the block, and the label is indexed, so all three are queries
-  > against what already exists rather than a reclassification.
+  > **Not yet built (§10):** per-representative topic profiles and topic facets
+  > in search. The stored unit is deliberately the block, and the label is
+  > indexed, so both are queries against what already exists rather than a
+  > reclassification. (Topic classification of **irományok** was the third of
+  > these and is now TOPIC-8 below.)
+- **TOPIC-8 (SHOULD).** The same labels are carried by **irományok**, wherever one
+  appears as an item the reader can act on: the bills list, the *Egyéb irományok*
+  list (BILL-9) and the iromány detail view. It answers the same question the
+  speech topic does — *what is this about?* — which for a document the title
+  answers only when the title is plain, and an iromány's title is routinely a
+  citation ("Az általános forgalmi adóról szóló 2007. évi CXXVII. törvény
+  módosításáról") that names the law being amended rather than the subject.
+  - **The input is the document, not the title or the metadata.** The registry
+    holds only a *link* to the PDF, so this rests on the scraper's mirrored,
+    text-extracted documents (DOC-1) and covers exactly the irományok that have
+    one. Where an iromány has no text — an image-only scan, or a document that
+    was never mirrored — it carries **no topic**, never a guess from its title.
+  - **The unit is a block of the document**, recovered from the extracted PDF
+    layout (paragraphs are real there, unlike the transcript's paragraph column)
+    and assembled to the same word budget as a speech's, with an over-long
+    paragraph split rather than truncated. The **cover sheet is kept**: it is
+    administrative, but it also names the subject, and dropping it is measurably
+    worse — over cycle 43 it changes 3 verdicts and silences 32 documents.
+  - Everything else is **deliberately identical** to the speech pass: the same
+    model, the same read-time threshold (TOPIC-5/6), the same word-weighted
+    aggregation with "Other" reportable but never winning (TOPIC-4), the same
+    on-disk cache and the same refusal to fail a build (TOPIC-7). A topic must
+    mean the same thing whichever text it was read off, so the reader is shown
+    the same chip and the same breakdown, worded for a document.
+  > **✅ realized.** `bill_topic` rows written by `loader.rebuild_bill_topics`
+  > from `parlacap.build_text_blocks`; served as `topic` on the bills list and
+  > detail, rendered by the shared `TopicBadge.vue` (`kind="bill"`).
+  > `PARLAMONITOR_BILL_TOPICS` switches the pass; `PARLAMONITOR_DOCUMENTS_DIR`
+  > points at the mirror. Measured on cycle 43: **320 of 356** documents with
+  > text get a topic at the 0.90 threshold (90 % coverage, against 69 % for
+  > speeches — a document is longer and far more topically focused than a
+  > speech). The predictions live in the same `parlacap-cache.json` under a
+  > `bills` key, so the one shipped file still carries both passes, and a server
+  > with no document mirror replays it as it stands.
 
 ---
 

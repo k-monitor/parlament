@@ -216,6 +216,19 @@ export default {
       + 'személyes megjegyzés).',
     method: 'Gépi besorolás a ParlaCAP modellel, bekezdésenként, {threshold}%-os '
       + 'megbízhatósági küszöbbel. Tájékoztató jellegű, nem hivatalos minősítés.',
+    // Az irományokra ugyanaz a modell fut, de nem felszólalásra: a szöveg a
+    // benyújtott dokumentumból származik, így a szóhasználat is más. Csak az
+    // eltérő mondatok szerepelnek itt; a többit a fenti közös kulcsok adják.
+    bill: {
+      panelLabel: 'Az iromány témája',
+      coverage: 'Az iromány szövegének {pct}-át lehetett kellő biztonsággal '
+        + 'besorolni; a többiről a modell nem nyilatkozik.',
+      otherShare: 'A besorolt rész {pct}-a nem szakpolitikai tartalom (fejléc, '
+        + 'iktatás, aláírás, eljárási formula).',
+      method: 'Gépi besorolás a ParlaCAP modellel, a benyújtott dokumentum '
+        + 'szövege alapján, szövegrészenként, {threshold}%-os megbízhatósági '
+        + 'küszöbbel. Tájékoztató jellegű, nem hivatalos minősítés.',
+    },
     names: {
       Macroeconomics: 'Makrogazdaság',
       'Civil Rights': 'Emberi és állampolgári jogok',

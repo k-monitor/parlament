@@ -595,8 +595,20 @@ def _load():
     logger.info("loading %s on %s (%s)", settings.parlacap_model, device,
                 "fp16" if fp16 else "fp32")
     tok = AutoTokenizer.from_pretrained(settings.parlacap_model)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        settings.parlacap_model, dtype=torch.float16 if fp16 else torch.float32)
+    # `dtype` is what transformers >= 4.56 calls this argument; older releases
+    # spell it `torch_dtype` and forward an unrecognised `dtype` straight to the
+    # model constructor, which raises. This module has to load on three
+    # different installs — the pinned Modal image (parlacap_modal_app.py), a GPU
+    # box's ad-hoc `pip install torch transformers`, and a CPU box — and only
+    # the first is version-pinned, so ask for the current name and fall back
+    # instead of tying the project to one release.
+    want = torch.float16 if fp16 else torch.float32
+    try:
+        model = AutoModelForSequenceClassification.from_pretrained(
+            settings.parlacap_model, dtype=want)
+    except TypeError:
+        model = AutoModelForSequenceClassification.from_pretrained(
+            settings.parlacap_model, torch_dtype=want)
     _verify_labels(model)
     model.to(device).eval()
     _pipeline = (tok, model, device)

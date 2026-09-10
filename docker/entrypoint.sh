@@ -189,6 +189,22 @@ case "${1:-serve}" in
         cd /app/scraper
         exec python -m parlamonitor officeholders "$DATA_DIR" "$@"
         ;;
+    documents)
+        # Mirror the cycle's iromany document files and extract their text
+        # (DOC-1) into $DATA_DIR/documents/<cycle>/ — the input the iromany half
+        # of the CAP topic pass reads (TOPIC-8), which is why a host that wants
+        # those labels needs this stage even though the site never serves a copy:
+        #   podman-compose run --rm -e PARLAMONITOR_DOCUMENTS=text sync documents --cycle 43
+        # Retention is `off` by default (PARLAMONITOR_DOCUMENTS), so this stores
+        # nothing until asked. Incremental: a re-run re-requests only what is
+        # missing or incomplete, so it is also how a partial mirror is finished
+        # (and how text is backfilled onto PDFs kept before poppler was there).
+        # Needs a read-write /data mount and the scrape egress config, hence the
+        # `sync` service.
+        shift
+        cd /app/scraper
+        exec python -m parlamonitor documents "$DATA_DIR" "$@"
+        ;;
     speaker-photos)
         # Download portraits for non-roster speakers (ministers / nationality
         # advocates) into $PHOTOS_DIR; the loader wires them on the next update.

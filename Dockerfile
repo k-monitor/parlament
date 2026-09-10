@@ -19,7 +19,11 @@ FROM python:3.12-slim AS runtime
 WORKDIR /app/backend
 
 # `flock` (util-linux) guards overlapping cron/loop sync runs (docker/sync-once.sh).
-RUN apt-get update && apt-get install -y --no-install-recommends util-linux \
+# `pdftotext` (poppler-utils) extracts the iromany document text the CAP topic
+# pass classifies (DOC-1 / TOPIC-8). Without it a `documents --documents text`
+# run downloads every PDF and stores nothing, so a host that classifies
+# iromanyok needs it; ~15 MB, and it is inert while PARLAMONITOR_DOCUMENTS=off.
+RUN apt-get update && apt-get install -y --no-install-recommends util-linux poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt ./

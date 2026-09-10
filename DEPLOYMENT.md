@@ -278,7 +278,7 @@ PARLAMONITOR_DOCUMENTS=text        # extracted text only  — ~4 MB per cycle
 or run the stage by hand without touching the sync's configuration at all:
 
 ```bash
-docker compose run --rm sync documents --cycle 43 --documents text /data
+podman-compose run --rm sync documents --cycle 43 --documents text
 ```
 
 Keeping only the text is the intended opt-in: it is ~1% of the size of the PDFs
@@ -289,13 +289,14 @@ PDF; the saving is disk, not bandwidth or politeness budget (SCR-4 applies
 either way: a first full pass over cycle 43 is 861 requests, ~21 min at
 `PARLAMONITOR_SLEEP=0.5`, and pulls the whole 868 MB down the wire).
 
-Text extraction needs **`pdftotext`** (poppler-utils), which the runtime image
-does **not** carry — it is a slim image and this stage is off by default. Enable
-`text`/`all` in a container and the run still completes, but logs that it could
-extract nothing; add the package to the `runtime` stage of the `Dockerfile`
-(`apt-get install -y --no-install-recommends poppler-utils`) if you want it
-there. On a dev checkout running the scraper directly, install it from your
-distro's packages.
+Text extraction needs **`pdftotext`** (poppler-utils). The runtime image
+carries it (the `runtime` stage installs it beside `flock`), because the iromány
+topic pass has no other way to reach the document text; it costs ~15 MB and does
+nothing at all while `PARLAMONITOR_DOCUMENTS=off`. On a dev checkout running the
+scraper directly, install it from your distro's packages — without it a
+`text`/`all` run still completes but logs that it could extract nothing, and a
+re-run once poppler is present backfills the text without re-fetching any PDF it
+kept.
 
 The mirror is incremental: published documents never change, so a second pass
 costs no requests. Its store is `data/documents/<cycle>/`, entirely regenerable

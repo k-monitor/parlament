@@ -38,12 +38,17 @@ from ..names import split_name
 
 logger = logging.getLogger(__name__)
 
-# The three per-MP asset-declaration (vagyonnyilatkozat) queries — see the note
-# in DETAIL_QUERIES for why upstream has three.
+# The per-MP asset-declaration (vagyonnyilatkozat) queries — see the note in
+# DETAIL_QUERIES for why upstream has one per disclosure regime.
 ASSET_DECLARATION_QUERIES = (
     "kepviselo-vagyon-nyilatkozata-query",
     "kepviselo-vagyon-nyilatkozata2022query",
     "kepviselo-vagyon-nyilatkozata2023query",
+    # The regime opened for the cycle that began 2026-05-09. Empty for every MP
+    # as of 2026-09-10 — nothing has been filed under it yet — but it is on the
+    # adatlap page alongside the others, so it is asked for now rather than
+    # silently dropping the declarations the moment they appear.
+    "kepviselo-vagyon-nyilatkozata2026query",
 )
 
 # Per-MP detail queries, keyed on {"pId": kepviseloId}. Mapped into the curated
@@ -58,11 +63,12 @@ DETAIL_QUERIES = (
     "kepviselo-felszolalasok-szama-query",
     "kepviselo-benyujtott-iromanyok-szama-query",
     "kepviselo-aktivitas-query",
-    # Asset declarations (REP-13). Upstream splits them across three queries by
-    # the disclosure regime in force, NOT by date range: the legacy one, the
-    # one-off "eredeti" declaration filed on taking the seat under the rules from
-    # 2022-08-01, and the yearly ones under the rules from 2023-01-01. They are
-    # disjoint in practice; `_asset_declarations` still merges + dedupes them.
+    # Asset declarations (REP-13). Upstream splits them across one query per
+    # disclosure regime in force, NOT by date range: the legacy one, the one-off
+    # "eredeti" declaration filed on taking the seat under the rules from
+    # 2022-08-01, the yearly ones under the rules from 2023-01-01, and the 2026
+    # regime. They are disjoint in practice; `_asset_declarations` still merges
+    # + dedupes them.
     *ASSET_DECLARATION_QUERIES,
 )
 

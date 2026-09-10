@@ -144,6 +144,43 @@ CV_RESOURCE = f"{BASE}/kepv/eletrajz/hu"
 
 _REFERER = {"Referer": f"{BASE}/web/guest/orszaggyulesi-naplo-elozo-ciklusbeli-adatai"}
 
+# Upstream re-versioned every per-MP detail query behind the MP adatlap page to a
+# ``_v2`` name (seen 2026-09-10: the old spellings started answering the portal's
+# "A megadott URL nem létezik" 404 page, for every MP and every one of these
+# queries). Nothing else in the registry moved — the roster, the advocate list and
+# the composition changes still answer under their original names.
+#
+# Callers keep using the unsuffixed name as the key their rows are filed under
+# (``parlamonitor.representatives.scrape.DETAIL_QUERIES`` and the builders that
+# read them); only the wire spelling lives here. When upstream versions one again,
+# add it to this set rather than renaming anything downstream. The current names
+# come from the adatlap page definition, which is authoritative:
+#   GET /felicitas/api/page-info/page-item/kepviseloexportok/
+#       kepviselo-adatlap-with-contract/kepviselo-adatlap-with-contract
+# → every datasource's ``recordset`` is the select URL to use.
+DETAIL_QUERY_V2 = frozenset({
+    "kepviselo-adatok-query",
+    "kepviselo-aktivitas-query",
+    "kepviselo-benyujtott-iromanyok-szama-query",
+    "kepviselo-bizottsagi-tagsagai-query",
+    "kepviselo-felszolalasok-szama-query",
+    "kepviselo-frakcioja-query",
+    "kepviselo-tisztseg-query",
+    "kepviselo-vagyon-nyilatkozata-query",
+    "kepviselo-vagyon-nyilatkozata2022query",
+    "kepviselo-vagyon-nyilatkozata2023query",
+    "kepviselo-vagyon-nyilatkozata2026query",
+    "kepviselo-valasztasi-adatok-query",
+    "kepviselo-vegzettsege-query",
+})
+
+
+def detail_query_endpoint(query: str) -> str:
+    """The name to request a per-MP detail ``query`` under, from the stable name
+    callers use. Unknown names pass through unchanged."""
+    return f"{query}_v2" if query in DETAIL_QUERY_V2 else query
+
+
 _PLAYSMIL_RE = re.compile(r"playSmil\('([^']+\.m3u8)'\)", re.I)
 # playseq.php?...&offset1=002543.19&...&offset2=010019.19&...  (HHMMSS.fff)
 _PLAYSEQ_OFF_RE = re.compile(r"offset1=([\d.]+).*?offset2=([\d.]+)")
@@ -436,8 +473,12 @@ class FelicitasClient:
         return self.select_all(KEPVISELO_PROVIDER, "kepviselo-lista-idopontban", body)
 
     def representative_detail(self, query: str, person_id: str) -> list[dict]:
-        """Run one per-MP detail query (e.g. ``kepviselo-adatok-query``)."""
-        return self.select_all(KEPVISELO_PROVIDER, query, {"pId": person_id})
+        """Run one per-MP detail query (e.g. ``kepviselo-adatok-query``).
+
+        ``query`` is the *stable* name callers key their rows on; the request goes
+        to whatever upstream currently spells it (see ``DETAIL_QUERY_V2``)."""
+        return self.select_all(KEPVISELO_PROVIDER, detail_query_endpoint(query),
+                               {"pId": person_id})
 
     def composition_changes(self, cycle: int, start: str, end: str) -> dict:
         """How the House's composition changed during ``cycle`` (REP-14) —

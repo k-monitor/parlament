@@ -14,6 +14,7 @@ Driven against a fake Felicitas client, so no network is touched.
 
 from __future__ import annotations
 
+from parlamonitor import felicitas
 from parlamonitor.representatives import scrape as reps
 
 SERVER = "http://www.parlament.hu"
@@ -334,3 +335,38 @@ def test_a_failing_changes_query_leaves_the_roster_intact():
     assert [r["personID"] for r in reg["data"]] == ["k001"]
     assert reg["data"][0]["mandate"]["terminated"] is False
     assert reg["changes"] == {"mandate": [], "faction": []}
+
+
+# --- upstream query versioning ---------------------------------------------
+
+def test_detail_queries_are_requested_under_their_current_upstream_name():
+    """Upstream versioned every per-MP detail query to a ``_v2`` name (2026-09);
+    the unsuffixed spellings 404. The scraper keeps keying its rows on the stable
+    name, so only the URL may carry the version — a record built from a `_v2`
+    response must still land in the same fields."""
+    posted: list[str] = []
+
+    class FakeHttp:
+        def polite_sleep(self):
+            pass
+
+        def post_json(self, url, body, headers=None):
+            posted.append(url)
+            assert body == {"pId": "k001"}
+            return {"metadata": {"fieldnames": {"ulohely": 0}}, "rows": [["A-12"]]}
+
+    client = felicitas.FelicitasClient(FakeHttp())
+    rows = client.representative_detail("kepviselo-adatok-query", "k001")
+
+    assert posted[0].endswith(
+        "/registry/kepviselo-query-provider/kepviselo-adatok-query_v2?page=0")
+    assert rows == [{"ulohely": "A-12"}]
+
+
+def test_no_detail_query_goes_out_unversioned():
+    """Every per-MP query on the adatlap page is ``_v2`` today, so one the scraper
+    asks for that is missing from the set would be requested under the dead name —
+    the 404 this whole indirection exists for. Registering it is the fix; if
+    upstream ever serves one unsuffixed, that exception belongs here with a note."""
+    assert [q for q in reps.DETAIL_QUERIES
+            if felicitas.detail_query_endpoint(q) == q] == []

@@ -37,6 +37,14 @@ export const ANALYSES = [
     icon: ['M3 5.5h3.5a4 4 0 0 1 4 4v5a4 4 0 0 0 4 4H20', 'm16.5 15 3.5 3.5-3.5 3.5'],
   },
   {
+    key: 'interjections',
+    route: 'interjections',
+    module: 'interjections',
+    // Two speech bubbles, the second cutting across the first — an interruption.
+    icon: ['M3 5.5h11a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H8l-4 3v-3H3a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2z',
+           'M13.5 10.5H21a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-.5v2.5l-3-2.5h-3'],
+  },
+  {
     key: 'settlements',
     route: 'settlements',
     module: 'settlements',

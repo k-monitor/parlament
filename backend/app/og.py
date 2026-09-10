@@ -305,11 +305,16 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
     "/analyses": (
         "Elemzések",
         "Számított kimutatások a Parlament munkájáról: frakciófegyelem, a kérdések "
-        "útja a válaszadó tárcáig, és az ország a felszólalásokban."),
+        "útja a válaszadó tárcáig, ki kinek szól közbe, és az ország a "
+        "felszólalásokban."),
     "/analyses/faction-cohesion": (
         "Frakcióelemzés",
         "Mennyire szavaznak együtt a frakciók: együttszavazási arányok és "
         "frakciófegyelem cikluson belül."),
+    "/analyses/interjections": (
+        "Közbeszólások",
+        "Ki szól közbe kinek a felszólalása alatt: a bekiabálások irányított "
+        "hálózata és a jegyzőkönyvbe került közbeszólások szövege."),
 }
 
 # Route shapes the site actually serves. Anything else resolves to the SPA's

@@ -16,6 +16,7 @@ import StateBlock from '../components/StateBlock.vue'
 import TrendChart from '../components/TrendChart.vue'
 import BarChart from '../components/BarChart.vue'
 import SankeyDiagram from '../components/SankeyDiagram.vue'
+import InterjectionGraph from '../components/InterjectionGraph.vue'
 import PieChart from '../components/PieChart.vue'
 import CohesionPanel from '../modules/votes/CohesionPanel.vue'
 
@@ -80,6 +81,8 @@ function fetchForKind() {
         period.value, route.query.types === '1', route.query.all === '1')
     case 'faction-cohesion':
       return api.voteCohesion({ period: period.value })
+    case 'interjection-graph':
+      return api.interjectionGraph(period.value, Number(route.query.top) || undefined)
     case 'vote-participation':
       return Promise.all([
         api.representative(q.id, period.value),
@@ -171,6 +174,7 @@ const title = computed(() => {
         : t('nav.search')
     case 'faction-speaking': return t('factions.speakingTime')
     case 'questions-sankey': return t('questions.title')
+    case 'interjection-graph': return t('interjections.title')
     case 'faction-cohesion': return t('votes.cohesion.title')
     case 'vote-participation':
       return data.value?.rep?.label
@@ -186,6 +190,7 @@ const isEmpty = computed(() => {
     case 'search-trend': return !(data.value.buckets && data.value.buckets.length)
     case 'faction-speaking': return factionBars.value.length === 0
     case 'questions-sankey': return !(data.value.total > 0)
+    case 'interjection-graph': return !(data.value.links && data.value.links.length)
     // Frakcióelemzés is a single-cycle analysis (analyses/registry.js): a
     // hand-built embed URL naming several cycles would pool Houses that never
     // sat together, so it shows nothing rather than a meaningless matrix.
@@ -213,6 +218,10 @@ const siteHref = computed(() => {
       break
     case 'faction-speaking': path = '/representatives/factions'; break
     case 'questions-sankey': path = '/analyses/questions'; break
+    case 'interjection-graph':
+      path = '/analyses/interjections'
+      if (q.top) usp.set('top', q.top)
+      break
     case 'faction-cohesion':
       path = '/analyses/faction-cohesion'
       if (q.tab) usp.set('tab', q.tab)
@@ -259,6 +268,20 @@ const siteHref = computed(() => {
             :nodes="sankeyNodes" :links="data.links"
             :caption="$t('questions.chartCaption')" :show-caption="false"
             :column-headings="sankeyHeadings"
+          />
+
+          <!-- Interjection network (§6E/INT-5). Not clickable in an embed: the
+               drill-down list is the page's, and a click inside an iframe cannot
+               go anywhere useful. -->
+          <InterjectionGraph
+            v-else-if="kind === 'interjection-graph'"
+            :nodes="data.nodes" :links="data.links"
+            :caption="$t('interjections.chartCaption')" :show-caption="false"
+            :labels="{ zoomIn: $t('interjections.zoomIn'),
+                       zoomOut: $t('interjections.zoomOut'),
+                       reset: $t('interjections.resetView'),
+                       made: $t('interjections.made'),
+                       received: $t('interjections.received') }"
           />
 
           <!-- Faction vote analysis (VOTE-8) -->

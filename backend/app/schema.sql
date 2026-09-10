@@ -1012,3 +1012,47 @@ CREATE TABLE person_settlement_stats (
     PRIMARY KEY (person_id, period_number)
 );
 CREATE INDEX idx_person_settlement_period ON person_settlement_stats(period_number);
+
+-- ---------------------------------------------------------------------------
+-- Interjections module (§6E)
+-- ---------------------------------------------------------------------------
+
+-- One row per attributed interjection lifted out of a speech's parentheses
+-- (INT-2): who shouted, over whose speech, and the words themselves. The
+-- interruption exists nowhere else in the record — the heckler has no speech of
+-- their own for it — so this table is the only place those words are addressable.
+--
+-- Everything extracted is stored, including what could not be pinned to a person
+-- and what landed inside a chairing speech, so the module's coverage is a number
+-- it can report rather than a claim (TRUST-1):
+--   * `speaker_id` NULL — the name resolved to nobody, or to several members of
+--     the same House (§6E/INT-3 refuses to guess between them);
+--   * `target_id`  NULL — the interrupted speech has no identified speaker;
+--   * `procedural` 1    — the interrupted speech is the chair running the sitting,
+--     so the pair is excluded from the graph and every count, as chairing speeches
+--     are from all representative statistics (STAT-1). Left in storage because the
+--     rule is exclusion from statistics, never from the record.
+CREATE TABLE interjection (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    speech_uid     TEXT NOT NULL REFERENCES speech(uid),   -- the interrupted speech
+    session_id     TEXT NOT NULL REFERENCES session(id),
+    period_number  INTEGER,
+    -- the sentence the carrying parenthetical opens in, so every count on the
+    -- module's pages opens onto the transcript and the video moment (INT-7)
+    sentence_id    INTEGER REFERENCES sentence(id),
+    ord            INTEGER NOT NULL,     -- position within the interrupted speech
+    speaker_name   TEXT NOT NULL,        -- the name as the transcript spells it
+    speaker_id     TEXT REFERENCES person(person_id),
+    target_id      TEXT REFERENCES person(person_id),
+    text           TEXT NOT NULL,        -- what was shouted, attribution stripped
+    procedural     INTEGER NOT NULL DEFAULT 0
+);
+-- The graph aggregate: scope by cycle, drop the chairing speeches, group by pair.
+CREATE INDEX idx_interjection_graph
+    ON interjection(period_number, procedural, speaker_id, target_id);
+-- One clicked arrow's interjections, and one person's whole row of them.
+CREATE INDEX idx_interjection_pair
+    ON interjection(speaker_id, target_id, period_number);
+CREATE INDEX idx_interjection_target ON interjection(target_id, period_number);
+CREATE INDEX idx_interjection_session ON interjection(session_id);
+CREATE INDEX idx_interjection_speech ON interjection(speech_uid);

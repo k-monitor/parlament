@@ -653,6 +653,12 @@ section — **Elemzések** — with its own entry in the top bar.
 > stand as entry points are in `_ROUTE_CARDS`/`STATIC_PATHS`; Települések keeps
 > the indexing status it had at its old address. Frakcióelemzés, held back for
 > want of exactly this framing, is **on** with the section.
+>
+> ANA-3's claim has since been tested by a fourth analysis: adding Közbeszólások
+> (§6E) to the section cost one entry in the registry, one route, one pair of i18n
+> strings and one line each in `ANALYSIS_MODULES` / `STATIC_PATHS` / `_ROUTE_CARDS`
+> — the landing card, the sub-tab and the "inside the section" route set all
+> followed from the registry entry, with no navigation code touched.
 
 ---
 
@@ -2589,6 +2595,181 @@ places in it.
 
 ---
 
+## 6E. Functional Requirements — Module: Interjections (Közbeszólások)
+
+The record of a plenary sitting is a list of speeches, and that shape quietly
+asserts something false: that members take turns. They do not. They shout across
+the chamber while somebody else holds the floor, and the shorthand writers keep
+the loudest of it — in parentheses, verbatim, inside the speech it interrupted:
+
+> …hogy ön fél **(Balla György: Úgy van!)**; ön fél attól, hogy…
+
+Those words exist nowhere else. The heckler has no speech of their own to hang
+them on, so they appear in no speech count, no speaking-time total and no speaker
+facet; a search finds them only inside somebody else's speech, attributed to that
+somebody. Roughly **99 000** of them sit in the corpus, unaddressable.
+
+What they are, once lifted out, is not a longer transcript but a **different kind
+of fact**: a directed relation between two named members. Who shouts, and over
+whom. That relation is a thing about the House that the ordered list of speeches
+cannot express at all — antagonisms, and their asymmetry (a member may be shouted
+down far more than they shout), and how much of both crosses the aisle.
+
+- **INT-1 (MUST).** The unit is **one attributed, quoted interjection**: a named
+  member, the words they shouted, and the speech they shouted them into. Both ends
+  matter — a count without the words behind it is an assertion (INT-7), and words
+  without a named shouter are not a relation.
+- **INT-2 (MUST).** Extraction is **deterministic and runs at load time**, never on
+  the request path (cf. TEL-2, WCLOUD-6). It needs no model, no GPU and no network,
+  so it runs in every install and every rebuild (SCR-6), it is unit-testable with
+  plain strings (TIM-4's discipline), and re-running it over the same transcript
+  gives the same rows.
+  - **The rules are the reader's rules.** The sitting-day transcript and the viewer
+    already lift these parentheticals out of the body text, italicise them and split
+    a `Name:` attribution off the front so the name can be linked to a profile
+    (`frontend/src/format.js`). This module ports *those* rules rather than
+    inventing its own, so the graph and the page a reader checks it against cannot
+    disagree about what an interjection is: a parenthetical is `(` to the next `)`;
+    one parenthetical can bundle several interjections separated by a **spaced**
+    dash (the spaces are what keep *Ruszin-Szendi* and *2028-ig* whole); an
+    attribution is **two to four title-case name tokens** (optionally behind
+    *Dr.*/*ifj.*/…) and a colon.
+  - **Chairing speeches are scanned but flagged**, and every count drops them
+    (STAT-1). This matters more here than anywhere else on the site: a voting block
+    is a single hours-long "speech" by the presiding officer, so a whole afternoon's
+    heckling lands inside it. Left in, the deputy speakers are the most-interrupted
+    members of every House by a wide margin.
+- **INT-3 (MUST).** **Precision over recall, because an edge is a claim about two
+  people.** A word frequency that is 3% wrong is noisy; an arrow that is wrong puts
+  words in a named person's mouth. Three gates, and what fails them is stored
+  *unattributed* rather than guessed at:
+  1. The two-token name rule alone drops the transcript's own look-alikes with no
+     hand-written exceptions — `Elnök:` (the chair, one token), `Igen:`,
+     `Közbeszólás:`, `Moraj a kormánypárti oldalon:` (lowercase words) and
+     `A táblán megjelenő eredmény:` (the voting display).
+  2. **The name must resolve to one person in the register**, which is the real
+     filter: a name nobody in the House bears buys no arrow.
+  3. **A collision is never broken by guessing.** Hungarian surnames collide hard
+     (the register holds five *Kovács László*s), so a name matching several people
+     is resolved only when the electoral cycle the words were spoken in leaves
+     exactly one of them in the House — and where two members of the same House
+     shared a name (two sitting *Tóth István*s), the interjection stays
+     unattributed. The module's **coverage is published, not assumed** (INT-8).
+- **INT-4.** The module owns **no scraper stage and no source file of its own**: it
+  derives everything from text the proceedings module already stored and names the
+  representatives module already holds (EXT-2), the way Tárcák does (§6C/MIN-1). A
+  changed sitting re-derives only that sitting (SCR-2).
+- **INT-5 (MUST).** The relation is read as a **directed graph**: one arrow per
+  ordered pair, its thickness the number of interjections, narrowed by the reader to
+  the **top *N* people** most involved — ranked by interjections *made plus
+  received*, since the exchange is the subject and a member who is only ever shouted
+  at belongs in it as much as one who only ever shouts. The whole relation is
+  1 400 people and 21 000 pairs; only the top of it is a diagram at all, so *N* is a
+  control and not a constant.
+  - **Position carries the finding.** The layout is force-directed, so members who
+    shout at each other are pulled together and the picture separates into the
+    knots of people who actually argue — a member who heckles widely sitting apart
+    from one locked into a single duel. Faction stays a **colour**, deliberately
+    not a position, which is what lets the reader see whether the knots line up
+    with the benches or cut across them. (The first version placed members on a
+    ring sorted by faction; it was honest, but every distance on it was an artefact
+    of the sort, which is a lot of ink spent saying nothing.)
+  - The layout MUST nevertheless be **deterministic** — the same data always draws
+    the same picture — so that two cycle scopes can be compared, a figure can be
+    embedded (§4C) and a screenshot can be trusted. A force simulation is not
+    inherently deterministic, so the two things that make this one so are
+    load-bearing and MUST hold: the simulation seeds **its own** generator rather
+    than calling `Math.random`, and it starts from a fixed initial placement
+    derived from the node order the API sorts. It is then run to convergence
+    **once, synchronously**, and the result drawn — never animated.
+  - An arrow is drawn only where **both** ends survive the top-*N* cut, so every
+    arrow shown is whole; what the cut leaves out is stated rather than implied
+    (INT-8).
+  - The figure is **navigable**: zoom and pan (wheel, pinch, drag — and buttons,
+    since a gesture is not a control for a keyboard), and any member can be dragged
+    out of the tangle. On touch a one-finger drag MUST still scroll the page: a
+    figure in the middle of an article must not trap the reader.
+  - **Names are placed, not merely drawn.** A label is a wide box on one side of a
+    small dot, so spacing the dots enough to space the names would blow the layout
+    apart and shrink the type to nothing. The names are laid out after the
+    simulation — most-involved first, each taking the first free slot among the two
+    sides and a few line offsets — and a name that finds no free slot is **left
+    off** rather than printed over another. The omission is temporary: zooming in
+    shrinks the labels relative to the layout, slots open, and the missing names
+    appear.
+  - A name is drawn at a **constant size on screen**, not a constant size in the
+    layout, because legibility is a fact about the reader's screen and not about
+    the data. (Shrinking the coordinate system to compensate on a phone does
+    nothing at all: it shrinks the fit scale by exactly the same factor.) Where a
+    narrow screen then leaves no room for "Surname Given", the chart falls back to
+    the **surname alone** — Hungarian writes it first — with the full name kept in
+    the tooltip and the accessible name. The *layout itself* is identical on every
+    screen; only the framing and the labels adapt, so the picture a phone shows is
+    the picture a desktop shows.
+- **INT-6.** A **self-attributed** interjection (the transcript occasionally credits
+  an aside to the member already holding the floor) and one whose interrupted speech
+  has no identified speaker are **stored and not counted**: a self-loop on this graph
+  says nothing, and neither is a relation between two people. Together they are 85
+  rows corpus-wide.
+- **INT-7 (MUST).** **A count is never a dead end.** Clicking an arrow lists the
+  interjections behind it — the words, the sitting day, the agenda item they
+  interrupted, and a link straight to the moment in the video (VIE-5/TEL-4). Clicking
+  a person lists every interjection they were part of, in either direction, which is
+  exactly what the graph highlights for them and what the number beside their name
+  counts.
+- **INT-8 (MUST).** The page states **what it is drawn from and what it leaves out**
+  (TRUST-1): how many interjections the extraction found in scope, how many were
+  attributable to one member, how many were shouted over a chairing speech, how many
+  people the relation has in total, and what share of it the drawn top *N* holds. A
+  network diagram is unusually good at implying that it is everything.
+- **INT-9.** The page belongs to the **Elemzések** section (§4E): it is a calculation
+  over the record, not a browse list. Like every page there it goes on belonging to
+  its own module and disappears with it (ANA-1/EXT-6). It is *not* cycle-scoped by
+  nature — the relation is meaningful over any span, and pooling several cycles
+  simply says which antagonisms outlast a term.
+
+> **✅ realized.** `app/interjections.py` is the pure extractor + resolver (no DB, no
+> network); `loader.rebuild_interjections` writes the one `interjection` table, and
+> `migrate_interjections.py` derives it in place on an existing DB. Over cycles
+> 34–43 the pass finds **99 054** attributed, quoted interjections in ~2 minutes and
+> resolves **97 659 (98.6%)** to a single member; **29 430** of them were shouted
+> over a chairing speech and **68 628** are left to draw, between **1 415** people
+> over **21 080** ordered pairs. The exclusion is not a formality: of the 10 170
+> interjections stored against Latorcai János in cycle 41, **10 168** landed in a
+> speech where he was chairing and **2** in a speech of his own. What stays
+> unattributed is almost entirely the honest residue — the two sitting *Tóth
+> István*s of cycle 37, the two *Dr. Varga László*s of cycle 39, and the
+> transcript's own typos (*Novád Előd*, *Arató Gerely*).
+>
+> The API is `/api/v1/interjections/graph` (grouped per request — 99 000 rows group
+> in a few milliseconds, so the module carries **no aggregate table** to fall out of
+> step with the transcript) and `/api/v1/interjections/list`. The figure is
+> `InterjectionGraph.vue`: a force layout (`d3-force`) rendered as plain Vue-drawn
+> SVG, pannable and zoomable with `d3-zoom`, each directed pair its own quadratic
+> curve bowed consistently to the left of its own direction of travel (which is what
+> separates A→B from B→A) and tipped with an arrowhead at the member being
+> interrupted. Three d3 modules are pulled in — `d3-force`, `d3-zoom`,
+> `d3-selection`, ~24 KB gzipped with the component — and they ride in a lazy chunk
+> this page and the embed share, the way Leaflet does for the two maps; the entry
+> bundle grew by 0.3 KB. INT-5's determinism was **verified, not assumed**: two
+> independent headless renders of the same URL produce byte-identical screenshots.
+> Density is answered by drawing a busier graph fainter (the rest-opacity falls with
+> √links), so an individual arrow stays visible — and clickable — at forty members
+> as well as twelve. The frame is sized to the settled layout rather than the layout
+> scaled into a fixed frame, which is what keeps a wide graph from being
+> letterboxed and a tall one from being cropped. The slider position and the
+> opened arrow both live in the URL (`?top=`, `?from=`+`?to=`, `?who=`), so a claim
+> about two members is citable and `back` walks the arrows a reader opened; all three
+> are absent at their defaults, keeping the canonical address parameter-free (§SEO-2).
+> The chart is embeddable as `interjection-graph` (§4C).
+>
+> Two things this cost elsewhere, both additive: `_delete_session` clears the
+> sitting's interjections before its sentences (guarded on the table existing, so a
+> DB predating the module still loads), and `/api/v1/interjections/list` gained a
+> `person` filter so a clicked node's list matches what the clicked node highlights.
+
+---
+
 ## 7. Extensibility — Module Architecture
 
 The site must accommodate new data domains (next likely: **Bills/irományok**,
@@ -2667,6 +2848,17 @@ rework of existing features.
 > pages are mounted in the Representatives section's tab bar while remaining a
 > separately switchable module, which is the first time the two have come apart:
 > a section's tab bar is a navigation choice, not a module boundary.
+>
+> The **Interjections module (§6E)** is the fourth, and the closest thing yet to a
+> module that is *only* a reading of what was already stored: like Tárcák it has no
+> scraper stage and no source file, and like Települések it derives its one table
+> from the transcript text and the shared `person` register at load time (EXT-2).
+> Its whole footprint outside itself is two additive lines — a delete in
+> `_delete_session` so a reloaded sitting drops its own rows first (guarded on the
+> table existing, so a DB predating the module still loads), and its entry in the
+> Elemzések registry. Notably it also declined a derived aggregate table: 99 000 rows
+> group per request in a few milliseconds, and the table it did not build is a table
+> that cannot fall out of step with the transcript it summarises.
 >
 > The **Elemzések section (§4E)** carries that same observation to its conclusion
 > from the other side: three pages that were sub-tabs of Votes, Bills and

@@ -47,6 +47,7 @@ export default {
     analyses: 'Elemzések',
     analysesIndex: 'Áttekintés',
     cohesion: 'Frakcióelemzés',
+    interjections: 'Közbeszólások',
     // Települések (§6D): a térkép és — a fül alatti oldalként — a saját körzetre
     // vonatkozó mutatók (TEL-9).
     settlements: 'Települések',
@@ -843,6 +844,32 @@ export default {
       nofaction: 'Független / egyéb',
     },
   },
+  // Közbeszólások (§6E) — ki szól közbe kinek a felszólalása alatt.
+  interjections: {
+    title: 'Közbeszólások',
+    subtitle: 'Ki kiabál be kinek a felszólalása alatt? A jegyzőkönyvbe szó szerint bekerült közbeszólások irányított hálózata: a nyíl a bekiabálótól a félbeszakított képviselő felé mutat, vastagsága a közbeszólások száma.',
+    count: '{n} közbeszólás {people} képviselő között',
+    listCount: '{n} közbeszólás',
+    noResults: 'Ebben a ciklusban nincs adat a közbeszólásokról.',
+    chartCaption: 'Ki szól közbe kinek a felszólalása alatt: a nyíl a közbeszólótól a félbeszakított képviselő felé mutat.',
+    clickHint: 'Kattints egy nyílra a mögötte lévő közbeszólások szövegéért, vagy egy képviselőre az összes közbeszólásáért.',
+    topLabel: 'Top {n} képviselő',
+    shownShare: 'Az ábrán a legtöbbet közbeszóló és legtöbbször félbeszakított {n} képviselő látszik: az összes közbeszólás {share}%-a.',
+    unattributed: 'További {n} közbeszólás nevét a jegyzőkönyv úgy írja, hogy nem lehetett egyetlen képviselőhöz kötni – ezek nem szerepelnek az ábrán.',
+    bothWays: '— minden közbeszólása, oda-vissza',
+    during: 'közbeszólás közben félbeszakítva:',
+    watch: 'Megnézem',
+    zoomIn: 'Nagyítás',
+    zoomOut: 'Kicsinyítés',
+    resetView: 'Nézet visszaállítása',
+    made: 'Közbeszólások száma',
+    received: 'Kapott közbeszólások',
+    dragHint: 'Az ábra nagyítható és mozgatható; egy képviselő ki is húzható a kuszaságból.',
+    close: 'Bezárás',
+    methodology: 'A gyorsírói jegyzőkönyv a hangosabb bekiabálásokat zárójelben, szó szerint, a félbeszakított felszólalás szövegébe írja: „(Balla György: Úgy van!)”. A Parlamonitor ezeket emeli ki, és köti össze a két képviselőt: a közbeszólót a zárójelben megnevezett név alapján, a másik oldalon pedig azt, akié a felszólalás. A név csak akkor számít, ha egyetlen képviselőre illik – ha a Házban egyszerre több azonos nevű képviselő ült (például két Tóth István), a közbeszólás megnevezetlen marad, nem tippelünk. Ugyanezt a szabályt használja a jegyzőkönyv-olvasó is, amikor a szövegben a közbeszóló nevét a profiljára linkeli, így az ábra és a jegyzőkönyv ugyanazt mondja.',
+    methodologyExclusions: 'Nem számítjuk bele az ülésvezetői felszólalások alatt elhangzott közbeszólásokat: egy szavazási blokk a jegyzőkönyvben egyetlen, órákig tartó levezető elnöki felszólalás, így egy egész délután bekiabálásai oda esnének, és az alelnökök lennének a Ház messze legtöbbet félbeszakított tagjai (ugyanaz a szabály, ami minden más képviselői statisztikából is kihagyja az ülésvezetést). Nem számítjuk azokat sem, amelyeknél a jegyzőkönyv csak az eseményt rögzíti, a szavakat nem („Gulyás Gergely közbeszól.”), és azokat sem, ahol a szavak megvannak, de a bekiabáló nem („Közbeszólások a Fidesz padsoraiból: Nem!”).',
+    coverage: 'A kiválasztott ciklusban {extracted} szó szerinti közbeszólás került elő, ebből {attributed} volt egyértelmű névhez köthető; {procedural} ülésvezetői felszólalás alatt hangzott el.',
+  },
   // Elemzések (§4E) — a szekció nyitóoldala. A kártyák szövege itt van, a
   // sorrendjük és az, hogy melyik modulhoz tartoznak, a
   // modules/analyses/registry.js-ben.
@@ -865,6 +892,13 @@ export default {
         title: 'Kérdések és interpellációk',
         desc: 'Ki kérdez és ki válaszol: a kérdések útja a kérdező frakciójától '
           + 'a válaszadó tárcáig.',
+      },
+      interjections: {
+        source: 'Felszólalások alapján',
+        title: 'Közbeszólások',
+        desc: 'Ki kiabál be kinek a felszólalása alatt — a jegyzőkönyvbe szó '
+          + 'szerint bekerült közbeszólások irányított hálózata, a bekiabálások '
+          + 'szövegével együtt.',
       },
       settlements: {
         source: 'Felszólalások alapján',

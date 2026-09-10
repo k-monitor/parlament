@@ -25,7 +25,7 @@ export default {
   // `representatives` is the merged Felszólalók page: representatives, nationality
   // advocates and the other speakers in one list, picked apart by category chips
   // (REP-1). `advocates` / `speakers` name two of those chips.
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', analyses: 'Analyses', analysesIndex: 'Overview', cohesion: 'Faction analysis', settlements: 'Settlements', settlementReps: 'Own constituency', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', analyses: 'Analyses', analysesIndex: 'Overview', cohesion: 'Faction analysis', interjections: 'Interjections', settlements: 'Settlements', settlementReps: 'Own constituency', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -725,6 +725,32 @@ export default {
       nofaction: 'Independent / other',
     },
   },
+  // Interjections (§6E) — who shouts over whose speech.
+  interjections: {
+    title: 'Interjections',
+    subtitle: 'Who shouts over whose speech? The heckling the shorthand writers recorded verbatim, drawn as a directed network: each arrow runs from the member who shouted to the one being interrupted, and its thickness is how many times.',
+    count: '{n} interjections between {people} members',
+    listCount: '{n} interjections',
+    noResults: 'No interjections on record for this term.',
+    chartCaption: 'Who interjects over whose speech: each arrow runs from the heckler to the member holding the floor.',
+    clickHint: 'Click an arrow to read the interjections behind it, or a member to see everything they shouted.',
+    topLabel: 'Top {n} members',
+    shownShare: 'The chart shows the {n} members most involved in this cross-talk: {share}% of all interjections.',
+    unattributed: 'A further {n} are written in a way that could not be pinned to a single member, and are left off the chart.',
+    bothWays: '— everything they shouted, and everything shouted at them',
+    close: 'Close',
+    during: 'interrupted:',
+    watch: 'Watch',
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
+    resetView: 'Reset the view',
+    made: 'Interjections made',
+    received: 'Interjections received',
+    dragHint: 'The chart can be zoomed and panned, and any member dragged out of the tangle.',
+    methodology: 'The shorthand record puts the louder heckling in parentheses, verbatim, inside the speech it interrupted: "(Balla György: Úgy van!)". Parlamonitor lifts those out and joins the two members: the heckler by the name in the parenthesis, the other end by whoever held the floor. A name counts only when it fits exactly one member — where two members of the same House shared a name (two Tóth Istváns, say), the interjection is left unattributed rather than guessed at. The transcript reader applies the same rule when it links a heckler\'s name to their profile, so the chart and the transcript agree.',
+    methodologyExclusions: 'Interjections shouted over a chairing speech are not counted: a voting block is one hours-long speech by the presiding officer in the record, so a whole afternoon of heckling would land inside it and the deputy speakers would be the most-interrupted members of the House by a wide margin — the same rule that keeps chairing out of every other representative statistic. Nor are the ones where the record notes the event but not the words ("Gulyás Gergely közbeszól."), or the words but not the heckler ("Közbeszólások a Fidesz padsoraiból: Nem!").',
+    coverage: 'In the selected term {extracted} verbatim interjections were found, {attributed} of them attributable to a single member; {procedural} were shouted over a chairing speech.',
+  },
   analyses: {
     lead: 'Computed views of the House at work: not a single speech or vote, but '
       + 'what thousands of them add up to.',
@@ -745,6 +771,13 @@ export default {
         title: 'Questions and interpellations',
         desc: 'Who asks and who answers: the path of a question from the asker\'s '
           + 'faction to the ministry that replies.',
+      },
+      interjections: {
+        source: 'From the proceedings',
+        title: 'Interjections',
+        desc: 'Who shouts over whose speech — the heckling the record kept '
+          + 'verbatim, drawn as a directed network, with the words behind '
+          + 'every arrow.',
       },
       settlements: {
         source: 'From the proceedings',

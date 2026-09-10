@@ -201,6 +201,12 @@ const routes = [
     component: () => import('./modules/bills/QuestionsView.vue'),
   },
   {
+    // Közbeszólások (§6E) — the directed graph of who heckles whom.
+    path: '/analyses/interjections', name: 'interjections',
+    meta: { module: 'interjections' },
+    component: () => import('./modules/interjections/InterjectionsView.vue'),
+  },
+  {
     // Települések (§6D) — the settlement-mention map and list.
     path: '/analyses/settlements', name: 'settlements', meta: { module: 'settlements' },
     component: () => import('./modules/settlements/SettlementsView.vue'),

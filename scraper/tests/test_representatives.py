@@ -3,7 +3,7 @@
 Focused on what this stage *assembles* rather than passes through:
 
 * REP-13 — the asset declarations (*vagyonnyilatkozatok*), merged into one series
-  from three separate upstream queries, and the CV, a static PDF whose URL we may
+  from one upstream query per disclosure regime, and the CV, a static PDF we may
   only publish once it is known to resolve; and
 * REP-14 — the **terminated mandates**: the roster is point-in-time, so the MPs who
   left mid-cycle are pulled from the composition-changes registry and each record's
@@ -85,10 +85,15 @@ class FakeFelicitas:
                 if person_id in self.cvs else None)
 
 
-def test_declarations_merge_the_three_queries_newest_first():
-    """Upstream splits the declarations across three queries by disclosure regime;
-    the profile wants one series, newest first by the date the declared assets were
-    held (REP-13) — not by when the filing happened to be recorded."""
+def test_declarations_merge_every_regimes_query_newest_first():
+    """Upstream splits the declarations across one query per disclosure regime; the
+    profile wants one series, newest first by the date the declared assets were held
+    (REP-13) — not by when the filing happened to be recorded.
+
+    The 2026 regime (in force from 2026-08-26) has filed nothing yet upstream, so
+    its row here is synthetic — it carries the same ten fields as the 2023 one, the
+    point being that a regime added to ASSET_DECLARATION_QUERIES needs no mapping
+    of its own to land in the series."""
     rec = {}
     reps.apply_details(rec, {
         "kepviselo-vagyon-nyilatkozata-query": [
@@ -99,13 +104,15 @@ def test_declarations_merge_the_three_queries_newest_first():
                   "Eredeti vagyonnyilatkozat - 2022. augusztus 05.", "2022-08-05")],
         "kepviselo-vagyon-nyilatkozata2023query": [
             _decl("/2024/0748k001_j0241231k.pdf", "Vagyonnyilatkozat 2024", "2024-12-31")],
+        "kepviselo-vagyon-nyilatkozata2026query": [
+            _decl("/2026/0837k001_j0261231k.pdf", "Vagyonnyilatkozat 2026", "2026-12-31")],
     })
     assert [d["assetDate"] for d in rec["assetDeclarations"]] == [
-        "2024-12-31", "2022-08-05", "2022-05-02", "2011-12-31"]
+        "2026-12-31", "2024-12-31", "2022-08-05", "2022-05-02", "2011-12-31"]
     # The URL is the adatlap's own recipe (server + /vagynyil + path), served over
     # https even though upstream still names the server over plain http.
     assert rec["assetDeclarations"][0]["url"] == (
-        "https://www.parlament.hu/vagynyil/2024/0748k001_j0241231k.pdf")
+        "https://www.parlament.hu/vagynyil/2026/0837k001_j0261231k.pdf")
 
 
 def test_declaration_reported_by_two_queries_is_kept_once():

@@ -57,7 +57,7 @@ ROBOTS_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400"
 # The modules the Elemzések section (§4E) gathers its pages from — the backend's
 # half of `frontend/src/modules/analyses/registry.js`. The section's landing page
 # is there as long as any one of them is mounted.
-ANALYSIS_MODULES = ("votes", "bills", "settlements")
+ANALYSIS_MODULES = ("votes", "bills", "settlements", "interjections")
 
 # Static routes, with the module each belongs to (None = always present; a tuple
 # = present while any one of them is). These are the entry points a crawler can
@@ -81,13 +81,14 @@ STATIC_PATHS: tuple[tuple[str, str | tuple[str, ...] | None], ...] = (
     ("/bills", "bills"),
     ("/documents", "bills"),
     ("/votes", "votes"),
-    # Elemzések (§4E). The section index, and the two analyses that stand as
-    # entry points of their own. Települések is deliberately absent, exactly as
-    # it was under its old address: its pages carry no card and stay off the
-    # index (see `_ROUTE_CARDS` in og.py).
+    # Elemzések (§4E). The section index, and the analyses that stand as entry
+    # points of their own. Települések is deliberately absent, exactly as it was
+    # under its old address: its pages carry no card and stay off the index (see
+    # `_ROUTE_CARDS` in og.py).
     ("/analyses", ANALYSIS_MODULES),
     ("/analyses/faction-cohesion", "votes"),
     ("/analyses/questions", "bills"),
+    ("/analyses/interjections", "interjections"),
 )
 
 

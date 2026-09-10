@@ -23,6 +23,7 @@ class ModuleSpec:
 def load_modules() -> list[ModuleSpec]:
     # Imported lazily so a syntax error in one module can't break import order.
     from .bills.router import router as bills_router
+    from .interjections.router import router as interjections_router
     from .portfolios.router import router as portfolios_router
     from .proceedings.router import router as proceedings_router
     from .representatives.router import router as representatives_router
@@ -41,4 +42,9 @@ def load_modules() -> list[ModuleSpec]:
         # is its own slice: it reads the bills module's tables and owns none of
         # them, so it switches off independently of both (EXT-1/EXT-6).
         ModuleSpec("portfolios", "Tárcák", portfolios_router),
+        # Közbeszólások (§6E): who shouts over whose speech. Like Települések it
+        # derives everything from the shared speech/sentence/person rows (EXT-2)
+        # and owns no scraping; its one page lives in the Elemzések section's tab
+        # bar (§4E/ANA-1) while remaining a separately switchable slice.
+        ModuleSpec("interjections", "Közbeszólások", interjections_router),
     ]

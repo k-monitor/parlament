@@ -103,8 +103,8 @@ def _declaration_url(row: dict) -> str | None:
 
 
 def _asset_declarations(details: dict[str, list[dict]]) -> list[dict]:
-    """The person's asset declarations (REP-13), merged from the three upstream
-    queries into one list, newest first.
+    """The person's asset declarations (REP-13), merged from the one-query-per-
+    disclosure-regime upstream listings into one list, newest first.
 
     Keyed on the declaration's own PDF path so a row reported by two of the
     queries is kept once; a row with no file (nothing published) can't be keyed

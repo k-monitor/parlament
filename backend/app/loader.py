@@ -24,6 +24,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import bisect
 import contextlib
 import glob
 import gzip
@@ -42,8 +43,8 @@ try:                                    # POSIX only; the writer lock degrades t
 except ImportError:                     # pragma: no cover - non-POSIX
     fcntl = None
 
-from . import (kmonitor, lemma_cache, nlp, nlp_modal, parlacap, portfolios,
-               readability, settlements, valasztas, wikidata)
+from . import (interjections, kmonitor, lemma_cache, nlp, nlp_modal, parlacap,
+               portfolios, readability, settlements, valasztas, wikidata)
 from .config import settings
 from .parlament_links import bill_page_url
 from .wordfreq import STOPWORDS, count_words
@@ -1076,6 +1077,11 @@ def _delete_session(conn: sqlite3.Connection, sid: str) -> None:
     conn.execute(
         "DELETE FROM entity WHERE sentence_id IN (SELECT se.id FROM sentence se "
         "JOIN speech sp ON sp.uid = se.speech_id WHERE sp.session_id = ?)", (sid,))
+    # §6E rows point at this sitting's speeches and sentences; they are re-derived
+    # from the reloaded text by rebuild_interjections. Guarded because a DB built
+    # before the module existed has no such table (EXT-6).
+    if _table_exists(conn, "interjection"):
+        conn.execute("DELETE FROM interjection WHERE session_id = ?", (sid,))
     conn.execute(
         "DELETE FROM sentence WHERE speech_id IN "
         "(SELECT uid FROM speech WHERE session_id = ?)", (sid,))
@@ -2892,6 +2898,182 @@ def _rebuild_person_settlement_stats(conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Interjections — Közbeszólások (§6E, INT-1..4)
+#
+# One pass, no cache and no model: `app.interjections` scans a speech's own text
+# for the parentheses the shorthand writers put heckles in, and the register turns
+# the names inside them into people. It is deterministic and takes ~3 minutes over
+# the whole corpus, so there is nothing to memoize that the DB does not hold — the
+# same reasoning as `rebuild_settlement_mentions`.
+# ---------------------------------------------------------------------------
+
+def _ensure_interjection_tables(conn: sqlite3.Connection) -> None:
+    """Create the §6E table in place if missing, so an existing DB gains the
+    module on the next load rather than needing a full rebuild (mirrors the other
+    late-added modules)."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS interjection (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            speech_uid     TEXT NOT NULL REFERENCES speech(uid),
+            session_id     TEXT NOT NULL REFERENCES session(id),
+            period_number  INTEGER,
+            sentence_id    INTEGER REFERENCES sentence(id),
+            ord            INTEGER NOT NULL,
+            speaker_name   TEXT NOT NULL,
+            speaker_id     TEXT REFERENCES person(person_id),
+            target_id      TEXT REFERENCES person(person_id),
+            text           TEXT NOT NULL,
+            procedural     INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_interjection_graph
+            ON interjection(period_number, procedural, speaker_id, target_id);
+        CREATE INDEX IF NOT EXISTS idx_interjection_pair
+            ON interjection(speaker_id, target_id, period_number);
+        CREATE INDEX IF NOT EXISTS idx_interjection_target
+            ON interjection(target_id, period_number);
+        CREATE INDEX IF NOT EXISTS idx_interjection_session
+            ON interjection(session_id);
+        CREATE INDEX IF NOT EXISTS idx_interjection_speech
+            ON interjection(speech_uid);
+    """)
+    conn.commit()
+
+
+def _seated_by_period(conn: sqlite3.Connection) -> dict[int, frozenset[str]]:
+    """Who was in the House in each electoral cycle — the evidence that breaks a
+    colliding heckler name (§6E/INT-3).
+
+    Three sources, unioned, because none alone covers everyone who can shout from
+    the benches: the mandate register (an MP who never spoke), the faction
+    memberships, and having spoken here at all (a minister who holds no mandate).
+    """
+    seated: dict[int, set[str]] = {}
+    for sql in (
+            "SELECT DISTINCT period_number, person_id FROM person_mandate "
+            "WHERE period_number IS NOT NULL",
+            "SELECT DISTINCT period_number, person_id FROM membership "
+            "WHERE period_number IS NOT NULL AND person_id IS NOT NULL",
+            "SELECT DISTINCT period_number, person_id FROM speech "
+            "WHERE period_number IS NOT NULL AND person_id IS NOT NULL"):
+        for period, person_id in conn.execute(sql):
+            seated.setdefault(period, set()).add(person_id)
+    return {p: frozenset(ids) for p, ids in seated.items()}
+
+
+def _speech_text(rows) -> tuple[str, list[tuple[int, int]]]:
+    """Rejoin one speech's sentences into the text the reader sees, with a map
+    from character offset back to sentence id.
+
+    Sentences are joined with a space inside a paragraph and a blank line between
+    paragraphs — the same reconstruction the export scripts use — because a
+    parenthetical routinely straddles the segmentation ("(A képviselő feláll." +
+    "Taps.)") and only the joined text has it whole. Map entries are
+    ``(end_offset, sentence_id)`` in order, so a bisect over them answers "which
+    sentence does this offset fall in".
+    """
+    chunks: list[str] = []
+    offsets: list[tuple[int, int]] = []
+    pos = 0
+    last_para = None
+    for i, (sentence_id, paragraph, text) in enumerate(rows):
+        para = 0 if paragraph is None else paragraph
+        if i:
+            sep = "\n\n" if para != last_para else " "
+            chunks.append(sep)
+            pos += len(sep)
+        chunks.append(text)
+        pos += len(text)
+        offsets.append((pos, sentence_id))
+        last_para = para
+    return "".join(chunks), offsets
+
+
+def rebuild_interjections(conn: sqlite3.Connection, *,
+                          only_sessions: set[str] | None = None) -> int:
+    """Extract attributed interjections from the transcripts into ``interjection``
+    (INT-2/INT-3).
+
+    Chairing speeches are scanned like any other — an interruption of the chair is
+    still a fact of the record — but marked ``procedural`` so every count can drop
+    them, as STAT-1 requires. It matters more here than anywhere: a voting block's
+    media segment is one hours-long "speech" by the presiding officer, and the
+    heckling of a whole afternoon lands inside it. Left in, the deputy speakers
+    would be the most-interrupted members of every House by a wide margin: of the
+    10 170 interjections stored against Latorcai János in cycle 41, **10 168** were
+    shouted while he was chairing and 2 during a speech of his own.
+
+    ``only_sessions`` scopes the pass to those sittings (the ``--update`` path);
+    every other sitting keeps its rows.
+    """
+    _ensure_interjection_tables(conn)
+
+    index = interjections.build_name_index(
+        (r["person_id"], (r["label"], r["label_full"]))
+        for r in conn.execute(
+            "SELECT person_id, label, label_full FROM person").fetchall())
+    if not index:
+        logger.info("No people loaded; skipping the interjection pass")
+        return 0
+    seated = _seated_by_period(conn)
+
+    if only_sessions:
+        sids = sorted(only_sessions)
+        conn.executemany("DELETE FROM interjection WHERE session_id = ?",
+                         [(s,) for s in sids])
+    else:
+        sids = [r[0] for r in conn.execute("SELECT id FROM session ORDER BY id")]
+        conn.execute("DELETE FROM interjection")
+
+    total = attributed = 0
+    for sid in sids:
+        speeches: dict[str, tuple[str | None, int | None, int]] = {}
+        for uid, person_id, period, procedural in conn.execute(
+                "SELECT uid, person_id, period_number, procedural FROM speech "
+                "WHERE session_id = ?", (sid,)):
+            speeches[uid] = (person_id, period, procedural)
+        if not speeches:
+            continue
+
+        by_speech: dict[str, list[tuple[int, int | None, str]]] = {}
+        for sentence_id, speech_uid, paragraph, text in conn.execute(
+                """SELECT se.id, se.speech_id, se.paragraph, se.text
+                   FROM sentence se JOIN speech sp ON sp.uid = se.speech_id
+                   WHERE sp.session_id = ? AND se.text IS NOT NULL AND se.text <> ''
+                   ORDER BY se.speech_id, se.ord, se.id""", (sid,)):
+            by_speech.setdefault(speech_uid, []).append(
+                (sentence_id, paragraph, text))
+
+        batch = []
+        for uid, rows in by_speech.items():
+            target_id, period, procedural = speeches.get(uid, (None, None, 0))
+            text, offsets = _speech_text(rows)
+            if "(" not in text:
+                continue
+            for ordinal, found in enumerate(interjections.extract(text)):
+                total += 1
+                speaker_id = interjections.resolve_name(
+                    found.speaker, index, seated.get(period))
+                if speaker_id:
+                    attributed += 1
+                position = bisect.bisect_left(offsets, (found.start + 1,))
+                sentence_id = offsets[min(position, len(offsets) - 1)][1]
+                batch.append((uid, sid, period, sentence_id, ordinal,
+                              found.speaker, speaker_id, target_id, found.text,
+                              1 if procedural else 0))
+        if batch:
+            conn.executemany(
+                """INSERT INTO interjection(speech_uid, session_id, period_number,
+                       sentence_id, ord, speaker_name, speaker_id, target_id,
+                       text, procedural)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""", batch)
+    conn.commit()
+    logger.info("Interjections: %d in %d sitting%s (%d attributed to a person, "
+                "%.1f%%)", total, len(sids), "" if len(sids) == 1 else "s",
+                attributed, 100.0 * attributed / total if total else 0.0)
+    return total
+
+
+# ---------------------------------------------------------------------------
 # Per-speech readability + lexical diversity (READ-1..7)
 # ---------------------------------------------------------------------------
 
@@ -4039,6 +4221,10 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         rebuild_settlements(conn)
         rebuild_settlement_mentions(conn)
         rebuild_settlement_stats(conn)
+        # Interjections (§6E). Needs no model and no other pass's output either —
+        # only the transcript and the register, whose person rows are all loaded by
+        # now (the office-holder file above seats the non-MP ministers).
+        rebuild_interjections(conn)
         wire_nonmp_photos(conn, Path(data_dir) / "media" / "photos")
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("sessions_loaded", str(loaded)))
@@ -4333,6 +4519,12 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
                 rebuild_settlement_mentions(conn,
                                             only_sessions=set(loaded_sessions))
             rebuild_settlement_stats(conn)
+            # §6E. Scoped to the sittings that changed, like the mention pass; a
+            # removal needs nothing beyond `_delete_session`, which took the
+            # sitting's interjections with it. There are no aggregate tables to
+            # keep in step — the graph is grouped at request time (INT-5).
+            if loaded_sessions:
+                rebuild_interjections(conn, only_sessions=set(loaded_sessions))
         # Wire any non-MP speaker portraits the scraper has downloaded since the
         # last load (global, cheap — see wire_nonmp_photos). Also runs for an
         # advocates-only update: advocates are non-MP rows, so this is what gives

@@ -45,6 +45,7 @@ router = APIRouter(prefix="/interjections", tags=["interjections"])
 MIN_TOP = 2
 MAX_TOP = 40
 DEFAULT_TOP = 12
+DEFAULT_RANK = "total"
 
 # What a pair must be for the graph to draw an arrow between them: both ends known,
 # not the same person (the transcript occasionally attributes an aside to the member
@@ -104,21 +105,33 @@ def _people(db: sqlite3.Connection, ids: List[str],
 def interjection_graph(
     period: Optional[List[int]] = Query(None),
     top: int = Query(DEFAULT_TOP, ge=MIN_TOP, le=MAX_TOP),
+    rank: str = Query(DEFAULT_RANK, pattern="^(total|made|received)$"),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    """Who interjects over whose speeches, as a directed graph (INT-5).
+    """Who interjects over whose speeches, as a directed graph (INT-5, INT-11).
 
-    ``top`` keeps the ``top`` people most involved in this cross-talk — ranked by
-    interjections **made plus received**, the two together because the graph is about
-    the exchange and a member who only ever gets shouted at belongs in it as much as
-    one who only ever shouts. Arrows are kept only where *both* ends survive that
-    cut, so every arrow drawn is complete: a node's `out`/`in` are its totals in
-    scope, and `shown_out`/`shown_in` what the drawn arrows account for, so the page
-    can say how much of a person's cross-talk is on screen rather than implying the
-    picture is all of it.
+    The cut is always the same shape — the ``top`` highest-ranked people, and the
+    arrows *between them* — so the figure holds exactly ``top`` members whatever
+    is asked for. Only the ranking changes, and ``rank`` picks it:
+
+    - ``total`` (the default) — interjections **made plus received**, because the
+      graph is by default about the exchange and a member who only ever gets
+      shouted at belongs in it as much as one who only ever shouts.
+    - ``made`` — who interjects the *most*, i.e. "közbeszólt".
+    - ``received`` — who is interjected at the most, i.e. "közbeszóltak neki".
+
+    The three pick genuinely different people: the House's loudest hecklers are
+    not its most-interrupted members, and `total` hides both behind their sum.
+
+    Arrows are kept only where *both* ends survive the cut, so every arrow drawn
+    is complete. A node's `out`/`in` are always the person's true totals in
+    scope; `shown_out`/`shown_in` are what the drawn arrows account for, so the
+    page can say how much of a person's cross-talk is on screen rather than
+    implying the picture is all of it.
 
     The pair counts are grouped per request (no aggregate table, INT-5) and the
-    payload memoized per cycle scope + ``top`` like the other aggregates.
+    payload memoized per cycle scope + ``top`` + ``rank`` like the other
+    aggregates.
     """
     _require_tables(db)
 
@@ -136,10 +149,17 @@ def interjection_graph(
             in_total[target_id] = in_total.get(target_id, 0) + n
 
         everyone = set(out_total) | set(in_total)
-        involvement = {p: out_total.get(p, 0) + in_total.get(p, 0) for p in everyone}
-        # Ranked by involvement, then by name-independent id so a tie is stable
-        # across requests (a slider dragged back and forth must not reshuffle).
-        ranked = sorted(everyone, key=lambda p: (-involvement[p], p))[:top]
+
+        if rank == "total":
+            metric = {p: out_total.get(p, 0) + in_total.get(p, 0) for p in everyone}
+        elif rank == "made":
+            metric = out_total
+        else:
+            metric = in_total
+        # Ranked by the chosen metric, then by name-independent id so a tie is
+        # stable across requests (a slider dragged back and forth must not
+        # reshuffle).
+        ranked = sorted(everyone, key=lambda p: (-metric.get(p, 0), p))[:top]
         keep = set(ranked)
 
         links = [{"source": s, "target": t, "count": n}
@@ -164,7 +184,7 @@ def interjection_graph(
         nodes.sort(key=lambda n: (
             (n["faction"] or {}).get("label") is None,
             (n["faction"] or {}).get("label") or "",
-            -(n["out"] + n["in"]), n["person_id"]))
+            -metric.get(n["person_id"], 0), n["person_id"]))
 
         # Links reference node *indices*, as the other figures' payloads do.
         at = {n["person_id"]: i for i, n in enumerate(nodes)}
@@ -175,6 +195,7 @@ def interjection_graph(
         total = sum(n for _s, _t, n in pairs)
         return {
             "top": top,
+            "rank": rank,
             "nodes": nodes,
             "links": links,
             # What the drawn picture leaves out, said out loud (TRUST-1): how many
@@ -185,7 +206,8 @@ def interjection_graph(
             "coverage": _coverage(db, period),
         }
 
-    return cached_aggregate("interjection_graph", (period_key(period), top), compute)
+    return cached_aggregate(
+        "interjection_graph", (period_key(period), top, rank), compute)
 
 
 def _coverage(db: sqlite3.Connection, period: Optional[List[int]]) -> dict:

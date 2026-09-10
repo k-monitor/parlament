@@ -303,6 +303,43 @@ def test_the_top_n_cut_keeps_the_most_involved_and_only_whole_arrows(heckled_cli
     assert (kovacs["in"], kovacs["shown_in"]) == (3, 2)
 
 
+def test_rank_made_cuts_on_interjections_sent(heckled_client):
+    """`rank=made` ranks on interjections *sent* rather than on the whole
+    exchange, and holds to the same "exactly `top` people" cut."""
+    data = heckled_client.get("/api/v1/interjections/graph",
+                              params={"period": 43, "top": 2, "rank": "made"}).json()
+    assert data["rank"] == "made"
+    edges = {(data["nodes"][l["source"]]["person_id"],
+              data["nodes"][l["target"]]["person_id"]): l["count"]
+             for l in data["links"]}
+    # Kovács and Nagy made 2 each; Szabó made 1 and drops out, taking the arrow
+    # they were an end of with them.
+    assert [n["person_id"] for n in data["nodes"]] == ["k001", "n002"]
+    assert edges == {("n002", "k001"): 2, ("k001", "n002"): 2}
+    kovacs = next(n for n in data["nodes"] if n["person_id"] == "k001")
+    # A node's own totals are the person's real ones whatever the cut ranked by.
+    assert (kovacs["out"], kovacs["in"]) == (2, 3)
+
+
+def test_rank_received_cuts_on_interjections_received(heckled_client):
+    """`rank=received` is the symmetric cut, and picks a different pair: Szabó
+    made an interjection but never took one, so they are last here — where on
+    `made` they beat the member who took three."""
+    data = heckled_client.get("/api/v1/interjections/graph",
+                              params={"period": 43, "top": 2,
+                                      "rank": "received"}).json()
+    assert data["rank"] == "received"
+    # k001 (took 3) and n002 (took 2) are the top two; Szabó (took none) is out.
+    assert [n["person_id"] for n in data["nodes"]] == ["k001", "n002"]
+    assert len(data["nodes"]) == 2
+
+
+def test_a_rank_the_api_does_not_know_is_refused(heckled_client):
+    res = heckled_client.get("/api/v1/interjections/graph",
+                             params={"period": 43, "rank": "loudest"})
+    assert res.status_code == 422
+
+
 def test_clicking_an_arrow_lists_the_words_behind_it(heckled_client):
     res = heckled_client.get("/api/v1/interjections/list",
                              params={"period": 43, "speaker": "n002",

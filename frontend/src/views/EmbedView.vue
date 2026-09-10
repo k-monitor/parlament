@@ -82,7 +82,8 @@ function fetchForKind() {
     case 'faction-cohesion':
       return api.voteCohesion({ period: period.value })
     case 'interjection-graph':
-      return api.interjectionGraph(period.value, Number(route.query.top) || undefined)
+      return api.interjectionGraph(
+        period.value, Number(route.query.top) || undefined, route.query.rank || undefined)
     case 'vote-participation':
       return Promise.all([
         api.representative(q.id, period.value),
@@ -221,6 +222,7 @@ const siteHref = computed(() => {
     case 'interjection-graph':
       path = '/analyses/interjections'
       if (q.top) usp.set('top', q.top)
+      if (q.rank) usp.set('rank', q.rank)
       break
     case 'faction-cohesion':
       path = '/analyses/faction-cohesion'
@@ -275,7 +277,7 @@ const siteHref = computed(() => {
                go anywhere useful. -->
           <InterjectionGraph
             v-else-if="kind === 'interjection-graph'"
-            :nodes="data.nodes" :links="data.links"
+            :nodes="data.nodes" :links="data.links" :metric="data.rank"
             :caption="$t('interjections.chartCaption')" :show-caption="false"
             :labels="{ zoomIn: $t('interjections.zoomIn'),
                        zoomOut: $t('interjections.zoomOut'),

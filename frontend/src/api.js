@@ -141,7 +141,8 @@ export const api = {
   questionsList: (params) => get('/bills/questions/list', params),
   // Közbeszólások (§6E) — who interjects over whose speech. The graph is one
   // request per (cycle scope, top N); the list is what one clicked arrow holds.
-  interjectionGraph: (period, top) => get('/interjections/graph', { period, top }),
+  interjectionGraph: (period, top, rank) =>
+    get('/interjections/graph', { period, top, rank }),
   interjectionList: (params) => get('/interjections/list', params),
   // votes
   votes: (params) => get('/votes', params),

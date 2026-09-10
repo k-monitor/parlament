@@ -7,12 +7,18 @@
 // it is a diagram at all.
 //
 // Part of the Interjections module: it reads `/api/v1/interjections/*` and honours
-// the global cycle chooser (§4A). The slider position and the opened arrow both
-// live in the URL — `?top=`, `?from=`+`?to=` for an arrow, `?who=` for a person —
-// so a reader can send someone the
+// the global cycle chooser (§4A). The slider position, the ranking mode and the
+// opened arrow all live in the URL — `?top=`, `?rank=`, `?from=`+`?to=` for an
+// arrow, `?who=` for a person — so a reader can send someone the
 // exact thing they are looking at, back/forward walks the arrows they opened, and
-// a claim about two members is citable (§4D/TRUST-1). All three are absent at
+// a claim about two members is citable (§4D/TRUST-1). All of them are absent at
 // their defaults, keeping the page's canonical address parameter-free (§SEO-2).
+//
+// `rank` picks what the top-N cut is ranked (and, for `made`/`received`, also
+// filtered) by: `total` draws the mutual cross-talk among the most-involved
+// people; `made`/`received` draw who the biggest hecklers shout at, or who
+// shouts at the most-heckled people, whoever the other end turns out to be — see
+// the `/graph` endpoint's own docstring for why the two shapes differ.
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -39,6 +45,8 @@ const EMBED_HEIGHT = 730
 const MIN_TOP = 2
 const MAX_TOP = 40
 const DEFAULT_TOP = 12
+const RANKS = ['total', 'made', 'received']
+const DEFAULT_RANK = 'total'
 
 // How many people the graph draws. Read from the URL so the view is shareable and
 // survives a reload; the default stays *out* of the address bar, keeping the page's
@@ -48,7 +56,14 @@ function topFromRoute() {
   return Number.isFinite(n) ? Math.min(MAX_TOP, Math.max(MIN_TOP, Math.round(n))) : DEFAULT_TOP
 }
 
+// What the top-N cut is ranked by — same URL treatment as `top` (§SEO-2).
+function rankFromRoute() {
+  const r = route.query.rank
+  return RANKS.includes(r) ? r : DEFAULT_RANK
+}
+
 const top = ref(topFromRoute())
+const rank = ref(rankFromRoute())
 const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
@@ -76,17 +91,37 @@ function commitTop() {
   }
 }
 
+// Switching the ranking mode is a click, not a drag, so it commits straight away —
+// no debounce needed. A stale drill-down panel (an arrow or person from the mode
+// just left) is closed rather than reloaded under the new mode, since the pair it
+// named may no longer be an edge in the picture at all.
+function setRank(r) {
+  if (r === rank.value) return
+  keepScrollOnce(route.path)
+  router.replace({
+    query: { ...route.query, rank: r === DEFAULT_RANK ? undefined : r,
+              from: undefined, to: undefined, who: undefined },
+  })
+}
+
 const scopeLabel = computed(() => {
   const c = currentCycleLabel()
   return c ? t('cycle.scope', { cycle: c }) : t('cycle.scopeAll')
 })
 
 // What the drawn picture leaves out, in the page's own words (TRUST-1): the top N
-// hold this much of the cross-talk, and this many people have some of it.
+// hold this much of the cross-talk, and this many people have some of it. Worded
+// per ranking mode, since "the N most involved" is only what `total` draws —
+// `made`/`received` name a narrower group and pull in whoever they interject with.
 const shownShare = computed(() => {
   if (!data.value || !data.value.total) return 0
   return Math.round((100 * data.value.shown) / data.value.total)
 })
+const shownShareKey = computed(() => ({
+  total: 'interjections.shownShareTotal',
+  made: 'interjections.shownShareMade',
+  received: 'interjections.shownShareReceived',
+}[rank.value]))
 
 const unattributed = computed(() => {
   if (!data.value) return 0
@@ -102,7 +137,7 @@ async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
   try {
-    const res = await api.interjectionGraph(store.cycles, top.value)
+    const res = await api.interjectionGraph(store.cycles, top.value, rank.value)
     if (seq === loadSeq) data.value = res
   } catch {
     if (seq === loadSeq) error.value = true
@@ -250,6 +285,11 @@ watch(() => route.query.top, () => {
   if (wanted !== top.value) top.value = wanted
   load()
 })
+watch(() => route.query.rank, () => {
+  const wanted = rankFromRoute()
+  if (wanted !== rank.value) rank.value = wanted
+  load()
+})
 // The opened arrow: reload its words, and bring the panel into view — including
 // when the reader arrived by pasting a link, where the panel is below the fold.
 watch(() => [route.query.from, route.query.to, route.query.who].join('|'), () => {
@@ -277,6 +317,15 @@ watch(() => [route.query.from, route.query.to, route.query.who].join('|'), () =>
     @retry="load"
   >
     <div v-if="data && data.total">
+      <div class="rankgroup" role="group" :aria-label="$t('interjections.rankLabel')">
+        <button
+          v-for="r in RANKS" :key="r" type="button"
+          class="rankbtn" :class="{ active: rank === r }"
+          :aria-pressed="rank === r"
+          @click="setRank(r)"
+        >{{ $t('interjections.rank.' + r) }}</button>
+      </div>
+
       <div class="i-controls">
         <p class="muted small">
           {{ $t('interjections.count', { n: data.total, people: data.people_total }) }}
@@ -295,7 +344,7 @@ watch(() => [route.query.from, route.query.to, route.query.who].join('|'), () =>
 
       <div class="card pad">
         <InterjectionGraph
-          :nodes="data.nodes" :links="data.links"
+          :nodes="data.nodes" :links="data.links" :metric="rank"
           :selected="selectedLink" :selected-node="selectedNode"
           :caption="$t('interjections.chartCaption')" :show-caption="false"
           :labels="{ zoomIn: $t('interjections.zoomIn'),
@@ -311,14 +360,15 @@ watch(() => [route.query.from, route.query.to, route.query.who].join('|'), () =>
           </p>
           <EmbedButton
             kind="interjection-graph" :title="$t('interjections.title')"
-            :params="{ top: top === DEFAULT_TOP ? undefined : String(top) }"
+            :params="{ top: top === DEFAULT_TOP ? undefined : String(top),
+                       rank: rank === DEFAULT_RANK ? undefined : rank }"
             :height="EMBED_HEIGHT" :max-width="EMBED_WIDTH"
           />
         </div>
       </div>
 
       <p class="small soft share">
-        {{ $t('interjections.shownShare', { share: shownShare, n: top }) }}
+        {{ $t(shownShareKey, { share: shownShare, n: top }) }}
         <template v-if="unattributed">
           {{ $t('interjections.unattributed', { n: unattributed }) }}
         </template>
@@ -412,6 +462,23 @@ watch(() => [route.query.from, route.query.to, route.query.who].join('|'), () =>
 <style scoped>
 .sechead { display: flex; align-items: center; gap: .35rem; }
 .sechead h1 { margin: 0; }
+/* Same segmented-control language as the representatives search-mode switch
+   (SpeakerSearchModes.vue): a bordered track of filled/unfilled buttons, which
+   reads as "either/or" rather than as one more filter pill. */
+.rankgroup {
+  display: flex; flex-wrap: wrap; gap: .2rem; width: fit-content; max-width: 100%;
+  margin: 0 0 .6rem; padding: .2rem; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--bg);
+}
+.rankbtn {
+  padding: .38rem .9rem; border-radius: calc(var(--radius) - 3px);
+  font-size: .9rem; font-weight: 600; line-height: 1.4; color: var(--ink-soft);
+  background: transparent; border: none; cursor: pointer;
+}
+.rankbtn:hover { color: var(--accent); background: var(--accent-soft); }
+.rankbtn.active, .rankbtn.active:hover {
+  background: var(--accent); color: var(--accent-ink); box-shadow: var(--shadow);
+}
 /* Count on the left, the top-N slider on the right, above the chart. */
 .i-controls { display: flex; align-items: center; justify-content: space-between; gap: .8rem; flex-wrap: wrap; margin-bottom: .75rem; }
 .i-controls p { margin: 0; }

@@ -46,6 +46,12 @@ const props = defineProps({
   showCaption: { type: Boolean, default: true },
   selected: { type: Number, default: -1 },       // index of the selected link
   selectedNode: { type: Number, default: -1 },   // index of the selected node
+  // Which of a member's two numbers this figure is about: 'total' (made plus
+  // received), 'made' or 'received'. It is the one the caller ranked the drawn
+  // people by, so it has to be the one the marker sizes and the number beside
+  // the name state — a "who heckles most" figure whose dots are sized by the sum
+  // would show a member large for being shouted *at*.
+  metric: { type: String, default: 'total' },
   // Labels for the zoom controls, so the component needs no i18n of its own.
   labels: { type: Object, default: () => ({}) },
 })
@@ -92,6 +98,13 @@ function trunc(s, n = NAME_MAX) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s
 }
 
+// The number this figure is about, for one member.
+function nodeValue(n) {
+  if (props.metric === 'made') return n.out || 0
+  if (props.metric === 'received') return n.in || 0
+  return (n.out || 0) + (n.in || 0)
+}
+
 // How a member is named on the chart itself. Everything that measures a label —
 // the placement pass, the frame's margin — must ask this, not the raw label.
 function chartName(label) {
@@ -117,13 +130,12 @@ function computeLayout() {
   const nodes = props.nodes
   if (!nodes.length) { placed.value = []; return }
 
-  const maxTotal = Math.max(...nodes.map((n) => (n.out || 0) + (n.in || 0)), 1)
+  const maxTotal = Math.max(...nodes.map(nodeValue), 1)
   const sqrtScale = (v, max, lo, hi) =>
     lo + (hi - lo) * Math.sqrt(Math.max(v, 0) / max)
 
   const sim = nodes.map((n, i) => {
-    const total = (n.out || 0) + (n.in || 0)
-    const r = sqrtScale(total, maxTotal, NODE_MIN, NODE_MAX)
+    const r = sqrtScale(nodeValue(n), maxTotal, NODE_MIN, NODE_MAX)
     return {
       index: i,
       r,
@@ -233,7 +245,7 @@ const points = computed(() => {
       x: p.x,
       y: p.y,
       r: p.r,
-      total: (n.out || 0) + (n.in || 0),
+      value: nodeValue(n),
       color: n.faction?.color || NO_FACTION,
       // The name goes on the side away from the middle of the picture, which is
       // where the space is.
@@ -372,9 +384,9 @@ const labelBoxes = computed(() => {
   const chosen = new Map()
   // Most involved first: where two names cannot both fit, the bigger number is
   // the one the reader is more likely to be looking for.
-  const order = [...pts].sort((a, b) => b.total - a.total || a.i - b.i)
+  const order = [...pts].sort((a, b) => b.value - a.value || a.i - b.i)
   for (const p of order) {
-    const width = (chartName(p.label).length + String(p.total).length + 2) * CHAR_W * scale
+    const width = (chartName(p.label).length + String(p.value).length + 2) * CHAR_W * scale
     const height = LINE_H * scale
     const sides = p.flip ? [-1, 1] : [1, -1]
     let picked = null
@@ -506,7 +518,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('mouseup', onDragEnd)
 })
 
-watch(() => props.nodes, computeLayout)
+// The metric is laid out, not just printed — it sets the marker sizes the
+// collision force spaces the members by — so switching it re-runs the layout.
+watch(() => [props.nodes, props.metric], computeLayout)
 
 // Dragging a member pins them where they are dropped: the settled layout is a
 // good starting point, not an argument, and untangling one name by hand is the
@@ -659,7 +673,7 @@ function chosen(a) {
                               ? p.r + 6 : -p.r - 6)} ${p.y + (labelBoxes.get(p.i)?.dy || 0)})`
                 + ` scale(${labelScale})`"
               dominant-baseline="middle"
-            >{{ chartName(p.label) }} <tspan class="nval">{{ p.total }}</tspan></text>
+            >{{ chartName(p.label) }} <tspan class="nval">{{ p.value }}</tspan></text>
           </g>
         </g>
       </svg>

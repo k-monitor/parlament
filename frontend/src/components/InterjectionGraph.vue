@@ -767,7 +767,13 @@ function chosen(a) {
   position: absolute; z-index: 3; pointer-events: none;
   min-width: 9rem; max-width: 15rem;
   padding: .45rem .55rem; border-radius: 8px;
-  background: var(--ink); color: #fff;
+  /* Slightly translucent, unlike the trend chart's tip, which sits above its
+     bars over empty space: this one opens *inside* the mesh next to its own
+     member, so at full opacity it hides the very arrows the reader is tracing.
+     88% is the floor, not a taste: the rows below are dimmed to .72 on top of
+     it, and thinning the ground further drops those under 4.5:1 (A11Y-1). */
+  background: color-mix(in srgb, var(--ink) 80%, transparent);
+  color: #fff;
   font-size: .72rem; line-height: 1.3;
   box-shadow: 0 4px 14px rgba(0, 0, 0, .22);
 }

@@ -144,6 +144,8 @@ export const api = {
   interjectionGraph: (period, top, rank) =>
     get('/interjections/graph', { period, top, rank }),
   interjectionList: (params) => get('/interjections/list', params),
+  interjectionPartners: (period, person) =>
+    get('/interjections/partners', { period, person }),
   // votes
   votes: (params) => get('/votes', params),
   vote: (id) => get(`/votes/${id}`),

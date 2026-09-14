@@ -13,6 +13,9 @@ module serves the two shapes that relation is read in:
 - **The interjections themselves** (``/list``) — because an arrow that cannot be
   opened is an assertion. Every count on this page leads back to the words, the
   sitting day and the video moment they were shouted at (INT-7).
+- **One member's counterparts** (``/partners``) — who shouts at them and whom they
+  shout at, each way with its count, which is what lets the reader narrow their
+  panel from "everything, both ways" to one antagonist (INT-11).
 
 Two exclusions are applied to everything counted here, and to nothing stored:
 
@@ -108,7 +111,7 @@ def interjection_graph(
     rank: str = Query(DEFAULT_RANK, pattern="^(total|made|received)$"),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    """Who interjects over whose speeches, as a directed graph (INT-5, INT-11).
+    """Who interjects over whose speeches, as a directed graph (INT-5, INT-10).
 
     The cut is always the same shape — the ``top`` highest-ranked people, and the
     arrows *between them* — so the figure holds exactly ``top`` members whatever
@@ -222,6 +225,50 @@ def _coverage(db: sqlite3.Connection, period: Optional[List[int]]) -> dict:
     return {"extracted": row["extracted"] or 0,
             "attributed": row["attributed"] or 0,
             "procedural": row["procedural"] or 0}
+
+
+@router.get("/partners")
+def interjection_partners(
+    person: str = Query(..., max_length=32),
+    period: Optional[List[int]] = Query(None),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Everyone one member exchanged interjections with, each way (INT-11).
+
+    A busy member's own panel opens on hundreds of rows running in both
+    directions at once, and "who shouts at them" and "whom they shout at" are
+    different questions that list mixes together. These two lists are what let
+    the reader put one of them, so they are the panel's two choosers — each entry
+    carrying its count, so picking a counterpart is an informed choice and the
+    shape of someone's cross-talk is legible before any of it is opened.
+
+    The same exclusions as the graph apply (``_GRAPH_WHERE``), so a count here
+    always matches the list that opening that counterpart gives.
+    """
+    _require_tables(db)
+
+    def compute():
+        def counterparts(fixed: str, other: str) -> list[dict]:
+            rows = db.execute(
+                f"""SELECT i.{other} AS person_id, p.label, COUNT(*) AS count
+                    FROM interjection i
+                    JOIN person p ON p.person_id = i.{other}
+                    WHERE {_GRAPH_WHERE} AND i.{fixed} = ?
+                          {period_and(period, 'i.period_number')}
+                    GROUP BY i.{other}
+                    ORDER BY count DESC, p.label""", [person]).fetchall()
+            return [{"person_id": r["person_id"], "label": r["label"],
+                     "count": r["count"]} for r in rows]
+
+        return {
+            "person_id": person,
+            # Who interjected at them, and whom they interjected at.
+            "received_from": counterparts("target_id", "speaker_id"),
+            "made_to": counterparts("speaker_id", "target_id"),
+        }
+
+    return cached_aggregate(
+        "interjection_partners", (period_key(period), person), compute)
 
 
 @router.get("/list")

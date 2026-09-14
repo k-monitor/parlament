@@ -373,6 +373,33 @@ def test_one_direction_is_still_askable_on_its_own(heckled_client):
     assert data["total"] == 2
 
 
+def test_the_partner_lists_split_a_person_by_direction(heckled_client):
+    """The two choosers on a member's own panel: who shouted at them, and whom
+    they shouted at, each with the count that opening it will show."""
+    data = heckled_client.get("/api/v1/interjections/partners",
+                              params={"period": 43, "person": "k001"}).json()
+    # Nagy heckled Kovács twice and Szabó once — busiest first.
+    assert [(p["person_id"], p["label"], p["count"])
+            for p in data["received_from"]] == [
+        ("n002", "Nagy Anna", 2), ("s003", "Szabó Géza", 1)]
+    assert [(p["person_id"], p["count"]) for p in data["made_to"]] == [("n002", 2)]
+    # The chair's heckled vote announcement is Kovács's too, and stays out of
+    # both lists exactly as it stays out of the graph (STAT-1).
+    assert sum(p["count"] for p in data["received_from"]) == 3
+
+
+def test_a_partner_count_matches_the_list_it_opens(heckled_client):
+    """The count in a chooser is a promise about the list behind it: picking
+    that counterpart must show exactly that many interjections."""
+    partners = heckled_client.get("/api/v1/interjections/partners",
+                                  params={"period": 43, "person": "k001"}).json()
+    for p in partners["received_from"]:
+        listed = heckled_client.get(
+            "/api/v1/interjections/list",
+            params={"period": 43, "person": "k001", "speaker": p["person_id"]}).json()
+        assert listed["total"] == p["count"]
+
+
 def test_the_list_refuses_an_unfiltered_dump(heckled_client):
     assert heckled_client.get("/api/v1/interjections/list").status_code == 400
 

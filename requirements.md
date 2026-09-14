@@ -2661,9 +2661,10 @@ down far more than they shout), and how much of both crosses the aisle.
   changed sitting re-derives only that sitting (SCR-2).
 - **INT-5 (MUST).** The relation is read as a **directed graph**: one arrow per
   ordered pair, its thickness the number of interjections, narrowed by the reader to
-  the **top *N* people** most involved — ranked by interjections *made plus
-  received*, since the exchange is the subject and a member who is only ever shouted
-  at belongs in it as much as one who only ever shouts. The whole relation is
+  the **top *N* people** — by default those most involved, ranked by interjections
+  *made plus received*, since the exchange is the subject and a member who is only
+  ever shouted at belongs in it as much as one who only ever shouts (the reader can
+  rank the cut by either direction on its own instead, INT-10). The whole relation is
   1 400 people and 21 000 pairs; only the top of it is a diagram at all, so *N* is a
   control and not a constant.
   - **Position carries the finding.** The layout is force-directed, so members who
@@ -2727,6 +2728,41 @@ down far more than they shout), and how much of both crosses the aisle.
   its own module and disappears with it (ANA-1/EXT-6). It is *not* cycle-scoped by
   nature — the relation is meaningful over any span, and pooling several cycles
   simply says which antagonisms outlast a term.
+- **INT-10.** The reader chooses **which direction the cut is ranked by**:
+  interjections *made plus received* (the default, INT-5), *made* alone
+  ("közbeszólt") or *received* alone ("közbeszóltak neki"). The three name
+  genuinely different people — the House's loudest hecklers are not its
+  most-interrupted members, and the sum hides both behind each other — and that
+  difference is the finding, so it MUST be a control rather than a fixed choice.
+  - The cut keeps the **same shape** in every mode: exactly *N* people, and the
+    arrows between them (INT-5). A mode changes *who* the figure is about, never
+    how many members it holds — a "top *N*" control whose number is not the node
+    count is a broken control. (An earlier version instead drew every arrow out of,
+    or into, the ranked *N* whoever the far end was, so those far ends joined the
+    picture too. It answered a fair objection — a member who is heckled constantly
+    but never heckles back cannot appear in any both-ends cut — but at *N* = 16 it
+    drew some 50 members and near 100 at *N* = 40, since a single member can have
+    several hundred distinct counterparts. Reviving it needs a *node budget*, not a
+    per-member arrow cap.)
+  - The chosen direction MUST also be the number the figure **states and sizes by**:
+    the marker areas and the number printed beside each name are that direction's
+    count, not the sum. A "who heckles most" picture whose dots are sized by the
+    total would draw a member large for being shouted *at*, which is the opposite
+    of what the reader asked to see.
+- **INT-11.** A member's own panel (INT-7) can be narrowed to **one counterpart, on
+  either side**: a chooser before and after their name, "who shouted at them" and
+  "whom they shouted at". The unnarrowed panel mixes both directions of hundreds of
+  rows, and those are different questions — "who does this member fight with" is
+  answerable only by asking one of them at a time.
+  - Each chooser lists that direction's counterparts **with their counts**, busiest
+    first, so the shape of someone's cross-talk is legible before a single row is
+    opened, and a count is a promise about the list behind it. The lists come from
+    the relation itself, not from the drawn figure: most of a member's counterparts
+    are outside any top-*N* cut.
+  - The two are **mutually exclusive** — one interjection has two ends and the
+    subject holds one of them — and both live in the URL beside the subject
+    (`?who=`+`?from=` / `?who=`+`?to=`), so a narrowed panel is as citable as the
+    arrow the graph opens (§4D/TRUST-1).
 
 > **✅ realized.** `app/interjections.py` is the pure extractor + resolver (no DB, no
 > network); `loader.rebuild_interjections` writes the one `interjection` table, and

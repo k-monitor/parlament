@@ -14,11 +14,10 @@
 // a claim about two members is citable (§4D/TRUST-1). All of them are absent at
 // their defaults, keeping the page's canonical address parameter-free (§SEO-2).
 //
-// `rank` picks what the top-N cut is ranked (and, for `made`/`received`, also
-// filtered) by: `total` draws the mutual cross-talk among the most-involved
-// people; `made`/`received` draw who the biggest hecklers shout at, or who
-// shouts at the most-heckled people, whoever the other end turns out to be — see
-// the `/graph` endpoint's own docstring for why the two shapes differ.
+// `rank` picks what the top-N cut is ranked by — the whole exchange, or only the
+// interjections a member made or took. The cut itself is the same shape in every
+// mode (exactly N people, arrows between them), so switching modes changes *who*
+// the figure is about, never how much of it there is.
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -111,8 +110,7 @@ const scopeLabel = computed(() => {
 
 // What the drawn picture leaves out, in the page's own words (TRUST-1): the top N
 // hold this much of the cross-talk, and this many people have some of it. Worded
-// per ranking mode, since "the N most involved" is only what `total` draws —
-// `made`/`received` name a narrower group and pull in whoever they interject with.
+// per ranking mode, since "the N most involved" is only who `total` draws.
 const shownShare = computed(() => {
   if (!data.value || !data.value.total) return 0
   return Math.round((100 * data.value.shown) / data.value.total)
@@ -150,12 +148,25 @@ async function load() {
 // The opened pair is read from the URL, never held beside it, so the address bar
 // and the panel cannot disagree — and the browser's own back button walks the
 // arrows a reader opened.
+//
+// A person panel (`?who=`) can additionally be narrowed to **one counterpart**
+// (INT-11), and the side it is narrowed on is the direction: `?who=P&from=X` is
+// "X shouting at P", `?who=P&to=Y` is "P shouting at Y". The two are mutually
+// exclusive because a single interjection has two ends and the subject holds one
+// of them. Either way the pair is complete, so the rest of the panel — the list
+// query, the rows, the heading — needs no notion of a filter: it reads the
+// `speaker`/`target` this resolves to, exactly as it does for a clicked arrow.
 const pair = computed(() => {
   const who = typeof route.query.who === 'string' ? route.query.who : null
-  if (who) return { person: who, speaker: null, target: null }
   const speaker = typeof route.query.from === 'string' ? route.query.from : null
   const target = typeof route.query.to === 'string' ? route.query.to : null
-  return speaker && target ? { person: null, speaker, target } : null
+  if (who) {
+    if (speaker) return { person: who, speaker, target: who, side: 'from', other: speaker }
+    if (target) return { person: who, speaker: who, target, side: 'to', other: target }
+    return { person: who, speaker: null, target: null, side: null, other: null }
+  }
+  return speaker && target
+    ? { person: null, speaker, target, side: null, other: null } : null
 })
 
 const pairData = ref(null)
@@ -259,7 +270,10 @@ async function loadPair() {
       period: store.cycles,
       speaker: pair.value.speaker || undefined,
       target: pair.value.target || undefined,
-      person: pair.value.person || undefined,
+      // Either a whole pair (a clicked arrow, or a person narrowed to one
+      // counterpart) or a person's own row of interjections, never both.
+      person: pair.value.speaker || pair.value.target
+        ? undefined : pair.value.person,
       limit: PAGE, offset: pairOffset.value,
     })
     if (seq === pairSeq) pairData.value = res
@@ -276,10 +290,54 @@ function gotoPairPage(p) {
   scrollToPanel()
 }
 
+// --- the two counterpart choosers (INT-11) --------------------------------
+// Keyed by the subject, not by the whole pair: narrowing to one counterpart and
+// back must not refetch the lists the choosers are made of. They are fetched
+// rather than read off the graph payload because a busy member's counterparts run
+// into the dozens, most of them outside whatever top-N cut is drawn.
+const partners = ref(null)
+let partnersFor = null
+
+async function loadPartners() {
+  const subject = pair.value?.person
+  if (!subject) { partners.value = null; partnersFor = null; return }
+  const key = `${subject}|${store.cycles.join(',')}`
+  if (partnersFor === key) return
+  partnersFor = key
+  try {
+    const res = await api.interjectionPartners(store.cycles, subject)
+    if (partnersFor === key) partners.value = res
+  } catch {
+    // A chooser that cannot be built is simply not offered: the panel below it
+    // is the point of the page and works without it.
+    if (partnersFor === key) { partners.value = null; partnersFor = null }
+  }
+}
+
+// Narrow the open person panel to one counterpart, or (empty value) widen it
+// back to everything they were part of. Setting one side clears the other.
+function setPartner(side, id) {
+  const who = pair.value?.person
+  if (!who) return
+  choose(id ? { who, [side]: id } : { who })
+}
+
+// What each chooser currently reads. A native `<select>` is as wide as its
+// *widest* option, which in a heading leaves the chosen word stranded a long way
+// from its own chevron — so the visible text is this label and the select itself
+// is laid over it, transparent (see `.partnerpick`).
+function partnerLabel(side) {
+  if (pair.value?.side !== side) return t('interjections.anyone')
+  const list = side === 'from'
+    ? partners.value?.received_from : partners.value?.made_to
+  const hit = (list || []).find((p) => p.person_id === pair.value.other)
+  return hit ? hit.label : (endLabel(pair.value.other)?.label || pair.value.other)
+}
+
 onMounted(() => {
-  loadMeta().catch(() => {}).finally(() => { load(); loadPair() })
+  loadMeta().catch(() => {}).finally(() => { load(); loadPair(); loadPartners() })
 })
-watch(() => store.cycles.join(','), () => { load(); loadPair() })
+watch(() => store.cycles.join(','), () => { load(); loadPair(); loadPartners() })
 watch(() => route.query.top, () => {
   const wanted = topFromRoute()
   if (wanted !== top.value) top.value = wanted
@@ -296,6 +354,7 @@ watch(() => [route.query.from, route.query.to, route.query.who].join('|'), () =>
   pairOffset.value = 0
   pairData.value = null
   loadPair()
+  loadPartners()
   if (pair.value) scrollToPanel()
 })
 </script>
@@ -378,11 +437,47 @@ watch(() => [route.query.from, route.query.to, route.query.who].join('|'), () =>
       <section v-if="pair" ref="panelRef" class="flowpanel">
         <div class="flowhead">
           <h2>
+            <!-- One member's own panel: the two choosers flank their name, on the
+                 side their arrows run — who shouted at them to the left, whom they
+                 shouted at to the right, so the heading reads as the direction it
+                 selects (INT-11). -->
+            <template v-if="pair.person && partners">
+              <span class="partnerpick" :class="{ set: pair.side === 'from' }">
+                <span class="partnerlabel" aria-hidden="true">{{ partnerLabel('from') }}</span>
+                <select
+                  class="partner" :value="pair.side === 'from' ? pair.other : ''"
+                  :aria-label="$t('interjections.filterFrom')"
+                  @change="setPartner('from', $event.target.value)"
+                >
+                  <option value="">{{ $t('interjections.anyone') }}</option>
+                  <option v-for="p in partners.received_from" :key="p.person_id"
+                          :value="p.person_id">{{ p.label }} ({{ p.count }})</option>
+                </select>
+              </span>
+              <span class="arrow" aria-hidden="true">→</span>
+            </template>
             <template v-for="(seg, i) in pairSegs" :key="i">
-              <span v-if="i > 0" class="arrow" aria-hidden="true"> → </span>
+              <span v-if="i > 0" class="arrow" aria-hidden="true">→</span>
               <span :style="seg.color ? { color: seg.color } : undefined">{{ seg.label }}</span>
             </template>
-            <span v-if="pair.person" class="muted outward">
+            <template v-if="pair.person && partners">
+              <span class="arrow" aria-hidden="true">→</span>
+              <span class="partnerpick" :class="{ set: pair.side === 'to' }">
+                <span class="partnerlabel" aria-hidden="true">{{ partnerLabel('to') }}</span>
+                <select
+                  class="partner" :value="pair.side === 'to' ? pair.other : ''"
+                  :aria-label="$t('interjections.filterTo')"
+                  @change="setPartner('to', $event.target.value)"
+                >
+                  <option value="">{{ $t('interjections.anyone') }}</option>
+                  <option v-for="p in partners.made_to" :key="p.person_id"
+                          :value="p.person_id">{{ p.label }} ({{ p.count }})</option>
+                </select>
+              </span>
+            </template>
+            <!-- Only where the choosers could not be built: with them, "Bárki →
+                 name → Bárki" already says both ways, in the words that change it. -->
+            <span v-if="pair.person && !pair.side && !partners" class="muted outward">
               {{ $t('interjections.bothWays') }}
             </span>
           </h2>
@@ -488,7 +583,42 @@ watch(() => [route.query.from, route.query.to, route.query.who].join('|'), () =>
 .share { max-width: 70ch; margin-top: .6rem; }
 .flowpanel { margin-top: 1.5rem; scroll-margin-top: 5rem; }
 .flowhead { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: .5rem; }
-.flowhead h2 { margin: 0; font-size: 1.15rem; }
+.flowhead h2 { margin: 0; font-size: 1.15rem; display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+/* The choosers sit *in* the heading, so they carry its weight and stay quiet
+   until used — a full form control either side of the name would read as a
+   toolbar and bury the name it is about. The `<select>` is the real control but
+   is laid over the label transparently, because a native one is as wide as its
+   widest option: in a heading that strands the chosen word a long way from its
+   own chevron. The wrapper is therefore what is styled, and what shows focus. */
+.partnerpick {
+  position: relative; display: inline-flex; align-items: center;
+  padding: .1rem 1.15rem .1rem .35rem; border-radius: 6px;
+  border: 1px solid transparent; color: var(--ink-soft); font-size: .95rem;
+}
+.partnerpick.set { color: var(--ink); }
+.partnerpick::after {
+  content: ''; position: absolute; right: .45rem; top: 50%;
+  width: .3rem; height: .3rem; margin-top: -.22rem;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg); opacity: .6;
+}
+.partnerpick:hover, .partnerpick:focus-within {
+  color: var(--accent); border-color: var(--line); background: var(--surface);
+}
+/* An outline on the select itself is drawn at the select's own opacity — that is,
+   invisibly — so the site's focus ring (A11Y-1) has to be borrowed by the wrapper.
+   `:has(:focus-visible)` rather than `:focus-within`, so it stays a keyboard
+   indicator and a click does not flash a ring. */
+.partnerpick:has(.partner:focus-visible) {
+  outline: 3px solid var(--focus); outline-offset: 2px;
+}
+.partnerlabel { max-width: 13rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Transparent, not hidden: it stays the focusable, keyboard-operable control
+   (its own ring is invisible, so the wrapper draws one via :focus-within). */
+.partner {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; font: inherit;
+}
 .outward { font-weight: 400; font-size: .85rem; margin-left: .4rem; }
 .arrow { color: var(--ink-soft); }
 .ijlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }

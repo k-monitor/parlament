@@ -298,6 +298,57 @@ def test_limit_stops_fetching_but_keeps_the_manifest(paths):
     assert len(list(paths.document_text_dir(43).iterdir())) == 1
 
 
+# --- draining a backlog over several runs (the paced sync, DOC-1) ----------
+# Turning the mirror on does not start from "the documents that appeared since
+# the last poll" — it starts from every document of the cycle. A sync pass is
+# therefore budgeted, which is only safe if the leftovers converge to zero
+# without re-fetching anything.
+
+def test_a_budgeted_run_reports_what_it_left_behind(paths):
+    meta = scrape.fetch_documents(FakeHttp(), paths, 43, REGISTRY,
+                                  retention="text", limit=1)
+    assert meta["total"] == 3 and meta["pending"] == 2
+    assert meta["limit"] == 1
+
+
+def test_successive_budgeted_runs_drain_the_backlog_without_refetching(paths):
+    seen = []
+    for _ in range(3):
+        http = FakeHttp()
+        meta = scrape.fetch_documents(http, paths, 43, REGISTRY,
+                                      retention="text", limit=1)
+        seen.append((meta["fetched"], meta["reused"], meta["pending"]))
+        # Never more than the budget, and never a second request for a document
+        # an earlier run already mirrored.
+        assert len(http.calls) == meta["fetched"] <= 1
+    assert seen == [(1, 0, 2), (1, 1, 1), (1, 2, 0)]
+    assert len(list(paths.document_text_dir(43).iterdir())) == 3
+
+    # Settled: the next run is free and has nothing outstanding.
+    http = FakeHttp()
+    meta = scrape.fetch_documents(http, paths, 43, REGISTRY, retention="text",
+                                  limit=1)
+    assert http.calls == [] and meta["reused"] == 3 and meta["pending"] == 0
+
+
+def test_an_unlimited_run_never_reports_a_backlog(paths):
+    meta = scrape.fetch_documents(FakeHttp(), paths, 43, REGISTRY,
+                                  retention="text")
+    assert meta["pending"] == 0 and meta["limit"] is None
+
+
+def test_per_sync_budget_defaults_and_a_typo_keeps_the_default(monkeypatch):
+    monkeypatch.delenv("PARLAMONITOR_DOCUMENTS_PER_SYNC", raising=False)
+    assert config.documents_per_sync() == config.DEFAULT_DOCUMENTS_PER_SYNC
+    monkeypatch.setenv("PARLAMONITOR_DOCUMENTS_PER_SYNC", "lots")
+    assert config.documents_per_sync() == config.DEFAULT_DOCUMENTS_PER_SYNC
+    monkeypatch.setenv("PARLAMONITOR_DOCUMENTS_PER_SYNC", "5")
+    assert config.documents_per_sync() == 5
+    # 0 is "no cap" — an operator draining a backlog deliberately, not a typo.
+    monkeypatch.setenv("PARLAMONITOR_DOCUMENTS_PER_SYNC", "0")
+    assert config.documents_per_sync() == 0
+
+
 # --- re-extraction never re-downloads --------------------------------------
 # Two ways a run can need the text of a document whose bytes we already hold:
 # poppler was installed since the last pass, or retention widened from `pdf` to

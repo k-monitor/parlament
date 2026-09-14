@@ -266,7 +266,18 @@ rather than serving a copy (LEGAL-1 / BILL-2). (Measured: a full pass over
 cycle 43 downloaded 861 documents / 868 MB and stored 3.96 MB of xz-compressed
 text — 6.7 MB of actual disk, once 4 KB blocks are counted.)
 
-Where it *is* wanted — a dev box or an analysis host doing NLP over the
+There is one reason to want it on the server anyway, and it is worth knowing
+about before you decide: **it is the only way a newly submitted iromány gets a
+topic chip here.** The iromány half of the CAP pass (TOPIC-8) reads document
+text, and a server with no mirror can only replay `parlacap-cache.json` — so
+every iromány submitted since that cache was last built shows no label until
+someone reclassifies on a GPU box and ships a new one. `text` retention costs
+~4 MB per cycle on disk and makes the loop self-sustaining: the sync mirrors the
+text, the reconcile behind it classifies the new irományok on Modal, and no
+hand-shipped cache sits in the middle. What it does *not* save is bandwidth —
+see the pacing note below.
+
+Where it *is* wanted — that, or a dev box or an analysis host doing NLP over the
 legislative text — turn it on with the retention that matches the use:
 
 ```dotenv
@@ -302,6 +313,28 @@ The mirror is incremental: published documents never change, so a second pass
 costs no requests. Its store is `data/documents/<cycle>/`, entirely regenerable
 — deleting it is always safe.
 
+**The sync is paced; a hand-run `documents` is not.** Switching the mirror on
+does not start from the two irományok that arrived since the last poll — it
+starts from every document of the cycle that was never mirrored, which for
+cycle 43 is 861 files and ~868 MB even at `text` retention (the text is what is
+*kept*; the PDF is still downloaded to get it). Draining that inside one sync
+pass would hold the sync lockfile, delay the DB reconcile queued behind it and
+spend the whole politeness budget in one burst. So a sync pass fetches at most
+`PARLAMONITOR_DOCUMENTS_PER_SYNC` new documents (default 25, `0` = no cap) and
+leaves the rest to the passes after it — at the default half-hour poll that is
+~1 200 documents a day, so a cold cycle settles inside a day and every pass
+after that is back to the handful that are genuinely new. Each pass logs what it
+left behind:
+
+```
+docs={'fetched': 25, 'reused': 140, 'pending': 696, 'errors': 0, 'bytesStored': 761234}
+```
+
+`pending` counting down to 0 is the backlog draining; `pending: 0` with a small
+`fetched` is the steady state. To fill the backlog in one go instead, run the
+stage by hand (`--documents text`, no budget) — or `--documents-per-pass 0` /
+`PARLAMONITOR_DOCUMENTS_PER_SYNC=0` to uncap the sync itself.
+
 #### Classifying irományok
 
 The iromány half of the pass (TOPIC-8) runs inside the same
@@ -329,6 +362,14 @@ document mirror to fingerprint against, each iromány's cached rows are replayed
 as they stand. A server that is given no cache simply shows no chips —
 `features.bill_topics` in `/api/v1/meta` goes false and the UI hides them,
 exactly as it does for speeches.
+
+The cost of that arrangement is that it only covers irományok the cache knows
+about: anything submitted after the last GPU run stays unlabelled until the next
+one. If that gap matters more than the ~4 MB per cycle, give the server the
+mirror instead — `PARLAMONITOR_DOCUMENTS=text` in `.env` — and its own sync
+classifies new irományok on Modal as they arrive, with the shipped cache still
+covering everything older. The two coexist: the cache is keyed per iromány, so a
+locally classified document simply adds an entry beside the imported ones.
 
 Set `PARLAMONITOR_BILL_TOPICS=0` to switch the iromány pass off while leaving the
 speech topics alone.
@@ -1000,9 +1041,10 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_SSH_KEY_PASSPHRASE` | — | passphrase, if the key is encrypted |
 | `PARLAMONITOR_SSH_KNOWN_HOSTS` | — | known_hosts path for strict host-key checking (default: trust-on-first-use) |
 | **Iromány document mirror** | | (DOC-1; off by default — see [document files](#mirroring-the-iromany-document-files-parlamonitor_documents)) |
-| `PARLAMONITOR_DOCUMENTS` | `off` | what to keep of each iromány document file: `off` / `text` / `pdf` / `all`. **Leave it `off` on the server** — `pdf`/`all` is ~870 MB per cycle |
+| `PARLAMONITOR_DOCUMENTS` | `off` | what to keep of each iromány document file: `off` / `text` / `pdf` / `all`. **Never `pdf`/`all` on the server** — ~870 MB per cycle. `text` (~4 MB) is a defensible server opt-in: it is what lets a newly submitted iromány be classified here instead of waiting for a hand-shipped cache |
 | `PARLAMONITOR_DOCUMENTS_COMPRESSION` | `xz` | codec for the stored text: `xz` / `gzip` / `none` |
 | `PARLAMONITOR_DOCUMENTS_MAX_MB` | `0` | skip any single document above this size (`0` = no limit) |
+| `PARLAMONITOR_DOCUMENTS_PER_SYNC` | `25` | how many NEW documents one **sync pass** may fetch (`0` = no cap). Paces the backlog a freshly enabled mirror faces; a hand-run `documents` command is never capped by it |
 | **Word-cloud NLP** | | (used by `init` + `sync`) |
 | `PARLAMONITOR_WORDCLOUD_BACKEND` | `auto` | `auto`/`huspacy`/`regex`/`modal` term extraction (WCLOUD-6) |
 | `PARLAMONITOR_HUSPACY_MODEL` | `hu_core_news_trf` | model for the newest cycle — must match the primary Modal image |

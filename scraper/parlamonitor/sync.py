@@ -57,6 +57,7 @@ from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
 from .config import Paths, session_id, timing_backend as _default_timing_backend
 from .config import documents_compression as _documents_compression
 from .config import documents_max_mb as _documents_max_mb
+from .config import documents_per_sync as _documents_per_sync
 from .config import documents_retention, whisper_language, whisper_model
 from .documents.scrape import fetch_documents, load_registry
 from .felicitas import FelicitasClient
@@ -382,19 +383,25 @@ def _sync_bills(felicitas: FelicitasClient, paths: Paths, cycle: int, state: dic
 
 def _sync_documents(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
                     retention: str, compression: str, max_mb: float,
-                    force: bool) -> dict | bool:
+                    limit: int, force: bool) -> dict | bool:
     """Top up the iromány document mirror for this cycle (DOC-1).
 
     Off unless the run was configured for it, which is what keeps a live sync's
     disk usage exactly as it was. When it is on, the cost of an idle pass is
     nothing: the stage is incremental against its own index, so only documents
-    that appeared since the last pass are actually downloaded."""
+    that appeared since the last pass are actually downloaded.
+
+    The exception is the *first* pass after it is switched on, which faces the
+    whole cycle's backlog at once — so a sync pass fetches at most ``limit``
+    documents (``PARLAMONITOR_DOCUMENTS_PER_SYNC``, 0 = no cap) and leaves the
+    rest to the passes after it. Meta carries ``pending``, which is that
+    backlog counting down."""
     if retention == "off":
         return False
     registry = load_registry(paths, cycle)
     return fetch_documents(felicitas.http, paths, cycle, registry,
                            retention=retention, compression=compression,
-                           max_mb=max_mb, force=force)
+                           max_mb=max_mb, limit=limit or None, force=force)
 
 
 def _sync_votes(felicitas: FelicitasClient, paths: Paths, cycle: int, state: dict,
@@ -505,7 +512,8 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
              timing_backend: str | None = None,
              documents: str | None = None,
              documents_compression: str | None = None,
-             documents_max_mb: float | None = None) -> dict:
+             documents_max_mb: float | None = None,
+             documents_limit: int | None = None) -> dict:
     """One cheap sync pass over ``cycle``. Each domain is isolated so one failing
     query never aborts the others (SCR-5). Returns a summary of what changed."""
     paths.ensure()
@@ -542,6 +550,8 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
                              or _documents_compression()),
                 max_mb=(documents_max_mb if documents_max_mb is not None
                         else _documents_max_mb()),
+                limit=(documents_limit if documents_limit is not None
+                       else _documents_per_sync()),
                 force=force)
         except Exception as e:
             logger.exception("Document mirror sync failed")

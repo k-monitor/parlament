@@ -28,7 +28,7 @@ import json
 
 import pytest
 
-from parlamonitor import sync
+from parlamonitor import config, sync
 from parlamonitor.config import Paths
 
 
@@ -557,6 +557,37 @@ def test_sync_runs_the_mirror_once_asked(patched, monkeypatch):
                             skip_reps=True, documents="text")
     assert summary["documents"] == {"fetched": 0}
     assert seen["retention"] == "text" and seen["compression"] == "xz"
+
+
+def test_a_sync_pass_is_budgeted_so_the_first_one_cannot_run_away(patched,
+                                                                  monkeypatch):
+    """Switching the mirror on faces the whole cycle's backlog, not the two
+    irományok that arrived since the last poll. A pass takes a slice of it and
+    leaves the rest to the next one, so it never holds the sync lock (or the
+    politeness budget) for a 15-minute download run."""
+    paths, _ = patched
+    monkeypatch.delenv("PARLAMONITOR_DOCUMENTS_PER_SYNC", raising=False)
+    monkeypatch.setattr(sync, "load_registry", lambda p, c: {"data": []})
+    seen = {}
+    monkeypatch.setattr(sync, "fetch_documents",
+                        lambda http, p, c, reg, **kw: seen.update(kw) or {"fetched": 0})
+    fel = FakeFelicitas(days=[], speeches={})
+    fel.http = object()
+
+    sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                  skip_reps=True, documents="text")
+    assert seen["limit"] == config.DEFAULT_DOCUMENTS_PER_SYNC
+
+    monkeypatch.setenv("PARLAMONITOR_DOCUMENTS_PER_SYNC", "7")
+    sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                  skip_reps=True, documents="text")
+    assert seen["limit"] == 7
+
+    # An explicit argument wins over the environment, and 0 means "no cap" —
+    # which reaches the stage as None, its own word for unlimited.
+    sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                  skip_reps=True, documents="text", documents_limit=0)
+    assert seen["limit"] is None
 
 
 def test_a_failing_mirror_never_sinks_the_sync(patched, monkeypatch):

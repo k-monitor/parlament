@@ -52,8 +52,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import whisper_align
-from .config import (DOCUMENT_RETENTIONS, Paths, RuntimeConfig,
-                     documents_compression, documents_max_mb,
+from .config import (DEFAULT_DOCUMENTS_PER_SYNC, DOCUMENT_RETENTIONS, Paths,
+                     RuntimeConfig, documents_compression, documents_max_mb,
                      documents_retention, session_cycle, timing_backend,
                      whisper_language, whisper_model)
 from .felicitas import FelicitasClient
@@ -523,11 +523,16 @@ def cmd_votes(args) -> None:
 def _documents_summary(documents) -> object:
     """The document stage's line in a sync summary: ``False`` when it is off (the
     default), else just the counts that say whether the pass did any work — the
-    full manifest meta belongs in the ingest log, not in a one-line status."""
+    full manifest meta belongs in the ingest log, not in a one-line status.
+
+    ``pending`` rides along because a paced pass is *supposed* to stop early:
+    without it a run that fetched its budget and quit looks the same as one that
+    finished the cycle, and there would be nothing in the log saying the backlog
+    is still coming down."""
     if not documents:
         return False
     return {k: documents.get(k) for k in
-            ("fetched", "reused", "errors", "bytesStored")}
+            ("fetched", "reused", "pending", "errors", "bytesStored")}
 
 
 def cmd_sync(args) -> None:
@@ -555,7 +560,8 @@ def cmd_sync(args) -> None:
                 skip_office_holders=args.skip_officeholders,
                 documents=args.documents,
                 documents_compression=args.documents_compression,
-                documents_max_mb=args.documents_max_mb)
+                documents_max_mb=args.documents_max_mb,
+                documents_limit=args.documents_per_pass)
             # Top up portraits for non-roster speakers of this cycle (ministers /
             # nationality advocates who aren't in the MP roster). Cheap on an idle
             # poll: already-downloaded ids are skipped and 404s are negative-cached,
@@ -819,6 +825,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--skip-officeholders", action="store_true",
                     help="skip the office-holder (tisztségviselők) refresh")
     _documents_opts(sp)
+    # Only `sync` is paced: a hand-run `documents` mirrors the cycle in one go
+    # (that is what it is for), while a poll every half hour must not spend the
+    # whole politeness budget draining a backlog it is in no hurry for.
+    sp.add_argument("--documents-per-pass", type=int, default=None,
+                    help="cap how many documents ONE sync pass newly fetches "
+                         f"(default {DEFAULT_DOCUMENTS_PER_SYNC}, 0 = no cap); "
+                         "the rest is picked up by the passes after it. Env: "
+                         "PARLAMONITOR_DOCUMENTS_PER_SYNC")
     sp.set_defaults(func=cmd_sync)
 
     sp = sub.add_parser("speaker-photos",

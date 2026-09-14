@@ -327,8 +327,11 @@ def fetch_documents(http: HttpClient, paths: Paths, cycle: int, registry: dict, 
     ``text`` / ``pdf`` / ``all`` (``off`` is handled by the caller — this
     function is never reached with it). ``compression`` names the text codec,
     ``max_mb`` caps a single document (0 = no cap), ``force`` re-fetches
-    everything, and ``limit`` stops after that many *fetched* documents, for a
-    smoke run.
+    everything, and ``limit`` stops after that many *fetched* documents — a
+    smoke run, or a sync pass keeping its share of the politeness budget small
+    (``PARLAMONITOR_DOCUMENTS_PER_SYNC``). What a limited run leaves behind is
+    reported as ``pending`` and simply waits for the next run: documents already
+    in the manifest are never re-fetched, so stopping early costs nothing.
 
     Returns a summary dict; the per-document manifest is written to
     ``documents/<cycle>/index.json`` as it goes."""
@@ -447,12 +450,13 @@ def fetch_documents(http: HttpClient, paths: Paths, cycle: int, registry: dict, 
                         counts["reused"], bytes_seen / 1e6,
                         (pdf_stored + text_stored) / 1e6)
             save_index(paths, cycle, entries, _meta(cycle, retention, compression,
-                                                    max_mb, counts, bytes_seen,
-                                                    pdf_stored, text_stored))
+                                                    max_mb, limit, counts,
+                                                    bytes_seen, pdf_stored,
+                                                    text_stored))
         http.polite_sleep()
 
-    meta = _meta(cycle, retention, compression, max_mb, counts, bytes_seen,
-                 pdf_stored, text_stored)
+    meta = _meta(cycle, retention, compression, max_mb, limit, counts,
+                 bytes_seen, pdf_stored, text_stored)
     save_index(paths, cycle, entries, meta)
     logger.info("Documents cycle %s: %d total, %d fetched, %d reused, "
                 "%d missing, %d over-cap, %d no-text, %d errors; "
@@ -461,18 +465,28 @@ def fetch_documents(http: HttpClient, paths: Paths, cycle: int, registry: dict, 
                 counts["missing"], counts["tooLarge"], counts["noText"],
                 counts["errors"], bytes_seen / 1e6,
                 (pdf_stored + text_stored) / 1e6)
+    if meta["pending"]:
+        logger.info("Stopped at the %d-document budget for this run; %d still "
+                    "to mirror, which the next run picks up (nothing fetched "
+                    "here is fetched again)", limit, meta["pending"])
     return meta
 
 
-def _meta(cycle, retention, compression, max_mb, counts, bytes_seen,
+def _meta(cycle, retention, compression, max_mb, limit, counts, bytes_seen,
           pdf_stored, text_stored) -> dict:
+    # `pending` is what a budgeted run left behind: every ref it neither
+    # fetched nor found already mirrored. Zero on an unlimited run, and on a
+    # limited one it counts down pass by pass — the one number that says
+    # whether the backlog is still draining.
     return {
         "cycle": cycle,
         "scrapedAt": _now_iso(),
         "retention": retention,
         "compression": compression,
         "maxMb": max_mb or None,
+        "limit": limit or None,
         **counts,
+        "pending": max(0, counts["total"] - counts["fetched"] - counts["reused"]),
         "bytesDownloaded": bytes_seen,
         "bytesStoredPdf": pdf_stored,
         "bytesStoredText": text_stored,

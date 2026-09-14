@@ -223,6 +223,13 @@ Primary use cases:
   > each document's source URL, owning bill, kind, SHA-256, page count and
   > artefact paths. Text comes from `pdftotext` (poppler); an unrecognised
   > retention value reads as `off`, so a typo can never turn the storage on.
+  > The **continuous sync** runs the same stage, and is the one caller that is
+  > *paced*: switching the mirror on there faces the whole cycle's backlog
+  > rather than the documents added since the last poll, so a pass fetches at
+  > most `PARLAMONITOR_DOCUMENTS_PER_SYNC` (default 25, `0` = uncapped) new
+  > documents and the manifest reports the remainder as `pending`, which
+  > counts down over the passes that follow. Incrementality is what makes that
+  > safe: stopping early costs the next pass nothing.
 
 ### 3.3 Ingestion into the database
 

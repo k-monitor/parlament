@@ -155,6 +155,31 @@ def documents_max_mb() -> float:
         return 0.0
 
 
+DEFAULT_DOCUMENTS_PER_SYNC = 25
+
+
+def documents_per_sync() -> int:
+    """How many documents a single **sync pass** may newly fetch (0 = no cap).
+
+    Only the continuous sync is paced; a hand-run ``documents`` command still
+    mirrors the whole cycle in one go (that is what it is for). The reason is
+    the backlog: turning the mirror on does not start from the couple of
+    irományok that appeared since the last poll — it starts from every document
+    of the cycle that was never mirrored (861 of them in cycle 43, ~868 MB,
+    a good 15 minutes at ``PARLAMONITOR_SLEEP=1.0``). Draining that inside one
+    pass would hold the sync lockfile, delay the DB reconcile behind it and
+    spend the whole politeness budget (SCR-4) in a single burst, for text that
+    is in no hurry. Capped, the first passes chip away at the backlog and every
+    later one is back to the handful that are genuinely new. The stage is
+    incremental (SCR-2), so a pass that stops early costs the next one
+    nothing."""
+    raw = os.environ.get("PARLAMONITOR_DOCUMENTS_PER_SYNC")
+    try:
+        return max(0, int(raw)) if raw not in (None, "") else DEFAULT_DOCUMENTS_PER_SYNC
+    except ValueError:
+        return DEFAULT_DOCUMENTS_PER_SYNC
+
+
 # --- Modal budget scope ----------------------------------------------------
 # Modal GPU time is metered, and transcribing the archive is by far the biggest
 # bill the pipeline can run up: a backfill of an old cycle is hundreds of

@@ -181,6 +181,7 @@ tracks processed files individually, and adds the two `person` columns in place)
 | `--documents` | `PARLAMONITOR_DOCUMENTS` | `off` | what the [document mirror](#document-files-doc-1) keeps: `off` / `text` / `pdf` / `all`. The storage guard — an unrecognised value reads as `off`, so a typo can never turn ~870 MB per cycle on |
 | `--documents-compression` | `PARLAMONITOR_DOCUMENTS_COMPRESSION` | `xz` | codec for the stored text: `xz` / `gzip` / `none` |
 | `--documents-max-mb` | `PARLAMONITOR_DOCUMENTS_MAX_MB` | `0` | skip any single document above this size (`0` = no limit); enforced while streaming, so an over-cap file is never fully downloaded |
+| `--documents-per-pass` | `PARLAMONITOR_DOCUMENTS_PER_SYNC` | `25` | **`sync` only:** how many NEW documents one pass may fetch (`0` = no cap). A freshly enabled mirror faces the whole cycle, not what arrived since the last poll, so a pass takes a slice and the manifest reports the rest as `pending`; a hand-run `documents` is never capped by it |
 | — | `PARLAMONITOR_MODAL_CYCLES` | `latest` | which cycles may be transcribed on **Modal** (`latest`/`all`/`43,42`) — the metered-GPU guard; out-of-scope days keep their cached words, or fall back to the positional estimate |
 
 #### SSH tunnel proxy
@@ -285,7 +286,14 @@ python -m parlamonitor documents --cycle 43 --documents text --limit 20 \
 ```
 
 It reads the links out of the saved `bills-<cycle>.json`, so run `bills` first.
-The same three knobs exist on `sync`, so a watcher can keep the mirror current.
+The same three knobs exist on `sync`, so a watcher can keep the mirror current —
+with one of its own, `--documents-per-pass` (env
+`PARLAMONITOR_DOCUMENTS_PER_SYNC`, default 25, `0` = no cap). A sync that has
+just had the mirror switched on faces the *whole cycle*, not the documents added
+since the last poll, so a pass fetches at most that many new ones and the
+manifest reports the remainder as `pending` for the passes after it to pick up.
+A hand-run `documents` is never capped by it: `--limit` above is the manual
+equivalent.
 
 #### Why it is off by default, and why `text` is the right opt-in
 

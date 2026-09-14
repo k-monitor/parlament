@@ -90,10 +90,13 @@ x-nlp-env: &nlp-env
   # serving colors — never a reclassification and never a rebuild.
   PARLAMONITOR_PARLACAP_THRESHOLD: ${PARLAMONITOR_PARLACAP_THRESHOLD:-0.90}
   # Also label the irományok themselves, from the text of the document each one
-  # links to (TOPIC-8). On this host that is always a cache replay: the server
-  # mirrors no documents (PARLAMONITOR_DOCUMENTS is off, DOC-1), so the rows come
-  # from the same parlacap-cache.json shipped for the speech topics. With no
-  # cache the pass writes nothing and the chip hides itself — never an error.
+  # links to (TOPIC-8). On this host that is a cache replay by default: the
+  # server mirrors no documents (PARLAMONITOR_DOCUMENTS is off, DOC-1), so the
+  # rows come from the same parlacap-cache.json shipped for the speech topics,
+  # and an iromány submitted since that cache was built carries no label. Set
+  # PARLAMONITOR_DOCUMENTS=text (see the sync service below) to give this host
+  # the text instead, and new irományok get classified here as they arrive. With
+  # neither the pass writes nothing and the chip hides itself — never an error.
   PARLAMONITOR_BILL_TOPICS: ${PARLAMONITOR_BILL_TOPICS:-1}
 
 # Whisper forced-alignment sentence-timing config for the scraping side (sync).
@@ -226,10 +229,28 @@ services:
       # Mirror of the iromány document files (DOC-1). `off` — the default — is
       # what keeps the server's disk as it is: `pdf`/`all` is ~870 MB per cycle,
       # and the site links documents on parlament.hu rather than serving copies.
-      # `text` (~4 MB per cycle) additionally needs poppler-utils in the image.
+      # `text` (~4 MB per cycle) additionally needs poppler-utils, which the
+      # image carries.
+      #
+      # It is also the ONLY thing this host can do to give a *newly submitted*
+      # iromány a topic chip of its own: with no mirror, the iromány half of the
+      # CAP pass has no text to read and can only replay parlacap-cache.json
+      # (see PARLAMONITOR_BILL_TOPICS above), so anything submitted after the
+      # cache was last shipped stays unlabelled. Setting
+      #   PARLAMONITOR_DOCUMENTS=text
+      # in .env closes that loop — the sync mirrors the text and the reconcile
+      # behind it classifies the new irományok on Modal, with no hand-shipped
+      # cache in the middle. Note it downloads every PDF to keep the text, so
+      # the first passes are the whole cycle's backlog, not just what is new:
       PARLAMONITOR_DOCUMENTS: ${PARLAMONITOR_DOCUMENTS:-off}
       PARLAMONITOR_DOCUMENTS_COMPRESSION: ${PARLAMONITOR_DOCUMENTS_COMPRESSION:-xz}
       PARLAMONITOR_DOCUMENTS_MAX_MB: ${PARLAMONITOR_DOCUMENTS_MAX_MB:-0}
+      # …which is what this paces. A pass fetches at most this many NEW documents
+      # and leaves the rest to the next one, so a freshly enabled mirror drains
+      # its backlog over a day of polls instead of holding one pass (and the sync
+      # lock, and the DB reconcile behind it) for a ~15-minute download run.
+      # 0 = no cap. Inert while PARLAMONITOR_DOCUMENTS=off.
+      PARLAMONITOR_DOCUMENTS_PER_SYNC: ${PARLAMONITOR_DOCUMENTS_PER_SYNC:-25}
     volumes:
       # Read-write here: the sync writes fresh scraper output + portraits.
       - ./data:/data

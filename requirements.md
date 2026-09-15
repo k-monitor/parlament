@@ -2764,6 +2764,16 @@ down far more than they shout), and how much of both crosses the aisle.
   rank the cut by either direction on its own instead, INT-10). The whole relation is
   1 400 people and 21 000 pairs; only the top of it is a diagram at all, so *N* is a
   control and not a constant.
+  - ***N* is a control the reader is never fighting.** The number follows the
+    slider continuously, but the figure is refetched and relaid out **only once the
+    drag ends** — committing as it travels spends a request and a force layout per
+    pixel to draw pictures nobody asked to see, and a held arrow key must coalesce
+    the same way. The control MUST also sit *outside* whatever a reload replaces:
+    inside it, the first commit takes the slider out of the hand dragging it and a
+    keyboard reader's focus with it. While the figure is behind the number the page
+    says so quietly, and a reload of a figure already on screen leaves it up rather
+    than blanking back to a spinner — the reader asked for a different *N* of the
+    same picture, not for a different page.
   - **Position carries the finding.** The layout is force-directed, so members who
     shout at each other are pulled together and the picture separates into the
     knots of people who actually argue — a member who heckles widely sitting apart
@@ -2812,9 +2822,11 @@ down far more than they shout), and how much of both crosses the aisle.
 - **INT-7 (MUST).** **A count is never a dead end.** Clicking an arrow lists the
   interjections behind it — the words, the sitting day, the agenda item they
   interrupted, and a link straight to the moment in the video (VIE-5/TEL-4). Clicking
-  a person lists every interjection they were part of, in either direction, which is
-  exactly what the graph highlights for them and what the number beside their name
-  counts.
+  a person lists **one side** of their cross-talk: the side the figure is currently
+  ranked by, which is the number printed beside their name and so the list the click
+  promises (ranked by the sum, the bigger of their two sides). The figure lights up
+  that same half of their arrows, so the picture and the list never say different
+  things, and one click on the arrow in the panel turns the other side up.
 - **INT-8 (MUST).** The page states **what it is drawn from and what it leaves out**
   (TRUST-1): how many interjections the extraction found in scope, how many were
   attributable to one member, how many were shouted over a chairing speech, how many
@@ -2846,20 +2858,32 @@ down far more than they shout), and how much of both crosses the aisle.
     count, not the sum. A "who heckles most" picture whose dots are sized by the
     total would draw a member large for being shouted *at*, which is the opposite
     of what the reader asked to see.
-- **INT-11.** A member's own panel (INT-7) can be narrowed to **one counterpart, on
-  either side**: a chooser before and after their name, "who shouted at them" and
-  "whom they shouted at". The unnarrowed panel mixes both directions of hundreds of
-  rows, and those are different questions — "who does this member fight with" is
-  answerable only by asking one of them at a time.
-  - Each chooser lists that direction's counterparts **with their counts**, busiest
-    first, so the shape of someone's cross-talk is legible before a single row is
-    opened, and a count is a promise about the list behind it. The lists come from
-    the relation itself, not from the drawn figure: most of a member's counterparts
-    are outside any top-*N* cut.
-  - The two are **mutually exclusive** — one interjection has two ends and the
-    subject holds one of them — and both live in the URL beside the subject
-    (`?who=`+`?from=` / `?who=`+`?to=`), so a narrowed panel is as citable as the
-    arrow the graph opens (§4D/TRUST-1).
+- **INT-11.** The panel is **one arrow with two choosers**: who shouted, who was
+  interrupted, and a direction that turns round. Either end may be left at *anyone* —
+  "everything shouted at P", "everything P shouted", or the single pair X → Y — so
+  the same control carries the reader from one member to one antagonist and back
+  without ever changing shape, and the other direction is one click rather than a
+  differently-shaped panel. A member's arrow and a member's own list are the same
+  object, differing only in whether the far end is named.
+  - An unnarrowed mix of both directions is **not** a state. "Who shouts at this
+    member" and "whom do they shout at" are different questions, and a list that
+    answers both at once answers neither — it is also the state in which a row has
+    to re-state its own direction, which is how the old panel spent a line of every
+    row on what the heading should have said.
+  - A chooser offers that end's **real counterparts with their counts**, busiest
+    first, taken from the relation and not from the drawn figure — most of a member's
+    counterparts are outside any top-*N* cut — so the shape of someone's cross-talk
+    is legible before a single row is opened, a count is a promise about the list
+    behind it, and picking a counterpart can never land on an empty list. Where the
+    far end is *anyone* there is no such list to draw on, and the chooser offers the
+    members the chart is currently drawing instead.
+  - Turning the arrow round is offered as **unavailable** where nothing was ever
+    shouted that way, which the counts already loaded make knowable without asking.
+  - Both ends live in the URL (`?from=` / `?to=`, either one absent meaning
+    *anyone*), so a narrowed panel is as citable as the arrow the graph opens
+    (§4D/TRUST-1). Addresses shared before the merge (`?who=`) name exactly one
+    direction too — the subject holds the end the narrowing did not — and are
+    rewritten into it on arrival rather than dropped.
 
 > **✅ realized.** `app/interjections.py` is the pure extractor + resolver (no DB, no
 > network); `loader.rebuild_interjections` writes the one `interjection` table, and
@@ -2890,16 +2914,20 @@ down far more than they shout), and how much of both crosses the aisle.
 > √links), so an individual arrow stays visible — and clickable — at forty members
 > as well as twelve. The frame is sized to the settled layout rather than the layout
 > scaled into a fixed frame, which is what keeps a wide graph from being
-> letterboxed and a tall one from being cropped. The slider position and the
-> opened arrow both live in the URL (`?top=`, `?from=`+`?to=`, `?who=`), so a claim
-> about two members is citable and `back` walks the arrows a reader opened; all three
-> are absent at their defaults, keeping the canonical address parameter-free (§SEO-2).
+> letterboxed and a tall one from being cropped. The slider position, the ranking
+> mode and the opened arrow all live in the URL (`?top=`, `?rank=`, `?from=`/`?to=`,
+> either end of the arrow absent meaning *anyone*), so a claim about two members is
+> citable and `back` walks the arrows a reader opened; all of them are absent at
+> their defaults, keeping the canonical address parameter-free (§SEO-2).
 > The chart is embeddable as `interjection-graph` (§4C).
 >
 > Two things this cost elsewhere, both additive: `_delete_session` clears the
 > sitting's interjections before its sentences (guarded on the table existing, so a
 > DB predating the module still loads), and `/api/v1/interjections/list` gained a
-> `person` filter so a clicked node's list matches what the clicked node highlights.
+> `person` filter — one member's interjections in both directions at once, which is
+> what a clicked node opened until the panel became a single reversible arrow
+> (INT-11); the page now asks one direction at a time, and the filter stays part of
+> the API.
 
 ---
 

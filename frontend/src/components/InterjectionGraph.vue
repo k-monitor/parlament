@@ -46,6 +46,11 @@ const props = defineProps({
   showCaption: { type: Boolean, default: true },
   selected: { type: Number, default: -1 },       // index of the selected link
   selectedNode: { type: Number, default: -1 },   // index of the selected node
+  // Which half of the selected node's arrows the caller is showing: 'from' (the
+  // ones they shouted), 'to' (the ones shouted at them), '' for both. The panel
+  // under the figure lists one direction of a member's cross-talk at a time, and
+  // the highlight has to be that same half or the picture and the list disagree.
+  selectedDir: { type: String, default: '' },
   // Which of a member's two numbers this figure is about: 'total' (made plus
   // received), 'made' or 'received'. It is the one the caller ranked the drawn
   // people by, so it has to be the one the marker sizes and the number beside
@@ -595,22 +600,26 @@ function pickNode(index) {
   emit('select-node', { index, node: n })
 }
 
+// Whether an arrow belongs to the selected member's highlighted half (`selectedDir`).
+function ofSelectedNode(a) {
+  if (props.selectedDir === 'from') return a.source.i === props.selectedNode
+  if (props.selectedDir === 'to') return a.target.i === props.selectedNode
+  return a.source.i === props.selectedNode || a.target.i === props.selectedNode
+}
+
 // An arrow is dimmed when something else is selected or hovered and it is not
 // part of it — the same three-state rule the Sankey uses, so the two figures
 // behave alike.
 function dimmed(a) {
   if (props.selected !== -1) return a.key !== props.selected
-  if (props.selectedNode !== -1) {
-    return a.source.i !== props.selectedNode && a.target.i !== props.selectedNode
-  }
+  if (props.selectedNode !== -1) return !ofSelectedNode(a)
   return active.value !== -1
     && a.source.i !== active.value && a.target.i !== active.value
 }
 
 function chosen(a) {
   return a.key === props.selected
-    || (props.selectedNode !== -1
-        && (a.source.i === props.selectedNode || a.target.i === props.selectedNode))
+    || (props.selectedNode !== -1 && ofSelectedNode(a))
 }
 </script>
 

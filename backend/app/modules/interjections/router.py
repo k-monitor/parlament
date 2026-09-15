@@ -14,8 +14,8 @@ module serves the two shapes that relation is read in:
   opened is an assertion. Every count on this page leads back to the words, the
   sitting day and the video moment they were shouted at (INT-7).
 - **One member's counterparts** (``/partners``) — who shouts at them and whom they
-  shout at, each way with its count, which is what lets the reader narrow their
-  panel from "everything, both ways" to one antagonist (INT-11).
+  shout at, each way with its count, which is what fills the two choosers the
+  panel's one arrow hangs between (INT-11).
 
 Two exclusions are applied to everything counted here, and to nothing stored:
 
@@ -235,12 +235,12 @@ def interjection_partners(
 ):
     """Everyone one member exchanged interjections with, each way (INT-11).
 
-    A busy member's own panel opens on hundreds of rows running in both
-    directions at once, and "who shouts at them" and "whom they shout at" are
-    different questions that list mixes together. These two lists are what let
-    the reader put one of them, so they are the panel's two choosers — each entry
-    carrying its count, so picking a counterpart is an informed choice and the
-    shape of someone's cross-talk is legible before any of it is opened.
+    The panel is one arrow — who shouted, who was interrupted — and either end
+    can be swapped for anyone the other end actually exchanged interjections
+    with. These two lists are that offer: each entry carries its count, so
+    picking a counterpart is an informed choice, the shape of someone's
+    cross-talk is legible before any of it is opened, and a chooser can never
+    land on an empty list.
 
     The same exclusions as the graph apply (``_GRAPH_WHERE``), so a count here
     always matches the list that opening that counterpart gives.
@@ -285,10 +285,11 @@ def interjection_list(
 
     All three filters are person ids, and at least one is required — an unfiltered
     dump of a hundred thousand shouts is not a view of anything. ``speaker`` +
-    ``target`` together are one clicked arrow. ``person`` is one clicked node: every
-    interjection they **made or received**, which is what the graph highlights when
-    a node is picked and what the node's own size on it counts, so the picture and
-    the list say the same thing.
+    ``target`` together are one arrow; either alone is one end of it against
+    everyone, which is what the page opens a clicked member with (INT-11).
+    ``person`` is both of their directions at once — what a clicked node opened
+    before the panel became a single reversible arrow; the page no longer asks for
+    it, and the filter stays part of the API.
 
     Each row carries the words, the sitting date, the agenda item they interrupted
     and the speech + sentence the viewer deep-links by (VIE-5), so the count on the

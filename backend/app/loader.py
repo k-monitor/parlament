@@ -1252,6 +1252,12 @@ def _ensure_portfolio_tables(conn: sqlite3.Connection) -> None:
     derived from rows the other modules already wrote, so there is nothing to
     re-scrape and no reason to force a full rebuild."""
     conn.executescript("""
+        -- Where the mapping fingerprint is stamped (_PORTFOLIO_MAP_KEY). Part of
+        -- schema.sql since long before this module, so this only ever matters on
+        -- a DB old enough to predate it — without which the stamp would raise and
+        -- take an otherwise fine update down with it.
+        CREATE TABLE IF NOT EXISTS build_meta (
+            key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS portfolio (
             slug TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
             ord INTEGER);
@@ -1285,6 +1291,30 @@ def _ensure_portfolio_tables(conn: sqlite3.Connection) -> None:
     # that predates it — an index over a missing column is a hard error.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_bill_period "
                  "ON portfolio_bill(portfolio_slug, role, period_number)")
+
+
+# `build_meta` key holding the fingerprint of the portfolio mapping the §6C tables
+# were last derived from (see `portfolios.table_fingerprint`).
+_PORTFOLIO_MAP_KEY = "portfolio_map"
+
+
+def _portfolios_stale(conn: sqlite3.Connection) -> bool:
+    """Whether the DB's §6C tables were derived from a DIFFERENT portfolio mapping
+    than the code now has — or predate the stamp entirely.
+
+    The tárca mapping lives in `app/portfolios.py` (and optionally an operator's
+    `PARLAMONITOR_PORTFOLIO_MAP` file), not in the scraper's output, so correcting
+    a label changes no processed file and an incremental update would otherwise
+    see nothing to do. A deployment would then keep serving the old mapping until
+    an unrelated sitting happened to rebuild the tables as a side effect. This is
+    what makes the rebuild follow the deploy instead.
+    """
+    try:
+        row = conn.execute("SELECT value FROM build_meta WHERE key = ?",
+                           (_PORTFOLIO_MAP_KEY,)).fetchone()
+    except sqlite3.OperationalError:        # a DB built before build_meta
+        return True
+    return (row[0] if row else None) != portfolios.table_fingerprint()
 
 
 def rebuild_portfolios(conn: sqlite3.Connection) -> int:
@@ -1440,6 +1470,11 @@ def rebuild_portfolios(conn: sqlite3.Connection) -> int:
     conn.executemany(
         "INSERT INTO portfolio_office(portfolio_slug, person_id, title, category, "
         "date_start, date_end) VALUES (?,?,?,?,?,?)", offices)
+    # Record WHICH mapping these rows were derived from, so an incremental update
+    # can tell that a table edit (a code change, invisible to its file signatures)
+    # has left them stale — see `_portfolios_stale`.
+    conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
+                 (_PORTFOLIO_MAP_KEY, portfolios.table_fingerprint()))
     conn.commit()
 
     if unmapped:
@@ -4412,6 +4447,10 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             build_database(data_dir, db_path, skip_wordcloud=skip_wordcloud)
             return True
         prev = _read_load_state(live)
+        # The one thing a file comparison cannot see: the §6C tárca mapping is
+        # code, so an edit to it (or to PARLAMONITOR_PORTFOLIO_MAP) leaves every
+        # processed file untouched while making the derived tables wrong.
+        portfolios_stale = _portfolios_stale(live)
     finally:
         live.close()
 
@@ -4419,11 +4458,15 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
     removed = _removed_sessions(processed, prev)
     n_changed = sum(len(v) for v in changed.values())
     if n_changed == 0 and not removed:
-        logger.info("No processed file changed since last load; DB is up to date")
-        return False
-    logger.info("Incremental update: %d changed file(s), %d removed sitting(s) — %s",
-                n_changed, len(removed),
-                {k: len(v) for k, v in changed.items() if v})
+        if not portfolios_stale:
+            logger.info("No processed file changed since last load; DB is up to date")
+            return False
+        logger.info("No processed file changed, but the portfolio mapping did — "
+                    "rebuilding the §6C tables")
+    else:
+        logger.info("Incremental update: %d changed file(s), %d removed sitting(s) — %s",
+                    n_changed, len(removed),
+                    {k: len(v) for k, v in changed.items() if v})
 
     # Snapshot the live DB into a temp copy we mutate in place, then swap it in.
     tmp_path = db_path.with_suffix(db_path.suffix + ".building")
@@ -4525,6 +4568,18 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             # keep in step — the graph is grouped at request time (INT-5).
             if loaded_sessions:
                 rebuild_interjections(conn, only_sessions=set(loaded_sessions))
+        # §6C. Only ONE of the four sources the tárca tables are derived from is a
+        # sitting (`speech.speaker_office`): the answered/submitted iromány links
+        # come from `bill_event` / `bill_sponsor`, and the office terms from
+        # `person_office`. So a poll that brought in newly answered questions or a
+        # refreshed roster — the common case between sitting weeks — must rebuild
+        # them too, or the section quietly lags the data it is derived from.
+        # `rebuild_aggregates` above already covers the sitting case; this is the
+        # rest of it, plus a mapping edit that changed no file at all.
+        elif (portfolios_stale or changed["bills-*.json"]
+                or changed["representatives-*.json"]
+                or changed["advocates-*.json"] or changed["officeholders.json"]):
+            rebuild_portfolios(conn)
         # Wire any non-MP speaker portraits the scraper has downloaded since the
         # last load (global, cheap — see wire_nonmp_photos). Also runs for an
         # advocates-only update: advocates are non-MP rows, so this is what gives

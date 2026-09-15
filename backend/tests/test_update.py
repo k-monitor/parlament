@@ -196,3 +196,67 @@ def test_api_picks_up_swapped_db_without_restart(client, data_dir, db_path):
     assert loader.update_database(data_dir, db_path) is True
 
     assert client.get("/api/v1/meta").json()["counts"]["sessions"] == 2
+
+
+def test_update_refreshes_portfolios_when_only_bills_changed(data_dir, db_path):
+    """§6C: three of the four sources the tárca tables derive from are not sittings.
+
+    Between sitting weeks the sync keeps bringing in newly submitted/answered
+    irományok and nothing else, so gating the rebuild on a changed sitting left the
+    Tárcák section lagging the data it is derived from on every deployment.
+    """
+    assert _count(db_path, "SELECT COUNT(*) FROM portfolio_bill "
+                           "WHERE portfolio_slug='belugy'") == 0
+
+    bills_file = data_dir / "processed" / "bills-43.json"
+    bills = json.loads(bills_file.read_text())
+    bills["data"].append(
+        {"billId": "bill-uuid-9", "billNumber": "T/109", "billNumberSort": 109,
+         "title": "A belügyi tárca javaslata", "type": "törvényjavaslat",
+         "mainType": "T", "status": "benyújtva",
+         "submittedDate": "2026-06-02T09:00:00Z",
+         "textUrl": None, "textCaption": None, "noText": True,
+         "sponsors": [{"personID": None, "factionId": None, "committeeId": None,
+                       "label": "kormány (belügyminiszter)"}]})
+    bills_file.write_text(json.dumps(bills, ensure_ascii=False))
+
+    assert loader.update_database(data_dir, db_path) is True
+
+    assert _count(db_path, "SELECT COUNT(*) FROM portfolio_bill "
+                           "WHERE portfolio_slug='belugy' AND bill_id='bill-uuid-9' "
+                           "AND role='submitted'") == 1
+    # The tárca itself is on the listing, not just the link.
+    assert _count(db_path, "SELECT COUNT(*) FROM portfolio WHERE slug='belugy'") == 1
+
+
+def test_update_rebuilds_portfolios_when_the_mapping_changed(data_dir, db_path,
+                                                             tmp_path, monkeypatch):
+    """§6C: the mapping is CODE, so editing it changes no processed file.
+
+    An incremental update compares (mtime, size) and would see nothing to do, which
+    is why a corrected label used to reach a deployment only when some unrelated
+    sitting next happened to land. The fingerprint stamp makes the rebuild follow
+    the deploy instead — here through the PARLAMONITOR_PORTFOLIO_MAP knob (OPS-4),
+    which changes the effective mapping exactly as an edit to the table does.
+    """
+    assert _count(db_path, "SELECT COUNT(*) FROM portfolio "
+                           "WHERE slug='penzugy' AND name='Pénzügyminisztérium'") == 1
+
+    override = tmp_path / "portfolio-map.json"
+    override.write_text(json.dumps(
+        [{"slug": "penzugy", "name": "Nemzetgazdasági és Pénzügyminisztérium",
+          "kind": "ministry", "aliases": ["pénzügyminiszter"]}], ensure_ascii=False))
+    monkeypatch.setenv("PARLAMONITOR_PORTFOLIO_MAP", str(override))
+    loader.portfolios._index.cache_clear()
+    loader.portfolios.table_fingerprint.cache_clear()
+    try:
+        # Nothing on disk changed — only the mapping.
+        assert loader.update_database(data_dir, db_path) is True
+        assert _count(db_path, "SELECT COUNT(*) FROM portfolio WHERE slug='penzugy' "
+                               "AND name='Nemzetgazdasági és Pénzügyminisztérium'") == 1
+        # …and the stamp now matches, so the next idle pass is a no-op again.
+        assert loader.update_database(data_dir, db_path) is False
+    finally:
+        monkeypatch.delenv("PARLAMONITOR_PORTFOLIO_MAP", raising=False)
+        loader.portfolios._index.cache_clear()
+        loader.portfolios.table_fingerprint.cache_clear()

@@ -2214,6 +2214,23 @@ speeches its minister and state secretaries gave).
   > as *Tárcák*, and the **Kérdések Sankey now groups its answerer column by the
   > same resolution** — before this a single ministry occupied two nodes, one for
   > its minister and one for its state secretary.
+- **MIN-12 (MUST).** The derived tables **track both of their inputs on the
+  continuous-sync path** (OPS-3), with no hand-run migration on a deployment.
+  Being derived, they are only as fresh as the last rebuild, and they have two
+  kinds of input that go stale independently:
+  - **the rows.** Only one of MIN-2's four links is a sitting; the others come from
+    `bill_event` / `bill_sponsor` (newly answered and newly submitted irományok)
+    and `person_office` (the roster). Between sitting weeks a poll brings in the
+    first two and no transcript at all, so an incremental update that rebuilds §6C
+    only when a *sitting* changed leaves the section lagging the irományok it is
+    derived from — the one failure mode a reader can see and cannot explain.
+  - **the mapping.** MIN-3's table is checked-in code, so correcting a label
+    changes no processed file and is invisible to the update's file comparison. A
+    DB therefore records **which mapping its rows were derived from**
+    (`build_meta.portfolio_map`, a fingerprint over the effective table including
+    an OPS-4 override), and a mismatch is itself a reason to rebuild. A corrected
+    label reaches the site on the next sync pass after the deploy, rather than
+    waiting for whatever unrelated sitting next happens to land.
 
 ---
 

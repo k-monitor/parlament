@@ -46,6 +46,7 @@ whose entries are added to (or override, by slug) the table below.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -585,3 +586,30 @@ def by_slug(slug: str) -> Portfolio | None:
 
 def all_portfolios() -> tuple[Portfolio, ...]:
     return tuple(_index()[1].values())
+
+
+@lru_cache(maxsize=1)
+def table_fingerprint() -> str:
+    """A hash of the *effective* mapping — the table above merged with whatever
+    ``PARLAMONITOR_PORTFOLIO_MAP`` overrides — plus the exclusion list.
+
+    The §6C tables are derived from this mapping, so a built DB carries a copy of
+    whatever it said at the time. Editing it is a **code** change with no
+    processed-file change behind it, which is precisely what the incremental
+    update's (mtime, size) comparison cannot see: without this stamp a deployed
+    site keeps serving the old mapping — a label misfiled, or standing alone as
+    its own tárca — until some unrelated sitting happens to land and rebuild the
+    tables as a side effect. The loader records this in ``build_meta`` and treats
+    a mismatch as stale, so a corrected label reaches the site on the next sync
+    pass instead of at the next sitting (MIN-3).
+
+    Derived from the entries themselves rather than a hand-kept version number:
+    there is no bump to forget, and the operator's override file counts too.
+    """
+    h = hashlib.sha256()
+    for p in sorted(_index()[1].values(), key=lambda p: p.slug):
+        h.update("\x1f".join((p.slug, p.name, p.kind, *p.aliases)).encode())
+        h.update(b"\x1e")
+    h.update(b"excluded\x1e")
+    h.update("\x1f".join(sorted(EXCLUDED_LABELS)).encode())
+    return h.hexdigest()[:16]

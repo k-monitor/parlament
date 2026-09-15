@@ -968,6 +968,8 @@ export default {
   votes: {
     title: 'Szavazások',
     subtitle: 'Az Országgyűlés név szerinti és listás szavazásai.',
+    cohesionLead: 'Kik szavaznak rendre együtt ezeken a szavazásokon?',
+    cohesionLink: 'Frakcióelemzés',
     searchPlaceholder: 'Keresés a tárgyban vagy irományszámban…',
     period: 'Ciklus',
     result: 'Eredmény',

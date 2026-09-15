@@ -843,6 +843,8 @@ export default {
   votes: {
     title: 'Votes',
     subtitle: 'Roll-call and list divisions of the National Assembly.',
+    cohesionLead: 'Who keeps voting together across these divisions?',
+    cohesionLink: 'Faction analysis',
     searchPlaceholder: 'Search the subject or bill number…',
     period: 'Cycle',
     result: 'Result',

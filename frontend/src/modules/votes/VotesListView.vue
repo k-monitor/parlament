@@ -10,6 +10,7 @@ import { formatDateTime } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import Pagination from '../../components/Pagination.vue'
+import { ANALYSIS_BY_ROUTE, analysisAvailable } from '../analyses/registry.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -181,6 +182,19 @@ async function load() {
   }
 }
 
+// Frakcióelemzés (VOTE-8) is what this list adds up to — who votes with whom
+// across the whole cycle rather than one division at a time. Linked only while
+// that page can actually be opened, for which the Elemzések registry is the one
+// authority: it is cycle-scoped, so the link comes and goes with the cycle
+// chooser (an "all cycles" scope would pool terms that never sat together).
+const cohesionAvailable = computed(() => {
+  // Guarded on the entry existing at all, not just on its module: if the
+  // analysis is ever dropped from the registry this link should quietly go with
+  // it rather than take the whole list page down with a missing `module`.
+  const cohesion = ANALYSIS_BY_ROUTE.cohesion
+  return !!cohesion && analysisAvailable(cohesion)
+})
+
 onMounted(() => { loadMeta().catch(() => {}).finally(() => { loadFacets(); load() }) })
 watch(() => route.query, (q) => {
   f.q = q.q || ''; f.result = q.result || ''
@@ -244,6 +258,16 @@ onUnmounted(() => clearTimeout(searchTimer))
       </button>
     </fieldset>
   </form>
+
+  <!-- The next question this list raises: who keeps voting with whom? -->
+  <p v-if="cohesionAvailable" class="card pad analysislink">
+    <span class="muted small">{{ $t('votes.cohesionLead') }}</span>
+    <!-- Plain named link: the cycle scope is re-attached by the router guard,
+         the same way every other in-site link leaves it to. -->
+    <router-link class="small" :to="{ name: 'cohesion' }">
+      {{ $t('votes.cohesionLink') }} →
+    </router-link>
+  </p>
 
   <!-- Person scope banner (arrives via a link from a profile's statistics):
        names the MP + which participation segment is shown, with a way back to
@@ -334,6 +358,7 @@ onUnmounted(() => clearTimeout(searchTimer))
 
 <style scoped>
 /* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
+.analysislink { display: flex; gap: .75rem; align-items: baseline; flex-wrap: wrap; margin-bottom: 1rem; }
 .personscope { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 1rem 0 .2rem; }
 .personscope .ps-title { margin: 0; font-weight: 600; }
 .personscope .ps-seg { color: var(--accent); }

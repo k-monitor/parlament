@@ -34,6 +34,14 @@ router = APIRouter(prefix="/bills", tags=["bills"])
 # so the bill page can embed the answer video (VIE-9).
 _ANSWER_EVENTS = ("kérdés megválaszolva", "interpelláció szóban megválaszolva")
 
+# The written counterpart: a question answered on paper instead of from the
+# floor. It carries no speech (hence its exclusion above) but it *is* an answer,
+# so it counts wherever the question asked is "was this answered at all" — the
+# Kérdések list's answer filter (BILL-13) and the Sankey's answerer column
+# (BILL-11), which both read the two kinds together.
+_WRITTEN_ANSWER_EVENT = "kérdés írásban megválaszolva"
+_ALL_ANSWER_EVENTS = _ANSWER_EVENTS + (_WRITTEN_ANSWER_EVENT,)
+
 # The asking MP's verdict on that oral answer, recorded as its own bill event.
 # In practice only interpellációk carry it (the House then votes on an answer the
 # MP rejected), and a question gets at most one of the two — so they make a clean
@@ -115,6 +123,41 @@ def _any_of(where: list, params: dict, column: str, values: list[str], prefix: s
     keys = [f"{prefix}{i}" for i in range(len(vals))]
     where.append(f"{column} IN (" + ",".join(":" + k for k in keys) + ")")
     params.update(dict(zip(keys, vals)))
+
+
+def _main_type_where(where: list, params: dict, prefix: str, *,
+                     main_type: Optional[str] = None,
+                     main_type_not: Optional[str] = None,
+                     main_type_in: Optional[str] = None,
+                     main_type_not_in: Optional[str] = None) -> None:
+    """The fotipus scope, applied in-place to a WHERE/params pair.
+
+    This is what tells the three iromány browse pages apart over the one list
+    endpoint: ``main_type=T`` for törvényjavaslatok (BILL-1), ``main_type_in=A,I,K``
+    for kérdések (BILL-13), and no scope at all for the all-irományok page
+    (BILL-9). The include/exclude forms combine, so a page can ask for "every
+    type except these".
+
+    ``prefix`` namespaces the bind names, so the same predicate can be built
+    twice within one statement — the facet query builds it for the list itself
+    and again inside the topic sub-select.
+    """
+    if main_type:
+        where.append(f"b.main_type = :{prefix}mt")
+        params[f"{prefix}mt"] = main_type
+    if main_type_not:
+        where.append(f"(b.main_type IS NULL OR b.main_type != :{prefix}mtn)")
+        params[f"{prefix}mtn"] = main_type_not
+    if main_type_in:
+        _any_of(where, params, "b.main_type",
+                [c.strip() for c in main_type_in.split(",")], f"{prefix}mti")
+    if main_type_not_in:
+        codes = [c.strip() for c in main_type_not_in.split(",") if c.strip()]
+        if codes:
+            keys = [f"{prefix}mtni{i}" for i in range(len(codes))]
+            where.append("(b.main_type IS NULL OR b.main_type NOT IN ("
+                         + ",".join(":" + k for k in keys) + "))")
+            params.update(dict(zip(keys, codes)))
 
 
 def _has_portfolios(db: sqlite3.Connection) -> bool:
@@ -293,6 +336,10 @@ def list_bills(
         None, pattern="^(accepted|rejected)$",
         description="Question-type irományok where the asking MP accepted / "
                     "rejected the answer given to them"),
+    answer_state: Optional[str] = Query(
+        None, pattern="^(answered|unanswered|oral|written)$",
+        description="Question-type irományok by whether and how they were "
+                    "answered: at all, not at all, from the floor, or in writing"),
     sort: str = Query("number", pattern="^(number|date)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -315,21 +362,9 @@ def list_bills(
     # not everything: silently dropping a filter is worse than an empty page.
     if not _topic_filter(db, where, params, topic, period):
         where.append("0=1")
-    if main_type:
-        where.append("b.main_type = :mt"); params["mt"] = main_type
-    if main_type_not:
-        where.append("(b.main_type IS NULL OR b.main_type != :mtn)")
-        params["mtn"] = main_type_not
-    if main_type_in:
-        _any_of(where, params, "b.main_type",
-                [c.strip() for c in main_type_in.split(",")], "mti")
-    if main_type_not_in:
-        codes = [c.strip() for c in main_type_not_in.split(",") if c.strip()]
-        if codes:
-            keys = [f"mtni{i}" for i in range(len(codes))]
-            where.append("(b.main_type IS NULL OR b.main_type NOT IN ("
-                         + ",".join(":" + k for k in keys) + "))")
-            params.update(dict(zip(keys, codes)))
+    _main_type_where(where, params, "", main_type=main_type,
+                     main_type_not=main_type_not, main_type_in=main_type_in,
+                     main_type_not_in=main_type_not_in)
     # Type and status are multi-value: the documents list lets a reader tick
     # several categories at once (kérdés *and* interpelláció), and each arrives
     # as a repeated query param. A single value still works unchanged.
@@ -370,6 +405,21 @@ def list_bills(
         # small table beats an index probe per candidate bill (~5× here).
         where.append("b.id IN (SELECT bill_id FROM bill_event WHERE name = :av)")
         params["av"] = _VERDICT_EVENTS[answer_verdict]
+    if answer_state:
+        # Whether a question was answered is the presence of an answer event, so
+        # "unanswered" is the absence of one — the same sub-select negated, which
+        # is sound here because `bill_event.bill_id` is NOT NULL (a NULL in a
+        # `NOT IN` list would silently match nothing). Same sub-select shape as
+        # the verdict above, and for the same reason.
+        names = {"oral": _ANSWER_EVENTS,
+                 "written": (_WRITTEN_ANSWER_EVENT,)}.get(
+                     answer_state, _ALL_ANSWER_EVENTS)
+        keys = [f"as{i}" for i in range(len(names))]
+        where.append(
+            f"b.id {'NOT IN' if answer_state == 'unanswered' else 'IN'} "
+            "(SELECT bill_id FROM bill_event WHERE name IN ("
+            + ",".join(":" + k for k in keys) + "))")
+        params.update(dict(zip(keys, names)))
     where_sql = " AND ".join(where)
 
     # number_sort restarts every cycle, so rank by period first — otherwise an
@@ -398,7 +448,8 @@ def list_bills(
         type=type, status=status, topic=topic, sponsor=sponsor,
         portfolio=portfolio, portfolio_role=portfolio_role,
         portfolio_period=portfolio_period,
-        answer_verdict=answer_verdict, results=total, offset=offset)
+        answer_verdict=answer_verdict, answer_state=answer_state,
+        results=total, offset=offset)
 
     rows = db.execute(
         f"""SELECT b.id, b.bill_number, b.title, b.type, b.main_type, b.status,
@@ -426,8 +477,7 @@ def list_bills(
 
 
 def _topic_facet(db: sqlite3.Connection, period: Optional[List[int]],
-                 main_type: Optional[str], main_type_not: Optional[str],
-                 sponsor: Optional[str]) -> list[dict]:
+                 sponsor: Optional[str], **main_type_scope) -> list[dict]:
     """The CAP topics actually present in this slice, with how many irományok
     carry each — ``[{"label", "code", "count"}]``, commonest first.
 
@@ -455,11 +505,7 @@ def _topic_facet(db: sqlite3.Connection, period: Optional[List[int]],
     outer_period = period_sql(period, "b.period_number")
     if outer_period:
         where.append(outer_period)
-    if main_type:
-        where.append("b.main_type = :f_mt"); params["f_mt"] = main_type
-    if main_type_not:
-        where.append("(b.main_type IS NULL OR b.main_type != :f_mtn)")
-        params["f_mtn"] = main_type_not
+    _main_type_where(where, params, "f_", **main_type_scope)
     if sponsor:
         where.append("EXISTS (SELECT 1 FROM bill_sponsor bs "
                      "WHERE bs.bill_id = b.id AND bs.person_id = :f_sp)")
@@ -479,28 +525,36 @@ def bill_facets(period: Optional[List[int]] = Query(
                     None, description="Electoral period number(s)"),
                 main_type: Optional[str] = None,
                 main_type_not: Optional[str] = None,
+                main_type_in: Optional[str] = None,      # CSV, as on the list
+                main_type_not_in: Optional[str] = None,  # CSV, as on the list
                 sponsor: Optional[str] = None,       # restrict to one MP's irományok
                 db: sqlite3.Connection = Depends(get_db)):
     """Distinct statuses and types for filter controls (optionally scoped to a
-    period, a fotipus include/exclude — e.g. ``main_type=T`` for the bills page,
-    ``main_type_not=T`` for the other-irományok page — and a sponsor, so a
-    profile can list only the document types that MP actually submitted)."""
+    period, a fotipus include/exclude — ``main_type=T`` for the bills page,
+    ``main_type_in=A,I,K`` for the kérdések page, nothing for the all-irományok
+    page — and a sponsor, so a profile can list only the document types that MP
+    actually submitted).
+
+    The fotipus params mirror the list endpoint's exactly, so a page asks for the
+    facets of the very slice it is showing: offering a type or a status that
+    matches nothing in the list below is a dead end dressed as a choice."""
     # Distinct-value scan over the whole bill table; static per deploy and hit by
     # every filter UI, so memoize per filter-combination (invalidated on DB swap).
-    key = (period_key(period), main_type, main_type_not, sponsor)
+    scope = {"main_type": main_type, "main_type_not": main_type_not,
+             "main_type_in": main_type_in, "main_type_not_in": main_type_not_in}
+    key = (period_key(period), main_type, main_type_not, main_type_in,
+           main_type_not_in, sponsor)
 
     def _compute():
-        where, params = ["1=1"], []
+        where, params = ["1=1"], {}
         per_sql = period_sql(period, "b.period_number")
         if per_sql:
             where.append(per_sql)
-        if main_type:
-            where.append("b.main_type = ?"); params.append(main_type)
-        if main_type_not:
-            where.append("(b.main_type IS NULL OR b.main_type != ?)"); params.append(main_type_not)
+        _main_type_where(where, params, "", **scope)
         if sponsor:
             where.append("EXISTS (SELECT 1 FROM bill_sponsor bs "
-                         "WHERE bs.bill_id=b.id AND bs.person_id=?)"); params.append(sponsor)
+                         "WHERE bs.bill_id=b.id AND bs.person_id=:sp)")
+            params["sp"] = sponsor
         where_sql = "WHERE " + " AND ".join(where)
         statuses = [r["status"] for r in db.execute(
             f"SELECT DISTINCT b.status FROM bill b {where_sql} "
@@ -509,8 +563,7 @@ def bill_facets(period: Optional[List[int]] = Query(
             f"SELECT DISTINCT b.main_type, b.type FROM bill b {where_sql} "
             f"ORDER BY b.main_type, b.type", params)]
         return {"statuses": statuses, "types": types,
-                "topics": _topic_facet(db, period, main_type, main_type_not,
-                                       sponsor)}
+                "topics": _topic_facet(db, period, sponsor, **scope)}
 
     return cached_aggregate("bill_facets", key, _compute)
 
@@ -521,9 +574,13 @@ def bill_facets(period: Optional[List[int]] = Query(
 # where the answerer is the responding portfolio (both oral and written answer
 # events carry it in `related_label`), or an "unanswered" node when the question
 # drew no answer.
+# The three fotipusok that ARE a question, and so the scope of both the Sankey
+# and the Kérdések browse page (BILL-13) — which reaches this endpoint as
+# `main_type_in=A,I,K`, the same way the bills page reaches it as `main_type=T`.
 _QUESTION_TYPES = ("A", "I", "K")
-_ORAL_ANSWER_EVENTS = ("kérdés megválaszolva", "interpelláció szóban megválaszolva")
-_WRITTEN_ANSWER_EVENT = "kérdés írásban megválaszolva"
+# The oral answer events, under the name this section reads them by (they are
+# the same events the answer video is resolved through — see the top of the file).
+_ORAL_ANSWER_EVENTS = _ANSWER_EVENTS
 # Colours for the question-type column of the Sankey (§6A). Muted tones distinct
 # from the faction palette; the type node colours its outgoing (stage-1) ribbons.
 _TYPE_COLORS = {
@@ -592,7 +649,7 @@ def _classify_questions(db: sqlite3.Connection, period: Optional[List[int]], top
     # actual responder — there is no separate "answered in writing" bucket. Oral
     # wins per bill when both events exist (the plenary answer is the substantive
     # one).
-    answer_events = _ORAL_ANSWER_EVENTS + (_WRITTEN_ANSWER_EVENT,)
+    answer_events = _ALL_ANSWER_EVENTS
     aph = ",".join("?" * len(answer_events))
     oral_ministry: dict[str, Optional[str]] = {}     # bill -> responder label (or None)
     written_ministry: dict[str, Optional[str]] = {}  # bill -> responder label (or None)

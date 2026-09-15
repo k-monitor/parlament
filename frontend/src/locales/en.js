@@ -25,7 +25,7 @@ export default {
   // `representatives` is the merged Felszólalók page: representatives, nationality
   // advocates and the other speakers in one list, picked apart by category chips
   // (REP-1). `advocates` / `speakers` name two of those chips.
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'Other documents', questions: 'Questions', votes: 'Votes', analyses: 'Analyses', analysesIndex: 'Overview', cohesion: 'Faction analysis', interjections: 'Interjections', settlements: 'Settlements', settlementReps: 'Own constituency', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'All documents', questions: 'Questions', votes: 'Votes', analyses: 'Analyses', analysesIndex: 'Overview', cohesion: 'Faction analysis', interjections: 'Interjections', settlements: 'Settlements', settlementReps: 'Own constituency', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -679,8 +679,8 @@ export default {
     docKind: { justification: 'Justification', background: 'Background' },
   },
   documents: {
-    title: 'Other documents',
-    subtitle: 'Other documents (irományok) submitted to the National Assembly (resolution proposals, interpellations, questions, reports…) — bills have their own page.',
+    title: 'All documents',
+    subtitle: 'Every document (iromány) submitted to the National Assembly in one list: bills, resolution proposals, questions, reports and every other type. Bills and questions also have pages of their own, with filters specific to them.',
     // Scoped to one representative the list covers every document type, bills
     // included — matching how the profile's submitted-documents stat counts.
     sponsorTitle: 'Submitted documents',
@@ -703,6 +703,38 @@ export default {
       K: 'Questions', A: 'Immediate questions', B: 'Reports',
       S: 'Personnel decisions', Y: 'Briefings',
     },
+  },
+  // The question list (BILL-13) — the Bills section's middle tab. Its own
+  // namespace, separate from `questions` (the Analyses Sankey's strings): the
+  // two pages share a title, not their contents.
+  questionList: {
+    title: 'Questions',
+    subtitle: 'MPs’ questions, written questions, interpellations and immediate questions — who asked, which ministry answered, and what became of the answer.',
+    searchPlaceholder: 'Search the title or document number…',
+    type: 'Question type',
+    status: 'Status',
+    topic: 'Topic',
+    answer: 'Answer',
+    answerAnswered: 'answered (either way)',
+    answerOral: 'answered from the floor',
+    answerWritten: 'answered in writing',
+    answerUnanswered: 'no answer',
+    // "No answer" is the absence of an answer event, not a ministry that failed
+    // to reply: a recently submitted question may simply still be within its
+    // statutory deadline (TRUST-1).
+    answerHint: 'From the recorded document events. For a recently submitted question, “no answer” may just mean the deadline has not passed yet.',
+    responder: 'Answering portfolio',
+    verdict: 'Answer accepted',
+    verdictAccepted: 'the MP accepted the answer',
+    verdictRejected: 'the MP rejected the answer',
+    verdictHint: 'Applies to interpellations only.',
+    sortNumber: 'By document number',
+    sortDate: 'By submission',
+    count: 'questions',
+    noResults: 'No matching questions.',
+    answeredBy: 'Answered by',
+    sankeyLead: 'Where do these questions travel from and to?',
+    sankeyLink: 'Questions analysis',
   },
   questions: {
     title: 'Questions',

@@ -1194,8 +1194,8 @@ section — **Elemzések** — with its own entry in the top bar.
   > reclassification. (Topic classification of **irományok** was the third of
   > these and is now TOPIC-8 below.)
 - **TOPIC-8 (SHOULD).** The same labels are carried by **irományok**, wherever one
-  appears as an item the reader can act on: the bills list, the *Egyéb irományok*
-  list (BILL-9) and the iromány detail view. It answers the same question the
+  appears as an item the reader can act on: the bills list, the *Kérdések* list
+  (BILL-13), the *Minden iromány* list (BILL-9) and the iromány detail view. It answers the same question the
   speech topic does — *what is this about?* — which for a document the title
   answers only when the title is plain, and an iromány's title is routinely a
   citation ("Az általános forgalmi adóról szóló 2007. évi CXXVII. törvény
@@ -1752,9 +1752,13 @@ The first additive feature module beyond proceedings and representatives, built
 to validate the module architecture (§7). It surfaces the *irományok* — the
 parliamentary documents submitted to the Assembly — sourced from the Felicitas
 `iromany` API. **Törvényjavaslatok** (bills, `fotipus = T`) are the flagship
-case with their own page and the rich detail sheet (BILL-7); **every other
-iromány type** (határozati javaslatok, interpellációk, kérdések, beszámolók, …)
-is surfaced on a separate browse page (BILL-9) over the same data layer.
+case with their own page and the rich detail sheet (BILL-7); the **question
+types** (kérdés, interpelláció, azonnali kérdés — `fotipus` A/I/K) have a page
+of their own too (BILL-13), because they are ~90% of everything that is not a
+törvényjavaslat and they carry attributes no other type has; and **every
+iromány type together**, those two included, is browsable on a third page
+(BILL-9). All three are the same data layer and the same detail view, scoped by
+`fotipus`: they are three questions put to one list, not three lists.
 
 - **BILL-1 (MUST).** A **browsable, filterable list of bills**, paginated and
   filterable by **status**, **type**, **sponsor**, and **free text**; filters
@@ -1850,23 +1854,28 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
     parsed and kept in the scrape output but not loaded: neither has a column
     that means it (the addressee for the same reason `cimzettNeve` is left out of
     the modern scrape).
-- **BILL-9 (MUST).** The non-bill irományok have their own **browsable,
-  filterable list page** ("Egyéb irományok"), separate from the
-  törvényjavaslatok page, paginated and filterable by
-  **document type** (interpelláció, kérdés, határozati javaslat, …), **status**
-  and **free text** (title *and* iromány number, as BILL-1); filters combine and
-  live in the **URL query**
+- **BILL-9 (MUST).** **Every** iromány is browsable on one **filterable list
+  page** ("Minden iromány") — the section's catch-all tab, for a reader who does
+  not know which type a document is, or who wants the types side by side.
+  Paginated and filterable by **document type** (interpelláció, kérdés,
+  határozati javaslat, …), **status** and **free text** (title *and* iromány
+  number, as BILL-1); filters combine and live in the **URL query**
   (deep-linkable). Type and status are **multi-select** — several categories can
   be in scope at once (a reader after "questions" wants kérdés *and*
   interpelláció), each value repeated in the query param, an empty selection
-  meaning "all" as with the cycle scope (§4A). The **electoral period** is set by the global cycle selector
-  (§4A). The free-text filter is **accent-insensitive** (§4B FOLD-1). It shares
-  the Bills module's data layer and `/api/v1/bills`
-  routes (scoped by `main_type`: `= T` for bills, `!= T` for this page) and the
-  **same detail view** (BILL-2/BILL-7) — only the browse page is distinct, so no
-  data, table or detail logic is duplicated. Each MP submitter links to their
-  profile through the shared `person` entity (EXT-2), exactly as on bills
-  (BILL-3).
+  meaning "all" as with the cycle scope (§4A). The **electoral period** is set by
+  the global cycle selector (§4A). The free-text filter is
+  **accent-insensitive** (§4B FOLD-1). It shares the Bills module's data layer
+  and `/api/v1/bills` routes — passing **no `fotipus` scope at all**, where the
+  bills page passes `main_type = T` and the kérdések page `main_type_in = A,I,K`
+  (BILL-13) — and the **same detail view** (BILL-2/BILL-7), so no data, table or
+  detail logic is duplicated. The three browse pages therefore **overlap by
+  design**; what is not duplicated is the *detail* address, which stays one
+  canonical per iromány (`/bills/:id` for a törvényjavaslat, `/documents/:id`
+  for everything else, §SEO-2). With a `sponsor` in the URL the page is one MP's
+  complete iromány list, which is what the profile's submitted-documents stat
+  (REP-3) links to and counts. Each MP submitter links to their profile through
+  the shared `person` entity (EXT-2), exactly as on bills (BILL-3).
 - **BILL-8 (SHOULD).** Where a bill event references a plenary **speech** (as
   parlament.hu's adatlap does), the event links **into this site's own speech
   viewer** (VIE-5), not out to parlament.hu. The link is resolved through the
@@ -1924,6 +1933,50 @@ is surfaced on a separate browse page (BILL-9) over the same data layer.
   routes and a frontend page — in the Elemzések section (§4E), disabled with the
   rest of the module wherever it sits (EXT-6).
   The Sankey diagram is **embeddable** (§4C).
+
+- **BILL-13 (SHOULD).** The **question-type irományok** — *kérdés*, *írásbeli
+  kérdés*, *interpelláció* and *azonnali kérdés* (Felicitas `fotipus` A/I/K) —
+  have their own **browsable, filterable list page** ("Kérdések") at
+  `/bills/questions`, the **middle tab** of the Törvényjavaslatok section,
+  between the törvényjavaslatok page (BILL-1) and the all-irományok page
+  (BILL-9). It exists because these are **~90% of every non-törvényjavaslat
+  iromány** (90 839 of 101 060 in the corpus): on a list of everything they bury
+  each other and every other type, and they carry attributes no other iromány
+  has, which had nowhere to live.
+  - Filterable by **question type**, **status**, **CAP policy topic** (TOPIC-8)
+    and **free text** (title *and* iromány number, as BILL-1, accent-insensitive
+    per §4B FOLD-1), plus the three filters that only mean something for a
+    question: **whether and how it was answered** (answered either way / from
+    the floor / in writing / not at all), the **answering tárca** (§6C, MIN-7),
+    and the asking MP's **verdict** on the answer (accepted / rejected — in
+    practice interpellációk only). Filters combine, are **multi-select** where
+    the value set is a category (type, status, topic) and live in the **URL
+    query**, so a filtered list is shareable and citable. The **electoral
+    period** comes from the global cycle selector (§4A).
+  - The answer state is **derived at query time** from the answer events, never
+    stored: *answered* is the presence of an answer event and *unanswered* its
+    absence. That the absence of a record is not the same as a ministry that
+    failed to reply is **said on the page** (TRUST-1): for a recently submitted
+    question "nincs válasz" may simply mean the statutory deadline has not
+    passed. Facets (type, status, topic, tárca) are scoped to the slice on
+    display and a value matching nothing is not offered, so no filter is a dead
+    end.
+  - It adds **no data layer of its own**: `/api/v1/bills` with
+    `main_type_in=A,I,K` — the same endpoint, row shape and detail view the other
+    two browse pages use (BILL-9) — plus `answer_state` on that list and the
+    `fotipus` include/exclude on `/api/v1/bills/facets`. An opened question keeps
+    the **canonical detail address of every non-törvényjavaslat**,
+    `/documents/:id` (§SEO-2), so this page adds a browse URL and no duplicate
+    detail URL; its breadcrumb, however, names *Kérdések* as the page the
+    document reads under.
+  - It is **not** at `/questions`: that address is the shipped 301 to the
+    Kérdések **Sankey** (BILL-11), which is a different page and keeps its
+    indexing. The two are siblings rather than rivals — this page links to the
+    analysis ("where do these questions travel?"), and their **titles differ**
+    ("Kérdések és interpellációk" vs "Kérdések elemzése") so neither is filed as
+    a duplicate of the other. Part of the Bills module's vertical slice
+    (BILL-5): it disappears with the module (EXT-6), and its tárca filter
+    disappears with the §6C module on its own.
 
 ---
 
@@ -2901,9 +2954,12 @@ rework of existing features.
 > Extending coverage to **all iromány types** (BILL-9) was lighter still — *no
 > new tables at all*: the scraper now fetches every `fotipus` into the existing
 > `bill` tables (tagging each row's `main_type` from its number prefix), the
-> `/api/v1/bills` list gained `main_type`/`main_type_not` filters, and a new
-> "Egyéb irományok" browse page reuses the existing bill detail view. The bills
-> page scopes itself to `main_type = T`, the new page to `!= T`.
+> `/api/v1/bills` list gained `main_type` include/exclude filters, and the extra
+> browse pages reuse the existing bill detail view. Three pages now sit over that
+> one list, each just a `fotipus` scope: the bills page at `main_type = T`, the
+> Kérdések page (BILL-13) at `main_type_in = A,I,K`, and "Minden iromány" at no
+> scope at all. A fourth would be another route, another scope, and no backend
+> work beyond a filter that is specific to it.
 >
 > The **Votes module (§6B)** is the second worked example, added the same purely
 > additive way: a new scraper stage and `votes-<cycle>.json` output, `vote` +
@@ -3184,9 +3240,9 @@ what was said.
 - **Bills** are implemented as the first additive module (§6A), including the
   full per-bill detail sheet (BILL-7: event history, aggregate votes, committee
   timelines, deadlines, documents, motions). The module now covers **all iromány
-  types** — törvényjavaslatok on their own page and every other type on the
-  "Egyéb irományok" page (BILL-9) — so document-level coverage of irományok is
-  complete. **Votes** are now implemented as the
+  types** — törvényjavaslatok on their own page, the question types on theirs
+  (BILL-13) and every type together on the "Minden iromány" page (BILL-9) — so
+  document-level coverage of irományok is complete. **Votes** are now implemented as the
   second additive module (§6B): the roll-call list, per-MP breakdown, per-faction
   breakdown, and bidirectional links to bills and representatives. **Committees**
   and a richer dedicated **interpellations** module (linking interpelláció →

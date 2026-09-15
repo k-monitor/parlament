@@ -122,8 +122,9 @@ async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false
   const offset = Number(route.query.offset) || 0
-  // This page is the bills (törvényjavaslat) view; the other iromány types
-  // live on the separate "Egyéb irományok" page (main_type=T scopes here).
+  // This page is the bills (törvényjavaslat) view — `main_type=T` scopes it.
+  // Its sibling tabs scope themselves the same way: the kérdések page to
+  // `main_type_in=A,I,K`, the "Minden iromány" page to nothing at all.
   // `period` comes from the global cycle chooser (store.cycles; empty = all).
   const args = {
     q: route.query.q, status: route.query.status, period: store.cycles,

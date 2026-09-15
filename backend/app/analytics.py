@@ -116,14 +116,15 @@ _SHARED_FIELDS = ("date_from", "date_to", "period", "person_id", "faction_id",
 SOURCES: dict[str, dict[str, str]] = {
     # The transcript full-text search (§5.1) — all its filters are shared ones.
     "proceedings": {"sort": "relevance"},
-    # The iromány list (§6): both the bills page (main_type=T) and the "egyéb
-    # irományok" page (main_type_not=T), which are one endpoint under two
-    # filter sets — the `filters` string tells them apart.
+    # The iromány list (§6): the bills page (main_type=T), the kérdések page
+    # (main_type_in=A,I,K) and the all-irományok page (no fotipus scope at all)
+    # are one endpoint under three filter sets — the `filters` string tells them
+    # apart.
     "bills": {"sort": "number", "main_type": "", "main_type_not": "",
               "main_type_in": "", "main_type_not_in": "", "type": "",
               "status": "", "sponsor": "", "portfolio": "",
               "portfolio_role": "any", "portfolio_period": "",
-              "answer_verdict": ""},
+              "answer_verdict": "", "answer_state": ""},
     # The representative list (REP-1) — `role` picks the MP / advocate / other
     # sub-tab, so it is a filter like any other here.
     "representatives": {"sort": "name", "role": "mp", "constituency": "",

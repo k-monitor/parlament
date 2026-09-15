@@ -1,16 +1,19 @@
 <script setup>
-// Browsable, filterable list of the cycle's *other* irományok — every document
-// type except törvényjavaslat (bills), which has its own page. Shares the Bills
-// module's data layer (`/api/v1/bills` with `main_type_not=T`) and detail view;
-// only the browse page is distinct. Filter/sort state lives in the URL so a
-// filtered list is shareable, and each MP submitter links to their profile
-// (EXT-2).
+// Browsable, filterable list of **every** iromány submitted to the Assembly
+// ("Minden iromány", BILL-9) — the section's catch-all tab, next to the two
+// pages that scope themselves to one kind: törvényjavaslatok (BILL-1) and
+// kérdések (BILL-13). It is where a reader lands who does not know which of the
+// three a document is, or wants them side by side; the other two are where the
+// type-specific filters live.
 //
-// One exception to "every type except T": with a `sponsor` in the URL the page
-// is one MP's complete iromány list (linked from the "Benyújtott önálló
-// indítványok" profile stat, which counts every type), so törvényjavaslatok are
-// included — the type exclusion is what splits the *browse* pages, not what a
-// per-submitter list should hide.
+// Shares the Bills module's data layer (`/api/v1/bills`, here with no fotipus
+// filter at all) and detail view; only the browse page is distinct. Filter/sort
+// state lives in the URL so a filtered list is shareable, and each MP submitter
+// links to their profile (EXT-2).
+//
+// With a `sponsor` in the URL it is one MP's complete iromány list, linked from
+// the "Benyújtott önálló indítványok" profile stat — which counts every type,
+// and now so does this page unconditionally.
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -35,7 +38,7 @@ const PAGE = 50
 const data = ref(null)
 const loading = ref(false)
 const error = ref(false)
-const types = ref([])      // distinct iromány categories (excl. törvényjavaslat)
+const types = ref([])      // distinct iromány categories present in this slice
 const statuses = ref([])
 // CAP policy topics present in this slice, with their counts (TOPIC-8). Facet-
 // driven rather than the model's full 21: a cycle typically uses a subset, and
@@ -119,8 +122,7 @@ function gotoPage(p) {
 async function loadFacets() {
   try {
     const r = await api.billFacets({
-      period: store.cycles, main_type_not: mainTypeNot.value,
-      sponsor: sponsor.value || undefined,
+      period: store.cycles, sponsor: sponsor.value || undefined,
     })
     // One type name can appear under two fotipusok, so the same string comes
     // back twice — dedupe, or the picker lists it twice.
@@ -139,18 +141,15 @@ const topicOptions = computed(() => topics.value.map((x) => ({
   label: `${topicGlyph(x.label)} ${topicName(x.label, tr, hasTr)} (${x.count})`,
 })))
 
-// Bills are excluded on the browse page (they have their own), but not from a
-// single submitter's list — see the note at the top of the file.
-const mainTypeNot = computed(() => (sponsor.value ? undefined : 'T'))
-
 // Monotonic load id: overlapping fetches (filter watcher + cycle watcher) can
 // resolve out of order; only the latest may write state.
 let loadSeq = 0
 
 // Anonymous search-quality signal (SEA-12): which result the reader opens after
 // a keyword search, and how far down the list it sat. The backend counts this
-// page under the same `bills` source as the törvényjavaslat list — the two are
-// one endpoint, told apart by their main_type filters.
+// page under the same `bills` source as the törvényjavaslat and kérdés lists —
+// the three are one endpoint, told apart by their main_type filters (this one
+// passing none).
 const clicks = createSearchClicks('bills')
 
 async function load() {
@@ -162,7 +161,7 @@ async function load() {
     q: route.query.q,
     type: toArray(route.query.type), status: toArray(route.query.status),
     period: store.cycles, sort: route.query.sort || 'number',
-    sponsor: route.query.sponsor, main_type_not: mainTypeNot.value,
+    sponsor: route.query.sponsor,
     answer_verdict: route.query.verdict || undefined,
     topic: toArray(route.query.topic),
   }

@@ -194,7 +194,7 @@ def _officeholders_registry():
 def _bills_registry():
     """Three irományok: two törvényjavaslatok (mainType T) — one with a known-MP
     sponsor (links to k001), one government bill (no MP link) — and one non-bill
-    document (an interpelláció, mainType I) for the "Egyéb irományok" page, so the
+    document (an interpelláció, mainType I) for the question and all-iromány pages, so the
     main_type / main_type_not / type filters are exercised (BILL-9)."""
     return {
         "meta": {"cycle": 43, "mainTypes": "all", "source": "felicitas-iromany-api",

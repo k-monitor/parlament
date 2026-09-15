@@ -79,6 +79,9 @@ STATIC_PATHS: tuple[tuple[str, str | tuple[str, ...] | None], ...] = (
     ("/representatives/officials", "representatives"),
     ("/representatives/portfolios", "portfolios"),
     ("/bills", "bills"),
+    # Kérdések (BILL-13) — the questions browse page, its own entry point into the
+    # 90 000-odd question-type irományok the all-irományok list below buries.
+    ("/bills/questions", "bills"),
     ("/documents", "bills"),
     ("/votes", "votes"),
     # Elemzések (§4E). The section index, and the analyses that stand as entry
@@ -183,8 +186,10 @@ def _sections() -> tuple[_Section, ...]:
             LIMIT :limit OFFSET :offset""",
       ),
       # Törvényjavaslatok live under /bills, every other iromány type under
-      # /documents — the same split the two browse pages make (main_type 'T'), and
-      # the one `og.py` canonicalises to.
+      # /documents — the split `og.py` canonicalises a detail page to. It is a
+      # split of the *detail* addresses only: the browse pages now number three
+      # (törvényjavaslatok, kérdések, all irományok) and overlap by design, so
+      # each iromány is still listed here exactly once, under its one canonical.
       _Section(
         "bills", "bills",
         f"SELECT COUNT(*) FROM bill WHERE main_type='T'{ses}",

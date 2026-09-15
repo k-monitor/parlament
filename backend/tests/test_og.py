@@ -313,6 +313,48 @@ def test_compare_is_not_taken_for_a_person_id(og_client):
     assert "noindex" not in r.text
 
 
+def test_questions_page_is_not_taken_for_an_iromany_id(og_client):
+    """`/bills/questions` is the Kérdések browse page (BILL-13), not an iromány
+    called "questions": it keeps its own card and a 200, where a missing iromány
+    id under the same route shape gets the noindex 404 shell."""
+    r = og_client.get("/bills/questions")
+    assert r.status_code == 200
+    assert _meta(r.text)["og:title"] == "Kérdések és interpellációk · Parlamonitor"
+    assert _canonical(r.text).endswith("/bills/questions")
+    assert "noindex" not in r.text
+    # The contrast: a genuinely missing iromány at the same shape.
+    assert og_client.get("/bills/no-such-iromany").status_code == 404
+
+
+def test_every_browse_card_has_a_title_of_its_own(spa_client):
+    """No two browse pages may be titled alike: a duplicate <title> is what
+    Google files as "Duplicate, Google chose a different canonical" and indexes
+    neither of. The near-miss this guards is the pair about questions — the
+    browse list (`/bills/questions`) and the Sankey (`/analyses/questions`)."""
+    from app.og import _ROUTE_CARDS
+    titles = [t for t, _ in _ROUTE_CARDS.values()]
+    assert len(titles) == len(set(titles)), \
+        sorted(t for t in titles if titles.count(t) > 1)
+    assert _meta(spa_client.get("/analyses/questions").text)["og:title"] \
+        == "Kérdések elemzése · Parlamonitor"
+
+
+def test_iromany_breadcrumb_names_the_page_it_reads_under(og_client):
+    """Three browse pages now, so the trail names the one the iromány belongs on
+    — a question reads under Kérdések even though its canonical detail address
+    stays `/documents/:id`."""
+    def trail(path):
+        crumbs = [b for b in _jsonld(og_client.get(path).text)
+                  if b["@type"] == "BreadcrumbList"][0]
+        return [(i["name"], i["item"]) for i in crumbs["itemListElement"]]
+
+    assert ("Törvényjavaslatok", "https://parlamonitor.k-monitor.hu/bills") \
+        in trail("/bills/bill-uuid-1")
+    # doc-uuid-3 is the fixture's interpelláció (main_type I).
+    assert ("Kérdések", "https://parlamonitor.k-monitor.hu/bills/questions") \
+        in trail("/documents/doc-uuid-3")
+
+
 def test_detail_pages_carry_structured_data(og_client):
     """Each entity type declares what it *is* (SEO-5). The `Person` block is the
     one that ties an MP page to the person as an entity rather than a name."""

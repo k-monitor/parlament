@@ -104,8 +104,9 @@ def test_list_bills_scoped_to_bills(client):
 
 
 def test_list_other_documents(client):
-    """The "Egyéb irományok" page passes main_type_not=T, so it excludes bills
-    and surfaces the other iromány types (BILL-9)."""
+    """`main_type_not=T` excludes bills and surfaces the other iromány types —
+    the scope a per-MP "everything except their bills" list asks for. (The
+    all-irományok browse page passes no fotipus scope at all now, BILL-9.)"""
     d = client.get("/api/v1/bills", params={"main_type_not": "T"}).json()
     assert d["total"] == 1
     assert d["bills"][0]["bill_number"] == "I/5"
@@ -196,6 +197,46 @@ def test_list_documents_filter_by_answer_verdict(client, db_path):
                       params={"answer_verdict": "maybe"}).status_code == 422
 
 
+def test_list_questions_filter_by_answer_state(client, db_path):
+    """The Kérdések list (BILL-13) can be narrowed by whether — and how — a
+    question was answered, read from the answer events. With no such event a
+    question counts as unanswered, which is the state most of them start in."""
+    import sqlite3
+    q = {"main_type_in": "A,I,K"}
+
+    # No answer event yet: the one question in the fixture is unanswered, and
+    # nothing at all is answered — the two are complements, not both-empty.
+    assert client.get("/api/v1/bills", params={**q, "answer_state": "unanswered"}
+                      ).json()["total"] == 1
+    for state in ("answered", "oral", "written"):
+        assert client.get("/api/v1/bills", params={**q, "answer_state": state}
+                          ).json()["total"] == 0
+
+    c = sqlite3.connect(db_path)
+    c.execute("""INSERT INTO bill_event (bill_id, ord, event_date, name)
+                 VALUES ('doc-uuid-3', 12, '2026-06-03T10:00:00Z',
+                         'interpelláció szóban megválaszolva')""")
+    c.commit(); c.close()
+
+    # Answered from the floor: "answered" and "oral" both see it, "written" does
+    # not, and "unanswered" no longer does.
+    for state in ("answered", "oral"):
+        d = client.get("/api/v1/bills", params={**q, "answer_state": state}).json()
+        assert d["total"] == 1 and d["bills"][0]["bill_number"] == "I/5"
+    assert client.get("/api/v1/bills", params={**q, "answer_state": "written"}
+                      ).json()["total"] == 0
+    assert client.get("/api/v1/bills", params={**q, "answer_state": "unanswered"}
+                      ).json()["total"] == 0
+    # Combines with the other filters like every other pair.
+    assert client.get("/api/v1/bills", params={
+        **q, "answer_state": "oral", "type": "interpelláció"}).json()["total"] == 1
+    assert client.get("/api/v1/bills", params={
+        **q, "answer_state": "oral", "status": "kihirdetve"}).json()["total"] == 0
+    # An unknown state is rejected rather than silently ignored.
+    assert client.get("/api/v1/bills",
+                      params={"answer_state": "someday"}).status_code == 422
+
+
 def test_list_bills_search_and_status(client):
     assert client.get("/api/v1/bills", params={"q": "költségvetés"}).json()["total"] == 1
     assert client.get("/api/v1/bills", params={"status": "kihirdetve"}).json()["total"] == 1
@@ -234,13 +275,25 @@ def test_bill_facets(client):
 
 
 def test_bill_facets_scoped_by_main_type(client):
-    """Facets honor the include/exclude used by each browse page: the bills page
-    (main_type=T) sees only bill types; the other-irományok page (main_type_not=T)
-    sees only the rest (BILL-9)."""
-    bills = client.get("/api/v1/bills/facets", params={"main_type": "T"}).json()
-    assert {t["type"] for t in bills["types"]} == {"törvényjavaslat"}
-    other = client.get("/api/v1/bills/facets", params={"main_type_not": "T"}).json()
-    assert {t["type"] for t in other["types"]} == {"interpelláció"}
+    """Facets honor the fotipus scope of each browse page, so a page never offers
+    a type or a status that matches nothing in the list below it: the bills page
+    (main_type=T) sees only bill types, the kérdések page (main_type_in=A,I,K)
+    only question types (BILL-13), and the all-irományok page — passing no scope
+    at all — sees every type there is (BILL-9).
+
+    All four scopes are asked for in the one test on purpose: the endpoint
+    memoizes its answer, so this also pins that the scope is part of the cache
+    key and one page's facets can never be served to another.
+    """
+    def types(**params):
+        return {t["type"] for t in
+                client.get("/api/v1/bills/facets", params=params).json()["types"]}
+
+    assert types(main_type="T") == {"törvényjavaslat"}
+    assert types(main_type_not="T") == {"interpelláció"}
+    assert types(main_type_in="A,I,K") == {"interpelláció"}
+    assert types(main_type_not_in="A,I,K") == {"törvényjavaslat"}
+    assert types() == {"törvényjavaslat", "interpelláció"}
 
 
 def test_bill_facets_scoped_by_sponsor(client):

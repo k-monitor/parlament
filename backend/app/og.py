@@ -287,12 +287,26 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
         "Törvényjavaslatok",
         "A benyújtott törvényjavaslatok: benyújtók, státusz, jogalkotási "
         "állomások és a kapcsolódó felszólalások."),
-    "/documents": (
-        "Egyéb irományok",
-        "Kérdések, interpellációk, határozati javaslatok és minden további "
-        "iromány típus — benyújtók és állapotuk szerint böngészve."),
-    "/analyses/questions": (
+    # Kérdések (BILL-13) — the question browse page. It needs a card of its own
+    # for the same reason `/representatives/all` and `/representatives/compare`
+    # do: without one this path falls through to the `/bills/{bill_id}` route
+    # below, finds no iromány called "questions", and would answer a real page
+    # with a 404 shell.
+    "/bills/questions": (
         "Kérdések és interpellációk",
+        "A képviselői kérdések, interpellációk és azonnali kérdések: ki kérdezte, "
+        "melyik tárca válaszolt, és mi lett a válasz sorsa."),
+    "/documents": (
+        "Minden iromány",
+        "Az Országgyűléshez benyújtott összes iromány egy listában: "
+        "törvényjavaslatok, határozati javaslatok, kérdések, beszámolók és minden "
+        "további típus — benyújtók és állapotuk szerint böngészve."),
+    # Titled as the analysis it is — the browse page above is what a reader
+    # searching for the questions themselves should land on, and giving the two
+    # the same <title> is exactly the duplicate this whole table exists to avoid.
+    # Its siblings in the section are named the same way ("Frakcióelemzés").
+    "/analyses/questions": (
+        "Kérdések elemzése",
         "Ki kérdez és ki válaszol az Országgyűlésben: a kérdések és "
         "interpellációk útja a kérdezőtől a válaszadó tárcáig."),
     "/votes": (
@@ -315,6 +329,17 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
         "Közbeszólások",
         "Ki szól közbe kinek a felszólalása alatt: a bekiabálások irányított "
         "hálózata és a jegyzőkönyvbe került közbeszólások szövege."),
+}
+
+# Which browse page an iromány belongs on, by fotipus — the breadcrumb parent of
+# an iromány detail page. Törvényjavaslatok and the three question types have
+# pages of their own; everything else is reached through the all-irományok list,
+# which is also the fallback.
+_BROWSE_PARENT: dict[str, tuple[str, str]] = {
+    "T": ("Törvényjavaslatok", "/bills"),
+    "A": ("Kérdések", "/bills/questions"),
+    "I": ("Kérdések", "/bills/questions"),
+    "K": ("Kérdések", "/bills/questions"),
 }
 
 # Route shapes the site actually serves. Anything else resolves to the SPA's
@@ -983,15 +1008,17 @@ def register(app) -> None:
                                           for n in sponsors]
             if b["text_url"]:
                 legislation["isBasedOn"] = b["text_url"]
-            is_bill = b["main_type"] == "T"
+            # The browse page this iromány reads under. Three of them now, and
+            # the canonical is still the type's preferred *detail* address above —
+            # a question's trail names Kérdések while its URL stays /documents/:id.
+            parent = _BROWSE_PARENT.get(b["main_type"] or "",
+                                        ("Minden iromány", "/documents"))
             return render(
                 request, title=title, description=_truncate(description),
                 url_path=url_path, og_type="article",
                 extra=_published_time(b["submitted_date"]),
                 jsonld=[legislation, _breadcrumbs(request, [
-                    ("Parlamonitor", "/"),
-                    ("Törvényjavaslatok" if is_bill else "Egyéb irományok",
-                     "/bills" if is_bill else "/documents"),
+                    ("Parlamonitor", "/"), parent,
                     (number or title, url_path)])],
                 body=_bill_body(b, sponsor_rows, title))
         except sqlite3.Error:

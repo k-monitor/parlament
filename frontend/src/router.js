@@ -156,6 +156,23 @@ const routes = [
     component: () => import('./modules/bills/BillsListView.vue'),
   },
   {
+    // Kérdések (BILL-13) — the question-type irományok (kérdés, interpelláció,
+    // azonnali kérdés) as their own browse page, the middle tab of the section.
+    // They are ~90% of everything that is not a törvényjavaslat, so on the
+    // all-irományok list they drown out every other type; here they get the
+    // filters that only make sense for a question (was it answered, how, and did
+    // the asker accept the reply). Same data layer and same detail view as the
+    // other two tabs — an opened question is still a `/documents/:id`, which is
+    // the canonical address for every non-törvényjavaslat (og.py).
+    //
+    // Not at `/questions`: that address is a shipped 301 to the Kérdések *Sankey*
+    // in Elemzések (backend `redirects.py`, mirrored below), which is a different
+    // page. Declared before `/bills/:id` so "questions" is never taken for an
+    // iromány id — the same ordering the static representatives segments make.
+    path: '/bills/questions', name: 'questionList', meta: { module: 'bills' },
+    component: () => import('./modules/bills/QuestionListView.vue'),
+  },
+  {
     path: '/bills/:id', name: 'bill', meta: { module: 'bills' },
     component: () => import('./modules/bills/BillView.vue'), props: true,
   },

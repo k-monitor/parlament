@@ -33,7 +33,7 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 const showAnalyses = computed(() => ANALYSES.some(analysisEnabled))
 
 // Two-level navigation: the top bar holds one entry per section; a section that
-// has sibling pages (Képviselők+Frakciók, Törvényjavaslatok+Egyéb irományok)
+// has sibling pages (Képviselők+Frakciók, Törvényjavaslatok+Kérdések+Minden iromány)
 // reveals a contextual sub-tab bar when the user is anywhere inside it. `detail`
 // routes (a profile / a single bill or document) keep their parent tab active.
 const NAV_SECTIONS = {
@@ -70,9 +70,22 @@ const NAV_SECTIONS = {
     ],
   },
   bills: {
-    match: ['bills', 'documents', 'bill', 'document'],
+    match: ['bills', 'questionList', 'documents', 'bill', 'document'],
     tabs: [
       { name: 'bills', key: 'bills', detail: ['bill'] },
+      // Kérdések (BILL-13). It shares its `nav.questions` label — and its
+      // subject — with the Kérdések *Sankey* under Elemzések: one is the list of
+      // questions, the other the analysis of where they travelled, and each page
+      // links to the other rather than pretending to be the only one. The label
+      // is shared deliberately; only the route names differ.
+      //
+      // It claims no `detail` route: an opened question is a `/documents/:id`,
+      // the canonical detail address of every non-törvényjavaslat (og.py), so it
+      // stays the all-irományok tab's detail page whichever list it was opened
+      // from. Which tab a detail page belongs to is then a pure function of its
+      // URL — the reader can predict it — at the cost of the bar shifting one tab
+      // when a question is opened from here.
+      { name: 'questionList', key: 'questions' },
       { name: 'documents', key: 'documents', detail: ['document'] },
     ],
   },
@@ -428,7 +441,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 .sectionhead.compact .subnav { margin-top: .35rem; }
 
 /* Contextual second-level bar (Képviselők ↔ Frakciók, Törvényjavaslatok ↔
-   Egyéb irományok). Shown only while inside the section — no hover/dropdown. */
+   Kérdések). Shown only while inside the section — no hover/dropdown. */
 .subheader { background: var(--surface); border-bottom: 1px solid var(--line); }
 .subnav { display: flex; gap: .2rem; padding-top: .25rem; padding-bottom: 0; flex-wrap: wrap; }
 .subtab {

@@ -39,7 +39,11 @@ export default {
     portfolios: 'Tárcák',
     factions: 'Frakciók',
     bills: 'Törvényjavaslatok',
-    documents: 'Egyéb irományok',
+    // A szekció harmadik, gyűjtőfüle: minden iromány típus egy listában
+    // (BILL-9), a törvényjavaslatokkal és a kérdésekkel együtt.
+    documents: 'Minden iromány',
+    // Két fül olvassa ugyanerről a névről: a Törvényjavaslatok szekció kérdés-
+    // listája (BILL-13) és az Elemzések Sankey-ja (BILL-11) — szándékosan.
     questions: 'Kérdések',
     votes: 'Szavazások',
     // Elemzések (§4E): a szekció neve a felső sávban, és — `analysesIndex` — a
@@ -793,8 +797,8 @@ export default {
     docKind: { justification: 'Indokolás', background: 'Háttéranyag' },
   },
   documents: {
-    title: 'Egyéb irományok',
-    subtitle: 'Az Országgyűléshez benyújtott egyéb irományok (határozati javaslatok, interpellációk, kérdések, beszámolók…) — a törvényjavaslatok külön oldalon szerepelnek.',
+    title: 'Minden iromány',
+    subtitle: 'Az Országgyűléshez benyújtott összes iromány egy listában: törvényjavaslatok, határozati javaslatok, kérdések, beszámolók és minden további típus. A törvényjavaslatoknak és a kérdéseknek saját, részletesebben szűrhető oldala is van.',
     // Egy képviselőre szűrt lista: itt minden iromány típus szerepel, a
     // törvényjavaslatokkal együtt (a képviselői profil statisztikája is így számol).
     sponsorTitle: 'Benyújtott irományok',
@@ -822,6 +826,38 @@ export default {
       K: 'Kérdések', A: 'Azonnali kérdések', B: 'Beszámolók és jelentések',
       S: 'Személyi döntések', Y: 'Tájékoztatók',
     },
+  },
+  // A kérdéslista (BILL-13) — a Törvényjavaslatok szekció középső füle. Külön
+  // névtér a `questions`-től, ami az Elemzések Sankey-jának szövegeit tartja:
+  // a két oldal címe azonos, a tartalma nem.
+  questionList: {
+    title: 'Kérdések',
+    subtitle: 'Képviselői kérdések, írásbeli kérdések, interpellációk és azonnali kérdések — ki kérdezte, melyik tárca válaszolt, és mi lett a válasz sorsa.',
+    searchPlaceholder: 'Keresés a címben vagy irományszámban…',
+    type: 'Kérdés típusa',
+    status: 'Állapot',
+    topic: 'Téma',
+    answer: 'Válasz',
+    answerAnswered: 'megválaszolva (bármilyen módon)',
+    answerOral: 'szóban megválaszolva',
+    answerWritten: 'írásban megválaszolva',
+    answerUnanswered: 'nincs válasz',
+    // A „nincs válasz” az események hiányát jelenti, nem azt, hogy a tárca
+    // elmulasztotta: egy frissen benyújtott kérdésnél még nem is járt le a
+    // válaszadási határidő (TRUST-1).
+    answerHint: 'A jegyzőkönyvi események alapján. A „nincs válasz” frissen benyújtott kérdésnél azt is jelentheti, hogy a határidő még nem járt le.',
+    responder: 'Válaszadó tárca',
+    verdict: 'Válasz elfogadása',
+    verdictAccepted: 'a képviselő elfogadta a választ',
+    verdictRejected: 'a képviselő elutasította a választ',
+    verdictHint: 'Csak az interpellációkra vonatkozik.',
+    sortNumber: 'Irományszám szerint',
+    sortDate: 'Benyújtás szerint',
+    count: 'kérdés',
+    noResults: 'Nincs a feltételeknek megfelelő kérdés.',
+    answeredBy: 'Válaszolt',
+    sankeyLead: 'Honnan hová tartanak ezek a kérdések?',
+    sankeyLink: 'Kérdések elemzése',
   },
   questions: {
     title: 'Kérdések',

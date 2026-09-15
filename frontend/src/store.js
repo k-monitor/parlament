@@ -17,6 +17,10 @@ const CYCLE_KEY = 'parlamonitor.cycle'
 // diversity chips (READ-5). A viewer-side display preference, not a scope, so it
 // is remembered per browser and never travels in the URL.
 const METRICS_KEY = 'parlamonitor.speechMetrics'
+// Whether the viewer jumps to the next speech (and keeps playing) when the
+// current clip ends (VIE-9). Like the metric chips, a viewer-side preference
+// remembered per browser rather than something that travels in the URL.
+const AUTOPLAY_KEY = 'parlamonitor.autoplayNext'
 
 export const store = reactive({
   meta: null,
@@ -41,6 +45,13 @@ export const store = reactive({
   // the feature is discovered; once switched on it shows the chips on the day list
   // and in the viewer alike. See `setShowSpeechMetrics`.
   showSpeechMetrics: false,
+  // Off by default: continuing into the *next* speech is a decision the reader
+  // should make, not one the page makes for them. Landing on a speech, watching
+  // it and then being carried into an unrelated one — often mid-sentence, often
+  // while reading something else in another tab — is the kind of surprise a
+  // media player has no business springing. Someone working through a whole
+  // sitting day can switch it on in the viewer, and the choice sticks.
+  autoplayNext: false,
   moduleEnabled(name) {
     if (!this.meta) return true // optimistic before load
     return this.meta.modules.some((m) => m.name === name)
@@ -139,9 +150,32 @@ function initShowSpeechMetrics() {
   }
 }
 
-// Read at import time: unlike the cycle scope this needs nothing from /meta, and
-// restoring it before the first render avoids the chips flashing in and out.
+// Turn auto-advance between speeches on/off and remember it. Same best-effort
+// persistence as the other display preferences.
+export function setAutoplayNext(on) {
+  store.autoplayNext = !!on
+  try {
+    localStorage.setItem(AUTOPLAY_KEY, store.autoplayNext ? '1' : '0')
+  } catch {
+    /* localStorage unavailable (private mode) — in-memory state still works */
+  }
+}
+
+// Restore the saved choice at startup. Anything but a stored "1" — no value, a
+// stale value, an unreadable store — leaves auto-advance off, the default a
+// first-time visitor gets.
+function initAutoplayNext() {
+  try {
+    store.autoplayNext = localStorage.getItem(AUTOPLAY_KEY) === '1'
+  } catch {
+    store.autoplayNext = false
+  }
+}
+
+// Read at import time: unlike the cycle scope these need nothing from /meta, and
+// restoring them before the first render avoids the chips flashing in and out.
 initShowSpeechMetrics()
+initAutoplayNext()
 
 // The scope a visitor gets with no saved choice and no `?cycle=` in the URL:
 // the latest cycle (periods arrive newest-first from /meta). It is also the

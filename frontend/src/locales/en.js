@@ -98,6 +98,8 @@ export default {
     viewOnParlament: 'View original on parlament.hu', license: 'License', agenda: 'Agenda item', speaker: 'Speaker',
     copyLink: 'Copy link', linkCopied: 'Link copied to clipboard', sittingDay: 'sitting', backToSession: 'Back to sitting',
     speechType: 'Speech type',
+    autoplayNext: 'Autoplay next speech',
+    autoplayNextTip: 'When this speech ends, move on to the next one and keep playing.',
   },
   // Speech annotation: readability (LIX) and lexical diversity (MATTR). The chip
   // shows only where a speech sits against the House's median — the raw scores are

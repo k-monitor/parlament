@@ -159,7 +159,7 @@ export default {
     estimatedTiming: 'Becsült időzítés',
     estimatedTimingTip: 'A videó időzítése pozícióalapú becslés (karakterarányos), ezért közelítő pontosságú.',
     viewOnParlament: 'Megtekintés a parlament.hu-n',
-    license: 'Licenc',
+    license: 'Felhasználás',
     agenda: 'Napirendi pont',
     speaker: 'Felszólaló',
     copyLink: 'Hivatkozás másolása',
@@ -167,6 +167,8 @@ export default {
     sittingDay: 'ülésnap',
     backToSession: 'Vissza az ülésnaphoz',
     speechType: 'Felszólalás típusa',
+    autoplayNext: 'Automatikus továbblépés',
+    autoplayNextTip: 'A felszólalás végén automatikusan a következőre lép, és tovább játssza.',
   },
   // Felszólalás-annotáció: olvashatóság (LIX) és szókincsgazdagság (MATTR).
   // A chipen csak az áll, hogy a felszólalás a Parlament mediánjához képest hol van: a

@@ -877,10 +877,16 @@ section — **Elemzések** — with its own entry in the top bar.
   needs no extra scraping (offsets are already stored); the generic whole-day
   stream URL is **not** used as the player source except as a fallback when a
   speech has no usable offsets (degraded, §VIE-8). When the clip ends the viewer
-  **auto-advances to the next speech** (navigating to its page, §VIE-5) and keeps
-  playing; on the last speech of a sitting it rests at the end. The clip's smil
-  VOD is generated on demand, so its activation endpoint is pinged before the
-  playlist is requested.
+  **may auto-advance to the next speech** (navigating to its page, §VIE-5) and
+  keep playing; on the last speech of a sitting it rests at the end. That
+  auto-advance is **opt-in and off by default** — being carried from the speech
+  the reader chose into an unrelated one is a surprise a player should not spring
+  — so the viewer offers a **switch** in the action row under the player, remembered
+  per browser (like the metric chips, §READ-5) rather than carried in the URL.
+  Explicitly moving to another speech while the video is playing keeps it playing
+  regardless; doing so from a paused player lands paused. The clip's smil VOD is
+  generated on demand, so its activation endpoint is pinged before the playlist is
+  requested.
 - **VIE-10 (SHOULD).** The viewer offers a **client-side clip exporter**: from the
   speech being watched a user can **download a self-contained video file** of a
   chosen segment, optionally with the official transcript as subtitles. The whole

@@ -12,12 +12,13 @@
 //   the exact moment. The current sentence is reflected back into the URL hash.
 // * VIE-6/VIE-7/VIE-8: estimated-timing disclosure, source link, and a graceful
 //   no-transcript state.
-// * VIE-9: when the clip ends, auto-advance to the next speech and keep playing.
+// * VIE-9: when the clip ends, auto-advance to the next speech and keep playing
+//   — opt-in (`store.autoplayNext`), off unless the reader ticks the box here.
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
 import { api } from '../../api.js'
-import { store } from '../../store.js'
+import { store, setAutoplayNext } from '../../store.js'
 import { agendaLabel, formatDate, formatDuration, segmentSentences } from '../../format.js'
 import EntityText from '../../components/EntityText.vue'
 import StateBlock from '../../components/StateBlock.vue'
@@ -278,10 +279,11 @@ function destroyHls() {
   loadedSrc = null
 }
 
-// The clip ended (VIE-9): hop to the next speech and keep playing. On the last
-// speech there's no next, so the player simply rests at the end.
+// The clip ended (VIE-9): hop to the next speech and keep playing — but only if
+// the reader asked for that (the auto-advance toggle under the player). Off, and
+// on the last speech where there's no next, the player simply rests at the end.
 function onSpeechEnd() {
-  if (advancing) return
+  if (advancing || !store.autoplayNext) return
   const next = data.value && data.value.neighbours && data.value.neighbours.next
   if (!next) return
   advancing = true
@@ -396,9 +398,12 @@ onMounted(() => {
   window.addEventListener('scroll', onUserScroll, { passive: true })
   load()
 })
-// Switching speeches should keep playing (continuous viewing, VIE-9). The click
-// that triggers navigation is a user gesture, so autoplay is allowed.
-watch(() => props.uid, () => { resumePlaying = true; load() })
+// Switching speeches keeps playing (continuous viewing, VIE-9) — the click that
+// triggers navigation is a user gesture, so playback is allowed to continue.
+// Only when it *was* playing, though: hitting "next speech" on a paused player
+// should land on a paused one. Never clears a resume onSpeechEnd already armed
+// (the clip is paused by the time `ended` has fired).
+watch(() => props.uid, () => { if (playing.value) resumePlaying = true; load() })
 onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   document.body.classList.remove('viewer-pane')
@@ -475,18 +480,32 @@ onBeforeUnmount(() => {
                       @click="toggleFullscreen">{{ isFullscreen ? '🗗' : '⛶' }}</button>
             </div>
           </div>
+          <!-- Attribution sits directly under the player it belongs to, on its
+               own line, so the credit reads as part of the video rather than as
+               one more control in the action row below it. -->
+          <p v-if="session && session.video_license" class="vlicense small">
+            <a :href="session.video_license" target="_blank" rel="noopener" class="muted">
+              {{ $t('viewer.license') }}: {{ session.video_creator || 'Magyar Országgyűlés' }}
+            </a>
+          </p>
           <div class="vactions row small">
             <a v-if="sourceLink" :href="sourceLink" target="_blank" rel="noopener" class="btn secondary small">
               ↗ {{ $t('viewer.viewOnParlament') }}
             </a>
-            <a v-if="session && session.video_license" :href="session.video_license" target="_blank" rel="noopener" class="muted">
-              {{ $t('viewer.license') }}: {{ session.video_creator || 'Magyar Országgyűlés' }}
-            </a>
+            <!-- Auto-advance (VIE-9), off by default. Pushed to the right of the
+                 same row as the source link; when the two don't fit side by side
+                 the switch wraps onto its own line, still right-aligned. -->
+            <label class="autoplay" :title="$t('viewer.autoplayNextTip')">
+              <input type="checkbox" class="visually-hidden" :checked="store.autoplayNext"
+                     @change="setAutoplayNext($event.target.checked)" />
+              <span class="autoplay-text">{{ $t('viewer.autoplayNext') }}</span>
+              <span class="autoplay-track" aria-hidden="true"><span class="autoplay-knob"></span></span>
+            </label>
           </div>
           <p v-if="speech.timing && speech.timing.estimated" class="small muted timing-note">
             ⚠ {{ $t('viewer.estimatedTimingTip') }}
           </p>
-          <nav class="row" style="justify-content:space-between;margin-top:.6rem;">
+          <nav class="row vnav">
             <router-link v-if="data.neighbours.prev" :to="{ name: 'viewer', params: { uid: data.neighbours.prev } }" class="btn secondary small">‹ {{ $t('viewer.prevSpeech') }}</router-link>
             <span v-else></span>
             <router-link v-if="data.neighbours.next" :to="{ name: 'viewer', params: { uid: data.neighbours.next } }" class="btn secondary small">{{ $t('viewer.nextSpeech') }} ›</router-link>
@@ -584,8 +603,37 @@ onBeforeUnmount(() => {
 .vc-seek { flex: 1; min-width: 60px; accent-color: var(--accent); cursor: pointer; }
 .vc-vol { width: 64px; accent-color: #fff; cursor: pointer; }
 @media (max-width: 520px) { .vc-vol { display: none; } }
-.vactions { margin-top: .6rem; gap: 1rem; flex-wrap: wrap; }
+/* Video credit: tight under the player, ahead of the action row. */
+.vlicense { margin: .4rem 0 0; }
+.vactions { margin-top: .5rem; gap: 1rem; flex-wrap: wrap; }
 .timing-note { margin-top: .4rem; }
+.vnav { gap: .5rem; justify-content: space-between; margin-top: .45rem; }
+/* Auto-advance switch: label then track, so it reads left-to-right and the
+   control lands on the column's right edge. The checkbox itself is visually
+   hidden (but focusable) and the track is drawn from its :checked state.
+   `margin-left: auto` keeps it right-aligned whether it shares the action row
+   with the source link or wraps below it. */
+.autoplay {
+  position: relative; display: inline-flex; align-items: center; gap: .5rem;
+  margin-left: auto; font-size: .85rem; color: var(--ink-soft);
+  cursor: pointer; user-select: none;
+}
+.autoplay:hover { color: var(--ink); }
+.autoplay-track {
+  flex: none; position: relative; width: 34px; height: 20px; border-radius: 999px;
+  background: var(--line); border: 1px solid #d3d0c8; transition: background .15s, border-color .15s;
+}
+.autoplay-knob {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .15s;
+}
+.autoplay input:checked ~ .autoplay-track { background: var(--accent); border-color: var(--accent); }
+.autoplay input:checked ~ .autoplay-track .autoplay-knob { transform: translateX(14px); }
+/* The hidden input carries focus, so its ring has to be drawn on the track. */
+.autoplay input:focus-visible ~ .autoplay-track { outline: 3px solid var(--focus); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .autoplay-track, .autoplay-knob { transition: none; }
+}
 .no-text { text-align: center; }
 .transcript { max-height: 70vh; overflow-y: auto; padding-right: .4rem; }
 .sentence { display: flex; align-items: flex-start; gap: .25rem; margin: 0 0 .15rem; border-radius: 8px; }
@@ -642,11 +690,16 @@ onBeforeUnmount(() => {
   .vcol-video { flex: none; position: static; display: flex; flex-direction: column; gap: .3rem; }
 
   /* Slim source/nav strips under the video. */
-  .vactions { margin-top: 0; gap: .6rem; font-size: .78rem; align-items: center; }
+  .vactions { margin-top: .25rem; gap: .6rem; font-size: .78rem; align-items: center; }
   .vactions .btn { padding: .3rem .6rem; }
+  .vlicense { margin: 0; font-size: .78rem; }
   .timing-note { margin: 0; }
-  .vcol-video nav { margin-top: 0 !important; }
+  .vcol-video nav { margin-top: 0; }
   .vcol-video nav .btn { padding: .32rem .6rem; font-size: .85rem; }
+  .autoplay { font-size: .78rem; gap: .4rem; }
+  .autoplay-track { width: 30px; height: 18px; }
+  .autoplay-knob { width: 12px; height: 12px; }
+  .autoplay input:checked ~ .autoplay-track .autoplay-knob { transform: translateX(12px); }
 
   /* The transcript is the only scroller; it fills the pane's remaining height.
      Its heading is redundant here, so drop it to reclaim the space. */

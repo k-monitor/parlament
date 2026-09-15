@@ -5,6 +5,7 @@ import { api } from '../api.js'
 import { store, loadMeta, periodLabel } from '../store.js'
 import TrendChart from '../components/TrendChart.vue'
 import DonateCard from '../components/DonateCard.vue'
+import UpcomingSitting from '../components/UpcomingSitting.vue'
 
 const router = useRouter()
 const q = ref('')
@@ -26,6 +27,11 @@ function go() {
 }
 const showProceedings = computed(() => store.moduleEnabled('proceedings'))
 const showReps = computed(() => store.moduleEnabled('representatives'))
+// The coming sitting's order paper (NR-5). On only where the scrape has
+// actually produced one, so a deployment that does not run the stage shows
+// nothing rather than an empty promise.
+const showUpcoming = computed(() =>
+  showProceedings.value && store.featureEnabled('upcoming_agenda'))
 
 // Curated example searches (§SEA-8): a handful of evergreen topics, each shown
 // with its popularity-over-time histogram so the home page invites exploration
@@ -210,6 +216,10 @@ watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
     </dl>
   </section>
 
+  <!-- What the House is about to do, under the corpus figures: the page leads
+       with what the site IS, and closes with what is coming next. -->
+  <UpcomingSitting v-if="showUpcoming" class="home-upcoming" />
+
   <section class="grid explore-grid home-donate-row">
     <DonateCard class="home-donate" />
   </section>
@@ -236,6 +246,7 @@ watch(showAllExamples, () => { if (showProceedings.value) loadExamples() })
   .stats div { padding-left: 1.4rem; }
   .stats div:nth-child(odd) { padding-left: 0; border-left: 0; }
 }
+.home-upcoming { margin-top: 1.5rem; }
 .home-donate-row { margin-top: 1.5rem; }
 /* Spans all three tracks so it lines up with the full width of the cards below. */
 .home-donate { grid-column: 1 / -1; }

@@ -225,7 +225,12 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
                      "speech_topics": (settings.parlacap
                                        and bool(topic_coverage["speeches"])),
                      "bill_topics": (settings.parlacap and settings.bill_topics
-                                     and bool(bill_topic_coverage["bills"]))},
+                                     and bool(bill_topic_coverage["bills"])),
+                     # The order paper for the coming sitting (NR-5). On only
+                     # when the scrape has actually produced one, so a
+                     # deployment that does not run the stage shows nothing
+                     # rather than an empty promise.
+                     "upcoming_agenda": _has_upcoming_agenda(db)},
         # How the per-speech readability / lexical-diversity annotations were
         # measured (READ-7). Every derived number on the site has to be able to
         # say what produced it (TRUST-1 / REP-5), and these two carry parameters
@@ -246,6 +251,20 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
             "A felszólalások videóidőzítése a v1-ben pozícióalapú becslés "
             "(karakterarányos), ezért közelítő pontosságú."),
     }
+
+
+def _has_upcoming_agenda(db) -> bool:
+    """Whether an order paper has been loaded (NR-5).
+
+    Two conditions, both of which have to hold for the home page to have
+    anything to show: the DB carries the NR tables at all, and the last scrape
+    actually parsed a napirend out of the Aktuális page."""
+    try:
+        return bool(db.execute(
+            "SELECT 1 FROM agenda_doc WHERE kind='agenda' AND item_count > 0 "
+            "LIMIT 1").fetchone())
+    except sqlite3.OperationalError:
+        return False
 
 
 class SearchClick(BaseModel):

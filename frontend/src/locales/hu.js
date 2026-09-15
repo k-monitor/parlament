@@ -1245,6 +1245,39 @@ export default {
     bluesky: 'Parlamonitor a Bluesky-on',
     feedback: 'Visszajelzés',
   },
+  // Aktuális napirendek (NR-5). A napirend TERV, nem jegyzőkönyv — a Ház
+  // a kiadása és az ülés között pontokat vesz le, sorrendet cserél, időt módosít.
+  // Ezért a blokk mindig kiírja, melyik dokumentumból és annak melyik
+  // állapotából származik, amit mutat.
+  upcoming: {
+    title: 'Aktuális napirendek',
+    sourceDoc: 'Napirend (PDF)',
+    asOf: '{at} órai állapot szerint',
+    extraordinary: 'Rendkívüli ülés',
+    empty: 'Jelenleg nincs meghirdetett ülésnapirend.',
+    startsAt: 'Ülésnap kezdete',
+    decisionsFrom: 'Határozathozatalok legkorábban',
+    endsAt: 'Várható befejezés',
+    showAll: 'További {n} napirendi pont',
+    showLess: 'Kevesebb',
+    noItems: 'A napirend részletei egyelőre nem olvashatók ki — a dokumentum fent megnyitható.',
+    houseCommittee: 'A Házbizottság következő ülése',
+    documents: 'További dokumentumok',
+    // A Ház eljárási megjegyzéseiből kiolvasott jelölések. Rövidek, mert a
+    // napirendi pont mellett jelvényként állnak.
+    flags: {
+      two_thirds: 'kétharmados',
+      four_fifths: 'négyötödös',
+      cardinal: 'sarkalatos',
+      exceptional: 'kivételes eljárás',
+      urgent: 'sürgős tárgyalás',
+      derogation: 'házszabálytól eltéréssel',
+      nationality: 'nemzetiségi napirendi pont',
+      eu: 'uniós napirendi pont',
+      quorum: 'határozatképesség szükséges',
+      secret_vote: 'titkos szavazás',
+    },
+  },
   agendaTypes: {
     opening: 'Ülésnap megnyitása',
     procedural: 'Ügyrendi',

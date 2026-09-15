@@ -52,6 +52,9 @@
 #                    PARLAMONITOR_MODAL_CYCLES — that is how new sitting days get
 #                    labelled without torch on this host. With no route available
 #                    it is left unlabelled: never guessed, never fatal.
+#   aktualis         read the Aktuális page + the napirend PDF behind it: the
+#                    order paper for the sitting that is coming (NR-1), e.g.
+#                      podman-compose run --rm sync aktualis
 #   officeholders    scrape the office-holder registry (tisztségviselők) — every
 #                    office term with its real dates, MPs and non-MPs alike — into
 #                    /data; the one-off backfill for a corpus scraped before the
@@ -188,6 +191,21 @@ case "${1:-serve}" in
         shift
         cd /app/scraper
         exec python -m parlamonitor officeholders "$DATA_DIR" "$@"
+        ;;
+    aktualis)
+        # Read parlament.hu's Aktuális page and the napirend PDF behind it into
+        # $DATA_DIR/processed/aktualis.json: the order paper for the sitting that
+        # is COMING (NR-1), which no API exposes. The sync sidecar refreshes it on
+        # every pass; this is the one-off backfill for a deployment whose corpus
+        # predates the stage:
+        #   podman-compose run --rm sync aktualis
+        # Cycle-less and cheap (one HTML request unless the House has issued a new
+        # napirend). Needs poppler-utils for the PDF text — already in the image —
+        # and a read-write /data mount plus the scrape egress config, hence the
+        # `sync` service. The DB picks it up on the next `update`/sync.
+        shift
+        cd /app/scraper
+        exec python -m parlamonitor aktualis "$DATA_DIR" "$@"
         ;;
     documents)
         # Mirror the cycle's iromany document files and extract their text

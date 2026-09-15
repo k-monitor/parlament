@@ -18,6 +18,7 @@ kept only as reference material; nothing here imports it at runtime.
 | `processed/advocates-<cycle>.json` | `parlamonitor.advocates` | the **nationality-advocate** registry (*nemzetiségi szószólók*) for a cycle: same record shape as an MP plus the `nationality` they speak for. They are not in the MP roster, but share its id space — so the file is additive and needs no re-run of the MP stage. |
 | `processed/officeholders.json` | `parlamonitor.officeholders` | the **office-holder** registry (*tisztségviselők*): every recorded term of government / House office with its **real** start and end date (open while still held) and the portal's own office **category**, grouped by person. Cycle-less, and the only source that dates the office of a **non-MP** minister or state secretary — who is in no roster at all. The category is not in the data: it is *which* per-category listing returned the row, so the stage asks for each category in turn (six paged listings) and tags what comes back. |
 | `documents/<cycle>/` | `parlamonitor.documents` | **optional** mirror of the iromány document *files* themselves — the extracted text (`text/<docid>.txt.xz`), the source PDF (`pdf/<docid>.pdf`), or both, plus an `index.json` manifest. **Off by default**; see [Document files](#document-files-doc-1). |
+| `processed/aktualis.json` | `parlamonitor.aktualis` | the **Aktuális** page: the documents it links (napirend, ülésterv, submission deadlines, legislative programme) and the **order paper for the sitting that is coming**, parsed out of the napirend PDF into days, timetables and agenda items — plus the House Committee's next meeting. The one source on the site for what the House is *about to* do; see [The Aktuális page](#the-aktuális-page-nr-1). |
 | `logs/ingest-<ts>.json` | both | per-run ingestion log (run time, sittings added, errors, backend). |
 
 Each speech's speaker carries a `personID` (`kepviseloId`) that joins directly
@@ -147,6 +148,11 @@ python -m parlamonitor advocates --all-cycles ./data
 
 # Irományok of a cycle (every document type) from the Felicitas API
 python -m parlamonitor bills --cycle 43 ./data
+
+# The Aktuális page + the napirend PDF behind it: the ORDER PAPER for the
+# sitting that is coming. Cycle-less, one HTML request unless the House has
+# published a new napirend since the last run.
+python -m parlamonitor aktualis ./data
 
 # …except 1994-98, which the API has none of — see below
 python -m parlamonitor bills --cycle 35 --archive ./data
@@ -373,6 +379,87 @@ skipped, and a repeat pass over cycle 43 costs no requests at all. A 404 or an
 over-cap document is *settled* and not asked about again; only a genuine fetch
 error is retried next run. `--force` re-fetches everything.
 
+### The Aktuális page (NR-1)
+
+Everything the Felicitas API exposes is a record of what the House **has done**.
+What it is **about to do** lives on one portal page,
+[`/web/guest/aktualis`](https://www.parlament.hu/web/guest/aktualis), as human
+documents:
+
+| Slug | What it is | Parsed? |
+| ---- | ---------- | ------- |
+| `nr_<YYYYMMDD>_elfogadott` | **napirend** — the order paper for one sitting | **yes**, in full |
+| `ut_<YYYYMMDD>_elfogadott` | **ülésterv** — the month's sitting plan | link only (NR-4) |
+| `tajek_benyhatido_<YYYYMMDD>` | submission deadlines | link only |
+| `torvenyalkotasi-program_<term>` | the term's legislative programme | link only |
+| `munkarend_<term>_…` | the House Committee's work-schedule resolution | link only |
+
+`aktualis.json` carries those links, the House Committee's next meeting, and the
+**parsed napirend**.
+
+**Why the page is parsed the way it is.** The markup is Liferay-generated and
+disposable — the House restyles it, the `div` ids change, and the block holding
+the House Committee's meeting is a repurposed *year navigator* whose links still
+carry `data-year="2025"` attributes that are not years. So nothing here keys on
+structure. Documents are found by the **shape of the href**, and the slug itself
+says what the document is and which sitting it belongs to; the House Committee's
+meeting is found by the two Hungarian labels the House writes in front of it
+(*Helyszíne:*, *Időpontja:*). Both survive a reskin. Only the links between the
+page's first heading and its footer count, because the site chrome links
+documents of its own — twice, once at the top and once in the footer.
+
+**The napirend parser** (`aktualis/nr.py`) reads
+`pdftotext -layout` output — the opposite choice from the iromány document mirror
+(DOC-1), which deliberately extracts in reading order. The order paper's meaning
+*is* its layout:
+
+```
+5.      T/438.       A szakképzésről szóló 2019. évi LXXX. törvény
+B./5.                módosításáról
+                     (Kormány - oktatási és gyermekügyi miniszter)
+                     Bizottsági jelentések és az összegző módosító javaslat vitája
+                     Megjegyzés:
+                     A Törvényalkotási Bizottság az előterjesztést megtárgyalta…
+```
+
+The ordinal, the `B./5.` cross-reference and the iromány number are a left
+**gutter**; in reading order they interleave with the title text. The parser
+peels the gutter off by *what a token is* — a marker followed by the layout's own
+column gap — rather than by a fixed column, because the columns move between
+documents and a page break dedents a wrapped line to column 0.
+
+Two numbers per item look alike and are not. **`ordinal`** is the item's place in
+that sitting day; **`ref`** (`B./n`) identifies it across the whole sitting. A
+bill debated and voted on the same day is two ordinals under one ref, and the
+day-2 listing restarts at 1. `ref` is also what joins an item to part **B**'s
+detail sheet (submission date, committees, amendment deadlines).
+
+What the parser produces per item: `ordinal`, `ref`, `billCode`, `title`,
+`submitter`, `stage`, `timeWindow`, `section`, `notes`, `detail`, and `flags` —
+the procedural properties the House states in prose (`two_thirds`, `cardinal`,
+`exceptional`, `urgent`, `nationality`, `eu`, `quorum`, `secret_vote`, …), lifted
+into something machine-readable because they are what makes an item notable.
+
+Edge cases it is built for, all seen in the corpus:
+
+- A **ceremonial sitting** (a government being sworn in) has an order paper with
+  no numbered item on it. It parses to its days with empty item lists — the truth
+  about that sitting, not a failure.
+- The **procedural decisions** the House takes before adopting the agenda are
+  listed *without* a number; they are kept with a null `ordinal`.
+- `S/...` is the House's own placeholder for "number to come", not a bill code.
+- A motion can carry **51 named sponsors** wrapping over a dozen lines; the
+  parenthetical is folded into `submitter` rather than trailing into the title.
+- The listing prints a month and a day and **never a year** — resolved against
+  the document's own date, picking the candidate nearest it so a sitting that
+  straddles New Year stays on the right side of it.
+
+**Cost.** One HTML request per pass. The napirend's slug names the sitting and
+the House issues a new slug rather than editing one in place, so an unchanged
+slug means the PDF is not fetched again (`--force` overrides). Text extraction
+needs `pdftotext` (poppler-utils); without it the page's own findings are still
+written and the agenda records why it is empty (SCR-6).
+
 ### The 1994-98 irományok (`bills --archive`)
 
 The Felicitas `iromany` API knows nothing about the **35th cycle**: the query that
@@ -463,6 +550,11 @@ python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
 - **Nationality advocates:** same slow cadence, latest cycle only (`--skip-advocates`
   opts out). Past cycles' advocate rosters are closed, so they are backfilled once
   with `advocates --all-cycles`.
+- **Aktuális:** every pass, on no slower cadence of its own (`--skip-aktualis`
+  opts out) — what it carries is a *schedule*, and a napirend picked up the day
+  after the sitting was never published at all as far as the site is concerned.
+  One HTML request unless the House has issued a new order paper, and the file is
+  rewritten only when something actually changed.
 
 An idle poll is a handful of requests and writes nothing. Last-seen signatures
 live in `data/sync-state.json`; the run prints a one-line JSON summary of what
@@ -512,6 +604,11 @@ parlamonitor/
   documents/
     scrape.py          the iromány document FILES + extracted text
                        → documents/<cycle>/ (optional; off by default)
+  aktualis/
+    page.py            the Aktuális portal page: its documents + the House
+                       Committee's next meeting
+    nr.py              the napirend (order paper) PDF → days, timetables, items
+    scrape.py          fetch + parse + write → aktualis.json
   cli.py               workflow orchestration (stages, lockfile, ingest log)
 whisper_modal_app.py   the Modal app deployed for the GPU backend
 check_whisper_cache.py which copied whisper-<session>.json caches are usable

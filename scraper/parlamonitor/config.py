@@ -341,6 +341,15 @@ class Paths:
     def officeholders_file(self) -> Path:
         return self.processed / "officeholders.json"
 
+    # --- the Aktuális page (upcoming sitting agenda) ------------------------
+    # One cycle-less file, overwritten on every poll: the page only ever states
+    # the *current* position — the next sitting's order paper, the House
+    # Committee's next meeting — so there is no history to key it by, and the
+    # newest read is the whole truth (NR-1).
+
+    def aktualis_file(self) -> Path:
+        return self.processed / "aktualis.json"
+
     # --- bills -------------------------------------------------------------
 
     def bills_file(self, cycle: int) -> Path:

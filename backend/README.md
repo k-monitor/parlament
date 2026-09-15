@@ -59,6 +59,32 @@ from surface forms when none are reachable — see `app/readability.py` for why 
 two metrics must never share a token stream. Both are cached per sitting in
 `speech-metrics-cache.json` next to the DB.
 
+### The sitting that is coming (NR-3)
+
+Alongside the record, the loader ingests the **order paper for the next sitting**
+from `processed/aktualis.json` (the scraper's `aktualis` stage). It lands in
+tables of its own — `agenda_doc`, `agenda_doc_day`, `agenda_doc_item`,
+`agenda_meta` — deliberately **not** in `session` / `agenda_item`: those record
+what was actually said and are joined to speeches, while an order paper is a
+*plan* the House still reorders and trims before the sitting. Keeping them apart
+is what stops the record inheriting a claim the House only intended.
+
+There is no history: the page states only the current position, so a load
+replaces the whole set. An item names its iromány by number only (`T/438`), so
+the link to the bill is **derived** and re-derived whenever either side moves —
+which also means an item announcing an iromány that had not been registered when
+the napirend was parsed gains its link as soon as the iromány lands.
+
+An existing deployment picks the tables up on the next `--update` (the new file
+is "changed" for a DB that has never seen it). To backfill without waiting:
+
+```bash
+.venv/bin/python migrate_upcoming_agenda.py ../data parlamonitor.db
+```
+
+Served by `GET /api/v1/proceedings/upcoming`, advertised as
+`features.upcoming_agenda` in `/api/v1/meta`, and rendered on the home page.
+
 ### The shared lemma store
 
 The diversity half and the word cloud both need HuSpaCy lemmas for the *same*

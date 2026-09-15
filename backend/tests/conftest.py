@@ -342,6 +342,93 @@ def _votes_registry():
     }
 
 
+def _aktualis_registry():
+    """The Aktuális page as the scraper writes it (NR-1): the documents it links
+    and the napirend parsed out of the PDF behind one of them.
+
+    Deliberately exercises the shapes that are easy to get wrong — an item with
+    no ordinal (the procedural decisions the House takes before adopting the
+    agenda), the same `ref` appearing twice in a day (a bill debated and voted
+    on the same day), a bill code that resolves against the fixture registry
+    (T/100) and one that does not."""
+    return {
+        "meta": {"source": "parlament-hu-aktualis",
+                 "pageUrl": "https://www.parlament.hu/web/guest/aktualis",
+                 "scrapedAt": "2026-05-12T10:00:00+00:00", "documentCount": 2,
+                 "agendaSlug": "nr_20260514_elfogadott", "agendaReused": False,
+                 "agendaError": None, "itemCount": 4, "pdftotext": True},
+        "data": {
+            "documents": [
+                {"slug": "nr_20260514_elfogadott", "kind": "agenda",
+                 "label": "Napirend", "date": "2026-05-14",
+                 "group": "Plenáris üléshez kapcsolódó információk",
+                 "url": "https://www.parlament.hu/documents/d/guest/nr_20260514_elfogadott"},
+                {"slug": "ut_20260514_elfogadott", "kind": "sitting_plan",
+                 "label": "Ülésterv", "date": "2026-05-14",
+                 "group": "Plenáris üléshez kapcsolódó információk",
+                 "url": "https://www.parlament.hu/documents/d/guest/ut_20260514_elfogadott"},
+            ],
+            "houseCommittee": {"place": "Országház, Pázmándy Dénes terem",
+                               "raw": "2026. május 18. (hétfő) 13:00 óra",
+                               "date": "2026-05-18", "time": "13:00",
+                               "weekday": "hétfő"},
+            "agenda": {
+                "slug": "nr_20260514_elfogadott",
+                "url": "https://www.parlament.hu/documents/d/guest/nr_20260514_elfogadott",
+                "label": "Napirend",
+                "title": "AZ ORSZÁGGYŰLÉS MÁJUS 14-15-I ÜLÉSÉNEK NAPIRENDJE",
+                "term": {"year": 2026, "season": "spring"},
+                "extraordinary": False,
+                "statusLabel": "Elfogadott", "statusAt": "2026-05-14T15:45",
+                "firstDate": "2026-05-14", "lastDate": "2026-05-15",
+                "itemCount": 4, "fetchedAt": "2026-05-12T10:00:00+00:00",
+                "days": [
+                    {"month": 5, "dayOfMonth": 14, "weekday": "CSÜTÖRTÖK",
+                     "date": "2026-05-14", "startsAt": "13:00",
+                     "decisionsFrom": ["14:45"],
+                     "endsNote": "kb. 22:00 óra, illetve a napirendi pontok megtárgyalása",
+                     "breakNote": "szükség szerint",
+                     "items": [
+                         {"ordinal": None, "ref": None, "billCode": "T/100/1",
+                          "section": "Döntés kivételes eljárásban történő tárgyalásról",
+                          "title": "A költségvetésről — kivételességi javaslat",
+                          "submitter": "Kormány - pénzügyminiszter", "stage": None,
+                          "timeWindow": None, "notes": None,
+                          "flags": ["exceptional"]},
+                         {"ordinal": 1, "ref": "1", "billCode": "T/100",
+                          "section": "Az általános viták a lezárásig",
+                          "title": "A költségvetésről szóló törvényjavaslat",
+                          "submitter": "Kormány - pénzügyminiszter",
+                          "stage": "Általános vita a lezárásig",
+                          "timeWindow": "Kb. 15:30- kb. 16:30 óráig",
+                          "notes": ["Határozatképesség szükséges!"],
+                          "flags": ["cardinal", "quorum", "two_thirds"],
+                          "detail": {"submittedOn": "2026.05.10.",
+                                     "committee": "2026.05.11. Pénzügyi Bizottság",
+                                     "amendmentCount": "2"}},
+                         {"ordinal": 2, "ref": "1", "billCode": "T/100",
+                          "section": "Döntések, határozathozatalok",
+                          "title": "A költségvetésről szóló törvényjavaslat",
+                          "submitter": "Kormány - pénzügyminiszter",
+                          "stage": "Döntés az összegző módosító javaslatról",
+                          "timeWindow": None, "notes": None, "flags": None},
+                     ]},
+                    {"month": 5, "dayOfMonth": 15, "weekday": "PÉNTEK",
+                     "date": "2026-05-15", "startsAt": "09:00",
+                     "decisionsFrom": ["09:40", "11:30"],
+                     "endsNote": None, "breakNote": None,
+                     "items": [
+                         {"ordinal": 1, "ref": "2", "billCode": "T/999",
+                          "section": None, "title": "Egy iromány, amit nem tartunk",
+                          "submitter": None, "stage": "Általános vita a lezárásig",
+                          "timeWindow": None, "notes": None, "flags": None},
+                     ]},
+                ],
+            },
+        },
+    }
+
+
 @pytest.fixture
 def data_dir(tmp_path):
     """A synthetic scraper data directory (processed/*.json) the loader builds
@@ -359,6 +446,8 @@ def data_dir(tmp_path):
         json.dumps(_session_record(), ensure_ascii=False))
     (data / "processed" / "officeholders.json").write_text(
         json.dumps(_officeholders_registry(), ensure_ascii=False))
+    (data / "processed" / "aktualis.json").write_text(
+        json.dumps(_aktualis_registry(), ensure_ascii=False))
     return data
 
 

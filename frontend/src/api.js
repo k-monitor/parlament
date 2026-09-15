@@ -73,6 +73,9 @@ export const api = {
   searchBreakdown: (params) => get('/proceedings/search/breakdown', params),
   suggest: (q) => get('/proceedings/suggest', { q }),
   sessions: (params) => get('/proceedings/sessions', params),
+  // The order paper for the sitting that is coming (NR-5). Cycle-less:
+  // there is only ever one next sitting.
+  upcomingAgenda: () => get('/proceedings/upcoming'),
   session: (id) => get(`/proceedings/sessions/${id}`),
   sessionWordcloud: (id, limit) => get(`/proceedings/sessions/${id}/wordcloud`, { limit }),
   sessionTopSpeakers: (id) => get(`/proceedings/sessions/${id}/top-speakers`),

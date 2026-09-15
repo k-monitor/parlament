@@ -298,6 +298,9 @@ CREATE TABLE bill (
 );
 CREATE INDEX idx_bill_period ON bill(period_number);
 CREATE INDEX idx_bill_number_sort ON bill(number_sort);
+-- An order paper names its irományok by number and nothing else, so this is
+-- the lookup that turns "T/438" into a bill (NR-3).
+CREATE INDEX idx_bill_number ON bill(bill_number);
 
 CREATE TABLE bill_sponsor (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1056,3 +1059,90 @@ CREATE INDEX idx_interjection_pair
 CREATE INDEX idx_interjection_target ON interjection(target_id, period_number);
 CREATE INDEX idx_interjection_session ON interjection(session_id);
 CREATE INDEX idx_interjection_speech ON interjection(speech_uid);
+
+-- --------------------------------------------------------------------------
+-- The Aktuális page: the sitting that is COMING (NR-3)
+--
+-- Everything else in this file is a record of what the House has done. These
+-- four tables are the one exception: they hold what it has *announced* — the
+-- order paper (napirend) for the next sitting, parsed out of the PDF the
+-- Aktuális page links, plus that page's other documents and the House
+-- Committee's next meeting.
+--
+-- They are deliberately NOT folded into `session` / `agenda_item`. Those record
+-- what was actually said and are joined to speeches; an order paper is a plan,
+-- and plans change — items get dropped, reordered, and re-timed between the
+-- napirend and the sitting. Keeping the plan in its own tables means the record
+-- never inherits a claim the House only intended (NR-4).
+--
+-- There is no history here. The page states only the House's current position,
+-- so the loader replaces the whole set on every load rather than accumulating
+-- order papers nobody will read again.
+CREATE TABLE agenda_doc (
+    slug          TEXT PRIMARY KEY,     -- "nr_20260914_elfogadott", from the URL
+    kind          TEXT NOT NULL,        -- agenda | sitting_plan | deadlines | …
+    url           TEXT NOT NULL,
+    label         TEXT,                 -- the page's own link text ("Napirend")
+    grp           TEXT,                 -- the heading it sits under on the page
+    ord           INTEGER NOT NULL DEFAULT 0,   -- page order
+    doc_date      TEXT,                 -- the sitting the slug names
+    -- The rest is filled only for kind='agenda', from the parsed PDF.
+    title         TEXT,                 -- the document's own cover title
+    first_date    TEXT,                 -- first / last sitting day it covers
+    last_date     TEXT,
+    extraordinary INTEGER NOT NULL DEFAULT 0,   -- "RENDKÍVÜLI ÜLÉS"
+    term_year     INTEGER,
+    term_season   TEXT,                 -- spring | autumn
+    status_label  TEXT,                 -- "Elfogadott" / "Elfogadott változat"
+    status_at     TEXT,                 -- the "…órai állapot szerint" stamp
+    item_count    INTEGER NOT NULL DEFAULT 0,
+    fetched_at    TEXT,
+    parse_error   TEXT                  -- why it holds no agenda, when it doesn't
+);
+CREATE INDEX idx_agenda_doc_kind ON agenda_doc(kind, ord);
+
+CREATE TABLE agenda_doc_day (
+    doc_slug       TEXT NOT NULL REFERENCES agenda_doc(slug) ON DELETE CASCADE,
+    ord            INTEGER NOT NULL,    -- position within the sitting
+    date           TEXT,                -- ISO; the PDF prints no year, we resolve it
+    weekday        TEXT,                -- as the PDF spells it ("HÉTFŐ")
+    starts_at      TEXT,                -- "13:00"
+    decisions_from TEXT,                -- comma-separated "14:45,11:30" (can be several)
+    ends_note      TEXT,                -- free text: "kb. 22:00 óra, illetve …"
+    break_note     TEXT,
+    PRIMARY KEY (doc_slug, ord)
+);
+
+CREATE TABLE agenda_doc_item (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    doc_slug    TEXT NOT NULL REFERENCES agenda_doc(slug) ON DELETE CASCADE,
+    day_ord     INTEGER NOT NULL,
+    date        TEXT,
+    -- The listing's own two numbers, which are NOT the same: `ordinal` is the
+    -- item's place in that day, `ref` the B./n back-reference that identifies it
+    -- across the whole sitting. One bill debated and voted on the same day is two
+    -- ordinals with one ref. `ordinal` is NULL for the procedural decisions the
+    -- House takes before adopting the agenda, which are listed without a number.
+    ordinal     INTEGER,
+    ref         TEXT,
+    bill_code   TEXT,                   -- "T/438", as printed
+    bill_id     TEXT REFERENCES bill(id),   -- resolved against the bill registry
+    section     TEXT,                   -- the listing heading it sits under
+    title       TEXT,
+    submitter   TEXT,
+    stage       TEXT,                   -- "Általános vita a lezárásig"
+    time_window TEXT,                   -- "Kb. 15:30- kb. 16:30 óráig"
+    flags       TEXT,                   -- comma-separated: cardinal,urgent,two_thirds…
+    notes       TEXT,                   -- the item's "Megjegyzés:" block, newline-joined
+    detail      TEXT                    -- part B's procedural fields, as JSON
+);
+CREATE INDEX idx_agenda_doc_item_doc ON agenda_doc_item(doc_slug, day_ord, ordinal);
+CREATE INDEX idx_agenda_doc_item_bill ON agenda_doc_item(bill_id);
+
+-- The page-level facts that are not documents: currently the House Committee's
+-- next meeting. A key/value table because there is one of each and the page may
+-- gain another tomorrow; the value is JSON.
+CREATE TABLE agenda_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);

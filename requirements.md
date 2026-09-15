@@ -195,6 +195,65 @@ Primary use cases:
   > queried, freeing its number in the same pass; the loader drops the DB row whose
   > processed file is gone (ING-5).
 
+- **NR-1 (SHOULD).** Everything the API exposes is a record of what the House
+  **has done**. What it is **about to do** is published only as human documents
+  hanging off one portal page, `/web/guest/aktualis`: the **napirend** (order
+  paper) for the next sitting, the month's **ülésterv**, the submission
+  deadlines, the legislative programme, and the date of the House Committee's
+  next meeting. The scraper SHOULD read that page, and SHOULD mirror and parse
+  the napirend behind it (NR-2), because the sitting a visitor most wants to
+  know about is the one that has not happened yet (SIT-1).
+  The page's markup is **disposable** — it is CMS-generated, restyled at will,
+  and the block carrying the House Committee's meeting is a repurposed *year
+  navigator* whose links still carry `data-year` attributes that are not years.
+  So the parse MUST key on what is stable: the **shape of the href**
+  (`/documents/d/guest/<slug>`, whose slug says both what the document is and
+  which sitting it belongs to — `nr_20260914_elfogadott`) and the **Hungarian
+  labels** the House writes in front of its own values. A CSS selector would not
+  survive the next reskin.
+  The pass MUST be **incremental** (SCR-2): the House issues a new napirend
+  under a new slug rather than editing one in place, so an unchanged slug means
+  an unchanged document and the PDF is not fetched again — an idle poll costs
+  one HTML request. It MUST run on **every** sync pass and on no slower cadence
+  of its own: what it carries is a *schedule*, and a napirend picked up the day
+  after the sitting was never published at all as far as the site is concerned.
+  Failure past the page fetch MUST degrade, never abort (SCR-5/SCR-6): a missing
+  `pdftotext`, a 404 on the document, an unparseable PDF — each leaves the
+  agenda empty with a recorded reason, and the page's own findings are still
+  written.
+  > **✅ realized.** `parlamonitor/aktualis/` (`page` + `nr` + `scrape`) writes
+  > `processed/aktualis.json`; `python -m parlamonitor aktualis <data_dir>`, and
+  > a `_sync_aktualis` pass inside `run_sync` (`--skip-aktualis` to opt out).
+
+- **NR-2 (SHOULD).** The napirend is a **PDF**, and it is the only place its
+  contents exist. Parsing it SHOULD yield the sitting's structure rather than a
+  blob of text: per sitting **day** its timetable (start, earliest decision
+  times, expected end, breaks), and per **agenda item** its ordinal, its
+  `B./n` cross-reference, the **iromány number** it concerns, its title,
+  submitter, debate stage, time window, the House's own notes, and the
+  procedural properties those notes state (two-thirds, cardinal, exceptional
+  procedure, urgent debate, nationality/EU item, secret ballot). Where the
+  document carries a detail sheet (part **B**), its fields — submission date,
+  committees, amendment deadlines — SHOULD be joined onto the item the `B./n`
+  identifies.
+  Extraction MUST preserve the PDF's **columns** (`pdftotext -layout`), unlike
+  the iromány document mirror (DOC-1) which deliberately does not: the order
+  paper's meaning *is* its layout — an item's ordinal, its cross-reference and
+  its iromány number form a left **gutter**, and in reading order they
+  interleave with the title text they belong to. The gutter MUST be peeled off
+  by what it is (a marker followed by the layout's own column gap) rather than
+  by a fixed column, because the columns move between documents and a page break
+  dedents a wrapped line to column 0.
+  Two numbers per item look alike and are not: the **ordinal** is the item's
+  place within that sitting day, the **`B./n`** identifies it across the whole
+  sitting — one bill debated and voted on the same day is two ordinals under one
+  reference, and the listing's own numbering restarts on the second day. A
+  document with **no numbered items at all** — a purely ceremonial sitting, a
+  government being sworn in — MUST parse to its days with empty item lists,
+  which is the truth about that sitting and not a failure (SCR-5).
+  > **✅ realized.** `parlamonitor/aktualis/nr.py`; tested against a verbatim
+  > capture of a real order paper in `scraper/tests/test_aktualis.py`.
+
 - **DOC-1 (SHOULD).** The iromány scrape (§6A) records where each document
   *is* — the iromány's own text link, each non-self-standing motion's, and the
   justification/background files on its detail sheet — but holds none of the
@@ -1021,6 +1080,50 @@ section — **Elemzések** — with its own entry in the top bar.
   > badge under the card's counts and in the day-page heading for `pending` only.
   > The window mirrors the scraper's own publication-lag grace, so the site stops
   > promising exactly when the sync stops chasing.
+
+- **NR-3 (SHOULD).** The parsed order paper SHOULD be stored in **tables of its
+  own**, never folded into `session` / `agenda_item`. Those record what was
+  actually said and are joined to speeches; an order paper is a **plan**, and
+  plans change — items are dropped, reordered and re-timed between the napirend
+  and the sitting. Merging the two would let the record inherit a claim the
+  House only intended. There is **no history** to keep: the page states only the
+  current position, so a load replaces the whole set, and an order paper the
+  House has withdrawn disappears with it rather than lingering as a sitting that
+  will never happen.
+  An item names its iromány by **number only** (`T/438`), so the link to the
+  bill (§6A) is **derived** at load time and MUST be **re-derived** whenever
+  either side moves — which also means an item announcing an iromány that was
+  not registered yet when the napirend was parsed gains its link as soon as the
+  iromány lands, with no re-scrape.
+  > **✅ realized.** `agenda_doc` / `agenda_doc_day` / `agenda_doc_item` /
+  > `agenda_meta`, loaded by `load_aktualis` and relinked by
+  > `_relink_agenda_bills`; `backend/migrate_upcoming_agenda.py` backfills an
+  > existing deployment.
+
+- **NR-4 (MAY).** The **ülésterv** (the month's sitting plan) is published
+  alongside the napirend and is *not* parsed: it is a wide grid whose cells wrap
+  over many lines, whose column boundaries move between documents, and whose
+  footnote markers glue onto the title text — a different and much harder
+  extraction problem than the order paper's, for a document that mostly restates
+  what the napirend already says in a form the site can use. It is recorded as a
+  **link** so a reader can open it, and MAY be parsed later.
+
+- **NR-5 (SHOULD).** The **home page** SHOULD show the coming sitting: its days,
+  their timetables, and their agenda items, with each item's iromány number
+  linking to the bill page where we hold that iromány. On a sitting week it is
+  the most perishable thing on the site, and until now the site's answer to
+  "what is the Parliament doing tomorrow" was nothing at all.
+  Because it is a **plan and not a record**, the block MUST carry the document it
+  came from and the moment that document was issued — the napirend's own
+  *"…órai állapot szerint"* stamp — so a reader can see what said this and as of
+  when, the disclosure rule every derived claim on the site follows (TRUST-1).
+  Whether it *also* spells the caveat out in prose is an editorial call, not a
+  requirement: the heading already frames the sitting as the coming one, and the
+  provenance line is the part that has to be there. It MUST be gated on the data
+  actually being there, so a deployment that does not run the stage shows nothing
+  rather than an empty promise.
+  > **✅ realized.** `GET /proceedings/upcoming` + `features.upcoming_agenda` in
+  > `/meta`; `frontend/src/components/UpcomingSitting.vue` on `HomeView`.
 
 ### 5.7 Speech readability & lexical diversity
 

@@ -707,6 +707,10 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
     _drop_portfolio_links(
         conn, "portfolio_bill",
         "bill_id IN (SELECT id FROM bill WHERE period_number IS ?)", (period,))
+    # An order paper's items point at the bills they announce (NR-3). That link
+    # is derived from the printed iromány number, so it is re-resolved below
+    # rather than being something this delete may not step on.
+    _unlink_agenda_bills(conn, period)
     child_tables = ("bill_sponsor", "bill_event", "bill_committee_event",
                     "bill_vote", "bill_deadline", "bill_committee",
                     "bill_document", "bill_motion_summary", "bill_motion")
@@ -780,6 +784,7 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
                 (bid, pid, faction_id, sp.get("label"), i))
 
         _load_bill_detail(conn, bid, rec.get("detail") or {}, _person)
+    _relink_agenda_bills(conn)
     conn.commit()
     logger.info("Loaded %d bills (cycle %s)", len(data), period)
     return len(data)
@@ -4152,6 +4157,210 @@ def _writer_lock(db_path: Path):
                 fh.close()
 
 
+# --- the Aktuális page: the sitting that is coming (NR-3) -------------------
+
+def _ensure_agenda_doc_tables(conn: sqlite3.Connection) -> None:
+    """Create the NR tables in place if missing, so an existing DB gains the
+    module on the next load rather than needing a full rebuild (mirrors the
+    other late-added modules)."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS agenda_doc (
+            slug          TEXT PRIMARY KEY,
+            kind          TEXT NOT NULL,
+            url           TEXT NOT NULL,
+            label         TEXT,
+            grp           TEXT,
+            ord           INTEGER NOT NULL DEFAULT 0,
+            doc_date      TEXT,
+            title         TEXT,
+            first_date    TEXT,
+            last_date     TEXT,
+            extraordinary INTEGER NOT NULL DEFAULT 0,
+            term_year     INTEGER,
+            term_season   TEXT,
+            status_label  TEXT,
+            status_at     TEXT,
+            item_count    INTEGER NOT NULL DEFAULT 0,
+            fetched_at    TEXT,
+            parse_error   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_agenda_doc_kind ON agenda_doc(kind, ord);
+        CREATE TABLE IF NOT EXISTS agenda_doc_day (
+            doc_slug       TEXT NOT NULL REFERENCES agenda_doc(slug) ON DELETE CASCADE,
+            ord            INTEGER NOT NULL,
+            date           TEXT,
+            weekday        TEXT,
+            starts_at      TEXT,
+            decisions_from TEXT,
+            ends_note      TEXT,
+            break_note     TEXT,
+            PRIMARY KEY (doc_slug, ord)
+        );
+        CREATE TABLE IF NOT EXISTS agenda_doc_item (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_slug    TEXT NOT NULL REFERENCES agenda_doc(slug) ON DELETE CASCADE,
+            day_ord     INTEGER NOT NULL,
+            date        TEXT,
+            ordinal     INTEGER,
+            ref         TEXT,
+            bill_code   TEXT,
+            bill_id     TEXT REFERENCES bill(id),
+            section     TEXT,
+            title       TEXT,
+            submitter   TEXT,
+            stage       TEXT,
+            time_window TEXT,
+            flags       TEXT,
+            notes       TEXT,
+            detail      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_agenda_doc_item_doc
+            ON agenda_doc_item(doc_slug, day_ord, ordinal);
+        CREATE INDEX IF NOT EXISTS idx_agenda_doc_item_bill
+            ON agenda_doc_item(bill_id);
+        CREATE TABLE IF NOT EXISTS agenda_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        );
+        -- The lookup that turns a printed iromány number into a bill. Without
+        -- it the relink below scans the whole registry once per agenda item.
+        CREATE INDEX IF NOT EXISTS idx_bill_number ON bill(bill_number);
+    """)
+    conn.commit()
+
+
+def _has_agenda_doc_tables(conn: sqlite3.Connection) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agenda_doc_item'"
+    ).fetchone() is not None
+
+
+def _unlink_agenda_bills(conn: sqlite3.Connection, period) -> None:
+    """Drop the order paper's links into a cycle whose bills are about to be
+    replaced, so the replace is not blocked by them. :func:`_relink_agenda_bills`
+    puts them back from the printed iromány number."""
+    if not _has_agenda_doc_tables(conn):
+        return
+    conn.execute(
+        "UPDATE agenda_doc_item SET bill_id = NULL WHERE bill_id IN "
+        "(SELECT id FROM bill WHERE period_number IS ?)", (period,))
+
+
+def _relink_agenda_bills(conn: sqlite3.Connection) -> None:
+    """Re-resolve every order-paper item against the bill registry.
+
+    The link is derived, not stored upstream: an order paper prints "T/438" and
+    the registry is what turns that into a bill. So it is re-derived whenever
+    either side moves — which also means an item announcing a bill that had not
+    been registered yet when the napirend was parsed gains its link as soon as
+    the iromány lands, with no re-scrape."""
+    if not _has_agenda_doc_tables(conn):
+        return
+    conn.execute("""
+        UPDATE agenda_doc_item
+           SET bill_id = (SELECT b.id FROM bill b
+                           WHERE b.bill_number = agenda_doc_item.bill_code
+                           ORDER BY b.period_number DESC LIMIT 1)
+         WHERE bill_code IS NOT NULL""")
+
+
+def _load_aktualis_file(conn: sqlite3.Connection, data_dir: Path) -> int:
+    """Load ``processed/aktualis.json`` if the scrape has produced one.
+
+    Absent on a corpus scraped before this stage existed, which is not an error:
+    the site then simply shows no upcoming sitting."""
+    path = Path(data_dir) / "processed" / "aktualis.json"
+    if not path.exists():
+        logger.info("No aktualis.json in %s — skipping the upcoming agenda",
+                    path.parent)
+        return 0
+    try:
+        registry = json.loads(path.read_text())
+    except ValueError as e:
+        logger.warning("Could not parse %s (%s) — skipping", path, e)
+        return 0
+    return load_aktualis(conn, registry)
+
+
+def load_aktualis(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load the Aktuális page's documents and the napirend parsed out of it.
+
+    Replaces the whole set: the page states only the House's current position,
+    and an order paper the House has withdrawn must disappear with it rather
+    than linger as a sitting that is never going to happen (NR-3)."""
+    _ensure_agenda_doc_tables(conn)
+    data = registry.get("data") or {}
+    meta = registry.get("meta") or {}
+    documents = data.get("documents") or []
+    agenda = data.get("agenda") or {}
+    agenda_slug = agenda.get("slug")
+    items = 0
+    try:
+        for table in ("agenda_doc_item", "agenda_doc_day", "agenda_doc", "agenda_meta"):
+            conn.execute(f"DELETE FROM {table}")
+
+        for ord_, doc in enumerate(documents):
+            parsed = agenda if doc.get("slug") == agenda_slug else {}
+            term = parsed.get("term") or {}
+            conn.execute(
+                """INSERT INTO agenda_doc(slug, kind, url, label, grp, ord, doc_date,
+                       title, first_date, last_date, extraordinary, term_year,
+                       term_season, status_label, status_at, item_count, fetched_at,
+                       parse_error)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (doc.get("slug"), doc.get("kind") or "document", doc.get("url"),
+                 doc.get("label"), doc.get("group"), ord_, doc.get("date"),
+                 parsed.get("title"), parsed.get("firstDate"), parsed.get("lastDate"),
+                 1 if parsed.get("extraordinary") else 0, term.get("year"),
+                 term.get("season"), parsed.get("statusLabel"), parsed.get("statusAt"),
+                 parsed.get("itemCount") or 0, parsed.get("fetchedAt"),
+                 parsed.get("error")))
+
+        for day_ord, day in enumerate(agenda.get("days") or []):
+            conn.execute(
+                """INSERT INTO agenda_doc_day(doc_slug, ord, date, weekday, starts_at,
+                       decisions_from, ends_note, break_note)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (agenda_slug, day_ord, day.get("date"), day.get("weekday"),
+                 day.get("startsAt"), ",".join(day.get("decisionsFrom") or []) or None,
+                 day.get("endsNote"), day.get("breakNote")))
+            for item in day.get("items") or []:
+                code = item.get("billCode")
+                conn.execute(
+                    """INSERT INTO agenda_doc_item(doc_slug, day_ord, date, ordinal,
+                           ref, bill_code, bill_id, section, title, submitter, stage,
+                           time_window, flags, notes, detail)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (agenda_slug, day_ord, day.get("date"), item.get("ordinal"),
+                     item.get("ref"), code, None,
+                     item.get("section"), item.get("title"), item.get("submitter"),
+                     item.get("stage"), item.get("timeWindow"),
+                     ",".join(item.get("flags") or []) or None,
+                     "\n".join(item.get("notes") or []) or None,
+                     json.dumps(item["detail"], ensure_ascii=False)
+                     if item.get("detail") else None))
+                items += 1
+
+        for key, value in (("house_committee", data.get("houseCommittee")),
+                           ("page", {"url": meta.get("pageUrl"),
+                                     "scrapedAt": meta.get("scrapedAt"),
+                                     "agendaSlug": agenda_slug,
+                                     "agendaError": meta.get("agendaError")})):
+            if value:
+                conn.execute("INSERT INTO agenda_meta(key, value) VALUES (?,?)",
+                             (key, json.dumps(value, ensure_ascii=False)))
+        # The bill links are derived from the printed iromány numbers, in one
+        # indexed pass rather than by carrying the whole registry in memory.
+        _relink_agenda_bills(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    logger.info("Loaded the Aktuális page (%d documents, %d agenda items)",
+                len(documents), items)
+    return items
+
+
 def build_database(data_dir: str | Path, db_path: str | Path, *,
                    only_session: str | None = None,
                    skip_wordcloud: bool = False) -> None:
@@ -4221,6 +4430,7 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         # `person` row only once the sittings they spoke in are in (the speaker stub),
         # and their office terms are exactly what this registry supplies (REP-2).
         _load_office_holders_file(conn, data_dir)
+        _load_aktualis_file(conn, data_dir)
 
         # Lemmatize / entity-extract each sitting's text into session_word_count
         # before the aggregates so word_doc_freq can derive from it (WCLOUD-2);
@@ -4294,7 +4504,8 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
 # load_state yet), which is exactly how a new domain lands on an already-built
 # deployment through the incremental path alone.
 _PROCESSED_GLOBS = ("representatives-*.json", "advocates-*.json", "bills-*.json",
-                    "votes-*.json", "*-session.json", "officeholders.json")
+                    "votes-*.json", "*-session.json", "officeholders.json",
+                    "aktualis.json")
 
 
 def _file_sig(path: Path) -> tuple[float, int]:
@@ -4524,6 +4735,13 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
         # a single small file, so re-reading it costs nothing.
         if changed["officeholders.json"] or loaded_sessions:
             _load_office_holders_file(conn, data_dir)
+
+        # The Aktuális page (NR-3). Reloaded whenever its file changed, and also
+        # when the bill registry did: an order paper links to its irományok by
+        # number, and a bill that was only submitted after the napirend was
+        # parsed has no row to link to until the registry catches up.
+        if changed["aktualis.json"] or changed["bills-*.json"]:
+            _load_aktualis_file(conn, data_dir)
 
         # Aggregates are speech-derived, so they only need rebuilding when a
         # sitting changed (bills/votes/reps carry their own rows). Word counts are

@@ -39,6 +39,9 @@ politeness/transport knobs come from the environment or flags, never hard-coded
 
     # Office holders (tisztségviselők): every office term with its real dates
     python -m parlamonitor officeholders ./data
+
+    # The Aktuális page: the next sitting's order paper (napirend), parsed
+    python -m parlamonitor aktualis ./data
 """
 
 from __future__ import annotations
@@ -60,6 +63,7 @@ from .felicitas import FelicitasClient
 from .http_client import CaptchaWall, HttpClient
 from .lockfile import acquire
 from .advocates.scrape import advocate_cycles, fetch_advocates, save_advocates
+from .aktualis.scrape import fetch_aktualis, load_previous, save_aktualis
 from .bills.legacy import CYCLE as ARCHIVE_CYCLE
 from .bills.legacy import faction_ids_from_registries, fetch_legacy_bills
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
@@ -450,6 +454,34 @@ def cmd_documents(args) -> None:
                        **meta})
 
 
+def cmd_aktualis(args) -> None:
+    """Read the Aktuális page and the napirend PDF behind it (NR-1).
+
+    Cycle-less and cheap: one HTML request, plus the PDF only when the House has
+    published a new one since the last run. Safe to poll often — which is the
+    point, since what it carries is a *schedule*, and a schedule is only worth
+    anything before it happens."""
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    http = HttpClient(RuntimeConfig.from_env(
+        sleep=args.sleep, retry_count=args.retry_count, proxy=args.proxy,
+        captcha_retries=args.captcha_retries, ssh_host=args.ssh_host,
+        ssh_port=args.ssh_port, ssh_user=args.ssh_user, ssh_key=args.ssh_key,
+        ssh_known_hosts=args.ssh_known_hosts))
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            registry = fetch_aktualis(http, previous=load_previous(paths),
+                                      force=args.force)
+            save_aktualis(paths, registry)
+    finally:
+        http.close()
+
+    _write_log(paths, {"command": "aktualis",
+                       "ranAt": datetime.now(timezone.utc).isoformat(
+                           timespec="seconds"),
+                       **registry["meta"]})
+
+
 def _cmd_bills_archive(args, paths: Paths) -> None:
     """``bills --archive``: cycle 35 off the static 1994-98 site, which is the
     only place those irományok exist (the Felicitas API returns none)."""
@@ -558,6 +590,7 @@ def cmd_sync(args) -> None:
                 skip_votes=args.skip_votes, skip_reps=args.skip_reps,
                 skip_advocates=args.skip_advocates,
                 skip_office_holders=args.skip_officeholders,
+                skip_aktualis=args.skip_aktualis,
                 documents=args.documents,
                 documents_compression=args.documents_compression,
                 documents_max_mb=args.documents_max_mb,
@@ -748,6 +781,16 @@ def build_parser() -> argparse.ArgumentParser:
                          "(default: today)")
     sp.set_defaults(func=cmd_officeholders)
 
+    sp = sub.add_parser("aktualis",
+                        help="read the Aktuális page: the next sitting's order "
+                             "paper (napirend), parsed from its PDF, plus the "
+                             "House Committee's next meeting")
+    _common(sp, cycle_required=False)
+    sp.add_argument("--force", action="store_true",
+                    help="re-download and re-parse the napirend PDF even when "
+                         "its slug is the one already on file")
+    sp.set_defaults(func=cmd_aktualis)
+
     sp = sub.add_parser("bills", help="scrape the cycle's irományok (all document types)")
     _common(sp)
     sp.add_argument("--main-types", default=None,
@@ -824,6 +867,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="skip the nationality-advocate refresh")
     sp.add_argument("--skip-officeholders", action="store_true",
                     help="skip the office-holder (tisztségviselők) refresh")
+    sp.add_argument("--skip-aktualis", action="store_true",
+                    help="skip the Aktuális page / napirend pass")
     _documents_opts(sp)
     # Only `sync` is paced: a hand-run `documents` mirrors the cycle in one go
     # (that is what it is for), while a poll every half hour must not spend the

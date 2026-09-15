@@ -53,6 +53,8 @@ from datetime import datetime, timedelta, timezone
 
 from . import whisper_align
 from .advocates.scrape import fetch_advocates, save_advocates
+from .aktualis.scrape import (fetch_aktualis, load_previous,
+                              save_aktualis)
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
 from .config import Paths, session_id, timing_backend as _default_timing_backend
 from .config import documents_compression as _documents_compression
@@ -501,6 +503,24 @@ def _sync_office_holders(felicitas: FelicitasClient, paths: Paths, state: dict,
     return True
 
 
+def _sync_aktualis(paths: Paths, http, *, force: bool) -> bool:
+    """Refresh the Aktuális page and the napirend behind it (NR-1).
+
+    Every pass, on no cadence of its own: the file is a *schedule*, and it is
+    worth only what it is worth before the sitting happens — a napirend that
+    lands the morning of the sitting and is picked up a day later was never
+    published at all, as far as the site is concerned. The cost is one HTML
+    request unless the House has issued a new napirend, because the document's
+    slug names the sitting it is for. Rewritten only when something actually
+    changed, so an unchanged page leaves the loader nothing to do."""
+    previous = load_previous(paths)
+    registry = fetch_aktualis(http, previous=previous, force=force)
+    if not force and previous and previous.get("data") == registry["data"]:
+        return False
+    save_aktualis(paths, registry)
+    return True
+
+
 # --- orchestration ---------------------------------------------------------
 
 def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
@@ -508,7 +528,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
              no_offsets: bool = False, reps_max_age: float = DEFAULT_REPS_MAX_AGE,
              skip_bills: bool = False, skip_votes: bool = False,
              skip_reps: bool = False, skip_advocates: bool = False,
-             skip_office_holders: bool = False,
+             skip_office_holders: bool = False, skip_aktualis: bool = False,
              timing_backend: str | None = None,
              documents: str | None = None,
              documents_compression: str | None = None,
@@ -522,7 +542,8 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
     summary = {"cycle": cycle, "checkedAt": _now(),
                "sessions": [], "removedSessions": [], "bills": False,
                "votes": False, "representatives": False, "advocates": False,
-               "officeHolders": False, "documents": False, "errors": []}
+               "officeHolders": False, "documents": False, "aktualis": False,
+               "errors": []}
 
     try:
         summary["sessions"], summary["removedSessions"] = _sync_proceedings(
@@ -593,6 +614,13 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
             logger.exception("Office-holder sync failed")
             summary["errors"].append(f"officeholders: {e}")
 
+    if not skip_aktualis:
+        try:
+            summary["aktualis"] = _sync_aktualis(paths, felicitas.http, force=force)
+        except Exception as e:
+            logger.exception("Aktuális sync failed")
+            summary["errors"].append(f"aktualis: {e}")
+
     state["cycle"] = cycle
     state["lastCheckAt"] = summary["checkedAt"]
     save_state(paths.sync_state, state)
@@ -600,5 +628,6 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
     summary["changed"] = bool(summary["sessions"] or summary["removedSessions"]
                               or summary["bills"] or summary["votes"]
                               or summary["representatives"]
-                              or summary["advocates"])
+                              or summary["advocates"]
+                              or summary["aktualis"])
     return summary

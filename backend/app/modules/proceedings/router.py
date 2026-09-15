@@ -758,6 +758,118 @@ def list_sessions(period: Optional[List[int]] = Query(
                          for r in rows]}
 
 
+# ---------------------------------------------------------------------------
+# The sitting that is coming: the Aktuális page's order paper (NR-5)
+# ---------------------------------------------------------------------------
+
+
+def _has_agenda_doc(db: sqlite3.Connection) -> bool:
+    """Whether this DB carries the NR tables — false on one built before the
+    stage existed, which is an empty answer rather than an error."""
+    return db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agenda_doc'"
+    ).fetchone() is not None
+
+
+def _json_or_none(raw):
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
+
+
+@router.get("/upcoming")
+def upcoming_agenda(db: sqlite3.Connection = Depends(get_db)):
+    """The order paper for the sitting that is coming (NR-5).
+
+    Everything the House has announced about its next sitting: the napirend's
+    days with their timetables and their items, the other documents the Aktuális
+    page links (the month's ülésterv, the submission deadlines), and the House
+    Committee's next meeting.
+
+    This is a **plan**, not a record: items get dropped, reordered and re-timed
+    between the order paper and the sitting, so every field here is what the
+    House *said* it would do, and the response carries the document and the
+    moment it was issued (``statusLabel`` / ``statusAt``) so a caller can say so.
+    Cycle-less by nature — there is only ever one next sitting.
+    """
+    if not _has_agenda_doc(db):
+        return {"agenda": None, "documents": [], "houseCommittee": None,
+                "source": None}
+
+    def compute():
+        docs = [dict(r) for r in db.execute(
+            """SELECT slug, kind, url, label, grp, doc_date, title, first_date,
+                      last_date, extraordinary, term_year, term_season,
+                      status_label, status_at, item_count, parse_error
+                 FROM agenda_doc ORDER BY ord""")]
+        agenda = next((d for d in docs if d["kind"] == "agenda"), None)
+        days = []
+        if agenda:
+            items_by_day: dict[int, list] = {}
+            for r in db.execute(
+                    """SELECT i.day_ord, i.ordinal, i.ref, i.bill_code, i.bill_id,
+                              i.section, i.title, i.submitter, i.stage,
+                              i.time_window, i.flags, i.notes, i.detail,
+                              b.title AS bill_title, b.status AS bill_status
+                         FROM agenda_doc_item i
+                         LEFT JOIN bill b ON b.id = i.bill_id
+                        WHERE i.doc_slug = ?
+                        ORDER BY i.day_ord, i.id""", (agenda["slug"],)):
+                items_by_day.setdefault(r["day_ord"], []).append({
+                    "ordinal": r["ordinal"], "ref": r["ref"],
+                    "billCode": r["bill_code"], "billId": r["bill_id"],
+                    "billTitle": r["bill_title"], "billStatus": r["bill_status"],
+                    "section": r["section"], "title": r["title"],
+                    "submitter": r["submitter"], "stage": r["stage"],
+                    "timeWindow": r["time_window"],
+                    "flags": (r["flags"] or "").split(",") if r["flags"] else [],
+                    "notes": (r["notes"] or "").split("\n") if r["notes"] else [],
+                    "detail": _json_or_none(r["detail"]),
+                })
+            for r in db.execute(
+                    """SELECT ord, date, weekday, starts_at, decisions_from,
+                              ends_note, break_note
+                         FROM agenda_doc_day WHERE doc_slug = ? ORDER BY ord""",
+                    (agenda["slug"],)):
+                days.append({
+                    "date": r["date"], "weekday": r["weekday"],
+                    "startsAt": r["starts_at"],
+                    "decisionsFrom": ((r["decisions_from"] or "").split(",")
+                                      if r["decisions_from"] else []),
+                    "endsNote": r["ends_note"], "breakNote": r["break_note"],
+                    "items": items_by_day.get(r["ord"], []),
+                })
+
+        meta = {r["key"]: _json_or_none(r["value"])
+                for r in db.execute("SELECT key, value FROM agenda_meta")}
+        page = meta.get("page") or {}
+        return {
+            "agenda": ({"slug": agenda["slug"], "url": agenda["url"],
+                        "title": agenda["title"], "label": agenda["label"],
+                        "firstDate": agenda["first_date"],
+                        "lastDate": agenda["last_date"],
+                        "extraordinary": bool(agenda["extraordinary"]),
+                        "termYear": agenda["term_year"],
+                        "termSeason": agenda["term_season"],
+                        "statusLabel": agenda["status_label"],
+                        "statusAt": agenda["status_at"],
+                        "itemCount": agenda["item_count"],
+                        "parseError": agenda["parse_error"],
+                        "days": days} if agenda else None),
+            "documents": [{"slug": d["slug"], "kind": d["kind"], "url": d["url"],
+                           "label": d["label"], "group": d["grp"],
+                           "date": d["doc_date"]}
+                          for d in docs if d["kind"] != "agenda"],
+            "houseCommittee": meta.get("house_committee"),
+            "source": {"page": page.get("url"), "scrapedAt": page.get("scrapedAt")},
+        }
+
+    return cached_aggregate("proceedings_upcoming", (), compute)
+
+
 def _has_session_status(db: sqlite3.Connection) -> bool:
     """Whether the (regenerable) DB has the ``session.status`` column — false only
     on a DB built before the upcoming-sittings feature, so those endpoints keep

@@ -680,7 +680,14 @@ section — **Elemzések** — with its own entry in the top bar.
   exact-phrase ("…") supported.
 - **SEA-3.** Filters: by **date range**, **speaker**, **faction**,
   **agenda-item type**. Filters are combinable. The **electoral period** is set
-  by the global cycle selector (§4A), not a per-search filter.
+  by the global cycle selector (§4A), not a per-search filter. The **speaker**
+  filter can also stand on its own: with no search term the page lists that
+  speaker's speeches — one result per **speech**, shown by its opening rather
+  than by a matched sentence, newest first (there is no relevance to rank by) —
+  so "everything they said" is reachable from the search page itself, still
+  combinable with the date/faction/agenda filters and the cycle scope. No other
+  filter searches without a term: a bare faction or agenda-type filter is a read
+  of the whole corpus, and is refused.
 - **SEA-4.** Each result shows: matched sentence with **highlighted** terms,
   **surrounding transcript context** — a few sentences immediately before and
   after the match so the moment reads in context without opening the viewer,
@@ -701,6 +708,19 @@ section — **Elemzések** — with its own entry in the top bar.
 - **SEA-6.** Search is reachable and shareable via **URL query params**
   (deep-linkable search state) so a search can be cited.
 - **SEA-7 (SHOULD).** Search-as-you-type suggestions for speakers and factions.
+  A name typed into the search box — from **4 characters** up, matched anywhere in
+  the label with the site-wide accent folding (§4B) — offers the speakers it
+  names, ranked by how much each has spoken and counted so two people of a
+  surname can be told apart. Picking one applies the **speaker filter** (§SEA-3)
+  rather than searching for the name: a speaker is named in the transcript's
+  *label*, not in the sentences the index holds, so the name moves out of the
+  query box and into the filter it was meant to be, and the box is left ready for
+  the term. The same suggestions back the **speaker filter's own field**, which
+  takes nothing but a name and so suggests **from the first character** — the
+  floor belongs to the main box, where a short fragment would open a dropdown
+  over an ordinary search term. The filter travels in the URL as `person_id`
+  (§SEA-6) — a shared link that carries only the id still shows the person's
+  name, resolved on arrival.
 - **SEA-8 (SHOULD).** A **popularity-over-time chart** accompanies a query: the
   number of matching sentences bucketed by calendar period (monthly, collapsing
   to yearly over a long span), so a user sees when a term was most discussed.

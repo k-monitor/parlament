@@ -5,14 +5,18 @@
 // reproduce the exact result set.
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, setCycles, currentCycleLabel, periodLabel } from '../../store.js'
 import { agendaLabel, formatDate, searchExcerptLines } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
+import { useSpeakerSuggest } from '../../lib/speakerSuggest.js'
 import { onekoForQuery, dismissOneko } from '../../lib/oneko.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
+import SpeakerFilter from '../../components/SpeakerFilter.vue'
+import SpeakerSuggestList from '../../components/SpeakerSuggestList.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
 import TrendChart from '../../components/TrendChart.vue'
 import BarChart from '../../components/BarChart.vue'
@@ -21,6 +25,7 @@ import DonateCard from '../../components/DonateCard.vue'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 
 const PAGE = 20
 const AGENDA_TYPES = ['opening', 'procedural', 'regular', 'oath', 'voting',
@@ -35,9 +40,14 @@ const filters = reactive({
   faction_id: route.query.faction_id || '',
   agenda_type: route.query.agenda_type || '',
 })
+// The speaker filter (SEA-3) is URL state like the others, but it travels as an
+// opaque `person_id` while the panel has to show a *name* — so the page keeps the
+// resolved person next to the id, rather than the id alone in `filters`.
+const speaker = ref(null)
 // Open the filter panel on load when a filter is already active (e.g. a shared
 // or deep-linked query), so its filters are visible rather than hidden.
-const showFilters = ref(!!(filters.date_from || filters.date_to || filters.faction_id || filters.agenda_type))
+const showFilters = ref(!!(filters.date_from || filters.date_to || filters.faction_id
+  || filters.agenda_type || route.query.person_id))
 // Result ordering (SEA-10): relevance (default) | date_desc | date_asc. Kept in
 // the URL like the other per-page filters so a sorted view is deep-linkable (CYC-5).
 const SORTS = ['relevance', 'date_desc', 'date_asc']
@@ -62,22 +72,38 @@ const totalPages = computed(() =>
   data.value ? Math.ceil(data.value.total / PAGE) : 0)
 
 onMounted(async () => {
+  document.addEventListener('pointerdown', onDocPointerDown)
+  // A deep-linked speaker filter resolves alongside the search, not before it:
+  // the results must not wait on a name that is only shown in the panel.
+  syncSpeaker(route.query.person_id || '')
   // Ensure the global cycle is initialised before the first search so results
   // are scoped to the selected cycle (not briefly to "all").
   await loadMeta().catch(() => {})
   try { factions.value = (await api.factions()).factions } catch {}
-  if (route.query.q) runFromRoute()
+  if (searchable.value) runFromRoute()
 })
 
+// What the page can run: a term, or — with no term — a speaker, whose speeches
+// are then listed (SEA-3). Any other filter needs a term to narrow.
+const searchable = computed(() => !!(route.query.q || route.query.person_id))
+
 // Re-run the active search when the global cycle changes.
-watch(() => store.cycles.join(','), () => { if (route.query.q) runFromRoute() })
+watch(() => store.cycles.join(','), () => { if (searchable.value) runFromRoute() })
 
 // Push the current form state into the URL (this triggers the watcher → fetch).
 function submit(resetPage = true) {
-  const query = { q: input.value.trim() }
+  clearSuggest()
+  const query = {}
+  // A filter can be set before a term is (picking a speaker from the box below
+  // is exactly that), and the backend has no query-less search — so an empty `q`
+  // is left out of the URL rather than sent: the filters stay, and the page waits
+  // for the word to search for.
+  const q = input.value.trim()
+  if (q) query.q = q
   for (const k of ['date_from', 'date_to', 'faction_id', 'agenda_type']) {
     if (filters[k]) query[k] = filters[k]
   }
+  if (speaker.value) query.person_id = speaker.value.person_id
   if (sort.value !== 'relevance') query.sort = sort.value
   if (!resetPage && route.query.offset) query.offset = route.query.offset
   router.push({ name: 'search', query })
@@ -95,11 +121,64 @@ function changeSort() {
 function clearFilters() {
   filters.date_from = filters.date_to = ''
   filters.faction_id = filters.agenda_type = ''
+  speaker.value = null
   submit()
 }
 
 function gotoPage(p) {
   router.push({ name: 'search', query: { ...route.query, offset: p * PAGE } })
+}
+
+// Bring `speaker` in line with the `person_id` the URL carries. A filter picked
+// on this page arrives with its name already known; one that arrives from a
+// shared link, a reload or the back button is a bare id, so it is shown as one
+// at once — an active filter must never be invisible — and the name is swapped
+// in when the profile answers. A failed lookup costs the name, not the filter.
+let speakerSeq = 0
+async function syncSpeaker(id) {
+  if (!id) { speakerSeq++; speaker.value = null; return }
+  if (speaker.value?.person_id === id) return          // already resolved
+  speaker.value = { person_id: id, label: id }
+  const seq = ++speakerSeq
+  try {
+    const p = await api.representative(id)
+    if (seq === speakerSeq) {
+      speaker.value = { person_id: id, label: p.label, photo_uri: p.photo_uri }
+    }
+  } catch { /* the id still filters correctly; only its name is missing */ }
+}
+
+// Search-as-you-type speaker suggestions in the main box (SEA-7). A name typed
+// there is almost never a useful search *term* — the transcript carries a
+// speaker in its label, not in the sentences the index holds — so what the list
+// offers is the speaker FILTER, and picking one moves the name out of the query
+// box and into the filter it was meant to be.
+// No loading state is taken from it: under the main box a spinner would fire on
+// every fourth character of an ordinary search term, so the list simply appears
+// when there is somebody to show.
+const { speakers: suggested, ask: askSuggest, clear: clearSuggest } = useSpeakerSuggest()
+const qInput = ref(null)
+const qBox = ref(null)
+
+// Picked in the filter panel, or dropped from it — either way the search re-runs
+// against the new filter.
+function onSpeakerFilter(s) {
+  speaker.value = s
+  submit()
+}
+
+function pickSuggested(s) {
+  speaker.value = { person_id: s.person_id, label: s.label, photo_uri: s.photo_uri }
+  clearSuggest()
+  input.value = ''          // the name is the filter now, not the query
+  showFilters.value = true  // …and the filter it became has to be visible
+  submit()
+  qInput.value?.focus()     // ready for the word they actually came to search
+}
+
+// A dropdown is dismissed by clicking away from it, not only by picking from it.
+function onDocPointerDown(e) {
+  if (qBox.value && !qBox.value.contains(e.target)) clearSuggest()
 }
 
 // Monotonic request id: every trigger (query watcher, cycle watcher, retry)
@@ -121,7 +200,7 @@ async function runFromRoute() {
   // any other search sends it home again. Called before the early return so an
   // emptied query dismisses it too.
   onekoForQuery(route.query.q)
-  if (!route.query.q) {
+  if (!searchable.value) {
     reqSeq++ // orphan any in-flight responses
     data.value = null; trend.value = null; breakdown.value = null
     currentArgs = null; breakdownLoadedSeq = -1
@@ -134,6 +213,7 @@ async function runFromRoute() {
     period: store.cycles, // global cycle scope (empty = all cycles)
     date_from: route.query.date_from,
     date_to: route.query.date_to,
+    person_id: route.query.person_id,
     faction_id: route.query.faction_id,
     agenda_type: route.query.agenda_type,
   }
@@ -157,6 +237,10 @@ async function runFromRoute() {
     const res = await api.search({ ...searchArgs, limit: PAGE, offset })
     if (seq === reqSeq) {
       data.value = res
+      // A query-less search has no relevance to rank by, so the backend answers
+      // by date whatever was asked for — follow it, or the sort control would
+      // name an ordering the list is not in.
+      sort.value = SORTS.includes(res.sort) ? res.sort : sort.value
       // Arm the quality ping with the same args the search ran with, so a click
       // is counted onto this search's own aggregate row.
       clicks.arm(searchArgs, offset)
@@ -198,13 +282,19 @@ watch(() => route.query, (q) => {
   filters.date_to = q.date_to || ''
   filters.faction_id = q.faction_id || ''
   filters.agenda_type = q.agenda_type || ''
+  syncSpeaker(q.person_id || '')
   sort.value = SORTS.includes(q.sort) ? q.sort : 'relevance'
   runFromRoute()
 })
 
-// The cat is appended to <body>, so it outlives this component unless it is
-// told otherwise — leaving the search page has to take it with us (SEA-13).
-onUnmounted(dismissOneko)
+// The cat is appended to <body> and the suggestion debounce runs on a timer, so
+// both outlive this component unless they are told otherwise — leaving the
+// search page has to take the cat with us (SEA-13) and drop the listener.
+onUnmounted(() => {
+  dismissOneko()
+  clearSuggest()
+  document.removeEventListener('pointerdown', onDocPointerDown)
+})
 
 function viewerLink(r) {
   return { name: 'viewer', params: { uid: r.speech_uid }, query: { s: r.sentence_ord } }
@@ -257,6 +347,13 @@ const cycleMarkers = computed(() => {
   return out
 })
 
+// What the result set is *called* — the keyword in quotes, or, for a query-less
+// search, the speaker whose speeches are listed. The captions read the same way
+// round either way, so they take one name.
+const trendCaption = computed(() => (data.value?.query
+  ? t('search.trendCaption', { q: data.value.query })
+  : t('search.trendCaptionSpeaker', { name: speaker.value?.label || '' })))
+
 // Params carried into the embeddable histogram (EmbedView `search-trend`): the
 // executed query plus the active filters, so the embed shows the same result set.
 // The cycle is added by EmbedButton from the global scope.
@@ -264,6 +361,7 @@ const trendEmbedParams = computed(() => ({
   q: data.value?.query,
   date_from: route.query.date_from,
   date_to: route.query.date_to,
+  person_id: route.query.person_id,
   faction_id: route.query.faction_id,
   agenda_type: route.query.agenda_type,
 }))
@@ -284,10 +382,19 @@ function onTrendSelect({ from, to }) {
 
   <form role="search" class="card pad searchform" @submit.prevent="submit()">
     <div class="row" style="gap:.5rem;">
-      <input
-        v-model="input" type="search" :placeholder="$t('search.placeholder')"
-        :aria-label="$t('search.title')" style="flex:1;min-width:200px;"
-      />
+      <div ref="qBox" class="qbox">
+        <input
+          ref="qInput" v-model="input" type="search" autocomplete="off"
+          :placeholder="$t('search.placeholder')" :aria-label="$t('search.title')"
+          @input="askSuggest(input)" @keydown.esc="clearSuggest()"
+        />
+        <!-- Who the typed text names (SEA-7). Offered as the speaker filter,
+             and silent for the ordinary search terms that match nobody. -->
+        <SpeakerSuggestList
+          floating :speakers="suggested"
+          :heading="$t('search.speakerSuggest')" @pick="pickSuggested"
+        />
+      </div>
       <button class="btn" type="submit">{{ $t('search.button') }}</button>
       <button class="btn secondary" type="button" :aria-expanded="showFilters" @click="showFilters = !showFilters">
         {{ $t('search.filters') }}
@@ -298,6 +405,14 @@ function onTrendSelect({ from, to }) {
     <fieldset v-show="showFilters" class="filters">
       <legend class="visually-hidden">{{ $t('search.filters') }}</legend>
       <div class="filter-grid">
+        <!-- Full width: its suggestions need the room, and it is the filter most
+             often reached for after the query itself. -->
+        <div class="wide">
+          <SpeakerFilter
+            :model-value="speaker" input-id="f-speaker"
+            @update:model-value="onSpeakerFilter"
+          />
+        </div>
         <div>
           <label for="f-faction">{{ $t('search.faction') }}</label>
           <select id="f-faction" v-model="filters.faction_id" @change="submit()">
@@ -349,7 +464,7 @@ function onTrendSelect({ from, to }) {
         <label class="sortctl small muted">
           {{ $t('search.sort') }}
           <select v-model="sort" @change="changeSort">
-            <option value="relevance">{{ $t('search.sortRelevance') }}</option>
+            <option v-if="data.query" value="relevance">{{ $t('search.sortRelevance') }}</option>
             <option value="date_desc">{{ $t('search.sortNewest') }}</option>
             <option value="date_asc">{{ $t('search.sortOldest') }}</option>
           </select>
@@ -360,7 +475,7 @@ function onTrendSelect({ from, to }) {
         <TrendChart
           :buckets="trend.buckets" :granularity="trend.granularity"
           :start="trend.start" :end="trend.end" :markers="cycleMarkers"
-          :caption="$t('search.trendCaption', { q: data.query })"
+          :caption="trendCaption"
           :unit="$t('search.results')"
           selectable @select="onTrendSelect"
         />
@@ -368,12 +483,14 @@ function onTrendSelect({ from, to }) {
           <p class="small muted trendhint">{{ $t('search.trendHint') }}</p>
           <EmbedButton
             kind="search-trend" :params="trendEmbedParams"
-            :title="$t('search.trendCaption', { q: data.query })" :height="300"
+            :title="trendCaption" :height="300"
           />
         </div>
       </section>
 
-      <section v-if="data.results.length" class="card pad breakdowncard">
+      <!-- Only for a keyword search: a query-less list is one speaker's own
+           speeches, so both groupings would be a single bar of their own. -->
+      <section v-if="data.results.length && data.query" class="card pad breakdowncard">
         <button
           class="breakdown-toggle" type="button"
           :aria-expanded="showBreakdown" @click="toggleBreakdown"
@@ -437,6 +554,10 @@ function onTrendSelect({ from, to }) {
 <style scoped>
 /* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
 .cyclenotice { margin: .6rem 0 0; }
+/* The positioning context the floating suggestion list hangs from. */
+.qbox { position: relative; flex: 1; min-width: 200px; }
+/* A filter whose control carries a dropdown takes the whole grid row. */
+.filter-grid .wide { grid-column: 1 / -1; }
 .search-donate { margin-top: 1.2rem; }
 .trendcard { margin: 0 0 .9rem; }
 /* In the figure footer row the hint sits left, pushing the embed button right. */

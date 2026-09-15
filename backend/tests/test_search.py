@@ -83,6 +83,91 @@ def test_search_result_carries_seek_and_provenance(client):
     assert res["speaker"]["label"] == "Kovács Béla"
 
 
+def test_search_speaker_filter_narrows_the_whole_result_set(client):
+    # SEA-3: the speaker filter is combinable like every other filter, and the
+    # trend (SEA-8) and breakdown (SEA-9) describe the same narrowed set — they
+    # share one WHERE with the result list, so a filter that reaches one of them
+    # and not the others would be a silent lie in the charts.
+    base = client.get("/api/v1/proceedings/search", params={"q": "koltsegvetes"})
+    assert base.json()["total"] >= 1
+    # Kovács Béla (k001) is the one who said it in the fixture corpus …
+    mine = client.get("/api/v1/proceedings/search",
+                      params={"q": "koltsegvetes", "person_id": "k001"}).json()
+    assert mine["total"] == base.json()["total"]
+    assert all(r["speaker"]["person_id"] == "k001" for r in mine["results"])
+    # … and Nagy Anna (n002) did not.
+    other = client.get("/api/v1/proceedings/search",
+                       params={"q": "koltsegvetes", "person_id": "n002"}).json()
+    assert other["total"] == 0 and other["results"] == []
+
+    trend = client.get("/api/v1/proceedings/search/trend",
+                       params={"q": "koltsegvetes", "person_id": "n002"}).json()
+    assert trend["buckets"] == []
+    bd = client.get("/api/v1/proceedings/search/breakdown",
+                    params={"q": "koltsegvetes", "person_id": "k001"}).json()
+    assert [s["person_id"] for s in bd["speakers"]] == ["k001"]
+
+
+def test_search_without_a_query_lists_the_speakers_speeches(client, db_path):
+    # SEA-3: a speaker is filter enough to search with. There is no keyword to
+    # match, so the result unit becomes the speech — one row, shown by its
+    # opening — and the ordering falls back to the sitting date, bm25 having
+    # nothing to rank.
+    _seed_prior_speech(db_path)   # a speech by somebody else, right before his
+    r = client.get("/api/v1/proceedings/search", params={"person_id": "k001"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["query"] == "" and data["match"] is None
+    assert data["sort"] == "date_desc"       # relevance needs a term to rank by
+    assert data["total"] == 1                # his one speech, not its sentences
+    hit = data["results"][0]
+    assert hit["speech_uid"] == "43001-1" and hit["sentence_ord"] == 0
+    assert hit["highlighted"] == "A költségvetés fontos kérdés."   # nothing marked
+    # The preview is the speech's own opening: it neither reaches back into the
+    # speech before it nor runs on into the one after.
+    assert hit["context"]["before"] == []
+    assert [c["text"] for c in hit["context"]["after"]] == ["Az ÁGAZATI fejlesztés ügye sürgős!"]
+    # …and it is still just a filter, combinable with the rest (his speech is
+    # `procedural`, so an agenda filter for the vote excludes it).
+    narrowed = client.get("/api/v1/proceedings/search",
+                          params={"person_id": "k001", "agenda_type": "voting"}).json()
+    assert narrowed["total"] == 0
+    # Nagy Anna has two speeches in the corpus here — the seeded one above and
+    # the fixture's vote, which carries no transcript — and only the one with
+    # text can be listed: the page searches the transcript, not the day's agenda.
+    other = client.get("/api/v1/proceedings/search",
+                       params={"person_id": "n002"}).json()
+    assert [r["speech_uid"] for r in other["results"]] == ["43001-0"]
+
+
+def test_search_without_a_query_or_a_speaker_is_refused(client):
+    # The corpus itself is not a result set: with neither a term nor a speaker
+    # there is nothing to bound the scan, so it is a 400 rather than a read of
+    # every sentence the House has ever spoken.
+    assert client.get("/api/v1/proceedings/search").status_code == 400
+    assert client.get("/api/v1/proceedings/search",
+                      params={"faction_id": 7}).status_code == 400
+    # A term that holds nothing searchable is the same answer …
+    assert client.get("/api/v1/proceedings/search",
+                      params={"q": '""'}).status_code == 400
+    # … unless a speaker carries the search on its own.
+    assert client.get("/api/v1/proceedings/search",
+                      params={"q": '""', "person_id": "k001"}).status_code == 200
+
+
+def test_search_aggregates_follow_a_query_less_search(client):
+    # SEA-8/SEA-9 describe the same result set as the list, in both modes: the
+    # trend counts the speeches, and the breakdown attributes them.
+    trend = client.get("/api/v1/proceedings/search/trend",
+                       params={"person_id": "k001"}).json()
+    assert trend["query"] == ""
+    assert sum(b["hits"] for b in trend["buckets"]) == 1
+    bd = client.get("/api/v1/proceedings/search/breakdown",
+                    params={"person_id": "k001"}).json()
+    assert [(s["label"], s["hits"]) for s in bd["speakers"]] == [("Kovács Béla", 1)]
+    assert [(f["label"], f["hits"]) for f in bd["factions"]] == [("Fidesz", 1)]
+
+
 def test_search_trend_buckets_hits_over_time(client):
     # SEA-8: the popularity chart counts matching sentences per calendar bucket,
     # honouring the same filters as /search.

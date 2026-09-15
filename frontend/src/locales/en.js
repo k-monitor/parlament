@@ -68,6 +68,15 @@ export default {
     hint: 'Tip: use quotes for an exact phrase, e.g. "tisztelt ház".',
     filters: 'Filters', clearFilters: 'Clear filters', period: 'Term', dateFrom: 'From', dateTo: 'To',
     speaker: 'Speaker', faction: 'Faction', agendaType: 'Agenda type', all: 'All', watch: 'Watch', on: '·',
+    // The speaker filter (SEA-3) and the suggestions that feed it (SEA-7).
+    speakerPlaceholder: 'Name…',
+    speakerHint: 'Start typing a name.',
+    speakerNoMatch: 'No speaker by that name.',
+    speakerClear: 'Clear the speaker filter',
+    speakerSpeeches: '{n} speeches',
+    speakerSuggest: 'Filter to a speaker:',
+    // With no term and only a speaker filter, the results are their speeches.
+    trendCaptionSpeaker: '{name}: speeches over time',
     // Multi-value filter (MultiSelect): the trigger's label and the panel's hint.
     selectedCount: '{n} selected', multiHint: 'You can pick several values.',
     sort: 'Sort:', sortRelevance: 'Relevance', sortNewest: 'Newest first', sortOldest: 'Oldest first',

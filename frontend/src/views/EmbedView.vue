@@ -69,11 +69,19 @@ async function load() {
 function fetchForKind() {
   const q = route.query
   switch (props.kind) {
-    case 'search-trend':
-      return api.searchTrend({
+    case 'search-trend': {
+      const trend = api.searchTrend({
         q: q.q, period: period.value, date_from: q.date_from,
-        date_to: q.date_to, faction_id: q.faction_id, agenda_type: q.agenda_type,
+        date_to: q.date_to, person_id: q.person_id, faction_id: q.faction_id,
+        agenda_type: q.agenda_type,
       })
+      // A query-less trend is one speaker's speeches over time (SEA-3), and the
+      // chart is titled by their name — which only the id in the URL identifies,
+      // so it is resolved alongside. A failed lookup costs the name, not the chart.
+      if (q.q || !q.person_id) return trend
+      return Promise.all([trend, api.representative(q.person_id).catch(() => null)])
+        .then(([t_, rep]) => ({ ...t_, speaker: rep?.label || '' }))
+    }
     case 'faction-speaking':
       return api.factions(period.value)
     case 'questions-sankey':
@@ -170,8 +178,9 @@ const cohesionTab = computed(() => (typeof route.query.tab === 'string' ? route.
 const title = computed(() => {
   switch (props.kind) {
     case 'search-trend':
-      return data.value?.query
-        ? t('search.trendCaption', { q: data.value.query })
+      if (data.value?.query) return t('search.trendCaption', { q: data.value.query })
+      return data.value?.speaker
+        ? t('search.trendCaptionSpeaker', { name: data.value.speaker })
         : t('nav.search')
     case 'faction-speaking': return t('factions.speakingTime')
     case 'questions-sankey': return t('questions.title')

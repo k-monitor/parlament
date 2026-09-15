@@ -76,7 +76,7 @@ _SEARCH_SORTS = {
 }
 
 
-def _context_side(db, session_id, speech_index, ord, direction):
+def _context_side(db, session_id, speech_index, ord, direction, spill=True):
     """Up to ``_SEARCH_CONTEXT_WINDOW`` transcript sentences flanking a matched
     sentence on one side, in reading order (SEA-4).
 
@@ -84,7 +84,11 @@ def _context_side(db, session_id, speech_index, ord, direction):
     The walk starts inside the hit's own speech and, when the hit sits at a speech
     boundary, spills into the neighbouring speech(es) — so the context genuinely
     comes "from the speeches before/after", not just the one the hit is in. Each
-    sentence carries its speaker so the UI can mark where the speaker changes."""
+    sentence carries its speaker so the UI can mark where the speaker changes.
+
+    ``spill=False`` keeps the walk inside the one speech: a filter-only result is
+    a *speech* shown by its opening (see ``_search_where``), and running on into
+    the next speaker would be padding its preview with somebody else's words."""
     cmp, order = (">", "ASC") if direction > 0 else ("<", "DESC")
     out: list[dict] = []
     idx, cursor = speech_index, ord
@@ -102,7 +106,7 @@ def _context_side(db, session_id, speech_index, ord, direction):
              "need": _SEARCH_CONTEXT_WINDOW - len(out)}).fetchall()
         out.extend({"text": r["text"], "speaker": r["speaker"],
                     "person_id": r["person_id"]} for r in rows)
-        if len(out) >= _SEARCH_CONTEXT_WINDOW:
+        if len(out) >= _SEARCH_CONTEXT_WINDOW or not spill:
             break
         # Window not full — hop to the adjacent speech and keep going from its edge.
         nb = db.execute(
@@ -128,14 +132,32 @@ def _search_where(db, q, date_from, date_to, period, person_id, faction_id,
     projection/grouping differs. Returns ``(where_sql, params, needs)`` where
     ``needs`` names the optional joins the filters reference (``'speech'`` for a
     ``sp.*`` filter, ``'session'`` for a date filter, ``'agenda'`` for an
-    agenda-type filter) so a caller can assemble a minimal FROM. Raises 400 when
-    the query holds no searchable terms."""
-    match = build_match(q)
-    if not match:
-        raise HTTPException(400, "Query contains no searchable terms")
-    where = ["sentence_fts MATCH :match"]
-    params: dict = {"match": match}
+    agenda-type filter) so a caller can assemble a minimal FROM.
+
+    With **no searchable term** the search is filter-only: a speaker's speeches,
+    listed without a keyword (SEA-3). There is then no doclist to match, so the
+    unit of a result changes from the matched sentence to the **speech**, stood
+    for by its first sentence (``se.ord = 0``) — "everything they said" is a list
+    of speeches, not one card per sentence inside them. Only a **speaker** may
+    stand alone like that: it is the one filter narrow enough to bound the scan
+    (even the most prolific MP has a few thousand speeches), where a bare faction
+    or agenda-type filter would be a read of the whole corpus. Callers tell the
+    two modes apart by whether ``params`` carries a ``match``. Raises 400 when
+    neither a usable term nor a speaker is given."""
+    match = build_match(q) if q else None
+    where: list[str] = []
+    params: dict = {}
     needs: set[str] = set()
+    if match:
+        where.append("sentence_fts MATCH :match")
+        params["match"] = match
+    elif person_id:
+        where.append("se.ord = 0")   # one row per speech, not per sentence
+        needs.add("speech")
+    else:
+        raise HTTPException(
+            400, "Query contains no searchable terms — give a term, or pick a "
+                 "speaker to list their speeches")
     if date_from:
         where.append("ss.date >= :date_from"); params["date_from"] = date_from; needs.add("session")
     if date_to:
@@ -149,7 +171,7 @@ def _search_where(db, q, date_from, date_to, period, person_id, faction_id,
         # the predicate above, never instead of it, so a loose or stale bound
         # costs speed and nothing else — and needs no join of its own, since
         # `sentence_fts` is always the FROM's first table.
-        span = sentence_id_range(db, period)
+        span = sentence_id_range(db, period) if match else None
         if span:
             where.append("sentence_fts.rowid BETWEEN :sid_lo AND :sid_hi")
             params["sid_lo"], params["sid_hi"] = span
@@ -192,19 +214,29 @@ def _budgeted(db, run):
             headers={"Retry-After": "30"})
 
 
-def _assemble_from(se: bool, speech: bool, session: bool, agenda: bool) -> str:
+def _assemble_from(se: bool, speech: bool, session: bool, agenda: bool,
+                   *, fts: bool = True) -> str:
     """Assemble the minimal FTS join chain for a search query. Each table bridges
     to the next through the previous one's key (``sentence_fts.rowid`` →
     ``sentence.id``; ``sentence.speech_id`` → ``speech.uid``; ``speech`` →
     ``session``/``agenda_item``), so session/agenda/speech joins all require the
     ``sentence`` row (``se``). Person/faction are never here: the WHERE never
     filters on them, so they are joined only against the ranked page (see
-    ``search``), not across the whole match set."""
-    parts = ["FROM sentence_fts"]
-    if se:
-        parts.append("JOIN sentence se ON se.id = sentence_fts.rowid")
-    if speech:
-        parts.append("JOIN speech sp ON sp.uid = se.speech_id")
+    ``search``), not across the whole match set.
+
+    ``fts=False`` is the filter-only chain (see ``_search_where``): with no
+    doclist to drive the scan the filters have to, so it starts at ``speech`` —
+    where person, faction and cycle are all indexed — and reaches through it to
+    the sentence that stands for each speech. Both tables are always in it, so
+    ``se``/``speech`` are ignored in that mode."""
+    if fts:
+        parts = ["FROM sentence_fts"]
+        if se:
+            parts.append("JOIN sentence se ON se.id = sentence_fts.rowid")
+        if speech:
+            parts.append("JOIN speech sp ON sp.uid = se.speech_id")
+    else:
+        parts = ["FROM speech sp", "JOIN sentence se ON se.speech_id = sp.uid"]
     if session:
         parts.append("JOIN session ss ON ss.id = sp.session_id")
     if agenda:
@@ -212,9 +244,24 @@ def _assemble_from(se: bool, speech: bool, session: bool, agenda: bool) -> str:
     return "\n        ".join(parts)
 
 
+def _aggregate_from(fts: bool, *, people: bool = False) -> str:
+    """The whole join chain, for the two aggregates (SEA-8/SEA-9). They group over
+    the entire match set rather than a page, so a minimal FROM buys them nothing
+    and every table is joined; ``people`` adds the person/faction rows the
+    breakdown groups by."""
+    parts = [_assemble_from(True, True, True, True, fts=fts)]
+    if people:
+        parts.append("LEFT JOIN person p ON p.person_id = sp.person_id")
+        parts.append("LEFT JOIN faction f ON f.id = sp.faction_id")
+    return "\n        ".join(parts)
+
+
 @router.get("/search")
 def search(
-    q: str = Query(..., min_length=1, description="Free-text query; \"…\" = exact phrase"),
+    q: Optional[str] = Query(
+        None, description="Free-text query; \"…\" = exact phrase. Optional when "
+                          "`person_id` is given — the search then lists that "
+                          "speaker's speeches"),
     date_from: Optional[str] = Query(None, description="ISO date lower bound"),
     date_to: Optional[str] = Query(None, description="ISO date upper bound"),
     period: Optional[List[int]] = Query(
@@ -233,7 +280,11 @@ def search(
     carries the matched sentence (with `<mark>` highlights), a few sentences of
     surrounding transcript context — spilling into the adjacent speeches at a
     speech boundary — speaker/faction/date/agenda metadata, and the timing needed
-    to open the viewer at that moment (SEA-4)."""
+    to open the viewer at that moment (SEA-4).
+
+    With no query but a `person_id`, it lists that speaker's speeches instead —
+    one row per speech, shown by its opening (SEA-3)."""
+    q = (q or "").strip()
     where_sql, params, needs = _search_where(db, q, date_from, date_to, period,
                                               person_id, faction_id, agenda_type)
     sort_name = sort if sort in _SEARCH_SORTS else "relevance"
@@ -262,6 +313,10 @@ def search(
     # user search is one recorded event; the result the reader then opens is
     # counted onto this same bucket by the click ping (SEA-12, main.py).
     #
+    # A filter-only search (no keyword) records nothing: the analytics table is
+    # keyed on the keyword, and `record` drops an empty one — there is no term
+    # whose ranking could regress.
+    #
     # Deliberately OUTSIDE the cache above: this counts *searches people ran*, so
     # a repeat search must be counted again even when its payload was served from
     # memory. The figure recorded is the one the reader is shown and pages
@@ -279,6 +334,11 @@ def search(
 
 def _search_compute(db, q, where_sql, params, needs, sort_name, limit, offset):
     """Run one page of the search and build its payload (see ``search``)."""
+    # Filter-only search (no term): rows are speeches stood for by their first
+    # sentence, not matched sentences — see `_search_where`.
+    fts = "match" in params
+    if not fts and sort_name == "relevance":
+        sort_name = "date_desc"      # nothing to rank: bm25 needs a match
     order_by = _SEARCH_SORTS[sort_name]
     is_relevance = order_by == "rank"
 
@@ -292,7 +352,7 @@ def _search_compute(db, q, where_sql, params, needs, sort_name, limit, offset):
 
     # Capped total: only the filters' joins matter (person/faction are never
     # filtered on), and the LIMIT stops the scan at the cap + 1.
-    count_from = _assemble_from(f_se, f_speech, f_session, f_agenda)
+    count_from = _assemble_from(f_se, f_speech, f_session, f_agenda, fts=fts)
     total_row = db.execute(
         f"SELECT COUNT(*) AS c FROM (SELECT 1 {count_from} WHERE {where_sql} "
         f"LIMIT {settings.max_search_total + 1})", params).fetchone()
@@ -312,16 +372,20 @@ def _search_compute(db, q, where_sql, params, needs, sort_name, limit, offset):
     c_session = f_session or not is_relevance
     c_agenda = f_agenda
     c_se = c_speech or c_session or c_agenda
-    hits_from = _assemble_from(c_se, c_speech, c_session, c_agenda)
+    hits_from = _assemble_from(c_se, c_speech, c_session, c_agenda, fts=fts)
     rank_col = ", bm25(sentence_fts) AS rank" if is_relevance else ""
     outer_order = "hits.rank" if is_relevance else order_by
+    # Nothing is highlighted in the filter-only mode: the sentence is not a match
+    # but the speech's opening line, and it is shown as it was said.
+    hit_cols = (f"""sentence_fts.rowid AS sid,
+                   highlight(sentence_fts, 0, char(2), char(3)) AS hl,
+                   snippet(sentence_fts, 0, char(2), char(3), '…', 18) AS sn{rank_col}"""
+                if fts else "se.id AS sid, se.text AS hl, NULL AS sn")
 
     rows = db.execute(
         f"""
         WITH hits AS (
-            SELECT sentence_fts.rowid AS sid,
-                   highlight(sentence_fts, 0, char(2), char(3)) AS hl,
-                   snippet(sentence_fts, 0, char(2), char(3), '…', 18) AS sn{rank_col}
+            SELECT {hit_cols}
             {hits_from}
             WHERE {where_sql}
             ORDER BY {order_by}
@@ -349,8 +413,10 @@ def _search_compute(db, q, where_sql, params, needs, sort_name, limit, offset):
         {**params, "limit": limit, "offset": offset}).fetchall()
 
     return {
-        "query": q,
-        "match": params["match"],
+        # A filter-only search has no keyword to echo, and the UI reads this to
+        # tell the two kinds of result list apart.
+        "query": q if fts else "",
+        "match": params.get("match"),
         "sort": sort_name,
         "total": min(total, settings.max_search_total),
         "total_is_capped": capped,
@@ -363,10 +429,13 @@ def _search_compute(db, q, where_sql, params, needs, sort_name, limit, offset):
                 "highlighted": _mark_html(r["highlighted"]),
                 "snippet": _mark_html(r["snippet"]),
                 "context": {
+                    # A speech shown by its opening has no "before" that belongs
+                    # to it — what precedes it is the previous speaker — and its
+                    # preview stops at the end of the speech (`spill`).
                     "before": _context_side(db, r["session_id"], r["speech_index"],
-                                            r["sentence_ord"], -1),
+                                            r["sentence_ord"], -1) if fts else [],
                     "after": _context_side(db, r["session_id"], r["speech_index"],
-                                           r["sentence_ord"], +1),
+                                           r["sentence_ord"], +1, spill=fts),
                 },
                 "time_start": r["time_start"],
                 "time_end": r["time_end"],
@@ -423,7 +492,10 @@ def _ongoing_axis_end(start_iso: str, today_iso: str) -> str:
 
 @router.get("/search/trend")
 def search_trend(
-    q: str = Query(..., min_length=1, description="Free-text query; \"…\" = exact phrase"),
+    q: Optional[str] = Query(
+        None, description="Free-text query; \"…\" = exact phrase. Optional when "
+                          "`person_id` is given — the search then lists that "
+                          "speaker's speeches"),
     date_from: Optional[str] = Query(None, description="ISO date lower bound"),
     date_to: Optional[str] = Query(None, description="ISO date upper bound"),
     period: Optional[List[int]] = Query(
@@ -442,6 +514,7 @@ def search_trend(
     monthly across the full multi-decade corpus. Only the periods that actually
     have hits are returned; the client fills the gaps with zeros so the timeline
     is continuous and honest."""
+    q = (q or "").strip()
     where_sql, params, _needs = _search_where(db, q, date_from, date_to, period,
                                                person_id, faction_id, agenda_type)
 
@@ -459,13 +532,9 @@ def search_trend(
 
 
 def _search_trend_compute(db, q, where_sql, params, date_from, date_to, period):
-    base_from = """
-        FROM sentence_fts
-        JOIN sentence se ON se.id = sentence_fts.rowid
-        JOIN speech sp ON sp.uid = se.speech_id
-        JOIN session ss ON ss.id = sp.session_id
-        LEFT JOIN agenda_item ai ON ai.id = sp.agenda_item_id
-    """
+    fts = "match" in params
+    base_from = _aggregate_from(fts)
+    q = q if fts else ""      # filter-only: speeches per bucket, no keyword
 
     span = db.execute(
         f"SELECT MIN(ss.date) AS lo, MAX(ss.date) AS hi {base_from} WHERE {where_sql}",
@@ -537,7 +606,10 @@ def _search_trend_compute(db, q, where_sql, params, date_from, date_to, period):
 
 @router.get("/search/breakdown")
 def search_breakdown(
-    q: str = Query(..., min_length=1, description="Free-text query; \"…\" = exact phrase"),
+    q: Optional[str] = Query(
+        None, description="Free-text query; \"…\" = exact phrase. Optional when "
+                          "`person_id` is given — the search then lists that "
+                          "speaker's speeches"),
     date_from: Optional[str] = Query(None, description="ISO date lower bound"),
     date_to: Optional[str] = Query(None, description="ISO date upper bound"),
     period: Optional[List[int]] = Query(
@@ -558,6 +630,7 @@ def search_breakdown(
     representative its `person_id` so the UI can link to the profile (REP-1).
     Speeches with no resolved representative are not attributed to a person row;
     those with no faction are not attributed to a faction row."""
+    q = (q or "").strip()
     where_sql, params, _needs = _search_where(db, q, date_from, date_to, period,
                                                person_id, faction_id, agenda_type)
 
@@ -571,15 +644,9 @@ def search_breakdown(
 
 
 def _search_breakdown_compute(db, q, where_sql, params, limit):
-    base_from = """
-        FROM sentence_fts
-        JOIN sentence se ON se.id = sentence_fts.rowid
-        JOIN speech sp ON sp.uid = se.speech_id
-        JOIN session ss ON ss.id = sp.session_id
-        LEFT JOIN agenda_item ai ON ai.id = sp.agenda_item_id
-        LEFT JOIN person p ON p.person_id = sp.person_id
-        LEFT JOIN faction f ON f.id = sp.faction_id
-    """
+    fts = "match" in params
+    base_from = _aggregate_from(fts, people=True)
+    q = q if fts else ""
 
     factions = db.execute(
         f"""SELECT f.id AS faction_id, f.label, f.color, COUNT(*) AS hits

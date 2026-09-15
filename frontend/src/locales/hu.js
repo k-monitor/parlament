@@ -114,6 +114,15 @@ export default {
     dateFrom: 'Dátumtól',
     dateTo: 'Dátumig',
     speaker: 'Felszólaló',
+    // A felszólalószűrő (SEA-3) és a hozzá tartozó javaslatok (SEA-7).
+    speakerPlaceholder: 'Név…',
+    speakerHint: 'Kezdj el írni egy nevet.',
+    speakerNoMatch: 'Nincs ilyen nevű felszólaló.',
+    speakerClear: 'Felszólalószűrő törlése',
+    speakerSpeeches: '{n} felszólalás',
+    speakerSuggest: 'Szűrés felszólalóra:',
+    // Keresőszó nélkül, csak felszólalóra szűrve a találatok a felszólalásai.
+    trendCaptionSpeaker: '{name} felszólalásai az időben',
     faction: 'Frakció',
     agendaType: 'Napirend típusa',
     all: 'Mind',

@@ -304,6 +304,44 @@ def test_bills_list_can_be_filtered_by_portfolio_in_both_senses(client, db_path)
         "portfolio": interior, "portfolio_role": "submitted"}).json()["total"] == 0
 
 
+def test_a_government_bills_sponsor_links_to_the_tarca_it_came_through(client, db_path):
+    """The bill page's Benyújtók row is the reader's way *into* §6C: "kormány
+    (pénzügyminiszter)" is an office, not a person, so without the tárca beside it
+    the government's own irományok are the one kind that dead-ends."""
+    _load_portfolio_corpus(db_path).close()
+
+    gov = client.get("/api/v1/bills/bill-uuid-2").json()["sponsors"]
+    assert [s["portfolio"] for s in gov] == [
+        {"slug": portfolios.resolve("pénzügyminiszter").slug,
+         "name": "Pénzügyminisztérium"}]
+    # The raw label is untouched — the tárca is added beside it, not substituted
+    # for it (TRUST-1).
+    assert gov[0]["name"] == "kormány (pénzügyminiszter)"
+    # …and the link is honest: that tárca's own submitted-iromány panel lists it.
+    listed = client.get("/api/v1/bills", params={
+        "portfolio": gov[0]["portfolio"]["slug"], "portfolio_role": "submitted"}).json()
+    assert "bill-uuid-2" in [b["id"] for b in listed["bills"]]
+
+    # An MP sponsor is a person, and stays one.
+    mp = client.get("/api/v1/bills/bill-uuid-1").json()["sponsors"]
+    assert [s["person_id"] for s in mp] == ["k001"]
+    assert [s["portfolio"] for s in mp] == [None]
+
+
+def test_a_sponsor_is_still_named_on_a_database_built_before_the_module(client, db_path):
+    """EXT-6: dropping the derived tables costs the link, never the sponsor."""
+    c = loader.connect(db_path)
+    for tbl in ("portfolio_office", "portfolio_speech", "portfolio_bill",
+                "portfolio_alias", "portfolio"):
+        c.execute(f"DROP TABLE IF EXISTS {tbl}")
+    c.commit()
+    c.close()
+
+    gov = client.get("/api/v1/bills/bill-uuid-2").json()["sponsors"]
+    assert [(s["name"], s["portfolio"]) for s in gov] == [
+        ("kormány (pénzügyminiszter)", None)]
+
+
 def test_trend_buckets_every_year_in_range(client, db_path):
     _load_portfolio_corpus(db_path).close()
     slug = portfolios.resolve("belügyminiszter").slug

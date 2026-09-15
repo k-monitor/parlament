@@ -617,6 +617,7 @@ export default {
     sortNumber: 'By bill number', sortDate: 'By submission', count: 'bills',
     bySponsor: 'Submitter', viewProfile: 'View profile', clearSponsor: 'Clear filter',
     noResults: 'No matching bills.', submitters: 'Submitters',
+    submitterPortfolio: 'Open portfolio page',
     submittedDate: 'Submission date',
     timeline: "The bill's progress",
     timelineNote: 'Legislative stages in order; completed steps are highlighted, upcoming ones dimmed.',

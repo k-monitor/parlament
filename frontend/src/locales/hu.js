@@ -725,6 +725,7 @@ export default {
     viewProfile: 'Képviselő profilja',
     clearSponsor: 'Szűrő törlése',
     noResults: 'Nincs a feltételeknek megfelelő törvényjavaslat.',
+    submitterPortfolio: 'A tárca oldala',
     submitters: 'Benyújtók',
     submittedDate: 'Benyújtás dátuma',
     timeline: 'A törvényjavaslat útja',

@@ -140,17 +140,39 @@ def _stages(stages_json: Optional[str]) -> list[dict]:
 
 
 def _sponsors_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, list]:
-    """Sponsor rows grouped by bill id (one query for a page of bills)."""
+    """Sponsor rows grouped by bill id (one query for a page of bills).
+
+    Each row carries whichever way in it has: an MP's ``person_id`` (EXT-2), and —
+    for the government's own irományok — the ``portfolio`` the label names (§6C).
+    """
     if not bill_ids:
         return {}
     placeholders = ",".join("?" * len(bill_ids))
+    # §6C: a sponsor with no person behind it is the government submitting *through
+    # a tárca* — "kormány (pénzügyminiszter)" names the ministry, not a submitter
+    # the reader can click. `portfolio_bill` already holds that reading as a
+    # `submitted` link (MIN-2), so joining it — rather than re-resolving the free-
+    # text label here — keeps this link and the tárca's own iromány panel answering
+    # to the same rows: what it points at is a page that exists and that lists this
+    # iromány (MIN-7). Dropped entirely on a DB built before the module, which then
+    # simply names the sponsor without linking it (EXT-6).
+    if _has_portfolios(db):
+        pf_select = ", pf.slug AS portfolio_slug, pf.name AS portfolio_name"
+        pf_join = """
+            LEFT JOIN portfolio_bill pb ON pb.bill_id = bs.bill_id
+                 AND pb.role = 'submitted' AND pb.label = bs.label
+            LEFT JOIN portfolio pf ON pf.slug = pb.portfolio_slug"""
+    else:
+        pf_select = ", NULL AS portfolio_slug, NULL AS portfolio_name"
+        pf_join = ""
     rows = db.execute(
         f"""SELECT bs.bill_id, bs.person_id, bs.label, bs.ord,
                    p.label AS person_label,
                    f.id AS faction_id, f.label AS faction_label, f.color AS faction_color
+                   {pf_select}
             FROM bill_sponsor bs
             LEFT JOIN person p ON p.person_id = bs.person_id
-            LEFT JOIN faction f ON f.id = bs.faction_id
+            LEFT JOIN faction f ON f.id = bs.faction_id{pf_join}
             WHERE bs.bill_id IN ({placeholders})
             ORDER BY bs.bill_id, bs.ord""", bill_ids).fetchall()
     out: dict[str, list] = {}
@@ -161,6 +183,8 @@ def _sponsors_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, list
             "name": r["person_label"] or r["label"],
             "faction": {"id": r["faction_id"], "label": r["faction_label"],
                         "color": r["faction_color"]} if r["faction_label"] else None,
+            "portfolio": {"slug": r["portfolio_slug"], "name": r["portfolio_name"]}
+                         if r["portfolio_slug"] else None,
         })
     return out
 

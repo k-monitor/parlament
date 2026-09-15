@@ -6,6 +6,7 @@
 // non-self-standing motion summary. Links to the official text (LEGAL-1).
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { api } from '../../api.js'
+import { store } from '../../store.js'
 import { formatDate, formatDateTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -54,6 +55,12 @@ const meta = computed(() => {
   ]
   return rows.filter(([, v]) => v != null && v !== '')
 })
+
+// The government submits *through a tárca*, which the API names on the sponsor
+// row (§6C). Linking it turns "kormány (pénzügyminiszter)" from a dead label into
+// the way into that ministry's page — but only while the module that serves that
+// page is mounted (EXT-6), exactly as the Kérdések diagram gates its own.
+const showPortfolios = computed(() => store.moduleEnabled('portfolios'))
 
 // A promulgated bill links to its Magyar Közlöny issue: prefer the direct
 // gazette PDF, fall back to the issue-listing page.
@@ -195,6 +202,13 @@ watch(() => props.id, load)
             <router-link v-if="s.person_id" :to="{ name: 'profile', params: { id: s.person_id } }">{{ s.name }}</router-link>
             <span v-else>{{ s.name }}</span>
             <FactionBadge v-if="s.faction" :faction="s.faction" />
+            <!-- The raw label stays exactly as the source wrote it (TRUST-1); the
+                 tárca it names is added beside it as the link. -->
+            <router-link
+              v-if="s.portfolio && showPortfolios" class="echip link tarca"
+              :to="{ name: 'portfolio', params: { slug: s.portfolio.slug } }"
+              :title="$t('bills.submitterPortfolio')"
+            >{{ s.portfolio.name }}</router-link>
           </li>
         </ul>
       </section>
@@ -627,6 +641,7 @@ watch(() => props.id, load)
   background: var(--line); color: var(--ink-soft);
 }
 .echip.mic { background: var(--accent-soft); color: var(--accent); }
+.echip.tarca { background: var(--accent-soft); color: var(--accent); }
 .echip.link { text-decoration: none; cursor: pointer; }
 .echip.link:hover { background: var(--accent); color: #fff; }
 .echip.vote { background: #eef6ee; color: #2e7d32; }

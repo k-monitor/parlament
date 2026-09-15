@@ -569,6 +569,7 @@ export default {
     methodology: 'Methodology', scope: 'Data scope',
     sessionsCovered: 'sittings covered', noSpeeches: 'No speeches on record.', viewSpeech: 'View',
     speechesDayCount: 'speeches', speechesLoadError: 'Could not load speeches.',
+    searchSpeeches: 'Search their speeches',
     showMore: 'Show more', showLess: 'Show less',
     showingFirst: 'Showing the first {n} items.',
     present: 'present',

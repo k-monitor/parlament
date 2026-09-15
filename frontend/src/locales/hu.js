@@ -653,6 +653,9 @@ export default {
     noSpeeches: 'Nincs rögzített felszólalás.',
     speechesDayCount: 'felszólalás',
     speechesLoadError: 'A felszólalások betöltése nem sikerült.',
+    // Kilépő link a keresőbe, erre a képviselőre szűrve: a napok szerinti lista
+    // böngészhető, de szövegre keresni csak a keresőben lehet.
+    searchSpeeches: 'Keresés a felszólalásaiban',
     viewSpeech: 'Megtekintés',
     showMore: 'Továbbiak megjelenítése',
     showLess: 'Kevesebb megjelenítése',

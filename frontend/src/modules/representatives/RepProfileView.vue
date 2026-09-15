@@ -772,7 +772,18 @@ watch(() => store.cycles.join(','), load)
           <!-- Speeches grouped by sitting day; each day is a spoiler that lazily
                loads its speeches on first expand (REP-2). -->
           <section class="card pad" ref="speechesSection">
-            <h2>{{ $t('profile.speeches') }} <span class="muted small" v-if="speechDays">({{ speechDays.total }})</span></h2>
+            <div class="sechead">
+              <h2>{{ $t('profile.speeches') }} <span class="muted small" v-if="speechDays">({{ speechDays.total }})</span></h2>
+              <!-- Out to the search page, pre-filtered to this member (SEA-3):
+                   the list below is browsable by day, but "what did they say
+                   about X" is a question only the full-text search answers.
+                   Dropped when there is nothing to search — an empty filtered
+                   result page is not an answer worth sending the reader to. -->
+              <router-link v-if="speechDays && speechDays.total" class="small seclink"
+                           :to="{ name: 'search', query: { person_id: id } }">
+                {{ $t('profile.searchSpeeches') }} &rarr;
+              </router-link>
+            </div>
             <p v-if="speechDays && speechDays.total === 0" class="muted">{{ $t('profile.noSpeeches') }}</p>
             <ul v-else-if="speechDays" class="daylist speechdays">
               <li v-for="d in shown(speechDays.days, 'days')" :key="d.session_id" class="dayitem">
@@ -912,6 +923,9 @@ watch(() => store.cycles.join(','), load)
 /* heading + help-icon row; the icon carries the section's description (REP-5) */
 .sechead { display: flex; align-items: center; gap: .35rem; margin-bottom: .6rem; }
 .sechead h2 { margin: 0; }
+/* The section's exit link sits at the far end of the header row, away from the
+   title it belongs to but out of the reading path of the list under it. */
+.seclink { margin-left: auto; white-space: nowrap; }
 .timeline, .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
 .timeline li { display: flex; gap: .6rem; align-items: center; }
 /* Committee term dates on their own line, so the committee name stays scannable. */

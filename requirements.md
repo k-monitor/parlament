@@ -1816,6 +1816,54 @@ section — **Elemzések** — with its own entry in the top bar.
     label stays a UI concern in both locales (I18N-1), including the Chinese animal
     year, whose turnover at the lunar new year is tabulated rather than computed.
 
+- **REP-17 (SHOULD).** **Remuneration (*tiszteletdíj*).** "What does a
+  representative earn" is among the first things a reader asks, and the House
+  answers it: parlament.hu publishes each MP's **monthly gross fee**
+  (`kepviselo-javadalmazasa-query`, pulled by the registry sync alongside the
+  other per-MP detail). The profile carries that published figure in its own
+  panel, newest month first, **with the statute read against it**.
+  - **The figure is official; the calculation only explains it.** The Ogytv.
+    fixes every fee as a multiple of one base amount, so dividing the published
+    figure by the §104(1) base recovers the statutory **rate** and the **section**
+    that sets it. That division is exact arithmetic on official data, and the
+    panel shows it — a bare forint amount tells a reader nothing about why it is
+    that and not something else.
+  - **Published, not computed, because computing it is wrong too often.** Derived
+    against 45 sitting MPs, a rule-table calculation matched 36 and missed 9. It
+    cannot see a mid-month change, an absence deduction under §107, an office the
+    registry does not record, or the part-month of a mandate that ends — one
+    departing member's last month came to 253 450 Ft, which no rule table would
+    ever produce. The statute gives the rate; only the House knows the payment.
+  - **An office is named only where our own record agrees with what was paid.**
+    Several offices share a rate (2.4× is a Deputy Speaker's fee, a standing
+    committee chair's, a House Steward's and a deputy faction leader's), so the
+    amount alone cannot say which applies. Where a committee seat or office we
+    hold carries exactly that rate, it is named; where nothing of ours does — or
+    where ours would contradict the payment — the panel states the rate and every
+    section that sets it, and asserts no office. Claiming a post the payroll
+    contradicts is the one thing this panel must never do.
+  - **A month that is not a clean multiple is reported as such.** A part-month or
+    a §107 deduction divides to no statutory rate, and the panel says so rather
+    than rounding onto the nearest rule and inventing a fact.
+  - **What it excludes is said, not implied.** The figure is a fee, not a total:
+    it leaves out the **költségtérítés** frames (accommodation, office, staff,
+    travel), which are reimbursements against a budget and whose drawn amounts are
+    not published; and for a minister or state secretary it is only a
+    **component**, since §106(2) pays the parliamentary fee on top of a government
+    salary fixed by another law. Both are stated on the card.
+  - **No published month, no panel.** This needs no special-casing for former MPs,
+    ended mandates or advocates: the House publishes months, so someone who is not
+    paid simply has none. The panel is **not cycle-scoped** — it is a fact about
+    now, like `is_mp` — and the series currently begins **2026-07-01**, when
+    publication started.
+  - **The base is a curated, dated constant.** §104(1) states it as a formula
+    (1.8× the KSH average gross wage of the preceding year, in force each 1 March),
+    but which KSH series the House applies is not pinned down by the text, so the
+    amount is carried as a dated, sourced constant rather than evaluated. It is
+    **confirmed rather than inferred**: every clean published fee divides by it to
+    a statutory rate exactly, which a wrong base could not do. A new entry is due
+    each March; past entries are never edited.
+
 - **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
   representative and faction statistics** (speaking time, speech counts, trends —
   REP-3/REP-4/REP-7), but are **never dropped from storage or from the

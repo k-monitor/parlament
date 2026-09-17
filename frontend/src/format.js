@@ -31,6 +31,22 @@ export function formatDate(iso) {
 // "July 15, 2026" (en). Used for the footer's "utolsó adatfrissítés" line.
 // Interpreted in Budapest time so the shown day matches the Hungarian date
 // boundary even though the stored timestamp is UTC.
+// A calendar month, no day — "2026. augusztus" (hu) / "August 2026" (en). For a
+// figure that is *for* a month (REP-17's remuneration), where printing the first
+// of it would read as a date the payment was made on.
+export function formatMonth(iso, locale = 'hu') {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 7)
+  try {
+    return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'hu-HU', {
+      year: 'numeric', month: 'long', timeZone: 'Europe/Budapest',
+    }).format(d)
+  } catch {
+    return String(iso).slice(0, 7)
+  }
+}
+
 export function formatLongDate(iso, locale = 'hu') {
   if (!iso) return ''
   const d = new Date(iso)

@@ -154,6 +154,14 @@ def _registry():
                   "url": None, "deadline": "2026-01-31", "submitted": "Nem",
                   "submittedAt": None, "note": None},
              ],
+             # The published monthly remuneration (REP-17), newest first, as the
+             # registry scraper writes it. August is a clean 2× the §104(1) base;
+             # July is a part-month, which no statutory rate produces — the two
+             # cases the profile has to tell apart. Nagy Anna has none at all.
+             "remuneration": [
+                 {"month": "2026-08-01", "amountHuf": 2618986},
+                 {"month": "2026-07-01", "amountHuf": 1103450},
+             ],
              "statistics": {"billsSubmitted": [{"cycle": 43, "ownBills": 3}]}},
             {"personID": "n002", "label": "Nagy Anna", "firstname": "Anna",
              "lastname": "Nagy", "faction": {"label": "TISZA"},

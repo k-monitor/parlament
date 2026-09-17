@@ -610,6 +610,38 @@ export default {
     assetDeclarationDate: 'vagyoni állapot: {date}',
     assetDeclarationMissing: 'Nincs közzétett dokumentum',
     assetDeclarationDeadline: 'beadási határidő: {date}',
+    // Tiszteletdíj (REP-17). Az ÖSSZEG HIVATALOS: a parlament.hu közli havonta.
+    // A törvény csak magyarázza — az alapdíjjal elosztva kijön a szorzó és a §.
+    // A felület sosem mondhatja, hogy „ennyit keres”: ez a képviselői tiszteletdíj,
+    // költségtérítés és más közszolgálati illetmény nélkül.
+    salary: 'Tiszteletdíj',
+    salaryPerMonth: 'Ft / hó (bruttó)',
+    salaryMonth: '{month} havi tiszteletdíj',
+    salarySource: 'Forrás: parlament.hu — a képviselő közzétett havi bruttó tiszteletdíja.',
+    salaryBasis: 'Ez a {section} szerinti alapdíj ({amount} Ft) {multiplier}-szerese.',
+    salaryBasisSections: 'A törvényben ezt a mértéket a(z) {sections} állapítja meg.',
+    salaryBasisRole: 'A képviselő ezt a megbízatást tölti be: {role} ({section}).',
+    salaryBasisInexact: 'Ez az összeg nem egész többszöröse az alapdíjnak ({multiplier}-szerese), ezért nem köthető egyetlen törvényi mértékhez sem.',
+    salaryBaseFormula: 'Az alapdíj a törvény szerint {formula}; {date} óta hatályos összeg.',
+    salaryNote: 'A képviselők havi bruttó tiszteletdíját az Országgyűlés közzéteszi; az itt látható összeg ez a hivatalos adat, nem számított érték. A törvény (2012. évi XXXVI. törvény) csak a magyarázathoz kell: minden tiszteletdíj a 104. § (1) szerinti alapdíj valamilyen többszöröse, így az összeget elosztva az alapdíjjal megkapjuk, melyik törvényi mérték szerint fizetik. Több egyidejű tisztség esetén a törvény a magasabb összegűt rendeli (105. § (7)), az összegek nem adódnak össze.',
+    salaryHistory: 'Korábbi hónapok',
+    salaryCaveatExpenses: 'Nem tartalmazza a költségtérítéseket (lakhatási, irodai, alkalmazotti és utazási keretek) — azok elszámolás alapján járó térítések, nem jövedelem, és a felhasznált összeg nem nyilvános.',
+    salaryCaveatGovernment: 'A képviselő kormányzati tisztséget is betölt: a 106. § (2) szerint a képviselői tiszteletdíj emellett jár, a kormányzati illetményt más törvény állapítja meg. Az itt látható összeg tehát a javadalmazásának csak egy része.',
+    salaryCaveatPartialMonth: 'A hónap nem teljes vagy csökkentett tiszteletdíjat mutat: ez lehet év közben kezdődő vagy megszűnő megbízatás töredékhónapja, vagy a 107. § szerinti, távolmaradás miatti levonás.',
+    // A tisztségek neve a törvény szóhasználatával, mert a hivatkozott § is az.
+    salaryRole: {
+      house_speaker: 'az Országgyűlés elnöke',
+      faction_leader: 'képviselőcsoport vezetője',
+      deputy_speaker: 'az Országgyűlés alelnöke',
+      house_steward: 'az Országgyűlés háznagya',
+      faction_deputy: 'képviselőcsoportvezető-helyettes',
+      committee_chair: 'állandó bizottság elnöke',
+      notary: 'az Országgyűlés jegyzője',
+      committee_vice: 'állandó bizottság alelnöke',
+      multi_committee: 'törvényalkotási bizottsági vagy legalább két állandó bizottsági tagság',
+      one_committee: 'állandó bizottsági tagság',
+      member: 'képviselői megbízatás',
+    },
     // Csillagjegyek (REP-16). Nyíltan játék: a Wikidata-beli születési dátumból
     // származnak, semmilyen elemzési értékük nincs — a kulcsok nyelvsemlegesek,
     // a címke a felület dolga.

@@ -276,6 +276,10 @@ def _ensure_person_document_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE person ADD COLUMN cv_url TEXT")
     if "asset_declarations_json" not in cols:
         conn.execute("ALTER TABLE person ADD COLUMN asset_declarations_json TEXT")
+    # The published monthly remuneration (REP-17), same reasoning again: it lands
+    # on a built deployment by re-loading the registry alone.
+    if "remuneration_json" not in cols:
+        conn.execute("ALTER TABLE person ADD COLUMN remuneration_json TEXT")
 
 
 def _ensure_person_birth_columns(conn: sqlite3.Connection) -> None:
@@ -333,14 +337,15 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
                                website, highest_education, active, is_mp, cv_url,
                                education_json, committees_json, offices_json,
                                faction_history_json, election_history_json,
-                               external_stats_json, asset_declarations_json)
+                               external_stats_json, asset_declarations_json,
+                               remuneration_json)
             VALUES (:pid, :label, :label_full, :firstname, :lastname,
                     :wikidata_id, :wikipedia_url, :date_of_birth, :zodiac_sign,
                     :chinese_zodiac_sign, :photo_uri,
                     :photo_file, :constituency, :seat, :email, :website,
                     :highest_education, :active, 1, :cv_url, :education, :committees,
                     :offices, :faction_history, :election_history, :external_stats,
-                    :asset_declarations)
+                    :asset_declarations, :remuneration)
             ON CONFLICT(person_id) DO UPDATE SET
                 label=excluded.label, label_full=excluded.label_full,
                 firstname=excluded.firstname, lastname=excluded.lastname,
@@ -358,7 +363,8 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
                 faction_history_json=excluded.faction_history_json,
                 election_history_json=excluded.election_history_json,
                 external_stats_json=excluded.external_stats_json,
-                asset_declarations_json=excluded.asset_declarations_json
+                asset_declarations_json=excluded.asset_declarations_json,
+                remuneration_json=excluded.remuneration_json
             """,
             {
                 "pid": pid,
@@ -388,6 +394,7 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
                 "election_history": _json_or_none(rec.get("electionHistory")),
                 "external_stats": _json_or_none(ext_stats),
                 "asset_declarations": _json_or_none(rec.get("assetDeclarations")),
+                "remuneration": _json_or_none(rec.get("remuneration")),
             },
         )
 
@@ -535,13 +542,14 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
                                seat, email, website, highest_education, active,
                                is_advocate, nationality, cv_url,
                                education_json, committees_json, offices_json,
-                               external_stats_json, asset_declarations_json)
+                               external_stats_json, asset_declarations_json,
+                               remuneration_json)
             VALUES (:pid, :label, :label_full, :firstname, :lastname,
                     :wikidata_id, :wikipedia_url, :date_of_birth, :zodiac_sign,
                     :chinese_zodiac_sign, :photo_uri, :photo_file,
                     :seat, :email, :website, :highest_education, :active,
                     1, :nationality, :cv_url, :education, :committees, :offices,
-                    :external_stats, :asset_declarations)
+                    :external_stats, :asset_declarations, :remuneration)
             ON CONFLICT(person_id) DO UPDATE SET
                 label=excluded.label,
                 label_full=COALESCE(excluded.label_full, person.label_full),
@@ -569,7 +577,9 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
                 offices_json=COALESCE(excluded.offices_json, person.offices_json),
                 external_stats_json=excluded.external_stats_json,
                 asset_declarations_json=COALESCE(excluded.asset_declarations_json,
-                                                 person.asset_declarations_json)
+                                                 person.asset_declarations_json),
+                remuneration_json=COALESCE(excluded.remuneration_json,
+                                           person.remuneration_json)
             """,
             {
                 "pid": pid,
@@ -597,6 +607,7 @@ def load_advocates(conn: sqlite3.Connection, registry: dict) -> int:
                 "offices": _json_or_none(rec.get("offices")),
                 "external_stats": _json_or_none(stats),
                 "asset_declarations": _json_or_none(rec.get("assetDeclarations")),
+                "remuneration": _json_or_none(rec.get("remuneration")),
             },
         )
 

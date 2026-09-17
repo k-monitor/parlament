@@ -377,3 +377,45 @@ def test_no_detail_query_goes_out_unversioned():
     upstream ever serves one unsuffixed, that exception belongs here with a note."""
     assert [q for q in reps.DETAIL_QUERIES
             if felicitas.detail_query_endpoint(q) == q] == []
+
+
+# --- monthly remuneration (REP-17) -----------------------------------------
+
+def _pay(month, amount):
+    """One row as ``kepviselo-javadalmazasa-query`` returns it."""
+    return {"id": f"row-{month}", "idoszak": month, "tiszteletdij": amount}
+
+
+def test_remuneration_is_newest_month_first():
+    rec = {}
+    reps.apply_details(rec, {"kepviselo-javadalmazasa-query": [
+        _pay("2026-07-01", 2618986), _pay("2026-08-01", 2618986),
+        _pay("2026-09-01", 2880885)]})
+    assert rec["remuneration"] == [
+        {"month": "2026-09-01", "amountHuf": 2880885},
+        {"month": "2026-08-01", "amountHuf": 2618986},
+        {"month": "2026-07-01", "amountHuf": 2618986},
+    ]
+
+
+def test_a_month_without_an_amount_is_dropped_not_zeroed():
+    """"Not published" and "paid nothing" are different claims, and a zero would
+    assert the second."""
+    rec = {}
+    reps.apply_details(rec, {"kepviselo-javadalmazasa-query": [
+        _pay("2026-08-01", None), _pay("2026-07-01", 2618986)]})
+    assert rec["remuneration"] == [{"month": "2026-07-01", "amountHuf": 2618986}]
+
+
+def test_no_remuneration_is_an_empty_list_not_a_missing_key():
+    """A former MP has no published month at all — the key still exists, so the
+    loader writes an empty series rather than leaving a stale one in place."""
+    rec = {}
+    reps.apply_details(rec, {})
+    assert rec["remuneration"] == []
+
+
+def test_remuneration_survives_a_previous_backed_rerun():
+    """It is a per-MP detail like the declarations, so a re-run that reuses
+    `previous` for someone must not blank it (REP-14)."""
+    assert "remuneration" in reps._DETAIL_KEYS

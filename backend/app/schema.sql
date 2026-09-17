@@ -69,7 +69,11 @@ CREATE TABLE person (
     external_stats_json   TEXT,          -- upstream per-cycle counts (bills, etc.)
     -- Asset declarations (vagyonnyilatkozatok, REP-13): one entry per filing,
     -- newest first, each linking to its PDF on parlament.hu (never mirrored).
-    asset_declarations_json TEXT
+    asset_declarations_json TEXT,
+    -- The published monthly gross remuneration (REP-17): one entry per month,
+    -- newest first, as parlament.hu reports it. The official figure, not one we
+    -- derive — the statute is only used to explain it.
+    remuneration_json TEXT
 );
 
 -- person <-> faction <-> period: factions change over time (membership table).

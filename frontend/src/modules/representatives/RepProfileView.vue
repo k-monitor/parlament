@@ -6,7 +6,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, cycleLabel } from '../../store.js'
-import { formatDate, formatDateLocal, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
+import { formatDate, formatDateLocal, formatLongDate, formatMonth, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import PieChart from '../../components/PieChart.vue'
@@ -18,7 +18,7 @@ import { compareRoute } from '../../lib/compareUrl.js'
 import { signsOf } from '../../lib/zodiac.js'
 
 const props = defineProps({ id: String })
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 // First day of the earliest cycle in scope, so the activity board always starts
 // there (null under "all cycles" → the board starts at the MP's first active day).
@@ -68,13 +68,27 @@ const settlements = ref(null)
 // Long lists (bills, votes, speeches) are collapsed to a preview so the profile
 // stays scannable; a per-section toggle reveals the rest of what's loaded.
 const COLLAPSE_LIMIT = 8
-const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false, declarations: false })
+const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false, declarations: false, salary: false })
 function shown(list, key) {
   return expanded[key] ? list : list.slice(0, COLLAPSE_LIMIT)
 }
 
 // Asset declarations (REP-13) come with the profile, already newest first.
 const declarations = computed(() => profile.value?.asset_declarations || [])
+
+// Remuneration (REP-17). The amount is parlament.hu's published monthly figure;
+// `basis` is only the arithmetic that explains it against the Ogytv. Null for
+// anyone with no published month, so the panel simply does not exist for them.
+const salary = computed(() => profile.value?.remuneration || null)
+// Months other than the newest — the fee changes, and this is the only place a
+// reader can see that it did.
+const salaryHistory = computed(() => (salary.value?.history || []).slice(1))
+const fmtMonth = (iso) => formatMonth(iso, locale.value)
+// Amounts and the multiplier both follow the reading locale: "1 309 493" and
+// "2,65" in Hungarian, "1,309,493" and "2.65" in English (I18N-1).
+const numLocale = computed(() => (locale.value === 'hu' ? 'hu-HU' : 'en-GB'))
+const fmtHuf = (n) => (n ?? 0).toLocaleString(numLocale.value)
+const fmtMultiplier = (n) => Number(n).toLocaleString(numLocale.value)
 
 // The submitted-irományok sections, in display order, dropping any the MP has
 // none of in the current scope (so a section never shows an empty "(0)").
@@ -296,7 +310,7 @@ async function load() {
   for (const m of [dayCache, openDays, voteDayCache, openVoteDays])
     for (const k of Object.keys(m)) delete m[k]
   expanded.questions = expanded.lawbills = expanded.other = expanded.votes
-    = expanded.days = expanded.declarations = false
+    = expanded.days = expanded.declarations = expanded.salary = false
   zodiacRevealed.value = false
   try {
     // Everything on the profile is scoped to the global cycle scope
@@ -611,6 +625,81 @@ watch(() => store.cycles.join(','), load)
             <ul class="plain">
               <li v-for="(e, i) in profile.education" :key="i" class="small">
                 {{ e.degree }} <span class="muted" v-if="e.institution">— {{ e.institution }}</span>
+              </li>
+            </ul>
+          </section>
+
+          <!-- Remuneration (REP-17). The figure is the House's own published
+               monthly one — we do not compute it, because computing it gets a
+               fifth of cases wrong (a part-month, a §107 deduction, an office
+               the registry does not hold). What the card adds is the reading of
+               it: divided by the §104(1) base it gives the statutory rate and
+               the section that sets it, which is exact arithmetic on official
+               data. Where the amount is not a clean multiple we say so instead
+               of forcing it onto the nearest rule. -->
+          <section class="card pad salary" v-if="salary">
+            <div class="sechead">
+              <h2>{{ $t('profile.salary') }}</h2>
+              <HelpTip :label="$t('profile.salary')">
+                <p>{{ $t('profile.salaryNote') }}</p>
+              </HelpTip>
+            </div>
+            <p class="amount">
+              <strong>{{ fmtHuf(salary.amount_huf) }}</strong>
+              <span class="muted small unit">{{ $t('profile.salaryPerMonth') }}</span>
+            </p>
+            <p class="small muted month">{{ $t('profile.salaryMonth', { month: fmtMonth(salary.month) }) }}</p>
+
+            <!-- The calculation behind the figure. -->
+            <div class="basis" v-if="salary.basis">
+              <template v-if="salary.basis.exact">
+                <p class="small">
+                  {{ $t('profile.salaryBasis', {
+                       section: salary.basis.base_section,
+                       amount: fmtHuf(salary.basis.base_huf),
+                       multiplier: fmtMultiplier(salary.basis.multiplier) }) }}
+                </p>
+                <!-- Name the office only where our own record agrees with what was
+                     paid; otherwise list every section that sets this rate, since
+                     the amount alone cannot say which of them applies. -->
+                <p class="small muted" v-if="salary.basis.role">
+                  {{ $t('profile.salaryBasisRole', {
+                       role: $t(`profile.salaryRole.${salary.basis.role}`),
+                       section: salary.basis.sections[0] }) }}
+                </p>
+                <p class="small muted" v-else-if="salary.basis.sections.length">
+                  {{ $t('profile.salaryBasisSections', { sections: salary.basis.sections.join(', ') }) }}
+                </p>
+              </template>
+              <p class="small" v-else>
+                {{ $t('profile.salaryBasisInexact', { multiplier: fmtMultiplier(salary.basis.multiplier) }) }}
+              </p>
+              <p class="small muted formula">
+                {{ $t('profile.salaryBaseFormula', {
+                     formula: salary.basis.base_formula,
+                     date: formatLongDate(salary.basis.base_valid_from, locale) }) }}
+              </p>
+            </div>
+
+            <template v-if="salaryHistory.length">
+              <h3 class="small histhead">{{ $t('profile.salaryHistory') }}</h3>
+              <ul class="plain hist">
+                <li v-for="h in shown(salaryHistory, 'salary')" :key="h.month" class="small">
+                  <span>{{ fmtMonth(h.month) }}</span>
+                  <span class="histnum">{{ fmtHuf(h.amount_huf) }}</span>
+                </li>
+              </ul>
+              <button v-if="salaryHistory.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+                :aria-expanded="expanded.salary" @click="expanded.salary = !expanded.salary">
+                {{ expanded.salary ? $t('profile.showLess') : $t('profile.showMore') }}
+              </button>
+            </template>
+
+            <ul class="plain caveats">
+              <li class="small muted">{{ $t('profile.salarySource') }}</li>
+              <li v-for="c in salary.caveats" :key="c" class="small muted">
+                {{ $t(`profile.salaryCaveat${c === 'excludes_expenses' ? 'Expenses'
+                      : c === 'government_office' ? 'Government' : 'PartialMonth'}`) }}
               </li>
             </ul>
           </section>
@@ -996,4 +1085,19 @@ watch(() => store.cycles.join(','), load)
   font-size: .68rem; padding: .05rem .3rem; border-radius: 999px;
   background: var(--accent-soft); color: var(--accent); white-space: nowrap;
 }
+/* REP-17 remuneration. The published amount leads; everything that qualifies it —
+   the arithmetic, the source, the exclusions — sits in the same card, because a
+   figure about a named person must not be readable without them. */
+.salary .amount { margin: .2rem 0 0; display: flex; flex-wrap: wrap; gap: .1rem .4rem; align-items: baseline; }
+.salary .amount strong { font-size: 1.45rem; font-variant-numeric: tabular-nums; }
+.salary .unit { white-space: nowrap; }
+.salary .month { margin: .15rem 0 0; }
+.salary .basis { margin: .6rem 0 0; }
+.salary .basis p { margin: 0 0 .25rem; }
+.salary .basis .formula { margin: .45rem 0 0; }
+.salary .histhead { margin: .75rem 0 .25rem; color: var(--ink-soft); font-size: .9rem; }
+.salary .hist { display: grid; gap: .1rem; }
+.salary .hist li { display: flex; align-items: baseline; gap: .5rem; }
+.salary .hist .histnum { margin-left: auto; font-variant-numeric: tabular-nums; }
+.salary .caveats { margin: .6rem 0 0; display: grid; gap: .35rem; border-top: 1px solid var(--line); padding-top: .5rem; }
 </style>

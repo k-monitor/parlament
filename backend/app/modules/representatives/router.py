@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
+from ... import salary as salary_rules
 from ... import valasztas
 from ...analytics import search_analytics
 from ...config import settings
@@ -1437,6 +1438,16 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         # cycle-scoped: it is biography, like `faction_history` and `committees`.
         "offices": offices,
         "election_history": _loads(p["election_history_json"]),
+        # The monthly gross remuneration parlament.hu publishes (REP-17), newest
+        # month first, with the statute read against it: which multiple of the
+        # §104(1) base it is, and the section that sets that rate. The **figure is
+        # official** — we do not compute it — and `basis` is only the arithmetic
+        # that explains it. Null for anyone with no published month, which is the
+        # right answer for everyone not currently paid. Not cycle-scoped: it is a
+        # fact about now, like `is_mp`.
+        "remuneration": salary_rules.for_person(
+            db, person_id, _loads(_col(p, "remuneration_json")),
+            _loads(p["committees_json"]), offices),
     }
 
 

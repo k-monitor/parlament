@@ -165,6 +165,7 @@ DETAIL_QUERY_V2 = frozenset({
     "kepviselo-bizottsagi-tagsagai-query",
     "kepviselo-felszolalasok-szama-query",
     "kepviselo-frakcioja-query",
+    "kepviselo-javadalmazasa-query",
     "kepviselo-tisztseg-query",
     "kepviselo-vagyon-nyilatkozata-query",
     "kepviselo-vagyon-nyilatkozata2022query",

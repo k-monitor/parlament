@@ -530,6 +530,38 @@ export default {
     assetDeclarationDate: 'assets as of {date}',
     assetDeclarationMissing: 'No published document',
     assetDeclarationDeadline: 'filing deadline: {date}',
+    // Remuneration (REP-17). THE FIGURE IS OFFICIAL: parlament.hu publishes it
+    // monthly. The statute only explains it — divided by the base it yields the
+    // rate and the section. The page never says "earns this much": this is the
+    // parliamentary fee, without expense frames or any other public salary.
+    salary: 'Remuneration',
+    salaryPerMonth: 'HUF / month (gross)',
+    salaryMonth: 'fee for {month}',
+    salarySource: 'Source: parlament.hu — the representative\'s published monthly gross fee.',
+    salaryBasis: 'That is {multiplier}× the §{section} base ({amount} HUF).',
+    salaryBasisSections: 'In the statute this rate is set by {sections}.',
+    salaryBasisRole: 'The representative holds this office: {role} (§{section}).',
+    salaryBasisInexact: 'This amount is not a whole multiple of the base ({multiplier}×), so it cannot be tied to any single statutory rate.',
+    salaryBaseFormula: 'The law sets the base at {formula}; this amount has applied since {date}.',
+    salaryNote: 'The National Assembly publishes each representative\'s monthly gross fee, and the amount shown here is that official figure, not a calculated one. The statute (Act XXXVI of 2012) is only used to explain it: every fee is some multiple of the §104(1) base, so dividing the amount by the base recovers which statutory rate it was paid at. Where someone holds several offices at once the law pays the highest (§105(7)) — they are not added together.',
+    salaryHistory: 'Earlier months',
+    salaryCaveatExpenses: 'Excludes expense frames (accommodation, office, staff and travel) — those are reimbursements against a budget rather than income, and how much of a frame was drawn is not published.',
+    salaryCaveatGovernment: 'This representative also holds a government office: under §106(2) the parliamentary fee is paid on top of a government salary set by a different law, so the figure here is only part of what they are paid.',
+    salaryCaveatPartialMonth: 'This month shows a part or reduced fee: either the fragment of a month in which a mandate began or ended, or a deduction for absence under §107.',
+    // Offices named as the statute names them, since the cited section is its text.
+    salaryRole: {
+      house_speaker: 'Speaker of the National Assembly',
+      faction_leader: 'leader of a parliamentary group',
+      deputy_speaker: 'Deputy Speaker',
+      house_steward: 'House Steward',
+      faction_deputy: 'deputy leader of a parliamentary group',
+      committee_chair: 'chair of a standing committee',
+      notary: 'Notary of the National Assembly',
+      committee_vice: 'deputy chair of a standing committee',
+      multi_committee: 'seat on the Legislative Committee or on at least two standing committees',
+      one_committee: 'seat on a standing committee',
+      member: 'parliamentary mandate',
+    },
     // Astrological signs (REP-16). Openly trivia: derived from the Wikidata birth
     // date, of no analytical value. Keys are language-neutral; labels live here.
     zodiac: 'Star sign',

@@ -63,6 +63,12 @@ DETAIL_QUERIES = (
     "kepviselo-felszolalasok-szama-query",
     "kepviselo-benyujtott-iromanyok-szama-query",
     "kepviselo-aktivitas-query",
+    # The monthly gross remuneration actually paid (REP-17). This is the only
+    # official statement of what a representative is paid; everything else about
+    # pay has to be inferred from the statute, and inference gets it wrong often
+    # enough (a mid-month change, an absence deduction under Ogytv. §107, an
+    # office we do not hold) that the published figure is the one to carry.
+    "kepviselo-javadalmazasa-query",
     # Asset declarations (REP-13). Upstream splits them across one query per
     # disclosure regime in force, NOT by date range: the legacy one, the one-off
     # "eredeti" declaration filed on taking the seat under the rules from
@@ -215,6 +221,16 @@ def apply_details(rec: dict, details: dict[str, list[dict]]) -> None:
     } for r in details.get("kepviselo-tisztseg-query", [])]
 
     rec["assetDeclarations"] = _asset_declarations(details)
+
+    # Monthly remuneration (REP-17), newest first. `idoszak` is the month the
+    # payment is for (always its first day); `tiszteletdij` the gross forint
+    # amount. A month with no amount is dropped rather than carried as a zero —
+    # "not published" and "paid nothing" are different claims.
+    rec["remuneration"] = sorted(
+        ({"month": r.get("idoszak"), "amountHuf": r.get("tiszteletdij")}
+         for r in details.get("kepviselo-javadalmazasa-query", [])
+         if r.get("idoszak") and r.get("tiszteletdij") is not None),
+        key=lambda x: x["month"], reverse=True)
 
     rec.setdefault("statistics", {})
     rec["statistics"]["speeches"] = [{
@@ -371,7 +387,7 @@ _DETAIL_KEYS = (
     "seat", "email", "website", "highestEducation", "parliamentaryOffice",
     "stateOffice", "active", "factionHistory", "committeeMemberships",
     "electionHistory", "constituency", "education", "offices", "assetDeclarations",
-    "statistics", "cvUrl", "photoFile",
+    "remuneration", "statistics", "cvUrl", "photoFile",
     # The Wikidata join is one query for the whole roster, so it is always re-run —
     # but a failed/skipped run must not blank what is already on file either.
     "wikidataId", "wikipediaUrl", "dateOfBirth", "zodiacSign", "chineseZodiacSign",

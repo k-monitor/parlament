@@ -3,6 +3,8 @@ sentence↔time mapping, and graceful degradation (OPS-3, EXT-3/EXT-6)."""
 
 from __future__ import annotations
 
+from app import salary
+
 
 def test_meta_lists_modules_and_attribution(client):
     m = client.get("/api/v1/meta").json()
@@ -348,6 +350,34 @@ def test_representative_profile(client):
     assert d["wikipedia_url"] == "https://hu.wikipedia.org/wiki/Kov%C3%A1cs_B%C3%A9la"
     # An MP without a Wikidata item simply has null links (no crash).
     assert client.get("/api/v1/representatives/n002").json()["wikipedia_url"] is None
+
+
+def test_profile_serves_the_published_remuneration(client):
+    """REP-17: the amount is parlament.hu's own published monthly figure — served
+    through the loader unchanged — and `basis` is only the statute read against
+    it. It is a fact about now, so selecting a cycle must not change it."""
+    d = client.get("/api/v1/representatives/k001").json()["remuneration"]
+    assert d["source"] == "parlament.hu"
+    # The newest month, exactly as published; the whole series is kept.
+    assert (d["amount_huf"], d["month"]) == (2618986, "2026-08-01")
+    assert [h["amount_huf"] for h in d["history"]] == [2618986, 1103450]
+    # 2 618 986 is exactly twice the §104(1) base, so the rate is recognised.
+    assert d["basis"]["exact"] is True and d["basis"]["multiplier"] == 2.0
+    assert d["basis"]["base_huf"] == 1309493
+    assert "excludes_expenses" in d["caveats"]
+    scoped = client.get("/api/v1/representatives/k001?period=43").json()
+    assert scoped["remuneration"] == d
+    # Nobody with no published month gets a figure — no error, no zero.
+    assert client.get("/api/v1/representatives/n002").json()["remuneration"] is None
+
+
+def test_a_part_month_is_not_forced_onto_a_statutory_rate(client):
+    """July's 1 103 450 Ft is no multiple of the base. Rounding it onto the
+    nearest rule would invent a fact, so it is reported as what it is."""
+    d = client.get("/api/v1/representatives/k001").json()["remuneration"]
+    july = salary.explain(1103450, "2026-07-01", [], [], None)
+    assert july["exact"] is False and july["sections"] == []
+    assert d["history"][1]["amount_huf"] == 1103450
 
 
 def test_profile_lists_asset_declarations_and_cv(client):

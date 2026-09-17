@@ -834,6 +834,8 @@ export default {
     zoomIn: 'Zoom in',
     zoomOut: 'Zoom out',
     resetView: 'Reset the view',
+    fullscreen: 'Full screen',
+    exitFullscreen: 'Leave full screen',
     made: 'Interjections made',
     received: 'Interjections received',
     dragHint: 'The chart can be zoomed and panned, and any member dragged out of the tangle.',

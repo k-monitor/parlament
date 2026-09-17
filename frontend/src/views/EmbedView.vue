@@ -291,6 +291,8 @@ const siteHref = computed(() => {
             :labels="{ zoomIn: $t('interjections.zoomIn'),
                        zoomOut: $t('interjections.zoomOut'),
                        reset: $t('interjections.resetView'),
+                       fullscreen: $t('interjections.fullscreen'),
+                       exitFullscreen: $t('interjections.exitFullscreen'),
                        made: $t('interjections.made'),
                        received: $t('interjections.received') }"
           />

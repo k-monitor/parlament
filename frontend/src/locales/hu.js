@@ -958,6 +958,8 @@ export default {
     zoomIn: 'Nagyítás',
     zoomOut: 'Kicsinyítés',
     resetView: 'Nézet visszaállítása',
+    fullscreen: 'Teljes képernyő',
+    exitFullscreen: 'Kilépés a teljes képernyőből',
     made: 'Közbeszólások száma',
     received: 'Kapott közbeszólások',
     dragHint: 'Az ábra nagyítható és mozgatható; egy képviselő ki is húzható a kuszaságból.',

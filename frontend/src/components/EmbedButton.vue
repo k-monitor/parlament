@@ -53,9 +53,12 @@ const embedUrl = computed(() => {
 
 // The paste-ready iframe. Responsive (width:100% up to a max), no border chrome
 // beyond a subtle frame, and lazily loaded so it never blocks the host page.
+// `allowfullscreen` is what lets a figure that offers a full-screen view (the
+// interjection network) offer it inside somebody else's page too — without it the
+// browser refuses the request and the figure hides the button rather than break it.
 const snippet = computed(() => {
   const titleAttr = (props.title || 'Parlamonitor').replace(/"/g, '&quot;')
-  return `<iframe src="${embedUrl.value}" title="${titleAttr}" width="${props.maxWidth}" height="${props.height}" style="width:100%;max-width:${props.maxWidth}px;border:1px solid #e5e2db;border-radius:12px" loading="lazy"></iframe>`
+  return `<iframe src="${embedUrl.value}" title="${titleAttr}" width="${props.maxWidth}" height="${props.height}" style="width:100%;max-width:${props.maxWidth}px;border:1px solid #e5e2db;border-radius:12px" loading="lazy" allowfullscreen></iframe>`
 })
 
 async function toggle() {

@@ -569,6 +569,8 @@ watch(() => [route.query.from, route.query.to, route.query.who].join('|'), () =>
           :labels="{ zoomIn: $t('interjections.zoomIn'),
                      zoomOut: $t('interjections.zoomOut'),
                      reset: $t('interjections.resetView'),
+                     fullscreen: $t('interjections.fullscreen'),
+                     exitFullscreen: $t('interjections.exitFullscreen'),
                      made: $t('interjections.made'),
                      received: $t('interjections.received') }"
           @select="onSelect" @select-node="onSelectNode"

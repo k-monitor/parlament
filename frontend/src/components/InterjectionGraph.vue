@@ -29,11 +29,14 @@
 // arrowhead at the member being interrupted. Thickness is the count.
 //
 // The view can be zoomed and panned (d3-zoom: wheel, pinch, drag, and buttons for
-// anyone not using a pointer), and any member can be dragged out of the tangle.
+// anyone not using a pointer), any member can be dragged out of the tangle, and
+// the figure can be thrown onto the whole screen — which on a phone, where it is
+// otherwise a 340px thumbnail, is the control that makes it readable at all.
 // Each arrow and each node is keyboard-focusable and labelled for assistive tech,
 // and the figure carries a text alternative, since a mesh of curves is not
 // readable by a screen reader however its parts are labelled (A11Y-1).
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, getCurrentInstance, onBeforeUnmount, onMounted, ref, shallowRef, watch }
+  from 'vue'
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY }
   from 'd3-force'
 import { select } from 'd3-selection'
@@ -57,7 +60,8 @@ const props = defineProps({
   // the name state — a "who heckles most" figure whose dots are sized by the sum
   // would show a member large for being shouted *at*.
   metric: { type: String, default: 'total' },
-  // Labels for the zoom controls, so the component needs no i18n of its own.
+  // Labels for the view controls (zoom, reset, full screen), so the component
+  // needs no i18n of its own.
   labels: { type: Object, default: () => ({}) },
 })
 const emit = defineEmits(['select', 'select-node'])
@@ -92,6 +96,12 @@ const CHAR_W = 6.2         // rough advance width of the label font, for spacing
 // never already outside it (`zoom.transform` sets a scale verbatim; only later
 // interaction is clamped, so a too-tight floor makes the first wheel jump).
 const ZOOM_RANGE = [0.15, 10]
+// How far past the frame the cloud may spread when full screen scales it up to
+// fill the height. Filling a phone-shaped room exactly would want two or three
+// times this, which stops being the same figure: at 1.35 the picture keeps three
+// quarters of its width, so what is off the sides is the outermost member or two
+// rather than most of the House.
+const CROP_MAX = 1.35
 // Somebody with no faction in the cycle in view — a minister or state secretary
 // holding no mandate, whom the register gives no membership and the rest of the
 // site shows by office instead (REP-12). A neutral tone, deliberately not the
@@ -128,6 +138,16 @@ const view = ref(zoomIdentity)      // current pan/zoom, applied to the whole sc
 const active = ref(-1)              // hovered/focused node index
 let fitted = zoomIdentity           // the transform that framed the fresh layout
 let zoomBehaviour = null
+// Height ÷ width of the room the figure is being drawn into, while it is full
+// screen (0 = it is in the page, where the content sets the frame instead). See
+// `frameLayout` for what it does, and the full-screen section for where it
+// comes from.
+let roomAspect = 0
+// The framing `frameLayout` last built. Unlike `view` it does not follow the
+// reader's own panning, which is what makes it the right thing to judge a name
+// against: a name that changed sides every time the picture moved would be a
+// worse read than one that is occasionally cut.
+const frame = shallowRef(zoomIdentity)
 
 // --- layout ---------------------------------------------------------------
 
@@ -203,7 +223,11 @@ function computeLayout() {
 // wheel/pinch compose against the same origin; the viewBox itself only ever gets
 // the box's aspect, which is what keeps the figure from being letterboxed.
 function frameLayout(points) {
-  if (!points.length) { HEIGHT.value = Math.round(WIDTH * 0.7); return zoomIdentity }
+  if (!points.length) {
+    HEIGHT.value = Math.round(WIDTH * 0.7)
+    frame.value = zoomIdentity
+    return zoomIdentity
+  }
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
   let widest = 0
   points.forEach((p, i) => {
@@ -228,13 +252,31 @@ function frameLayout(points) {
   // produced (within the clamp). Choosing the height first and scaling into it is
   // what left a small cloud floating in a tall empty box.
   const w = WIDTH
-  const k = Math.min(usableW / spanX, (w * BOX_ASPECT[1]) / spanY, 2.2)
-  const wanted = k * spanY + 2 * FRAME_PAD + 2 * LABEL_TARGET_PX * (WIDTH / stageWidth.value)
-  const h = Math.round(Math.min(Math.max(wanted, w * BOX_ASPECT[0]), w * BOX_ASPECT[1]))
+  const lineRoom = 2 * LABEL_TARGET_PX * (WIDTH / Math.max(stageWidth.value, 1))
+  let k = Math.min(usableW / spanX, (w * BOX_ASPECT[1]) / spanY, 2.2)
+  const wanted = k * spanY + 2 * FRAME_PAD + lineRoom
+  let h = Math.round(Math.min(Math.max(wanted, w * BOX_ASPECT[0]), w * BOX_ASPECT[1]))
+
+  // Full screen reads the other way round: the frame is the shape of the ROOM,
+  // and the layout is scaled up until it fills it. A fit leaves the screen half
+  // empty on anything tall — the frame above is tight around a cloud whose own
+  // proportions were set for a 900×620 box, and height is then never the binding
+  // constraint. Nothing is lost vertically (the fit was already tight there); what
+  // goes past the sides is the gutter held for names, and on a tall screen the
+  // outermost members with it. `cropMax` is what keeps that honest: the cloud may
+  // spread to twice the frame, so the reader is always looking at the middle half
+  // of it and the rest is one pinch (or the − button) away.
+  if (roomAspect) {
+    h = Math.round(w * roomAspect)
+    const fill = (h - 2 * FRAME_PAD - lineRoom) / spanY
+    const cropMax = (w * CROP_MAX) / spanX
+    k = Math.min(Math.max(k, fill), cropMax)
+  }
   HEIGHT.value = h
-  return zoomIdentity
+  frame.value = zoomIdentity
     .translate(w / 2 - k * (minX + maxX) / 2, h / 2 - k * (minY + maxY) / 2)
     .scale(k)
+  return frame.value
 }
 
 // --- what gets drawn ------------------------------------------------------
@@ -375,6 +417,11 @@ const labelScale = computed(() =>
 // in shrinks a name *in graph units*, slots open up, and the missing names appear.
 // Every node keeps its tooltip and its accessible name either way.
 const LINE_H = 15
+// How far past the frame's edge a name may run before the side it is on counts as
+// unusable. It is slack, not a margin: the in-page fit reserves room for the
+// longest name at both edges and no more, so a rule with no give in it would
+// re-arrange that picture too over a pixel or two.
+const EDGE_SLACK = 14
 
 function overlaps(a, b) {
   return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
@@ -390,15 +437,25 @@ const labelBoxes = computed(() => {
   // Most involved first: where two names cannot both fit, the bigger number is
   // the one the reader is more likely to be looking for.
   const order = [...pts].sort((a, b) => b.value - a.value || a.i - b.i)
+  const f = frame.value
   for (const p of order) {
     const width = (chartName(p.label).length + String(p.value).length + 2) * CHAR_W * scale
     const height = LINE_H * scale
-    const sides = p.flip ? [-1, 1] : [1, -1]
+    const gap = p.r + 6 * scale
+    // Which side the frame can actually show this name on. In the page neither
+    // test ever fails — the fit holds a gutter as wide as the longest name at
+    // both edges — but full screen crops those gutters on purpose, and a member
+    // out at the edge reads better labelled inwards than cut in half.
+    const mid = f.x + f.k * p.x
+    const outRight = mid + f.k * (gap + width) > WIDTH + EDGE_SLACK
+    const outLeft = mid - f.k * (gap + width) < -EDGE_SLACK
+    const sides = outRight && !outLeft ? [-1, 1]
+      : outLeft && !outRight ? [1, -1]
+        : p.flip ? [-1, 1] : [1, -1]
     let picked = null
     for (const dy of [0, -LINE_H * scale, LINE_H * scale,
                       -2 * LINE_H * scale, 2 * LINE_H * scale]) {
       for (const side of sides) {
-        const gap = p.r + 6 * scale
         const x0 = side > 0 ? p.x + gap : p.x - gap - width
         const box = { x0, x1: x0 + width,
                       y0: p.y + dy - height / 2, y1: p.y + dy + height / 2 }
@@ -473,8 +530,16 @@ function nodeAria(p) {
 
 // --- zoom, pan and dragging a member out of the tangle --------------------
 
+// Whether the view on screen is still the one we framed, rather than one the
+// reader panned or zoomed to themselves — which is what decides if a resize may
+// re-frame under them. It cannot be read off `view`: a `ref` hands back a
+// reactive proxy of the transform, never the object that was put in, so an
+// identity test against `fitted` is false even when nothing has been touched.
+let untouched = true
+
 function applyView(transform) {
   if (!svgRef.value || !zoomBehaviour) return
+  untouched = true
   select(svgRef.value).call(zoomBehaviour.transform, transform)
 }
 
@@ -484,6 +549,107 @@ function zoomBy(factor) {
 }
 
 function resetView() { applyView(fitted) }
+
+// --- the whole screen -----------------------------------------------------
+//
+// On a phone this figure is a thumbnail: ~340px of a column, in which the
+// placement pass drops most of the names because they do not fit (see
+// `labelBoxes`) — so the reader gets the fewest names exactly where they have
+// the least room to go looking for them. Expanding it to the screen is the one
+// control that hands those back, and turned sideways it is a different figure.
+//
+// Expanded, the picture is not merely fitted into a bigger box: the frame takes
+// the shape of the room and the layout is scaled up until it fills it, because
+// fitting a wide tangle into a tall screen is what leaves two thirds of a phone
+// blank. `frameLayout` does that part; what it costs — the outermost member or
+// two going past the sides — is capped there too.
+//
+// It is a fixed overlay *and*, where the browser allows it, a real fullscreen
+// request. The overlay has to be the part that does the work: iOS Safari puts
+// nothing but a <video> into fullscreen, and a phone is what this button is for.
+// Native fullscreen is then a bonus on top of it that takes the browser's own
+// chrome away; the same rules lay the figure out inside either.
+const expanded = ref(false)
+const figRef = ref(null)
+// The height the figure was taking in the page before it left it. An overlay is
+// out of the flow, so without this the article closes over the hole the figure
+// left, the page gets shorter under a frozen scroll position, and coming back
+// out drops the reader somewhere above where they were.
+const reserved = ref(0)
+const capRef = ref(null)
+const CAP_GAP = 8            // the caption's margin-bottom, in CSS pixels
+let bodyOverflow = ''
+
+// Measure the room and re-frame the figure into it. The stage always spans the
+// overlay, so the room is as wide as the stage and as tall as what is left of the
+// viewport under anything above the picture (a caption, when one is shown) — and
+// `frameLayout` then makes the frame that shape and scales the layout to fill it.
+// Re-framing is unconditional, unlike the resize path: a reader who had zoomed in
+// before pressing the button has a view that means nothing in a frame of a
+// different shape, and full screen is where they expect the picture back whole.
+function refit() {
+  const fig = figRef.value
+  const stage = stageRef.value
+  if (!fig || !stage) return
+  if (expanded.value) {
+    // The overlay's own content box, less whatever is printed above the picture
+    // (a caption, when one is shown). Measured on the figure rather than on the
+    // stage's position inside it: the overlay centres what it holds, so the
+    // stage's offset is half the empty space this is meant to get rid of.
+    const cap = capRef.value
+    const room = Math.max(fig.clientHeight - (cap ? cap.offsetHeight + CAP_GAP : 0), 160)
+    roomAspect = room / Math.max(stage.clientWidth || stageWidth.value, 1)
+  } else {
+    roomAspect = 0
+  }
+  fitted = frameLayout(placed.value)
+  applyView(fitted)
+}
+
+// Hidden rather than broken where it cannot work: inside an embed's iframe
+// (§4C) the overlay would only cover the iframe's own little box, so there the
+// button is worth showing only if the host page allows real fullscreen.
+const canExpand = computed(() => {
+  if (typeof window === 'undefined') return false
+  const framed = window.self !== window.top
+  return !framed || !!document.fullscreenEnabled
+})
+
+function expand() {
+  reserved.value = figRef.value?.offsetHeight || 0
+  expanded.value = true
+  // The page behind a fixed overlay must not scroll under the reader's finger.
+  bodyOverflow = document.body.style.overflow
+  document.body.style.overflow = 'hidden'
+  // The overlay only takes the stage over on the next frame — measure it then,
+  // or the room is still the column the figure was sitting in.
+  requestAnimationFrame(refit)
+  figRef.value?.requestFullscreen?.()?.catch(() => { /* the overlay is enough */ })
+}
+
+function collapse() {
+  if (!expanded.value) return
+  expanded.value = false
+  document.body.style.overflow = bodyOverflow
+  if (document.fullscreenElement) document.exitFullscreen?.()
+  requestAnimationFrame(refit)
+}
+
+function toggleExpanded() { expanded.value ? collapse() : expand() }
+
+// Escape leaves native fullscreen by itself and never reaches us, so the overlay
+// has to follow it out; without native fullscreen (iOS) the key is ours to read.
+function onFullscreenChange() {
+  if (expanded.value && !document.fullscreenElement) collapse()
+}
+
+function onKeydown(event) {
+  if (event.key === 'Escape') collapse()
+}
+
+// A rotated phone is the case this exists for: the room is a different shape, so
+// the frame and the scale that fills it are different numbers.
+function onWindowResize() { if (expanded.value) refit() }
 
 // Track the figure's rendered width — a rotated phone, a resized window, a sidebar
 // opening — because it is what the on-screen size of a name is measured against.
@@ -495,8 +661,11 @@ function watchWidth() {
     const w = entry.contentRect.width
     if (!w || Math.abs(w - stageWidth.value) < 1) return
     stageWidth.value = w
-    // Only re-frame while the reader has not taken over the view themselves.
-    if (view.value === fitted) { fitted = frameLayout(placed.value); applyView(fitted) }
+    // Only re-frame while the reader has not taken over the view themselves, and
+    // through `refit`, so that the room is measured again rather than assumed:
+    // going full screen widens the stage without resizing the window, and a frame
+    // built for the old room would be the wrong shape for the new one.
+    if (untouched) refit()
   })
   observer.observe(stageRef.value)
 }
@@ -510,10 +679,19 @@ onMounted(() => {
     // ctrl+wheel and must still zoom, and only the primary button pans. A press
     // that began on a member never reaches here — that handler stops it.
     .filter((event) => (!event.ctrlKey || event.type === 'wheel') && !event.button)
-    .on('zoom', (event) => { view.value = event.transform })
+    // `sourceEvent` is what tells a wheel, a pinch or a drag from our own
+    // programmatic framing: only the former is the reader taking the view over.
+    .on('zoom', (event) => {
+      view.value = event.transform
+      if (event.sourceEvent) untouched = false
+    })
   select(svgRef.value).call(zoomBehaviour)
   applyView(fitted)
   watchWidth()
+  document.addEventListener('fullscreenchange', onFullscreenChange)
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('resize', onWindowResize)
+  window.addEventListener('orientationchange', onWindowResize)
 })
 
 onBeforeUnmount(() => {
@@ -521,6 +699,12 @@ onBeforeUnmount(() => {
   if (svgRef.value && zoomBehaviour) select(svgRef.value).on('.zoom', null)
   window.removeEventListener('mousemove', onDragMove)
   window.removeEventListener('mouseup', onDragEnd)
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('resize', onWindowResize)
+  window.removeEventListener('orientationchange', onWindowResize)
+  // Leaving the route while expanded must not leave the page unscrollable.
+  collapse()
 })
 
 // The metric is laid out, not just printed — it sets the marker sizes the
@@ -587,9 +771,22 @@ function onNodeClick(i) {
 
 // --- selection ------------------------------------------------------------
 
+// A pick scrolls the page underneath to the interjections behind that arrow —
+// which, expanded, is a page the overlay is covering. So choosing something from
+// the big view closes it and lands the reader on what they asked for. Only where
+// somebody is listening: an embed (§4C) has no list to land on, and there a tap
+// that folded the figure away would be the opposite of helpful.
+const instance = getCurrentInstance()
+
+function leaveExpanded() {
+  const on = instance?.vnode?.props
+  if (on && (on.onSelect || on.onSelectNode)) collapse()
+}
+
 function pick(index) {
   const l = props.links[index]
   if (!l) return
+  leaveExpanded()
   emit('select', { index, count: l.count,
                    source: props.nodes[l.source], target: props.nodes[l.target] })
 }
@@ -597,6 +794,7 @@ function pick(index) {
 function pickNode(index) {
   const n = props.nodes[index]
   if (!n) return
+  leaveExpanded()
   emit('select-node', { index, node: n })
 }
 
@@ -624,108 +822,140 @@ function chosen(a) {
 </script>
 
 <template>
-  <figure class="igraph" style="margin:0;">
-    <figcaption v-if="caption && showCaption" class="small soft" style="margin-bottom:.5rem;">{{ caption }}</figcaption>
-    <div class="stage" ref="stageRef">
-      <svg
-        ref="svgRef" :viewBox="`0 0 ${WIDTH} ${HEIGHT}`" class="svg"
-        role="img" :aria-label="caption"
-        :style="{ '--arrow-rest': restOpacity }"
-      >
-        <desc>{{ summary }}</desc>
-        <g :transform="`translate(${view.x} ${view.y}) scale(${view.k})`">
-          <!-- arrows: one per ordered pair, thickness = how many interjections -->
-          <g
-            v-for="a in arrows" :key="'a' + a.key"
-            class="arrow" :class="{ dim: dimmed(a), sel: chosen(a) }"
-            role="button" tabindex="0"
-            :aria-label="`${a.source.label} → ${a.target.label}: ${a.count}`"
-            @mousedown.stop @click="pick(a.key)"
-            @keydown.enter.prevent="pick(a.key)" @keydown.space.prevent="pick(a.key)"
-          >
-            <title>{{ a.source.label }} → {{ a.target.label }}: {{ a.count }}</title>
-            <!-- a wide, invisible copy of the curve, so a hairline arrow is still
-                 something a mouse and a finger can hit -->
-            <path :d="a.d" class="hit" />
-            <path :d="a.d" class="line" :stroke="a.color" :stroke-width="a.width" />
-            <path :d="a.head" class="head" :fill="a.color" />
-          </g>
+  <div class="igwrap" :style="expanded ? { minHeight: `${reserved}px` } : null">
+    <figure class="igraph" :class="{ expanded }" ref="figRef" style="margin:0;">
+      <figcaption
+        v-if="caption && showCaption" ref="capRef" class="small soft"
+        style="margin-bottom:.5rem;"
+      >{{ caption }}</figcaption>
+      <div class="stage" ref="stageRef">
+        <svg
+          ref="svgRef" :viewBox="`0 0 ${WIDTH} ${HEIGHT}`" class="svg"
+          role="img" :aria-label="caption"
+          :style="{ '--arrow-rest': restOpacity }"
+        >
+          <desc>{{ summary }}</desc>
+          <g :transform="`translate(${view.x} ${view.y}) scale(${view.k})`">
+            <!-- arrows: one per ordered pair, thickness = how many interjections -->
+            <g
+              v-for="a in arrows" :key="'a' + a.key"
+              class="arrow" :class="{ dim: dimmed(a), sel: chosen(a) }"
+              role="button" tabindex="0"
+              :aria-label="`${a.source.label} → ${a.target.label}: ${a.count}`"
+              @mousedown.stop @click="pick(a.key)"
+              @keydown.enter.prevent="pick(a.key)" @keydown.space.prevent="pick(a.key)"
+            >
+              <title>{{ a.source.label }} → {{ a.target.label }}: {{ a.count }}</title>
+              <!-- a wide, invisible copy of the curve, so a hairline arrow is still
+                   something a mouse and a finger can hit -->
+              <path :d="a.d" class="hit" />
+              <path :d="a.d" class="line" :stroke="a.color" :stroke-width="a.width" />
+              <path :d="a.head" class="head" :fill="a.color" />
+            </g>
 
-          <!-- people: one marker + name per node -->
-          <g
-            v-for="p in points" :key="'n' + p.i"
-            class="nodegrp" :class="{ selnode: p.i === selectedNode }"
-            role="button" tabindex="0"
-            :aria-label="nodeAria(p)"
-            @mouseenter="active = p.i" @mouseleave="active = -1"
-            @focus="active = p.i" @blur="active = -1"
-            @mousedown.stop="onNodeDown($event, p.i)"
-            @click="onNodeClick(p.i)"
-            @keydown.enter.prevent="pickNode(p.i)" @keydown.space.prevent="pickNode(p.i)"
-          >
-            <!-- No `<title>` here: the hover card below says all of this, and a
-                 `<title>` alongside it would only add the browser's own second
-                 tooltip on top of it. -->
-            <!-- The selection ring is drawn OUTSIDE the marker, not as a stroke on
-                 it: a thick stroke on a 4px dot swallows the fill, and the fill is
-                 the faction. -->
-            <circle
-              v-if="p.i === selectedNode" :cx="p.x" :cy="p.y" :r="p.r + 4"
-              class="ring"
+            <!-- people: one marker + name per node -->
+            <g
+              v-for="p in points" :key="'n' + p.i"
+              class="nodegrp" :class="{ selnode: p.i === selectedNode }"
+              role="button" tabindex="0"
+              :aria-label="nodeAria(p)"
+              @mouseenter="active = p.i" @mouseleave="active = -1"
+              @focus="active = p.i" @blur="active = -1"
+              @mousedown.stop="onNodeDown($event, p.i)"
+              @click="onNodeClick(p.i)"
+              @keydown.enter.prevent="pickNode(p.i)" @keydown.space.prevent="pickNode(p.i)"
+            >
+              <!-- No `<title>` here: the hover card below says all of this, and a
+                   `<title>` alongside it would only add the browser's own second
+                   tooltip on top of it. -->
+              <!-- The selection ring is drawn OUTSIDE the marker, not as a stroke on
+                   it: a thick stroke on a 4px dot swallows the fill, and the fill is
+                   the faction. -->
+              <circle
+                v-if="p.i === selectedNode" :cx="p.x" :cy="p.y" :r="p.r + 4"
+                class="ring"
+              />
+              <circle :cx="p.x" :cy="p.y" :r="p.r" class="dot" :fill="p.color" />
+              <text
+                v-if="labelBoxes.get(p.i) || p.i === selectedNode || p.i === active"
+                class="nlabel"
+                :text-anchor="(labelBoxes.get(p.i)?.side ?? (p.flip ? -1 : 1)) > 0 ? 'start' : 'end'"
+                :transform="`translate(${p.x + ((labelBoxes.get(p.i)?.side ?? (p.flip ? -1 : 1)) > 0
+                                ? p.r + 6 : -p.r - 6)} ${p.y + (labelBoxes.get(p.i)?.dy || 0)})`
+                  + ` scale(${labelScale})`"
+                dominant-baseline="middle"
+              >{{ chartName(p.label) }} <tspan class="nval">{{ p.value }}</tspan></text>
+            </g>
+          </g>
+        </svg>
+
+        <!-- The hovered (or keyboard-focused) member's card. `aria-hidden`, because
+             the node it belongs to already carries the same words. -->
+        <div
+          v-if="tip" class="ntip" aria-hidden="true"
+          :style="{ left: `${tip.x}px`, top: `${tip.y}px`, transform: tip.shift }"
+        >
+          <div class="ntip-head">
+            <img
+              v-if="tip.node.photo_uri" class="avatar sm" :src="tip.node.photo_uri"
+              alt="" loading="lazy" @error="onPhotoError"
             />
-            <circle :cx="p.x" :cy="p.y" :r="p.r" class="dot" :fill="p.color" />
-            <text
-              v-if="labelBoxes.get(p.i) || p.i === selectedNode || p.i === active"
-              class="nlabel"
-              :text-anchor="(labelBoxes.get(p.i)?.side ?? (p.flip ? -1 : 1)) > 0 ? 'start' : 'end'"
-              :transform="`translate(${p.x + ((labelBoxes.get(p.i)?.side ?? (p.flip ? -1 : 1)) > 0
-                              ? p.r + 6 : -p.r - 6)} ${p.y + (labelBoxes.get(p.i)?.dy || 0)})`
-                + ` scale(${labelScale})`"
-              dominant-baseline="middle"
-            >{{ chartName(p.label) }} <tspan class="nval">{{ p.value }}</tspan></text>
-          </g>
-        </g>
-      </svg>
-
-      <!-- The hovered (or keyboard-focused) member's card. `aria-hidden`, because
-           the node it belongs to already carries the same words. -->
-      <div
-        v-if="tip" class="ntip" aria-hidden="true"
-        :style="{ left: `${tip.x}px`, top: `${tip.y}px`, transform: tip.shift }"
-      >
-        <div class="ntip-head">
-          <img
-            v-if="tip.node.photo_uri" class="avatar sm" :src="tip.node.photo_uri"
-            alt="" loading="lazy" @error="onPhotoError"
-          />
-          <div class="ntip-id">
-            <span class="ntip-name">{{ tip.node.label }}</span>
-            <span v-if="tip.node.faction?.label" class="ntip-faction">
-              <i class="swatch" :style="{ background: tip.node.color }"></i>
-              {{ tip.node.faction.label }}
-            </span>
+            <div class="ntip-id">
+              <span class="ntip-name">{{ tip.node.label }}</span>
+              <span v-if="tip.node.faction?.label" class="ntip-faction">
+                <i class="swatch" :style="{ background: tip.node.color }"></i>
+                {{ tip.node.faction.label }}
+              </span>
+            </div>
           </div>
+          <dl class="ntip-stats">
+            <dt>{{ labels.made }}</dt>
+            <dd>{{ tip.node.out }}</dd>
+            <dt>{{ labels.received }}</dt>
+            <dd>{{ tip.node.in }}</dd>
+          </dl>
         </div>
-        <dl class="ntip-stats">
-          <dt>{{ labels.made }}</dt>
-          <dd>{{ tip.node.out }}</dd>
-          <dt>{{ labels.received }}</dt>
-          <dd>{{ tip.node.in }}</dd>
-        </dl>
-      </div>
 
-      <!-- Zoom is otherwise a wheel/pinch gesture only, which is no control at
-           all for a keyboard or a trackpad the reader would rather scroll with. -->
-      <div class="zoomctl">
-        <button type="button" class="zbtn" :aria-label="labels.zoomIn || '+'"
-                @click="zoomBy(1.4)">+</button>
-        <button type="button" class="zbtn" :aria-label="labels.zoomOut || '−'"
-                @click="zoomBy(1 / 1.4)">−</button>
-        <button type="button" class="zbtn reset" :aria-label="labels.reset || 'reset'"
-                @click="resetView">⤢</button>
+        <!-- Zoom is otherwise a wheel/pinch gesture only, which is no control at
+             all for a keyboard or a trackpad the reader would rather scroll with. -->
+        <div class="zoomctl">
+          <button type="button" class="zbtn" :aria-label="labels.zoomIn || '+'"
+                  :title="labels.zoomIn" @click="zoomBy(1.4)">+</button>
+          <button type="button" class="zbtn" :aria-label="labels.zoomOut || '−'"
+                  :title="labels.zoomOut" @click="zoomBy(1 / 1.4)">−</button>
+          <!-- Reset is the arrow that means "put back what I did to this". It used
+               to be ⤢, which every video player and every map on the web reads as
+               "make this bigger" — and which now, one button down, does. -->
+          <button type="button" class="zbtn icon" :aria-label="labels.reset || 'reset'"
+                  :title="labels.reset" @click="resetView">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="2 4 2 10 8 10" />
+              <path d="M4.51 15a9 9 0 1 0 2.13-9.36L2 10" />
+            </svg>
+          </button>
+          <button
+            v-if="canExpand" type="button" class="zbtn icon grow"
+            :aria-label="(expanded ? labels.exitFullscreen : labels.fullscreen) || 'fullscreen'"
+            :title="expanded ? labels.exitFullscreen : labels.fullscreen"
+            :aria-pressed="expanded" @click="toggleExpanded"
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <g v-if="!expanded">
+                <path d="M9 3H5a2 2 0 0 0-2 2v4" /><path d="M15 3h4a2 2 0 0 1 2 2v4" />
+                <path d="M21 15v4a2 2 0 0 1-2 2h-4" /><path d="M3 15v4a2 2 0 0 0 2 2h4" />
+              </g>
+              <g v-else>
+                <path d="M9 3v4a2 2 0 0 1-2 2H3" /><path d="M21 9h-4a2 2 0 0 1-2-2V3" />
+                <path d="M15 21v-4a2 2 0 0 1 2-2h4" /><path d="M3 15h4a2 2 0 0 1 2 2v4" />
+              </g>
+            </svg>
+          </button>
+        </div>
       </div>
-    </div>
-  </figure>
+    </figure>
+  </div>
 </template>
 
 <style scoped>
@@ -803,7 +1033,7 @@ function chosen(a) {
 .ntip-stats dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
 
 .zoomctl {
-  position: absolute; right: .5rem; top: .5rem;
+  position: absolute; right: .5rem; top: .5rem; z-index: 4;
   display: flex; flex-direction: column; gap: .25rem;
 }
 .zbtn {
@@ -813,6 +1043,38 @@ function chosen(a) {
   cursor: pointer;
 }
 .zbtn:hover { color: var(--accent); border-color: var(--accent); }
-.zbtn.reset { font-size: .85rem; }
+.zbtn.icon { display: grid; place-items: center; }
+/* Full screen is a different kind of action from the three above it — it changes
+   what the figure *is*, not where inside it you are — so it sits apart. */
+.zbtn.grow { margin-top: .3rem; }
+
+/* Expanded. A fixed overlay rather than only a `:fullscreen` rule, because iOS
+   Safari will not put anything but a <video> into real fullscreen and a phone is
+   precisely where this is worth having; where native fullscreen does work it is
+   asked for as well, and these same rules lay the figure out inside it. */
+.igraph.expanded {
+  position: fixed; inset: 0; z-index: 95;
+  margin: 0; padding: .6rem;
+  display: flex; flex-direction: column; justify-content: center;
+  background: var(--surface); overflow: hidden;
+}
+/* The stage spans the overlay; what makes the figure fit the screen exactly is
+   the frame `frameLayout` builds for it, whose shape is the room's. */
+.igraph.expanded .stage { width: 100%; }
+/* One finger now pans the graph instead of scrolling the page: there is no page
+   left underneath to scroll, and moving around by hand is the whole point of
+   having asked for the big view. */
+.igraph.expanded .svg { touch-action: none; }
+
+/* Where a thumb does the aiming, the controls are thumb-sized — and four of them
+   down the side of a 340px figure is a wall of buttons beside a thumbnail, so the
+   in-page one keeps only the two that a finger cannot do without: a pinch already
+   zooms, nothing undoes a pinch, and full screen is the way out of the thumbnail.
+   Expanded there is room for all four again, which is also where a keyboard gets
+   its zoom buttons back. */
+@media (max-width: 560px) {
+  .zbtn { width: 2.25rem; height: 2.25rem; }
+  .igraph:not(.expanded) .zbtn:not(.icon) { display: none; }
+}
 @media (prefers-reduced-motion: reduce) { .arrow, .dot { transition: none; } }
 </style>

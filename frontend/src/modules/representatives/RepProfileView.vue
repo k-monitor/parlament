@@ -16,6 +16,7 @@ import ShareButton from '../../components/ShareButton.vue'
 import EmbedButton from '../../components/EmbedButton.vue'
 import { compareRoute } from '../../lib/compareUrl.js'
 import { signsOf } from '../../lib/zodiac.js'
+import { REMUNERATION_ENABLED } from '../../features.js'
 
 const props = defineProps({ id: String })
 const { t, locale } = useI18n()
@@ -78,8 +79,10 @@ const declarations = computed(() => profile.value?.asset_declarations || [])
 
 // Remuneration (REP-17). The amount is parlament.hu's published monthly figure;
 // `basis` is only the arithmetic that explains it against the Ogytv. Null for
-// anyone with no published month, so the panel simply does not exist for them.
-const salary = computed(() => profile.value?.remuneration || null)
+// anyone with no published month, so the panel simply does not exist for them —
+// and null for everyone while REMUNERATION_ENABLED is off, which is the one
+// place the editorial curtain hangs: the whole card keys off this.
+const salary = computed(() => (REMUNERATION_ENABLED ? profile.value?.remuneration || null : null))
 // Months other than the newest — the fee changes, and this is the only place a
 // reader can see that it did.
 const salaryHistory = computed(() => (salary.value?.history || []).slice(1))

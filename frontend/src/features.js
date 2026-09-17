@@ -20,3 +20,12 @@
 // loader still measures every speech, the API still serves `metrics` on each
 // speech and the methodology on /meta, and the stored numbers stay current.
 export const SPEECH_METRICS_ENABLED = true
+
+// Remuneration (REP-17, §6B): the published monthly fee panel on an MP profile,
+// with the §104(1) reading of it.
+//
+// OFF — the panel is built and the data is live (the registry sync stores every
+// published month and the profile API still serves `remuneration`), but the
+// figure is not on the public site yet. Flipping this to `true` restores the
+// card as it stands; nothing else has to change.
+export const REMUNERATION_ENABLED = false

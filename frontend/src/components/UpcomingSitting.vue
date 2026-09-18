@@ -13,6 +13,17 @@ import { useI18n } from 'vue-i18n'
 import { api } from '../api.js'
 import StateBlock from './StateBlock.vue'
 
+const props = defineProps({
+  // Single-day mode (NR-6). Set to an ISO date, the card shows the order paper's
+  // entry for that one day and nothing else — what the sitting-day page of an
+  // announced sitting needs, where the page itself already says which day this is
+  // and the reader came for this day alone. The card then renders only when the
+  // napirend actually carries that date: an announced day the current order paper
+  // says nothing about must leave the page as it found it, not add an empty
+  // promise to it.
+  date: { type: String, default: '' },
+})
+
 const { locale } = useI18n()
 const data = ref(null)
 const loading = ref(true)
@@ -25,12 +36,16 @@ const expanded = ref(false)
 const PREVIEW_ITEMS = 4
 
 const agenda = computed(() => data.value && data.value.agenda)
-const days = computed(() => (agenda.value && agenda.value.days) || [])
-const hiddenCount = computed(() =>
-  days.value.reduce((n, d) => n + Math.max(0, d.items.length - PREVIEW_ITEMS), 0))
+const allDays = computed(() => (agenda.value && agenda.value.days) || [])
+const days = computed(() => (props.date
+  ? allDays.value.filter((d) => d.date === props.date)
+  : allDays.value))
+const hiddenCount = computed(() => (props.date ? 0
+  : days.value.reduce((n, d) => n + Math.max(0, d.items.length - PREVIEW_ITEMS), 0)))
 
+// One day asked for by date is not a preview of anything — show it whole.
 function shownItems(day) {
-  return expanded.value ? day.items : day.items.slice(0, PREVIEW_ITEMS)
+  return props.date || expanded.value ? day.items : day.items.slice(0, PREVIEW_ITEMS)
 }
 
 // The listing prints the weekday in Hungarian capitals ("HÉTFŐ"), which is the
@@ -87,9 +102,9 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="card pad upcoming">
+  <section v-if="!date || days.length" class="card pad upcoming">
     <div class="upcoming__head">
-      <h2>{{ $t('upcoming.title') }}</h2>
+      <h2>{{ date ? $t('upcoming.dayTitle') : $t('upcoming.title') }}</h2>
       <span v-if="agenda && agenda.extraordinary" class="badge">
         {{ $t('upcoming.extraordinary') }}
       </span>
@@ -115,7 +130,8 @@ onMounted(load)
       <p v-if="!days.length" class="soft">{{ $t('upcoming.noItems') }}</p>
 
       <div v-for="day in days" :key="day.date || day.weekday" class="uday">
-        <h3 class="uday__date">
+        <!-- In single-day mode the page heading above already names the date. -->
+        <h3 v-if="!date" class="uday__date">
           <time :datetime="day.date">{{ dayLabel(day.date) }}</time>
         </h3>
         <p class="uday__times soft">
@@ -166,12 +182,12 @@ onMounted(load)
                     : $t('upcoming.showAll', { n: hiddenCount }) }}
       </button>
 
-      <p v-if="houseCommittee" class="upcoming__hc soft">
+      <p v-if="houseCommittee && !date" class="upcoming__hc soft">
         <strong>{{ $t('upcoming.houseCommittee') }}:</strong>
         <time :datetime="data.houseCommittee.date">{{ houseCommittee }}</time>
       </p>
 
-      <p v-if="data.documents && data.documents.length" class="upcoming__docs soft">
+      <p v-if="data.documents && data.documents.length && !date" class="upcoming__docs soft">
         <span class="upcoming__docs-label">{{ $t('upcoming.documents') }}:</span>
         <a
           v-for="d in data.documents" :key="d.slug" :href="d.url"

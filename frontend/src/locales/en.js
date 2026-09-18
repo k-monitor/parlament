@@ -1152,6 +1152,9 @@ export default {
   // Hungarian block for why every rendering names its source document.
   upcoming: {
     title: "The next sitting's agenda",
+    // The same block narrowed to one day, on the page of a sitting day that has
+    // not been held yet (NR-6).
+    dayTitle: 'Planned agenda',
     sourceDoc: 'Order paper (PDF)',
     asOf: 'as of {at}',
     extraordinary: 'Extraordinary sitting',

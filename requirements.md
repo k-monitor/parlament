@@ -1131,6 +1131,26 @@ section — **Elemzések** — with its own entry in the top bar.
   > **✅ realized.** `GET /proceedings/upcoming` + `features.upcoming_agenda` in
   > `/meta`; `frontend/src/components/UpcomingSitting.vue` on `HomeView`.
 
+- **NR-6 (SHOULD).** A **sitting-day page with nothing in it yet** — an announced
+  day, or one parlament.hu has not populated — SHOULD show that day's entry from
+  the order paper (NR-5) instead of only a notice that the transcript is coming.
+  It is the page a visitor is most likely to open on a sitting morning, and the
+  one page on the site that has nothing to say; the napirend already knows what
+  the House means to do that day, and a reader who arrived from the sittings list
+  should not have to find their way to the home page for it.
+  The same provenance obligation applies unchanged — this is still a plan, not a
+  record — so the day is shown by the *same* block as the home page, carrying its
+  document and its *"…órai állapot szerint"* stamp, rather than re-rendered as if
+  it were the day's agenda. It MUST be shown only where the current order paper
+  actually covers that date: a day the napirend says nothing about (every past
+  day, once the House has moved on) is left as it was, so the page never invents
+  a plan for a day no document describes.
+  > **✅ realized.** `UpcomingSitting` takes a `date` prop that narrows it to one
+  > day (no preview truncation, no House Committee / documents footer, no
+  > repeated date heading) and renders nothing when the order paper has no such
+  > day; `SessionView` mounts it under the "coming soon" notice whenever the day
+  > holds no agenda items and the feature is on.
+
 ### 5.7 Speech readability & lexical diversity
 
 - **READ-1 (SHOULD).** Each **speech** carries two measured language annotations —

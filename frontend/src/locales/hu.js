@@ -1292,6 +1292,10 @@ export default {
   // állapotából származik, amit mutat.
   upcoming: {
     title: 'Aktuális napirendek',
+    // Ugyanaz a blokk egyetlen ülésnapra szűkítve, a még meg nem tartott
+    // ülésnap oldalán (NR-6): ott nem „aktuális napirendek”, hanem ennek az
+    // egy napnak a terve.
+    dayTitle: 'Tervezett napirend',
     sourceDoc: 'Napirend (PDF)',
     asOf: '{at} órai állapot szerint',
     extraordinary: 'Rendkívüli ülés',

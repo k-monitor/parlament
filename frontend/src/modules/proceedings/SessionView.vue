@@ -14,6 +14,7 @@ import SpeakerLink from '../../components/SpeakerLink.vue'
 import WordCloud from '../../components/WordCloud.vue'
 import HelpTip from '../../components/HelpTip.vue'
 import ShareButton from '../../components/ShareButton.vue'
+import UpcomingSitting from '../../components/UpcomingSitting.vue'
 import SpeechRow from './SpeechRow.vue'
 
 const props = defineProps({ id: String })
@@ -57,6 +58,17 @@ const hasSpeechMetrics = computed(() => SPEECH_METRICS_ENABLED
 // video is missing from some speech and is still expected. Flagged in the heading
 // exactly as in the sittings list, so a half-published day never looks finished.
 const partial = computed(() => data.value?.session?.processing === 'pending')
+// A day with nothing in it yet — announced, or held but not populated — is the
+// one page on the site with nothing to show, and it is also the page a reader is
+// most likely to open on a sitting morning. The order paper the home page carries
+// (NR-5) knows what this day is *meant* to hold, so show that here instead of an
+// empty notice (NR-6). The card fetches the napirend itself and renders only if
+// the current one actually covers this date, so a day it says nothing about (any
+// past day, once the House has moved on) is left exactly as it was. Gated on the
+// stage having run at all, like the home page's copy.
+const showPlanned = computed(() =>
+  !!data.value && !data.value.agenda.length && store.featureEnabled('upcoming_agenda'))
+
 // Title used when sharing this sitting day (mirrors the page heading).
 const shareTitle = computed(() => {
   const s = data.value?.session
@@ -180,6 +192,10 @@ function searchWord(word) {
           <section v-else-if="!data.agenda.length" class="card pad empty-day">
             <p>{{ data.session.status === 'scheduled' ? $t('sessions.upcomingNote') : $t('sessions.notProcessed') }}</p>
           </section>
+
+          <!-- What the House says it will do on this day (NR-6): a plan, not a
+               record, so the card keeps its own provenance line. -->
+          <UpcomingSitting v-if="showPlanned" :date="data.session.date" class="planned" />
 
           <section v-if="cloud && cloud.words.length" class="card pad wcloud">
             <div class="sechead">
@@ -391,6 +407,9 @@ function searchWord(word) {
 .titlebar { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .titlebar h1 { margin-bottom: 0; }
 .wcloud { margin-bottom: 1rem; }
+/* The planned agenda sits under the "coming soon" notice that explains why the
+   transcript is missing, with the same rhythm as the cards below it. */
+.planned { margin: 1rem 0; }
 .sechead { display: flex; align-items: center; gap: .35rem; margin-bottom: .6rem; }
 .sechead .wcloud-title { margin: 0; }
 /* Collapsible section header: the title doubles as the expand/collapse control. */

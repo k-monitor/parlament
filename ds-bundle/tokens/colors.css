@@ -28,4 +28,12 @@
   /* Text highlight (search matches) */
   --mark: #fff3bf;        /* highlight background */
   --mark-ink: #5c4400;    /* text on --mark */
+
+  /* Section grounds — the Elemzések (analyses) part of the site sits on a
+     warmer ground than the browse sections, so a change of part is visible
+     past the masthead. Two steps down from --bg, both still well clear of the
+     white cards that sit on them. */
+  --section-band: #e9e3d5; /* section masthead band (deepest) */
+  --section-bg:   #f3efe5; /* page ground inside the section */
+  --section-line: #d9d2c1; /* the band's bottom hairline */
 }

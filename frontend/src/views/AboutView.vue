@@ -20,6 +20,7 @@ import DonateCard from '../components/DonateCard.vue'
 
     <h2>{{ $t('about.sourcesTitle') }}</h2>
     <p v-html="$t('about.sourcesBody1')"></p>
+    <p v-html="$t('about.sourcesCrow')"></p>
     <p v-html="$t('about.sourcesBody2')"></p>
     <p v-html="$t('about.sourcesBody3')"></p>
     <p>{{ $t('about.sourcesModelsIntro') }}</p>
@@ -30,6 +31,7 @@ import DonateCard from '../components/DonateCard.vue'
       <li>{{ $t('about.sourcesModel4') }}</li>
       <li>{{ $t('about.sourcesModel5') }}</li>
     </ul>
+    <p v-html="$t('about.sourcesParlaCap')"></p>
     <p v-html="$t('about.sourcesBody4')"></p>
     <p v-html="$t('about.sourcesBody5')"></p>
     <p v-html="$t('about.sourcesBody6')"></p>

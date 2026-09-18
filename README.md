@@ -67,6 +67,8 @@ fejlesztéséhez is.
 
 ### Egyéb források
 
+A fejlesztésben nagy segítségünkre volt [Varjú Zoltán](https://www.linkedin.com/in/zoltanvarju/) ([crow intelligence](https://crowintelligence.org/)). Többek közt neki köszönhetjük a [saphes](https://saphes.readthedocs.io) szövegmetrikai könyvtárat, egy [kísérleti dashboard](https://crowintelligence.org/parlamonitor-dashboard/)-ot, NLP-vel kapcsolatos tanácsadást és általánosabb fejlesztési ötleteket.
+
 A jegyzőkönyvek és felvételek szinkronizálását az
 [Open Parliament TV](https://openparliament.tv/startseite/) projekt inspirálta.
 
@@ -83,6 +85,8 @@ A modellek forrásai:
 - Szeged NER Corpus (György Szarvas, Richárd Farkas, László Felföldi, András Kocsor, János Csirik (MTA-SZTE Research Group on Artificial Intelligence))
 - Hungarian lg Floret vectors (Szeged AI)
 - huBERT base model (cased) (Dávid Márk Nemeskey (SZTAKI-HLT))
+
+A felszólalások és irományok kategorizálására a [ParlaCap](https://huggingface.co/classla/ParlaCAP-Topic-Classifier) modelt használtuk, melynek szerzői: Taja Kuzman Pungeršek, Peter Rupnik, Daniela Širinić, Nikola Ljubešić.
 
 A képviselők és egyéb entitások linkelése, valamint metaadatainak kiegészítése
 során a [Wikidata](https://www.wikidata.org/) és a

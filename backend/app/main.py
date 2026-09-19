@@ -30,6 +30,14 @@ from .query_cache import cached_aggregate
 
 API_PREFIX = "/api/v1"
 
+# What the site is willing to promise about a speech's video timings (VIE-6 /
+# TIM-3). A constant because it is said in two places — to an API client here,
+# and to a language model in `llms.txt` (seo.py) — and a caveat that only holds
+# in one of them is worse than none.
+TIMING_DISCLAIMER = (
+    "A felszólalások videóidőzítése a v1-ben pozícióalapú becslés "
+    "(karakterarányos), ezért közelítő pontosságú.")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -247,9 +255,7 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
         # looking at rather than reusing the speech wording (TRUST-1 / REP-5).
         "bill_topics": {**parlacap.methodology(), "unit": "document block",
                         **bill_topic_coverage},
-        "timing_disclaimer": (  # VIE-6 / TIM-3
-            "A felszólalások videóidőzítése a v1-ben pozícióalapú becslés "
-            "(karakterarányos), ezért közelítő pontosságú."),
+        "timing_disclaimer": TIMING_DISCLAIMER,  # VIE-6 / TIM-3
     }
 
 

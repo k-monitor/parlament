@@ -1,4 +1,5 @@
-"""Crawler-facing site plumbing: `robots.txt` and the XML sitemaps (SEO-1…SEO-4).
+"""Crawler-facing site plumbing: `robots.txt`, the XML sitemaps and `llms.txt`
+(SEO-1…SEO-4, SEO-7).
 
 The site is a client-rendered SPA over ~260 000 content pages (every speech,
 sitting day, MP, iromány and vote). Nothing links to most of them from a
@@ -6,7 +7,7 @@ crawlable index — the browse pages paginate through an API — so **discovery 
 to come from a sitemap**, and the crawl budget has to be spent on content pages
 rather than on the filter permutations of the browse pages.
 
-Two routes do that:
+Three routes do that:
 
 - ``/robots.txt`` — opens the content pages, closes the faceted/parameterised
   views (which all carry a ``<link rel="canonical">`` back to their clean URL
@@ -15,6 +16,10 @@ Two routes do that:
   (``/sitemap-<section>-<n>.xml``), each capped at ``URLS_PER_SITEMAP`` entries.
   Children are generated straight from SQLite on request and cached in-process
   against the DB file's identity, so a sync that swaps the DB invalidates them.
+- ``/llms.txt`` — the same site, addressed to a language model rather than to a
+  crawler (llmstxt.org): what this corpus *is*, the Hungarian vocabulary it is
+  written in, what it does and does not cover, how to cite it, and where the
+  machine-readable data actually lives (the API, not the HTML).
 
 Only sections whose feature module is mounted are advertised (EXT-6): a
 deployment running without the votes module must not sitemap ``/votes/…``.
@@ -113,11 +118,19 @@ class _Section:
     `sql` selects ``(path, lastmod)`` — an app-relative path and a W3C date (or
     NULL) — and takes ``:limit``/``:offset``; `count_sql` counts the same set.
     The two must agree on the WHERE clause, or pagination drifts.
+
+    `pattern` and `blurb` are what `llms.txt` says about the slice: the shape of
+    one of its addresses, and what a reader finds there. They live here rather
+    than in a table of their own so a section can never be described to a model
+    without also being in the sitemap — and so an unmounted module (EXT-6) drops
+    out of both at once.
     """
     name: str
     module: str
     count_sql: str
     sql: str
+    pattern: str
+    blurb: str
 
 
 def _sections() -> tuple[_Section, ...]:
@@ -149,6 +162,9 @@ def _sections() -> tuple[_Section, ...]:
             WHERE COALESCE(status,'published')='published'{ses}
             ORDER BY date DESC, id DESC
             LIMIT :limit OFFSET :offset""",
+        "/sessions/{ulesnap_id}",
+        "Egy ülésnap (sitting day): a nap teljes jegyzőkönyve felszólalásokra "
+        "bontva, napirendi pontok, szó-felhő és beszédidő-toplista.",
       ),
       # Speeches are the corpus — everything with enough text to be a page of its
       # own (MIN_SENTENCES).
@@ -172,6 +188,9 @@ def _sections() -> tuple[_Section, ...]:
             {sp_where}
             ORDER BY sp.session_id DESC, sp.speech_index
             LIMIT :limit OFFSET :offset""",
+        "/proceedings/{felszolalas_uid}",
+        "Egy felszólalás (speech): a jegyzőkönyvi szöveg mondatonként, a "
+        "felszólalóval, az ülésnappal és a hozzá tartozó videórészlettel.",
       ),
       # Everyone with a profile page worth reading: MPs, nationality advocates and
       # anyone who has spoken in the House (REP-12). A bare person row carrying
@@ -184,6 +203,9 @@ def _sections() -> tuple[_Section, ...]:
             WHERE {_people_where(window)}
             ORDER BY is_mp DESC, label
             LIMIT :limit OFFSET :offset""",
+        "/representatives/{szemely_id}",
+        "Egy felszólaló profilja: mandátumai, frakciói, felszólalásai, "
+        "szavazatai, benyújtott irományai és beszédstatisztikái.",
       ),
       # Törvényjavaslatok live under /bills, every other iromány type under
       # /documents — the split `og.py` canonicalises a detail page to. It is a
@@ -197,6 +219,9 @@ def _sections() -> tuple[_Section, ...]:
              FROM bill WHERE main_type='T'{ses}
             ORDER BY submitted_date DESC, id
             LIMIT :limit OFFSET :offset""",
+        "/bills/{iromany_id}",
+        "Egy törvényjavaslat (bill): benyújtói, jogalkotási állomásai, "
+        "kapcsolódó irományai, vitái és szavazásai.",
       ),
       _Section(
         "documents", "bills",
@@ -206,6 +231,9 @@ def _sections() -> tuple[_Section, ...]:
              FROM bill WHERE (main_type IS NULL OR main_type<>'T'){ses}
             ORDER BY submitted_date DESC, id
             LIMIT :limit OFFSET :offset""",
+        "/documents/{iromany_id}",
+        "Minden más iromány (parliamentary document): határozati javaslat, "
+        "kérdés, interpelláció, beszámoló, tájékoztató és a többi típus.",
       ),
       # The tárcák (§6C). Few pages, but each is a standing entry point into a
       # ministry's whole record — the kind of page a search for "Belügyminisztérium
@@ -216,6 +244,9 @@ def _sections() -> tuple[_Section, ...]:
         """SELECT '/representatives/portfolios/' || slug AS path, NULL AS lastmod
              FROM portfolio ORDER BY ord
             LIMIT :limit OFFSET :offset""",
+        "/representatives/portfolios/{tarca_slug}",
+        "Egy tárca (ministry): kik vezették, milyen kérdéseket kapott és mit "
+        "nyújtott be a Parlament elé.",
       ),
       _Section(
         "votes", "votes",
@@ -224,6 +255,9 @@ def _sections() -> tuple[_Section, ...]:
              FROM vote{votes_where}
             ORDER BY vote_datetime DESC, id
             LIMIT :limit OFFSET :offset""",
+        "/votes/{szavazas_id}",
+        "Egy név szerinti szavazás (roll-call vote): tárgya, eredménye és "
+        "minden képviselő leadott szavazata.",
       ),
     )
 
@@ -361,6 +395,200 @@ def _pages(count: int) -> int:
     return max(1, -(-count // URLS_PER_SITEMAP))
 
 
+# --- llms.txt ---------------------------------------------------------------
+
+# llms.txt (llmstxt.org) is the site described for a language model: one markdown
+# file, at a fixed address, saying what this is, what it covers and where the
+# machine-readable data lives — so an assistant answering a question about the
+# Hungarian Parliament can start from the corpus instead of from a rendered SPA
+# page it has to reverse-engineer.
+#
+# It restates the site rather than describing it a second time: the page titles
+# and blurbs come from og.py's card table (the same text the <title> and the
+# crawlable nav carry), the URL shapes and their descriptions from the sitemap
+# sections above, and the figures from the home page's own counter. Nothing here
+# is a fact about the corpus that only this file knows — a model quoting a number
+# the site itself does not show is the one failure mode this file can cause.
+
+
+def _hu_int(n: int) -> str:
+    """A figure the way the site writes it: 2 582, not 2,582."""
+    return f"{n:,}".replace(",", "\u00a0")
+
+
+def _llms_coverage(db: sqlite3.Connection) -> list[str]:
+    """What this deployment actually holds, in figures.
+
+    From the DB rather than from a constant, because both halves are deployment
+    config: which cycles are served is CYC-7, and how much of them is loaded
+    changes with every sync. A model told that the corpus stops in 2022 when it
+    stops today will answer confidently and wrongly, so the one number this file
+    must never carry is a stale one — and the counts come from the same memoized
+    counter the home page reads, so the two can never disagree.
+
+    A DB too old to answer (a section's table missing, as the sitemap guards for
+    above) simply contributes no coverage line: llms.txt must still serve."""
+    from .main import _corpus_counts  # deferred: main imports this module
+
+    try:
+        periods = db.execute(
+            "SELECT number, date_start, date_end FROM electoral_period "
+            "WHERE date_start IS NOT NULL"
+            + period_and(settings.site_periods, "number")
+            + " ORDER BY number").fetchall()
+        counts = _corpus_counts(db)
+    except sqlite3.Error:  # pragma: no cover - a DB this broken fails elsewhere
+        logger.warning("llms.txt: no coverage figures available", exc_info=True)
+        return []
+    if not periods:
+        return []
+
+    first, last = periods[0], periods[-1]
+    span = (f"{first['number']}–{last['number']}. ciklus" if len(periods) > 1
+            else f"{first['number']}. ciklus")
+    years = (f"{first['date_start'][:4]}–{last['date_end'][:4]}"
+             if last["date_end"] else
+             f"{first['date_start'][:4]}-től napjainkig")
+    return [
+        f"Lefedettség / Coverage: {span} ({years}) — "
+        f"{_hu_int(counts['sessions'])} ülésnap, "
+        f"{_hu_int(counts['speeches'])} felszólalás, "
+        f"{_hu_int(counts['sentences'])} mondat, "
+        f"{_hu_int(counts['representatives'])} képviselő.",
+    ]
+
+
+def _llms_updated(db: sqlite3.Connection) -> list[str]:
+    """When the corpus was last refreshed, as a date. The site syncs daily, so
+    "today" is a wrong answer about yesterday's sitting either way — but a model
+    can only say how fresh this is if the file tells it."""
+    try:
+        row = db.execute("SELECT value FROM build_meta "
+                         "WHERE key='data_updated_at'").fetchone()
+    except sqlite3.Error:  # pragma: no cover - see _llms_coverage
+        return []
+    if not row or not row[0]:
+        return []
+    return [f"Az adatok utolsó frissítése / Data last refreshed: {row[0][:10]}."]
+
+
+def _llms_browse(base: str) -> list[str]:
+    """The browse pages as link lines, in the site's own words.
+
+    Titles and descriptions come from og.py's card table, so this file, the
+    page's `<title>` and the crawlable nav say the same thing about a page; the
+    list itself is STATIC_PATHS, so an unmounted module (EXT-6) drops out of all
+    three at once."""
+    from .og import _DEFAULT_DESC, _ROUTE_CARDS  # deferred: og imports us too
+
+    lines = []
+    for path, module in STATIC_PATHS:
+        if not static_enabled(module):
+            continue
+        title, desc = _ROUTE_CARDS.get(path, ("Nyitólap", _DEFAULT_DESC))
+        lines.append(f"- [{title}]({base}{path}): {desc}")
+    return lines
+
+
+def _llms_patterns() -> list[str]:
+    """The shape of a detail URL in each mounted section — what a model needs to
+    build a link to a specific speech or vote, rather than guessing one."""
+    return [f"- `{s.pattern}` — {s.blurb}" for s in _enabled_sections()]
+
+
+def _llms_txt(base: str, db: sqlite3.Connection) -> str:
+    """The whole document (llmstxt.org layout: H1, a blockquote summary, free
+    prose, then H2 sections of links)."""
+    from .main import TIMING_DISCLAIMER  # deferred: main imports this module
+
+    out = [
+        "# Parlamonitor",
+        "",
+        "> A Magyar Országgyűlés nyilvános jegyzőkönyveinek, képviselőinek,",
+        "> irományainak és szavazásainak kereshető, civil-tech tükre. /",
+        "> A searchable civic-tech mirror of the Hungarian National Assembly's",
+        "> public proceedings, representatives, documents and votes.",
+        "",
+        "A Parlamonitor a K-Monitor projektje. **Nem hivatalos oldal**: minden",
+        "adat forrása a parlament.hu, amit a Parlamonitor újraközöl, mondatszinten",
+        "kereshetővé tesz, videóval összekapcsol és származtatott statisztikákkal",
+        "egészít ki. Eltérés esetén az Országgyűlés saját közlése az irányadó. /",
+        "Not an official site: all data originates from parlament.hu, and where",
+        "the two differ, the Assembly's own publication governs.",
+        "",
+    ]
+    out += _llms_coverage(db)
+    out += _llms_updated(db)
+    out += [
+        "",
+        "Amire egy idézetnél figyelni kell / What to watch when citing:",
+        "",
+        "- A jegyzőkönyvek szövege az Országgyűlésé. A videóidőzítés, a "
+        "szó-felhők, a beszédmetrikák, a témacímkék és minden összesítés a "
+        "Parlamonitor feldolgozása — ezeket a Parlamonitornak kell "
+        "tulajdonítani, nem a Parlamentnek.",
+        f"- {TIMING_DISCLAIMER} Idézésnél a jegyzőkönyvi szöveg az irányadó, "
+        "nem a videó másodperce.",
+        "- Az oldal magyar nyelvű korpuszt közöl; a felület magyarul és angolul "
+        "olvasható, de a felszólalások szövege mindig magyar.",
+        "- A képviselőkről szóló oldalak életrajzi jellegűek, a listák és "
+        "statisztikák viszont mindig egy választási ciklusra vonatkoznak: egy "
+        "szám csak a ciklusával együtt jelent valamit.",
+        "",
+        "Fogalmak / Key terms: *ülésnap* = sitting day; *felszólalás* = speech;",
+        "*iromány* = any document submitted to the Assembly (bill, resolution,",
+        "question, report); *törvényjavaslat* = bill; *kérdés*, *interpelláció* =",
+        "parliamentary question; *frakció* = parliamentary group; *ciklus* =",
+        "electoral term; *szószóló* = nationality advocate; *tárca* = ministry;",
+        "*napirend* = order paper; *közbeszólás* = interjection from the floor.",
+        "",
+        "## Böngészés / Browse",
+        "",
+    ]
+    out += _llms_browse(base)
+    out += [
+        "",
+        "## Oldalcímek / URL patterns",
+        "",
+    ]
+    out += _llms_patterns()
+    out += [
+        "",
+        "## Gépi hozzáférés / Machine-readable access",
+        "",
+        f"- [API dokumentáció / API docs]({base}/api/docs): a nyilvános, csak "
+        "olvasható JSON API (`/api/v1/…`) — felszólalások, képviselők, irományok "
+        "és szavazások ugyanazokkal a szűrőkkel, amelyekkel az oldal maga "
+        "dolgozik. Egy adat kinyeréséhez ezt érdemes hívni, nem a HTML-t "
+        "értelmezni.",
+        f"- [OpenAPI séma / OpenAPI schema]({base}/api/openapi.json): minden "
+        "végpont és paramétere gépi formában.",
+        f"- [Metaadatok / Site metadata]({base}/api/v1/meta): a betöltött "
+        "ciklusok, a korpusz méretei, a származtatott adatok módszertana és a "
+        "forrásmegjelölés — érdemes ezzel kezdeni.",
+        f"- [Sitemap index]({base}/sitemap.xml): minden tartalmi oldal címe.",
+        f"- [robots.txt]({base}/robots.txt): a keresőknek szóló szabályok. Az "
+        "`/api/` útvonalat elzárja a *keresőktől* (nem oldal, nem indexelendő) — "
+        "az API maga nyilvános, és ez a fájl éppen erre irányít.",
+        "",
+        "## Optional",
+        "",
+        f"- [A projektről / About]({base}/about): mi a Parlamonitor, honnan "
+        "származnak az adatai, hogyan készül a jegyzőkönyv–videó "
+        "összekapcsolás, és mi használható fel szabadon.",
+        "- [Országgyűlés / National Assembly](https://www.parlament.hu): az "
+        "elsődleges forrás — minden itt közölt adat innen származik.",
+        "- [K-Monitor](https://k-monitor.hu): az oldalt fejlesztő és üzemeltető "
+        "antikorrupciós szervezet.",
+        "- [Forráskód / Source code](https://github.com/k-monitor/parlament): a "
+        "teljes feldolgozási lánc, AGPL-3.0 alatt.",
+        "- [Figyusz](https://figyusz.k-monitor.hu/): a K-Monitor értesítője az "
+        "országgyűlési irományok tematikus követésére.",
+        "",
+    ]
+    return "\n".join(out)
+
+
 # --- routes -----------------------------------------------------------------
 
 def register(app) -> None:
@@ -400,6 +628,24 @@ def register(app) -> None:
         ]
         return PlainTextResponse("\n".join(lines),
                                  headers={"Cache-Control": ROBOTS_CACHE_CONTROL})
+
+    @app.get("/llms.txt", response_class=PlainTextResponse,
+             include_in_schema=False)
+    def llms_txt(request: Request,
+                 db: sqlite3.Connection = Depends(get_db)):
+        """The site, described for a language model (SEO-7).
+
+        Markdown, but served as text/plain under a .txt address — the same
+        content type robots.txt gets, and the one every fetcher renders rather
+        than offers to download.
+
+        Cached against the corpus version like the sitemaps: the figures in it
+        are a pure function of the DB, and it is otherwise a couple of counts
+        per request."""
+        base = _base_url(request)
+        return PlainTextResponse(
+            _cached(db, f"llms:{base}", lambda: _llms_txt(base, db)),
+            headers={"Cache-Control": ROBOTS_CACHE_CONTROL})
 
     @app.get("/sitemap.xml", include_in_schema=False)
     def sitemap_index(request: Request,

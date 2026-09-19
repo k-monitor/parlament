@@ -1,9 +1,13 @@
-"""robots.txt + the XML sitemaps (app/seo.py).
+"""robots.txt, the XML sitemaps and llms.txt (app/seo.py).
 
 The site is a client-rendered SPA over a corpus nothing links to from a
 crawlable index, so a search engine finds its pages through the sitemap or not
 at all (SEO-1/SEO-3). These tests assert the index and its children cover every
 enabled section, stay in step with the DB, and skip a module that isn't mounted.
+
+The llms.txt tests (SEO-7) guard the one thing that file can get wrong that the
+sitemap cannot: saying something about the corpus that isn't so — a scope, a
+figure or a caveat that the site itself does not also say.
 """
 
 from __future__ import annotations
@@ -197,3 +201,97 @@ def test_sitemaps_are_regenerated_after_a_load(seo_client, db_path):
 
     second = seo_client.get("/sitemap-sessions-1.xml").text
     assert "https://parlamonitor.k-monitor.hu/sessions/43999" in _locs(second)
+
+
+# --- llms.txt ---------------------------------------------------------------
+
+def test_llms_txt_is_markdown_served_as_text(seo_client):
+    """llmstxt.org layout — H1, a `>` summary, then H2 sections — under a .txt
+    address, so a fetcher renders it instead of offering it as a download."""
+    r = seo_client.get("/llms.txt")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    body = r.text
+    assert body.startswith("# Parlamonitor\n")
+    assert "\n> " in body
+    assert "\n## " in body
+
+
+def test_llms_txt_links_are_absolute_and_on_the_indexed_host(seo_client):
+    """The file is read on its own, far from the page it describes: a relative
+    link in it resolves against nothing."""
+    for link in re.findall(r"\]\((.+?)\)", seo_client.get("/llms.txt").text):
+        assert link.startswith("https://"), link
+
+
+def test_llms_txt_offers_the_same_entry_points_as_the_sitemap(seo_client):
+    """The browse list is STATIC_PATHS, like the core sitemap and the crawlable
+    nav — three surfaces, one list, so none of them can go stale alone."""
+    body = seo_client.get("/llms.txt").text
+    for path in seo._enabled_static():
+        assert f"](https://parlamonitor.k-monitor.hu{path})" in body
+
+
+def test_llms_txt_gives_the_url_shape_of_every_mounted_section(seo_client):
+    """What a model needs to link a specific speech or vote rather than guess
+    one. Taken from the sitemap's own sections, so it cannot advertise a page
+    the sitemap doesn't carry."""
+    body = seo_client.get("/llms.txt").text
+    for section in seo._enabled_sections():
+        assert f"`{section.pattern}`" in body
+    assert "`/proceedings/{felszolalas_uid}`" in body
+
+
+def test_llms_txt_states_the_corpus_it_actually_serves(seo_client, conn):
+    """The figures come from the DB, not from prose someone has to remember to
+    update: a model told the corpus stops in 2022 when it stops today answers
+    confidently and wrongly."""
+    body = seo_client.get("/llms.txt").text
+    sessions, speeches = conn.execute(
+        "SELECT (SELECT COUNT(*) FROM session), (SELECT COUNT(*) FROM speech)"
+    ).fetchone()
+    assert f"{seo._hu_int(sessions)} ülésnap" in body
+    assert f"{seo._hu_int(speeches)} felszólalás" in body
+    # …and how fresh that is, from the loader's own build stamp.
+    stamp = conn.execute(
+        "SELECT value FROM build_meta WHERE key='data_updated_at'").fetchone()[0]
+    assert stamp[:10] in body
+
+
+def test_llms_txt_repeats_the_sites_own_caveats(seo_client):
+    """A caveat that holds in the API but not in the file a model reads is worse
+    than none — so the timing disclaimer is one constant, said in both."""
+    from app.main import TIMING_DISCLAIMER
+    body = seo_client.get("/llms.txt").text
+    assert TIMING_DISCLAIMER in body
+    # …and the attribution the whole project rests on (LEGAL-1 / TRUST-1).
+    assert "parlament.hu" in body
+    assert "Nem hivatalos oldal" in body
+
+
+def test_llms_txt_drops_a_disabled_module(seo_client, monkeypatch):
+    """EXT-6, same as the sitemap: a deployment without the votes module must
+    not describe vote pages it does not serve."""
+    monkeypatch.setattr(seo.settings, "enabled_modules",
+                        {"proceedings", "representatives", "bills"})
+    monkeypatch.setattr(seo, "_cache", {})
+    body = seo_client.get("/llms.txt").text
+    assert "/votes" not in body
+    assert "/proceedings/" in body  # the mounted ones stay
+
+
+def test_llms_txt_follows_the_served_cycle_window(seo_client, conn, monkeypatch):
+    """A windowed deployment (CYC-7) describes its window, not the whole corpus:
+    the coverage line carries the same period predicate the API's queries do, so
+    it can never claim a cycle the site answers 404 to."""
+    conn.execute("INSERT INTO electoral_period (number, label, date_start, "
+                 "date_end) VALUES (42, '42. ciklus', '2022-05-02', '2026-05-08')")
+    conn.commit()
+    monkeypatch.setattr(seo, "_cache", {})
+    assert "42–43. ciklus" in seo_client.get("/llms.txt").text
+
+    monkeypatch.setattr(seo.settings, "site_cycles", "43")
+    monkeypatch.setattr(seo, "_cache", {})
+    body = seo_client.get("/llms.txt").text
+    assert "43. ciklus" in body
+    assert "42–43" not in body  # the cycle it does not serve is gone

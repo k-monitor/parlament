@@ -3314,6 +3314,9 @@ The corpus is public-interest text that people search for by name and by phrase
 product, not decoration. The site is a client-rendered SPA over ~260 000 content
 pages, which puts three things at risk: a crawler must be able to *reach* a page,
 get *one* address for it, and find *content* on it without running the app.
+Increasingly the reader asks an assistant rather than a search engine, and an
+assistant that has to guess what this corpus is will guess wrong — so the site
+also states it outright (SEO-7).
 
 - **SEO-1 (MUST).** The site serves a **`robots.txt`** naming its sitemap, and an
   **XML sitemap index** covering every content page — speeches, sitting days,
@@ -3350,6 +3353,17 @@ get *one* address for it, and find *content* on it without running the app.
   see, and — since nothing else links to a speech — it is also the site's
   internal link graph. It MUST be the same content the app renders; a
   crawler-only variant is cloaking.
+- **SEO-7 (SHOULD).** The site serves **`/llms.txt`** (llmstxt.org): the corpus
+  described for a language model rather than for a crawler — what it is and is
+  not (a third-party mirror; `parlament.hu` governs), the Hungarian vocabulary it
+  is written in (*ülésnap*, *iromány*, *frakció*…), which cycles it covers and
+  how fresh they are, the shape of each detail URL, and where the
+  **machine-readable data** lives, so an assistant calls the API instead of
+  scraping the SPA. Like the sitemap it is **generated**, module-aware (EXT-6)
+  and cycle-windowed (CYC-7), and it repeats the site's own attribution and
+  caveats from the same constants the API serves them from: a figure or a
+  disclaimer that holds on the site but not in the file a model reads is worse
+  than none (TRUST-1).
 
 ### 8.7 Social announcements (Bluesky)
 

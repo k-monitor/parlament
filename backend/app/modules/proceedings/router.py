@@ -16,9 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...analytics import search_analytics
 from ...config import settings
-from ...db import (QueryBudgetExceeded, get_db, like_contains, period_in_scope,
-                   period_key, period_list, period_sql, query_budget,
-                   sentence_id_range)
+from ...db import (QueryBudgetExceeded, get_db, like_contains, period_and,
+                   period_in_scope, period_key, period_list, period_sql,
+                   query_budget, sentence_id_range)
 from ...media import per_speech_clip
 from ...nlp import LINKABLE_LABELS
 # How completely a held day is published (SIT-2). Shared with the Bluesky
@@ -1013,6 +1013,252 @@ def _topics_for(db: sqlite3.Connection, uids: list[str]) -> dict[str, dict]:
             if agg:
                 out[uid] = agg
     return out
+
+
+# ---------------------------------------------------------------------------
+# The floor's topic mix (TOPIC-9) — the Témák analysis's speech half
+# ---------------------------------------------------------------------------
+# Everything below aggregates the *same* stored blocks the chip on a speech is
+# read off, through the *same* threshold and the *same* tie-break
+# (`parlacap.aggregate`, expressed in SQL as `parlacap.dominant_topic_sql`). That
+# is the point: a page that said the House spent 6 % of its words on health while
+# the speeches it links to carried a different label would be worse than no page.
+#
+# Nothing here is materialised. A stored topic table would have to bake in the
+# confidence threshold, and the threshold is a read-time policy an operator must
+# be able to retune with a restart (TOPIC-6) — so the aggregation is redone per
+# request and memoised per (scope, threshold, DB) like every other aggregate on
+# this site.
+#
+# What that costs, measured against a synthetic **fully**-classified five-cycle
+# archive (300k speeches, 1.5M blocks) with the query cache switched off: 4.3 s
+# for the all-cycles mix and 0.8 s for one cycle; 1.4 s / 0.4 s for a topic's
+# detail. Two passes over the block table, ~2 s each, and the scan *is* the cost —
+# dropping the `session` join changes nothing measurable (2.42 s against 2.46 s),
+# which is also why no covering index is carried for it. Two things keep that
+# tolerable: the cycle selector defaults to a single cycle, so the sub-second
+# request is the ordinary one, and the archive as actually classified today is
+# ~600k blocks, not 1.5M. Revisit if the whole archive is ever classified and the
+# all-cycles view becomes a common entry point.
+
+# How many people the per-topic panel names. A top list is a way in, not a
+# ranking to read to the end: twelve fills the panel at every width and keeps the
+# cached matrix (every label's top list, computed in one pass) small.
+TOPIC_TOP_SPEAKERS = 12
+
+
+def _topic_scope(period: Optional[List[int]], column: str = "session_id") -> str:
+    """Cycle scope for a `speech_topic` query, as a bare SQL predicate ("" = all).
+
+    A block row carries the sitting it was spoken on, not a cycle number, so the
+    scope is a subquery over `session` rather than a join: the same fragment has to
+    go inside `parlacap.dominant_topic_sql`, which is a window query with nothing
+    to join to. `column` is the sitting-id column to test, qualified where the
+    caller's query has more than one (`speech` carries a `session_id` too).
+
+    A query that already joins `session` should scope on `s.period_number` instead
+    and skip this — cheaper, and this exists for the ones that cannot.
+    """
+    per = period_sql(period, "period_number")
+    return f"{column} IN (SELECT id FROM session WHERE {per})" if per else ""
+
+
+def _topic_scope_and(period: Optional[List[int]], column: str = "session_id") -> str:
+    """:func:`_topic_scope` prefixed with " AND ", for appending to a WHERE that
+    already has a condition (mirrors `db.period_and`)."""
+    sql = _topic_scope(period, column)
+    return f" AND {sql}" if sql else ""
+
+
+@router.get("/topics")
+def topic_mix(period: Optional[List[int]] = Query(None),
+              db: sqlite3.Connection = Depends(get_db)):
+    """What the House talks about: the CAP topic mix of the floor (TOPIC-9).
+
+    Two measures per topic, because they answer different questions and neither
+    stands alone:
+
+    * **`words`/`share`** — how much of the classified policy text is about it.
+      This is the agenda measure, and it is the one the aggregation already uses
+      (a speech is about what it spends its words on, TOPIC-4).
+    * **`speeches`** — how many speeches it is the *subject* of, resolved by the
+      dominant-topic rule, i.e. exactly the speeches whose chip shows this label.
+      A topic can be the subject of few speeches while running through many, and
+      the difference between the two columns is worth seeing.
+
+    `coverage` is what keeps the chart honest (TRUST-1): the pass only ever ran on
+    non-procedural speeches with a transcript, and at the threshold in force about
+    a third of the blocks it did classify are left unlabelled. A reader is told how
+    much of the House's speech the picture is drawn from before they read it.
+
+    `trend` is the same mix cut by calendar year — the shape of the agenda over
+    time. It rides along with the mix rather than being an endpoint of its own
+    because it comes out of the same scan.
+    """
+    if not _has_speech_topics(db):
+        raise HTTPException(
+            status_code=503,
+            detail="No topic classification in this database (TOPIC-7).")
+
+    def compute():
+        params = parlacap.topic_params()
+        per = period_sql(period, "s.period_number")
+        # One pass over the blocks answers the mix, the coverage and the trend.
+        # Grouping by `conf` rather than filtering on it is what makes the
+        # unlabelled share visible: a topic's words and the words the model was
+        # not sure enough about come out of the same scan.
+        rows = db.execute(
+            f"""SELECT substr(s.date, 1, 4) AS y, t.label AS label,
+                       t.score >= :topic_threshold AS conf,
+                       SUM(t.words) AS words, COUNT(*) AS blocks
+                FROM speech_topic t
+                JOIN session s ON s.id = t.session_id
+                {('WHERE ' + per) if per else ''}
+                GROUP BY y, label, conf""", params).fetchall()
+
+        scope = _topic_scope_and(period)
+        classified = db.execute(
+            f"SELECT COUNT(DISTINCT speech_id) FROM speech_topic WHERE 1=1{scope}"
+        ).fetchone()[0]
+        dominant = dict(db.execute(
+            "SELECT label, COUNT(*) FROM ("
+            + parlacap.dominant_topic_sql(scope, "speech") + ") GROUP BY label",
+            params).fetchall())
+
+        # The population the pass covers, so `labelled` can be read as a share of
+        # something: chairing speeches are never classified (STAT-1) and a speech
+        # with no transcript has nothing to classify.
+        speech_per = period_sql(period, "period_number")
+        speeches = db.execute(
+            "SELECT COUNT(*) FROM speech WHERE procedural = 0 AND has_text = 1"
+            + ((" AND " + speech_per) if speech_per else "")).fetchone()[0]
+
+        return parlacap.topic_mix(
+            [(r["y"], r["label"], r["conf"], r["words"] or 0, r["blocks"])
+             for r in rows],
+            dominant,
+            {"speeches": speeches, "classified": classified,
+             "labelled": sum(dominant.values())})
+
+    # The threshold rides in the key, not only in the payload: it is a read-time
+    # policy an operator can retune (TOPIC-6), and a cached mix that outlived the
+    # change would disagree with the chips on the speeches it links to.
+    return cached_aggregate(
+        "topic_mix",
+        (period_key(period), parlacap.topic_params()["topic_threshold"]), compute)
+
+
+@router.get("/topics/{label}")
+def topic_detail(label: str,
+                 period: Optional[List[int]] = Query(None),
+                 db: sqlite3.Connection = Depends(get_db)):
+    """One topic's owners: which factions spend their floor time on it, and who
+    speaks most about it (TOPIC-9).
+
+    Two shares per faction, because "who owns this topic" and "who is this topic's
+    House" are different claims and the bigger faction wins the first by arithmetic
+    alone:
+
+    * `share_of_topic` — this faction's slice of everything said about it;
+    * `share_of_own` — how much of *its own* classified policy speech goes here,
+      which is what makes a small faction's specialism visible at all.
+
+    Computed for **every** topic in one pass and cached per scope, then sliced:
+    the scan is the cost, not the grouping, so a reader clicking through topics
+    pays for it once.
+    """
+    if label not in parlacap.LABELS or label == parlacap.NON_POLICY:
+        raise HTTPException(404, "Unknown policy topic")
+    if not _has_speech_topics(db):
+        raise HTTPException(
+            status_code=503,
+            detail="No topic classification in this database (TOPIC-7).")
+
+    def compute():
+        params = parlacap.topic_params()
+        # `speech` carries the cycle itself, so this half needs no session subquery.
+        per = period_and(period, "sp.period_number")
+        factions: dict[str, list] = {}
+        totals: dict[int | None, int] = {}
+        rows = db.execute(
+            f"""SELECT t.label AS label, sp.faction_id AS faction_id,
+                       f.label AS faction_label, f.color AS color,
+                       SUM(t.words) AS words
+                FROM speech_topic t
+                JOIN speech sp ON sp.uid = t.speech_id
+                LEFT JOIN faction f ON f.id = sp.faction_id
+                WHERE t.score >= :topic_threshold
+                  AND t.label <> :topic_non_policy{per}
+                GROUP BY t.label, sp.faction_id""", params).fetchall()
+        for r in rows:
+            totals[r["faction_id"]] = totals.get(r["faction_id"], 0) + (r["words"] or 0)
+            factions.setdefault(r["label"], []).append(r)
+
+        speakers: dict[str, list] = {}
+        top = db.execute(
+            f"""SELECT label, person_id, name, photo_uri, faction_label, color, words
+                FROM (
+                  SELECT t.label AS label, sp.person_id AS person_id,
+                         -- A speaker the person registry does not carry (a guest,
+                         -- an office-holder from before the roster) still spoke:
+                         -- fall back to the name the transcript wrote.
+                         COALESCE(p.label, sp.speaker_label) AS name,
+                         p.photo_uri AS photo_uri,
+                         f.label AS faction_label, f.color AS color,
+                         SUM(t.words) AS words,
+                         ROW_NUMBER() OVER (
+                           PARTITION BY t.label
+                           ORDER BY SUM(t.words) DESC, sp.person_id ASC) AS rk
+                  FROM speech_topic t
+                  JOIN speech sp ON sp.uid = t.speech_id
+                  LEFT JOIN person p ON p.person_id = sp.person_id
+                  LEFT JOIN faction f ON f.id = sp.faction_id
+                  WHERE t.score >= :topic_threshold
+                    AND t.label <> :topic_non_policy
+                    AND sp.person_id IS NOT NULL{per}
+                  GROUP BY t.label, sp.person_id
+                ) WHERE rk <= {TOPIC_TOP_SPEAKERS}""", params).fetchall()
+        for r in top:
+            speakers.setdefault(r["label"], []).append(r)
+
+        out = {}
+        for lab in parlacap.LABELS:
+            if lab == parlacap.NON_POLICY:
+                continue
+            frows = factions.get(lab, [])
+            topic_words = sum(r["words"] or 0 for r in frows)
+            out[lab] = {
+                "label": lab,
+                "code": parlacap.CAP_CODES.get(lab),
+                "words": topic_words,
+                "factions": sorted(
+                    ({"id": r["faction_id"],
+                      "label": r["faction_label"],
+                      "color": r["color"],
+                      "words": r["words"] or 0,
+                      "share_of_topic": ((r["words"] or 0) / topic_words
+                                         if topic_words else 0.0),
+                      "share_of_own": ((r["words"] or 0) / totals[r["faction_id"]]
+                                       if totals.get(r["faction_id"]) else 0.0)}
+                     for r in frows),
+                    key=lambda d: (-d["words"], d["label"] or "")),
+                "speakers": [
+                    {"person_id": r["person_id"],
+                     "name": r["name"],
+                     "photo_uri": r["photo_uri"],
+                     "faction": ({"label": r["faction_label"], "color": r["color"]}
+                                 if r["faction_label"] else None),
+                     "words": r["words"] or 0,
+                     "share_of_topic": ((r["words"] or 0) / topic_words
+                                        if topic_words else 0.0)}
+                    for r in speakers.get(lab, [])],
+            }
+        return out
+
+    everything = cached_aggregate(
+        "topic_detail",
+        (period_key(period), parlacap.topic_params()["topic_threshold"]), compute)
+    return everything[label]
 
 
 @router.get("/sessions/{session_id}")

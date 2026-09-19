@@ -19,6 +19,12 @@ import { store } from '../../store.js'
 //              active and count as being "inside" the section.
 //   cycleScoped — the analysis only means something within one electoral cycle,
 //              so it is unavailable unless exactly one cycle is in scope (§4A).
+//   feature  — an optional capability inside that module, as /meta advertises it.
+//              A module can be mounted and still carry none of the data an
+//              analysis needs: the topic pass wants a GPU, so a deployment that
+//              ran no model and was shipped no cache serves proceedings with no
+//              topics in them. The analysis then leaves the section entirely
+//              rather than offering a card onto an empty page.
 //   icon     — SVG path `d` strings, drawn stroked in a 24×24 box.
 export const ANALYSES = [
   {
@@ -35,6 +41,16 @@ export const ANALYSES = [
     module: 'bills',
     // One column's flow bending into another — the Sankey.
     icon: ['M3 5.5h3.5a4 4 0 0 1 4 4v5a4 4 0 0 0 4 4H20', 'm16.5 15 3.5 3.5-3.5 3.5'],
+  },
+  {
+    key: 'topics',
+    route: 'topics',
+    module: 'proceedings',
+    // The chart's second series is the irományok's (the bills module), but the
+    // page stands on the speech half alone and says so when the other is absent.
+    feature: 'speech_topics',
+    // A stack of ranked bars — the topic mix, which is the page's one figure.
+    icon: ['M3.5 5.5h17', 'M3.5 12h11', 'M3.5 18.5h6'],
   },
   {
     key: 'interjections',
@@ -66,7 +82,9 @@ export const ANALYSIS_BY_ROUTE = Object.fromEntries(ANALYSES.map((a) => [a.route
 // Whether an analysis is on the site at all: its module is mounted (EXT-6).
 // This is what decides the section's top-bar entry, so the entry does not come
 // and go as the reader changes the cycle scope.
-export function analysisEnabled(a) { return store.moduleEnabled(a.module) }
+export function analysisEnabled(a) {
+  return store.moduleEnabled(a.module) && (!a.feature || store.featureEnabled(a.feature))
+}
 
 // Whether it can be *opened right now*: enabled, and — for a within-cycle
 // analysis — with exactly one cycle in scope (§4A). Neither "all cycles" nor a

@@ -114,6 +114,9 @@ def test_core_sitemap_holds_the_browse_pages(seo_client):
     # The Kérdések browse page (BILL-13) — its own entry point into the
     # question-type irományok the all-irományok list buries.
     assert "https://parlamonitor.k-monitor.hu/bills/questions" in locs
+    # Témák (TOPIC-9) — an analysis that stands as an entry point of its own, so
+    # it is advertised like the others in its section.
+    assert "https://parlamonitor.k-monitor.hu/analyses/topics" in locs
 
 
 def test_speech_sitemap_carries_content_pages_with_their_date(

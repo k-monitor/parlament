@@ -329,6 +329,11 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
         "Közbeszólások",
         "Ki szól közbe kinek a felszólalása alatt: a bekiabálások irányított "
         "hálózata és a jegyzőkönyvbe került közbeszólások szövege."),
+    "/analyses/topics": (
+        "Miről szól a Parlament?",
+        "Az Országgyűlés napirendje szakpolitikai témák szerint: miről beszélnek "
+        "a plenáris ülésen, mi kerül be irományként, és melyik frakció mivel "
+        "foglalkozik."),
 }
 
 # Which browse page an iromány belongs on, by fotipus — the breadcrumb parent of

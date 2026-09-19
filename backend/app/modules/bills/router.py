@@ -520,6 +520,76 @@ def _topic_facet(db: sqlite3.Connection, period: Optional[List[int]],
              "count": r["c"]} for r in rows]
 
 
+@router.get("/topics")
+def bill_topic_mix(period: Optional[List[int]] = Query(
+                       None, description="Electoral period number(s)"),
+                   db: sqlite3.Connection = Depends(get_db)):
+    """The topic mix of what is *submitted* to the House — the Témák page's
+    document half (TOPIC-9), the counterpart of ``/proceedings/topics``.
+
+    The same shape, out of the same folding function (``parlacap.topic_mix``), so
+    the page can put the two agendas side by side: what the House talks about and
+    what is put in front of it are not the same list, and the gap between them is
+    the reason this page shows both.
+
+    ``coverage`` is worth more here than on the speech side, because the pass
+    covers a *subset by construction*: only an iromány whose document was mirrored
+    and could be read as text has anything to classify (TOPIC-8), so a reader is
+    told how many irományok that was before reading a share of them.
+    """
+    if not _has_bill_topics(db):
+        raise HTTPException(
+            status_code=503,
+            detail="No iromány topic classification in this database (TOPIC-8).")
+
+    def compute():
+        params = parlacap.topic_params()
+        per = period_sql(period, "t.period_number")
+        # Cut by the year the iromány was *submitted*, not by the cycle: a cycle
+        # is four years of agenda and the point of the trend is what moved inside
+        # it. `bill_topic` carries the cycle but not the date, hence the join.
+        rows = db.execute(
+            f"""SELECT substr(b.submitted_date, 1, 4) AS y, t.label AS label,
+                       t.score >= :topic_threshold AS conf,
+                       SUM(t.words) AS words, COUNT(*) AS blocks
+                FROM bill_topic t
+                JOIN bill b ON b.id = t.bill_id
+                {('WHERE ' + per) if per else ''}
+                GROUP BY y, label, conf""", params).fetchall()
+
+        scope = ""
+        inner_period = period_sql(period, "period_number")
+        if inner_period:
+            scope = f"AND {inner_period}"
+        dominant = dict(db.execute(
+            "SELECT label, COUNT(*) FROM ("
+            + parlacap.dominant_topic_sql(scope) + ") GROUP BY label",
+            params).fetchall())
+        classified = db.execute(
+            "SELECT COUNT(DISTINCT bill_id) FROM bill_topic"
+            + (f" WHERE {inner_period}" if inner_period else "")).fetchone()[0]
+
+        bill_period = period_sql(period, "period_number")
+        where = f" WHERE {bill_period}" if bill_period else ""
+        total, with_text = db.execute(
+            "SELECT COUNT(*), SUM(text_url IS NOT NULL) FROM bill" + where).fetchone()
+
+        return parlacap.topic_mix(
+            [(r["y"], r["label"], r["conf"], r["words"] or 0, r["blocks"])
+             for r in rows],
+            dominant,
+            {"bills": total or 0, "with_text": with_text or 0,
+             "classified": classified, "labelled": sum(dominant.values())})
+
+    # The threshold is in the key, not just the payload: it is a read-time policy
+    # an operator can retune (TOPIC-6), and a cache that outlived the change would
+    # serve a mix the chips no longer agree with. Read through `topic_params` so it
+    # is literally the value the queries bind.
+    return cached_aggregate(
+        "bill_topic_mix",
+        (period_key(period), parlacap.topic_params()["topic_threshold"]), compute)
+
+
 @router.get("/facets")
 def bill_facets(period: Optional[List[int]] = Query(
                     None, description="Electoral period number(s)"),

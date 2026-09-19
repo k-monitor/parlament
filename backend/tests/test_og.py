@@ -271,6 +271,16 @@ def test_cohesion_page_has_its_own_card(spa_client):
     assert m["og:url"] == "https://parlamonitor.k-monitor.hu/analyses/faction-cohesion"
 
 
+def test_topics_page_has_its_own_card(spa_client):
+    """Témák (TOPIC-9). Without a card of its own it would share the generic site
+    preview with every other unlisted path — and it is a page worth sharing."""
+    r = spa_client.get("/analyses/topics")
+    assert r.status_code == 200
+    m = _meta(r.text)
+    assert m["og:title"] == "Miről szól a Parlament? · Parlamonitor"
+    assert m["og:url"] == "https://parlamonitor.k-monitor.hu/analyses/topics"
+
+
 def test_analyses_index_has_its_own_card(spa_client):
     r = spa_client.get("/analyses")
     assert r.status_code == 200

@@ -15,7 +15,8 @@ import { store, currentCycleLabel, serializeCycles } from '../store.js'
 
 const props = defineProps({
   // Which embed view to point at: 'search-trend' | 'faction-speaking' |
-  // 'questions-sankey' | 'faction-cohesion' | 'vote-participation'.
+  // 'questions-sankey' | 'faction-cohesion' | 'vote-participation' |
+  // 'interjection-graph' | 'topic-mix'.
   kind: { type: String, required: true },
   // Chart-specific query params (q, id, filters). Empty/nullish values dropped.
   params: { type: Object, default: () => ({}) },

@@ -725,6 +725,12 @@ section — **Elemzések** — with its own entry in the top bar.
 > strings and one line each in `ANALYSIS_MODULES` / `STATIC_PATHS` / `_ROUTE_CARDS`
 > — the landing card, the sub-tab and the "inside the section" route set all
 > followed from the registry entry, with no navigation code touched.
+>
+> A fifth, Témák (TOPIC-9), cost the same plus one thing the registry did not
+> describe before: an analysis whose **module is mounted but whose data may not
+> exist** (the classification pass needs a GPU). That is a `feature:` key on the
+> entry — checked by `analysisEnabled` for the card and the tab, and by the
+> router for the address — rather than a second list of routes somewhere.
 
 ---
 
@@ -1372,6 +1378,61 @@ section — **Elemzések** — with its own entry in the top bar.
   > speech). The predictions live in the same `parlacap-cache.json` under a
   > `bills` key, so the one shipped file still carries both passes, and a server
   > with no document mirror replays it as it stands.
+- **TOPIC-9 (SHOULD).** The labels are also read as an **agenda**, on a page of
+  their own in Elemzések (§4E): *Témák*. A chip answers "what is this speech
+  about?" one item at a time; the question the corpus can only answer in the
+  aggregate is **what this House spends itself on, and whether that has changed**
+  — which is a different page, not a bigger chip.
+  - **Two agendas, one chart.** The figure ranks the CAP topics and gives each one
+    two bars: its share of what was **said** on the floor, and its share of what
+    was **submitted** to the House as an iromány. They are deliberately not
+    merged. The two are read off different texts covering different populations,
+    and the gap between them — the House argues about what is contested and
+    processes what is routine — is the finding. The ranking can follow either
+    series, because the document agenda has an order of its own and seeing the
+    same rows resorted is how the difference becomes visible. Where the iromány
+    half is absent (the module is off, or nothing was ever classified), the page
+    loses a series and nothing else.
+  - **The measure is the word-weighted share of the classified policy text**, the
+    same weight the per-item aggregation uses (TOPIC-4), beside the count of items
+    the topic is the **subject** of — resolved by the same dominant-topic rule as
+    the chip and the iromány filter, so a count on this page is the size of the
+    set a reader would find by opening them. "Other" is excluded from every share
+    and reported separately, exactly as it is per item.
+  - **Coverage is stated before the chart, not under it** (TRUST-1). Every share
+    here is a share of the labelled part: at the threshold in force roughly a
+    third of the floor's blocks say nothing, chairing speeches are never
+    classified at all (STAT-1), and only an iromány with readable text can carry a
+    topic. A reader who is not told that reads the chart as a census.
+  - **A topic opens** into how it is spoken about: its share of each **calendar
+    year** (a share, so a quiet year shows the shape of its agenda rather than the
+    lull), which **factions** carry it — both as a share of everything said on the
+    topic *and* as a share of that faction's own policy speech, since the big
+    faction wins the first by arithmetic and only the second shows a small party's
+    specialism — and **who** speaks most about it. The opened topic and the
+    ranking ride in the URL (`?topic=`, `?by=`), absent at their defaults (§SEO-2).
+  - **Nothing is materialised.** A stored topic table would bake in the confidence
+    threshold, which is a read-time policy an operator must be able to retune with
+    a restart (TOPIC-6), so the page aggregates the stored blocks per request and
+    memoises the result per (scope, threshold, DB) like every other aggregate
+    here. The threshold is part of the cache key: a cached mix that outlived a
+    retune would disagree with the chips on the speeches it links to.
+  - The chart is **embeddable** (§4C), and the page is **absent rather than empty**
+    on a deployment that never classified anything: no card, no tab, and its
+    address answers the 404 the rest of the site would.
+  > **✅ realized.** `/analyses/topics`, served by `/proceedings/topics`
+  > (+ `/topics/{label}`) and `/bills/topics`, both folded by the shared
+  > `parlacap.topic_mix` so the two halves cannot compute a share two ways. The
+  > item counts come from `parlacap.dominant_topic_sql`, now generalised over both
+  > block tables. The figure is `components/TopicMixChart.vue`, shared with the
+  > `topic-mix` embed. The registry entry carries a `feature:` gate
+  > (`speech_topics` in `/meta`), which the router honours as a 404 — the first
+  > analysis whose data can be missing while its module is mounted.
+  >
+  > **Still not built (§10):** a topic filter in the proceedings search, and the
+  > per-representative topic profile. The page therefore links out to the iromány
+  > list (which does filter by topic) and to a speaker's profile, but there is no
+  > "every speech on this topic" list to link to yet — so none is offered.
 
 ---
 

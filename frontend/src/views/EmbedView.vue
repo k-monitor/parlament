@@ -19,6 +19,7 @@ import SankeyDiagram from '../components/SankeyDiagram.vue'
 import InterjectionGraph from '../components/InterjectionGraph.vue'
 import PieChart from '../components/PieChart.vue'
 import CohesionPanel from '../modules/votes/CohesionPanel.vue'
+import TopicMixChart from '../components/TopicMixChart.vue'
 
 const props = defineProps({ kind: String })
 const route = useRoute()
@@ -92,6 +93,14 @@ function fetchForKind() {
     case 'interjection-graph':
       return api.interjectionGraph(
         period.value, Number(route.query.top) || undefined, route.query.rank || undefined)
+    // The two agendas (TOPIC-9). Both halves are fetched, and the document one is
+    // allowed to fail: a deployment can carry speech topics and no iromány ones,
+    // and the figure is still the figure with one series.
+    case 'topic-mix':
+      return Promise.all([
+        api.topicMix(period.value),
+        api.billTopicMix(period.value).catch(() => null),
+      ]).then(([speech, bill]) => ({ speech, bill }))
     case 'vote-participation':
       return Promise.all([
         api.representative(q.id, period.value),
@@ -185,6 +194,7 @@ const title = computed(() => {
     case 'faction-speaking': return t('factions.speakingTime')
     case 'questions-sankey': return t('questions.title')
     case 'interjection-graph': return t('interjections.title')
+    case 'topic-mix': return t('topics.page.title')
     case 'faction-cohesion': return t('votes.cohesion.title')
     case 'vote-participation':
       return data.value?.rep?.label
@@ -201,6 +211,8 @@ const isEmpty = computed(() => {
     case 'faction-speaking': return factionBars.value.length === 0
     case 'questions-sankey': return !(data.value.total > 0)
     case 'interjection-graph': return !(data.value.links && data.value.links.length)
+    case 'topic-mix': return !(data.value.speech?.topics || []).length
+                             && !(data.value.bill?.topics || []).length
     // Frakcióelemzés is a single-cycle analysis (analyses/registry.js): a
     // hand-built embed URL naming several cycles would pool Houses that never
     // sat together, so it shows nothing rather than a meaningless matrix.
@@ -236,6 +248,10 @@ const siteHref = computed(() => {
     case 'faction-cohesion':
       path = '/analyses/faction-cohesion'
       if (q.tab) usp.set('tab', q.tab)
+      break
+    case 'topic-mix':
+      path = '/analyses/topics'
+      if (q.by) usp.set('by', q.by)
       break
     case 'vote-participation': path = q.id ? `/representatives/${q.id}` : '/representatives'; break
   }
@@ -295,6 +311,17 @@ const siteHref = computed(() => {
                        exitFullscreen: $t('interjections.exitFullscreen'),
                        made: $t('interjections.made'),
                        received: $t('interjections.received') }"
+          />
+
+          <!-- The two agendas (TOPIC-9). Rows are not clickable here: what a
+               click opens is the page's detail panel, which an iframe has
+               nowhere to put. -->
+          <TopicMixChart
+            v-else-if="kind === 'topic-mix'"
+            :speech="data.speech" :bill="data.bill"
+            :sort-by="route.query.by === 'bills' ? 'bill' : 'speech'"
+            :interactive="false"
+            :caption="$t('topics.page.chartCaption')"
           />
 
           <!-- Faction vote analysis (VOTE-8) -->

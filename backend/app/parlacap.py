@@ -448,6 +448,89 @@ def aggregate(rows, threshold: float | None = None) -> dict | None:
     }
 
 
+def topic_mix(rows, dominant: dict, coverage: dict | None = None) -> dict:
+    """Roll a whole slice of the corpus up into its topic mix (TOPIC-9).
+
+    ``rows`` are ``(period, label, confident, words, blocks)`` groups — one scan of
+    a block table, grouped by calendar period, label, and whether the block cleared
+    the threshold. ``dominant`` maps a label to how many *items* (speeches,
+    irományok) it is the subject of, by the rule in :func:`aggregate` expressed as
+    :data:`DOMINANT_TOPIC_SQL`. ``coverage`` is whatever the caller can say about
+    the population behind the numbers; its keys travel through untouched.
+
+    Both halves of the Témák page go through this one function on purpose. The
+    speech blocks and the document blocks live in different tables with different
+    scoping columns, but the chart puts their shares side by side, and a share
+    computed one way for speeches and another way for irományok would be a
+    comparison of nothing — the same reason the two are read off one model at one
+    threshold in the first place (TOPIC-8).
+
+    Three decisions it inherits from :func:`aggregate`, so the page and the chip
+    cannot disagree:
+
+    * **words, not blocks**, are the weight — a topic's share is of the classified
+      *policy text*, so a long argument outweighs a one-line aside;
+    * **"Other" never counts as a topic** (:data:`NON_POLICY`). It is reported as
+      ``other_words`` — how much of the confident text carried no policy at all —
+      and is excluded from every share;
+    * **below the threshold is not evidence**. Those blocks are counted only into
+      ``blocks`` (against ``confident_blocks``), which is what lets the page say
+      how much of the corpus it is *not* speaking for.
+    """
+    words: dict[str, int] = {}
+    blocks: dict[str, int] = {}
+    by_period: dict[str, dict[str, int]] = {}
+    other_words = 0
+    all_blocks = 0
+    confident_blocks = 0
+
+    for period, label, confident, w, b in rows:
+        all_blocks += b
+        if not confident:
+            continue
+        confident_blocks += b
+        if label == NON_POLICY:
+            other_words += w
+            continue
+        words[label] = words.get(label, 0) + w
+        blocks[label] = blocks.get(label, 0) + b
+        if period:
+            bucket = by_period.setdefault(period, {})
+            bucket[label] = bucket.get(label, 0) + w
+
+    policy_words = sum(words.values())
+    topics = sorted(
+        ({"label": lab,
+          "code": CAP_CODES.get(lab),
+          "words": w,
+          "blocks": blocks.get(lab, 0),
+          "share": w / policy_words if policy_words else 0.0,
+          "count": dominant.get(lab, 0)}
+         for lab, w in words.items()),
+        # Words first, the label name after — the same deterministic order the
+        # per-item breakdown uses, so two servers answer identically.
+        key=lambda d: (-d["words"], d["label"]))
+
+    return {
+        "threshold": settings.parlacap_threshold,
+        "coverage": {**(coverage or {}),
+                     "blocks": all_blocks,
+                     "confident_blocks": confident_blocks,
+                     "policy_words": policy_words,
+                     "other_words": other_words},
+        "topics": topics,
+        # One bucket per period that has any confident policy text, each carrying
+        # its own total so a share can be taken against the period rather than
+        # against the corpus — the agenda's *shape* in a quiet year is the point,
+        # not that the year was quiet.
+        "trend": {"granularity": "year",
+                  "buckets": [{"period": p,
+                               "policy_words": sum(by_period[p].values()),
+                               "labels": by_period[p]}
+                              for p in sorted(by_period)]},
+    }
+
+
 # The same winner :func:`aggregate` picks, expressed in SQL — so a *filter* on
 # topic selects exactly the irományok whose chip shows that topic.
 #
@@ -474,23 +557,37 @@ def aggregate(rows, threshold: float | None = None) -> dict | None:
 # saves ~4 % of that, the rest being the window sort, so it is not worth carrying
 # on a table that size; revisit if the archive is ever classified in full.
 DOMINANT_TOPIC_SQL = """
-SELECT bill_id, label FROM (
-  SELECT bill_id, label,
-         ROW_NUMBER() OVER (PARTITION BY bill_id
+SELECT {key}, label FROM (
+  SELECT {key}, label,
+         ROW_NUMBER() OVER (PARTITION BY {key}
                             ORDER BY SUM(words) DESC, COUNT(*) DESC, label ASC) AS rk
-  FROM bill_topic
+  FROM {table}
   WHERE score >= :topic_threshold AND label <> :topic_non_policy {scope}
-  GROUP BY bill_id, label
+  GROUP BY {key}, label
 ) WHERE rk = 1
 """
 
+# The two tables the rule applies to. It is the *same* rule in both: the topic a
+# reader sees on an iromány's chip and the one they see on a speech's are picked
+# by one tie-break (:func:`aggregate`), so the analysis that counts either of them
+# must not re-invent it — see TOPIC-9.
+DOMINANT_TOPIC_TABLES = {
+    "bill": ("bill_topic", "bill_id"),
+    "speech": ("speech_topic", "speech_id"),
+}
 
-def dominant_topic_sql(scope: str = "") -> str:
-    """:data:`DOMINANT_TOPIC_SQL` with ``scope`` spliced in.
+
+def dominant_topic_sql(scope: str = "", kind: str = "bill") -> str:
+    """:data:`DOMINANT_TOPIC_SQL` over one of :data:`DOMINANT_TOPIC_TABLES`, with
+    ``scope`` spliced in.
 
     ``scope`` is appended to the inner ``WHERE`` and must be caller-built SQL with
-    bound parameters — never interpolated user input."""
-    return DOMINANT_TOPIC_SQL.format(scope=scope)
+    bound parameters — never interpolated user input. It can only name columns of
+    the block table itself: the query has no join to hang anything else on, so a
+    speech-side caller scoping by cycle writes a subquery over ``session`` (the
+    block rows carry a sitting id, not a cycle number)."""
+    table, key = DOMINANT_TOPIC_TABLES[kind]
+    return DOMINANT_TOPIC_SQL.format(scope=scope, table=table, key=key)
 
 
 def topic_params(threshold: float | None = None) -> dict:

@@ -947,3 +947,334 @@ def test_dominant_topic_sql_agrees_with_aggregate(conn, topic_corpus):
                   for bid, rs in rows.items() if parlacap.aggregate(rs)}
     assert sql_winner == agg_winner
     assert agg_winner            # the corpus really did classify something
+
+
+# ---------------------------------------------------------------------------
+# the Témák analysis (TOPIC-9)
+# ---------------------------------------------------------------------------
+# The page aggregates the very rows the chips are read off, so the failure it has
+# to be protected from is not an exception — it is a number that looks plausible
+# and means something other than the label beside it. Four ways that happens:
+# counting words the threshold rejected, letting "Other" behave like a topic,
+# counting a speech under a topic whose chip says something else, and leaving the
+# cycle scope out of one query of the several a page costs.
+
+def _floor_speech(index, person_id, name, faction, paragraphs, speech_type=None):
+    """One speech whose paragraphs each carry a marker word, so every block gets a
+    known label at a known length (`_words` yields n+1 words)."""
+    video = "https://example/playlist.m3u8"
+    return {
+        "originID": f"43-x-{index}", "speechIndex": index,
+        "electoralPeriod": {"number": 43},
+        "agendaItem": {"title": "Általános vita", "officialTitle": "Általános vita",
+                       "type": "debate", "nativeType": "HU-debate"},
+        "people": [{"type": "memberOfParliament", "label": name,
+                    "context": "main-speaker", "personID": person_id,
+                    "faction": {"label": faction}}],
+        "media": {"videoFileURI": video, "duration": 7200,
+                  "creator": "Magyar Országgyűlés", "license": "https://lic",
+                  "sourcePage": "https://parlament.hu/x"},
+        "textContents": [{"type": "proceedings", "sourceURI": "https://parlament.hu/x",
+                          "textBody": [{"speech_id": f"43-x-{index}", "sentences": [
+                              {"text": _words(mark, n), "timeStart": float(10 * i),
+                               "timeEnd": float(10 * i + 9), "paragraph": i}
+                              for i, (mark, n) in enumerate(paragraphs)]}]}],
+        "debug": {"confidence": 0.7, "align-method": "estimated-day-offset",
+                  "felszolalasTipusa": speech_type},
+    }
+
+
+def _floor_session(session, sitting, date, speeches):
+    video = "https://example/playlist.m3u8"
+    return {
+        "meta": {"session": session, "electoralPeriod": 43, "sitting": sitting,
+                 "date": date, "dateStart": f"{date}T08:00:00",
+                 "dateEnd": f"{date}T10:00:00", "source": "felicitas-json",
+                 "dayVideoURI": video, "timingMethod": "estimated-day-offset",
+                 "sourceScrapedAt": "2026-06-18T00:00:00+00:00"},
+        "data": speeches,
+    }
+
+
+@pytest.fixture
+def floor_data(data_dir):
+    """Two extra sittings, a year apart, whose speeches carry known topics.
+
+    Written into the shared data directory *before* the DB is built (hence a
+    fixture of its own, ordered ahead of `conn`), so the corpus the API serves is
+    the one the loader produced rather than rows poked into a table.
+
+    What each sitting is for:
+
+    * 2026 — a speech that contests itself (a short confident Health block against
+      a long Energy one, so the dominant rule has something to decide), a plain
+      Health speech, a confidently *non-policy* speech, a chairing speech, and a
+      block the model is not sure about;
+    * 2027 — the same two members on different topics, so the trend has two years
+      and the faction split is not a single sitting's accident.
+    """
+    import json
+    (data_dir / "processed" / "43002-session.json").write_text(json.dumps(
+        _floor_session("43002", 2, "2026-05-16", [
+            _floor_speech(1, "k001", "Kovács Béla", "Fidesz",
+                          [("EGESZSEG", 20), ("ENERGIA", 60)]),
+            _floor_speech(2, "n002", "Nagy Anna", "TISZA", [("EGESZSEG", 40)]),
+            # Confident, and confidently about nothing: greetings and points of
+            # order. It must be reported as such and never become a subject.
+            _floor_speech(3, "n002", "Nagy Anna", "TISZA", [("UGYREND", 30)]),
+            # The chair. Never classified at all (STAT-1), so its marker must not
+            # appear in the mix however loud it is.
+            _floor_speech(4, "k001", "Kovács Béla", "Fidesz", [("KOZLEKEDES", 80)],
+                          speech_type="ülésvezetés"),
+            # Classified, but under the threshold: coverage, not evidence.
+            _floor_speech(5, "k001", "Kovács Béla", "Fidesz", [("BIZONYTALAN", 30)]),
+        ]), ensure_ascii=False))
+    (data_dir / "processed" / "43003-session.json").write_text(json.dumps(
+        _floor_session("43003", 3, "2027-03-02", [
+            _floor_speech(1, "n002", "Nagy Anna", "TISZA", [("EGESZSEG", 20)]),
+            _floor_speech(2, "k001", "Kovács Béla", "Fidesz", [("KOZLEKEDES", 60)]),
+        ]), ensure_ascii=False))
+    return data_dir
+
+
+@pytest.fixture
+def floor(floor_data, conn, tmp_path, monkeypatch):
+    """The corpus above, classified by the marker-word stand-in."""
+    for instance in _live_settings():
+        monkeypatch.setattr(instance, "parlacap", True)
+        monkeypatch.setattr(instance, "parlacap_min_words", 2)
+        # Small enough that each paragraph closes its own block, so a speech's two
+        # competing topics stay two predictions rather than merging into one.
+        monkeypatch.setattr(instance, "parlacap_target_words", 5)
+    fake = _TextClassifier({"EGESZSEG": ("Health", 0.97),
+                            "ENERGIA": ("Energy", 0.92),
+                            "KOZLEKEDES": ("Transportation", 0.96),
+                            "UGYREND": ("Other", 0.99),
+                            "BIZONYTALAN": ("Housing", 0.55)})
+    monkeypatch.setattr(parlacap, "classify", fake)
+    monkeypatch.setattr(parlacap, "backend", lambda **kw: "local")
+    loader.rebuild_speech_topics(conn, tmp_path)
+    conn.commit()
+    return fake
+
+
+@pytest.fixture
+def floor_client(floor, client):
+    """The API bound to the classified corpus above.
+
+    Ordering, not convenience: `client` builds the database the first time it is
+    asked for, so a test that took it *before* `floor` would be served a corpus
+    written after the build. Going through one fixture makes that impossible.
+    """
+    return client
+
+
+def _mix(client, **params):
+    from urllib.parse import urlencode
+    body = client.get("/api/v1/proceedings/topics"
+                      + ("?" + urlencode(params, doseq=True) if params else ""))
+    assert body.status_code == 200, body.text
+    return body.json()
+
+
+def _labels(body):
+    return {t["label"]: t for t in body["topics"]}
+
+
+def test_the_mix_counts_the_words_the_blocks_actually_carry(floor_client, conn):
+    """The chart's arithmetic against the stored rows: every topic's words are the
+    confident words of that label, and the shares are of their sum."""
+    body = _mix(floor_client)
+    stored = dict(conn.execute(
+        "SELECT label, SUM(words) FROM speech_topic WHERE score >= ? "
+        "AND label <> 'Other' GROUP BY label",
+        (settings.parlacap_threshold,)).fetchall())
+    assert {t["label"]: t["words"] for t in body["topics"]} == stored
+    total = sum(stored.values())
+    assert body["coverage"]["policy_words"] == total
+    assert sum(t["share"] for t in body["topics"]) == pytest.approx(1.0)
+    # Commonest first, so the page can render the list as it arrives.
+    assert [t["words"] for t in body["topics"]] == sorted(
+        (t["words"] for t in body["topics"]), reverse=True)
+
+
+def test_other_is_reported_but_is_never_a_topic(floor_client):
+    """CAP's "Other" is how the model says "no policy here" — a real prediction,
+    and the one thing on this page that must not be rendered as a subject."""
+    body = _mix(floor_client)
+    assert "Other" not in _labels(body)
+    assert body["coverage"]["other_words"] > 0
+
+
+def test_an_unsure_block_is_coverage_not_evidence(floor_client):
+    """The Housing block sits under the threshold. It has to show up in what the
+    page admits it cannot label, and nowhere else."""
+    body = _mix(floor_client)
+    assert "Housing" not in _labels(body)
+    assert body["coverage"]["confident_blocks"] < body["coverage"]["blocks"]
+
+
+def test_the_chair_is_never_in_the_mix(floor_client):
+    """The chairing speech is the loudest Transportation block in 2026 and is
+    excluded structurally (STAT-1) — the model reads an announcement as being
+    about whatever bill it names."""
+    buckets = {b["period"]: b["labels"] for b in _mix(floor_client)["trend"]["buckets"]}
+    assert "Transportation" not in buckets["2026"]
+    assert "Transportation" in buckets["2027"]
+
+
+def test_a_topics_speech_count_is_the_speeches_whose_chip_says_so(floor_client, conn):
+    """The count beside a topic must be the size of the set a reader would find by
+    opening every speech under it — the dominant-topic rule, not "mentions it"."""
+    body = _mix(floor_client)
+    rows: dict[str, list] = {}
+    for r in conn.execute("SELECT speech_id, block, label, score, runner_up, "
+                          "runner_score, words FROM speech_topic "
+                          "ORDER BY speech_id, block"):
+        rows.setdefault(r["speech_id"], []).append(tuple(r)[1:])
+    expected: dict[str, int] = {}
+    for uid, blocks in rows.items():
+        agg = parlacap.aggregate(blocks)
+        if agg:
+            expected[agg["label"]] = expected.get(agg["label"], 0) + 1
+    assert {t["label"]: t["count"] for t in body["topics"] if t["count"]} == expected
+    assert body["coverage"]["labelled"] == sum(expected.values())
+    # The contested speech is Energy's alone: its Health block is confident but
+    # short, so Health runs through the speech without being its subject.
+    assert _labels(body)["Health"]["count"] == 2
+    assert _labels(body)["Energy"]["count"] == 1
+
+
+def test_coverage_says_what_the_picture_is_drawn_from(floor_client, conn):
+    """A share of the House's speech is unreadable without the population behind
+    it, and every one of these can only shrink leftwards (TRUST-1)."""
+    cov = _mix(floor_client)["coverage"]
+    speeches = conn.execute(
+        "SELECT COUNT(*) FROM speech WHERE procedural = 0 AND has_text = 1"
+    ).fetchone()[0]
+    assert cov["speeches"] == speeches
+    assert cov["labelled"] <= cov["classified"] <= cov["speeches"]
+    # The fixture's first sitting carries speeches the classifier had no marker
+    # for, so "classified" is genuinely short of the population.
+    assert cov["classified"] < cov["speeches"]
+
+
+def test_the_trend_is_cut_by_year_and_carries_its_own_total(floor_client):
+    """Each bucket's share is taken against that year, not the corpus: the shape of
+    a quiet year's agenda is the point, not that the year was quiet."""
+    buckets = _mix(floor_client)["trend"]["buckets"]
+    assert [b["period"] for b in buckets] == ["2026", "2027"]
+    for b in buckets:
+        assert b["policy_words"] == sum(b["labels"].values())
+    assert sum(b["policy_words"] for b in buckets) == _mix(floor_client)["coverage"]["policy_words"]
+
+
+def test_the_mix_follows_the_read_time_threshold(floor_client, monkeypatch):
+    """The same rows, a different answer, nothing reclassified (TOPIC-6) — and the
+    cache must not outlive the change, which is why the threshold is in its key."""
+    before = _labels(_mix(floor_client))
+    assert "Energy" in before
+    for instance in _live_settings():
+        monkeypatch.setattr(instance, "parlacap_threshold", 0.95)
+    after = _mix(floor_client)
+    assert "Energy" not in _labels(after)          # 0.92 no longer clears the bar
+    assert after["threshold"] == 0.95
+    # The contested speech changes hands rather than vanishing: at 0.95 only its
+    # short Health block still counts, so what was a speech about energy is now a
+    # speech about health — same rows, same speech, different subject.
+    assert before["Health"]["count"] == 2
+    assert _labels(after)["Health"]["count"] == 3
+    assert after["coverage"]["labelled"] == 4
+
+
+def test_the_cycle_scope_reaches_every_query_behind_the_page(floor_client):
+    """A page costs several queries; one that forgot the scope would show the whole
+    archive's numbers under a single cycle's heading."""
+    assert _mix(floor_client, period=43)["topics"] == _mix(floor_client)["topics"]
+    empty = _mix(floor_client, period=39)
+    assert empty["topics"] == []
+    assert empty["coverage"]["blocks"] == 0
+    assert empty["coverage"]["speeches"] == 0
+    assert empty["trend"]["buckets"] == []
+
+
+def test_a_db_with_no_topics_says_so_rather_than_answering_zero(floor_client, conn):
+    """An empty chart and a chart of a corpus that was never classified are
+    different claims; only one of them is honest here."""
+    conn.execute("DROP TABLE speech_topic")
+    conn.commit()
+    assert floor_client.get("/api/v1/proceedings/topics").status_code == 503
+
+
+def test_topic_detail_splits_a_topic_between_its_factions(floor_client):
+    """Two shares, because "who owns this topic" and "whose House is it" are
+    different claims and the bigger faction wins the first by arithmetic."""
+    body = floor_client.get("/api/v1/proceedings/topics/Health").json()
+    factions = {f["label"]: f for f in body["factions"]}
+    assert set(factions) == {"Fidesz", "TISZA"}
+    assert sum(f["share_of_topic"] for f in body["factions"]) == pytest.approx(1.0)
+    # TISZA said nothing else that cleared the bar, so all of its policy speech is
+    # this topic — while for Fidesz it is a corner of theirs.
+    assert factions["TISZA"]["share_of_own"] == pytest.approx(1.0)
+    assert factions["Fidesz"]["share_of_own"] < 0.5
+    assert factions["TISZA"]["words"] > factions["Fidesz"]["words"]
+
+
+def test_topic_detail_names_who_speaks_about_it(floor_client):
+    """The panel's way in: ranked by words on the topic, each resolvable to a
+    profile."""
+    body = floor_client.get("/api/v1/proceedings/topics/Transportation").json()
+    assert [s["person_id"] for s in body["speakers"]] == ["k001"]
+    assert body["speakers"][0]["name"] == "Kovács Béla"
+    assert body["speakers"][0]["share_of_topic"] == pytest.approx(1.0)
+    health = floor_client.get("/api/v1/proceedings/topics/Health").json()
+    words = [s["words"] for s in health["speakers"]]
+    assert words == sorted(words, reverse=True)
+
+
+def test_topic_detail_is_scoped_and_refuses_a_non_topic(floor_client):
+    assert floor_client.get("/api/v1/proceedings/topics/Health?period=39"
+                      ).json()["factions"] == []
+    # "Other" is a prediction, not a subject: there is no page for it.
+    assert floor_client.get("/api/v1/proceedings/topics/Other").status_code == 404
+    assert floor_client.get("/api/v1/proceedings/topics/Nonsense").status_code == 404
+
+
+# --- the document half (TOPIC-8 read as an agenda) --------------------------
+
+def test_the_document_mix_is_the_same_shape_from_another_table(client, topic_corpus):
+    """The two halves are drawn as one chart, so they must be one shape and one
+    arithmetic — the speech share and the document share are compared by eye."""
+    body = client.get("/api/v1/bills/topics?period=43").json()
+    assert set(body) == {"threshold", "coverage", "topics", "trend"}
+    assert sum(t["share"] for t in body["topics"]) == pytest.approx(1.0)
+    labels = {t["label"]: t for t in body["topics"]}
+    # T/100 is contested: Health runs through it, Energy is what it is about. The
+    # two columns of the chart are exactly this difference.
+    assert labels["Health"]["words"] > 0
+    assert labels["Health"]["count"] == 0
+    assert labels["Energy"]["count"] == 2
+
+
+def test_the_document_mixs_counts_match_the_list_they_open(client, topic_corpus):
+    """Each count is a promise about a filtered list; the facet already keeps that
+    promise and this page must not make a different one."""
+    body = client.get("/api/v1/bills/topics?period=43").json()
+    for t in body["topics"]:
+        listed = _listing(client, period=43, topic=t["label"], limit=1)["total"]
+        assert listed == t["count"], t["label"]
+
+
+def test_the_document_coverage_names_the_population_it_could_read(client, topic_corpus):
+    """Only an iromány whose document was mirrored and read as text can carry a
+    topic (TOPIC-8), so a share of irományok means nothing without that count."""
+    cov = client.get("/api/v1/bills/topics?period=43").json()["coverage"]
+    assert cov["labelled"] <= cov["classified"] <= cov["with_text"] <= cov["bills"]
+    assert cov["bills"] > 0
+
+
+def test_the_document_mix_says_so_when_nothing_was_classified(client, conn,
+                                                              topic_corpus):
+    conn.execute("DROP TABLE bill_topic")
+    conn.commit()
+    assert client.get("/api/v1/bills/topics?period=43").status_code == 503

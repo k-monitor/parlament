@@ -3,6 +3,9 @@ import { defaultCycles, loadMeta, parseCycles, serializeCycles, setCycles, store
 import {
   claimsOwnScroll, keepInPlace, rememberScroll, scrollTarget, whenReachable,
 } from './lib/scrollMemory.js'
+// The Elemzések section describes itself in one place (§4E/ANA-3); the guard
+// below reads the feature gate from there rather than naming routes again.
+import { ANALYSIS_BY_ROUTE } from './modules/analyses/registry.js'
 
 // The global electoral-cycle scope is carried in a `?cycle=` query param so that
 // a shared link reproduces the exact scope the sharer was viewing: one or more
@@ -218,6 +221,14 @@ const routes = [
     component: () => import('./modules/bills/QuestionsView.vue'),
   },
   {
+    // Témák (TOPIC-9) — the CAP topic mix of the floor and of the irományok.
+    // Registered against proceedings, whose speeches the chart's first series is;
+    // the document series comes from the bills module and is simply absent where
+    // that is off (EXT-6).
+    path: '/analyses/topics', name: 'topics', meta: { module: 'proceedings' },
+    component: () => import('./modules/analyses/TopicsView.vue'),
+  },
+  {
     // Közbeszólások (§6E) — the directed graph of who heckles whom.
     path: '/analyses/interjections', name: 'interjections',
     meta: { module: 'interjections' },
@@ -308,6 +319,18 @@ router.beforeEach(async (to) => {
   // an external source, so the backend can switch it off on its own — in which case
   // its endpoints 404 and so must its page, rather than rendering an error state.
   if (to.name === 'lookup' && store.loaded && !store.featureEnabled('constituency_lookup')) {
+    return {
+      name: 'notfound',
+      params: { pathMatch: to.path.substring(1).split('/') },
+      query: to.query,
+    }
+  }
+  // The same for an analysis gated on a capability rather than on its module
+  // (Témák, whose data needs a classification pass the deployment may never have
+  // run): its card and tab are already gone, so its address must not be the one
+  // place it still answers.
+  const gate = ANALYSIS_BY_ROUTE[to.name]?.feature
+  if (gate && store.loaded && !store.featureEnabled(gate)) {
     return {
       name: 'notfound',
       params: { pathMatch: to.path.substring(1).split('/') },

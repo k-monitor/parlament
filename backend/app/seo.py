@@ -62,7 +62,8 @@ ROBOTS_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400"
 # The modules the Elemzések section (§4E) gathers its pages from — the backend's
 # half of `frontend/src/modules/analyses/registry.js`. The section's landing page
 # is there as long as any one of them is mounted.
-ANALYSIS_MODULES = ("votes", "bills", "settlements", "interjections")
+ANALYSIS_MODULES = ("votes", "bills", "settlements", "interjections",
+                    "proceedings")
 
 # Static routes, with the module each belongs to (None = always present; a tuple
 # = present while any one of them is). These are the entry points a crawler can
@@ -97,6 +98,13 @@ STATIC_PATHS: tuple[tuple[str, str | tuple[str, ...] | None], ...] = (
     ("/analyses/faction-cohesion", "votes"),
     ("/analyses/questions", "bills"),
     ("/analyses/interjections", "interjections"),
+    # Témák (TOPIC-9) — the CAP topic mix of the floor and of the irományok. Its
+    # data is the proceedings module's (the iromány half is an addition to the
+    # picture, not a precondition for it), and like every other analysis it is
+    # advertised on the strength of that module alone: a deployment that mounts
+    # proceedings but never ran the classification pass serves the page's "not
+    # classified" state, exactly as an unbuilt interjection table does.
+    ("/analyses/topics", "proceedings"),
 )
 
 

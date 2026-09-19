@@ -51,6 +51,9 @@ export default {
     analyses: 'Elemzések',
     analysesIndex: 'Áttekintés',
     cohesion: 'Frakcióelemzés',
+    // Témák (TOPIC-9): a szakpolitikai témák megoszlása. A fül rövid neve áll
+    // itt; az oldal saját címe ennél beszédesebb.
+    topics: 'Témák',
     interjections: 'Közbeszólások',
     // Települések (§6D): a térkép és — a fül alatti oldalként — a saját körzetre
     // vonatkozó mutatók (TEL-9).
@@ -221,6 +224,18 @@ export default {
   // árnyalja — hogy a felszólalás mekkora részét fedi le, mi ellen "nyert", mennyi
   // maradt bizonytalan, és melyik modell milyen küszöbbel döntött — a kattintásra
   // nyíló panelbe került. A témanevek a CAP magyar kódkönyvének elnevezéseit követik.
+  // A kétsávos ábra szövegei. Külön névtér, mert az ábrát az oldal és a
+  // beágyazott változat is használja (§4C).
+  topicMix: {
+    speeches: 'Felszólalások',
+    bills: 'Irományok',
+    tip: {
+      speech: '{topic} – felszólalások: a besorolt szakpolitikai szöveg {pct}-a '
+        + '({words} szó), {n} felszólalás témája.',
+      bill: '{topic} – irományok: a besorolt szakpolitikai szöveg {pct}-a '
+        + '({words} szó), {n} iromány témája.',
+    },
+  },
   topics: {
     chipTitle: 'Téma: {topic} – kattintson a részletekért',
     panelLabel: 'A felszólalás témája',
@@ -244,6 +259,51 @@ export default {
       method: 'Gépi besorolás a ParlaCAP modellel, a benyújtott dokumentum '
         + 'szövege alapján, szövegrészenként, {threshold}%-os megbízhatósági '
         + 'küszöbbel. Tájékoztató jellegű, nem hivatalos minősítés.',
+    },
+    // A Témák elemzés (TOPIC-9) oldalszövegei. Ugyanabban a névtérben, mint a
+    // csip és a témanevek: egy téma ugyanazt jelenti mindkét helyen.
+    page: {
+      title: 'Miről szól a Parlament?',
+      lead: 'Az Országgyűlés napirendje szakpolitikai témák szerint: miről beszélnek '
+        + 'a plenáris ülésen, és mi kerül irományként a Ház elé. A kettő nem '
+        + 'ugyanaz a lista — a különbség maga is eredmény.',
+      help1: 'Minden felszólalást és minden olvasható iromány szövegét gépi '
+        + 'osztályozó sorolja be a CAP nemzetközi kódrendszerének 21 '
+        + 'szakpolitikai témájába, bekezdésenként, {threshold}%-os megbízhatósági '
+        + 'küszöbbel. Amiben a modell nem elég biztos, arról inkább nem mond semmit.',
+      help2: 'A sávok a besorolt szakpolitikai szöveg megoszlását mutatják szavak '
+        + 'szerint. Az ügyrendi, udvariassági és személyes részek („egyéb”) nem '
+        + 'számítanak bele, az ülésvezetői felszólalások pedig egyáltalán nem '
+        + 'kerülnek a modell elé.',
+      unclassified: 'Ebben a telepítésben nincsenek témabesorolások.',
+      coverageSpeech: 'a felszólalások {pct}-a kapott témát ({n} / {total})',
+      // Az irományoknál a nevező nem az összes iromány, hanem amelyiknek
+      // egyáltalán van olvasható szövege (TOPIC-8) — ezt ki kell mondani.
+      coverageBill: 'az olvasható szövegű irományok {pct}-a ({n} / {total})',
+      sortBy: 'Rendezés',
+      chartCaption: 'A szakpolitikai témák megoszlása a besorolt szövegben',
+      clickHint: 'Kattintson egy témára: kik beszélnek róla, melyik frakció, '
+        + 'és hogyan változott az évek során.',
+      close: 'Bezárás',
+      leadSpeech: 'A plenáris ülés besorolt szakpolitikai szövegének {pct}-a szól '
+        + 'erről, és {n} felszólalásnak ez a témája.',
+      leadNoSpeech: 'Erről a témáról a vizsgált időszakban nem hangzott el elég '
+        + 'biztosan besorolható felszólalás.',
+      leadBill: 'Az irományok besorolt szövegéből {pct} jut rá, {n} iromány témája.',
+      trendCaption: '{topic}: a plenáris szöveg hány százaléka szólt erről évente',
+      factions: 'Melyik frakció beszél róla',
+      factionsNote: 'A sáv azt mutatja, hogy a frakció saját besorolt szakpolitikai '
+        + 'szövegéből mennyi jut erre a témára — így a kis frakció beszédtémája is '
+        + 'látszik. Alatta az, hogy a témáról elhangzottakból mennyi az övé.',
+      shareOfTopic: 'a témáról elhangzottak {pct}-a',
+      noFaction: 'Frakció nélkül',
+      speakers: 'Kik beszélnek róla',
+      speakersNote: 'A témáról legtöbbet beszélők, a téma szövegéből való '
+        + 'részesedésükkel.',
+      noDetail: 'Ehhez a témához nincs bontás a kiválasztott időszakban.',
+      openBills: 'Irományok ezzel a témával',
+      method: 'Gépi besorolás a ParlaCAP modellel, bekezdésenként, {threshold}%-os '
+        + 'megbízhatósági küszöbbel. Tájékoztató jellegű, nem hivatalos minősítés.',
     },
     names: {
       Macroeconomics: 'Makrogazdaság',
@@ -990,6 +1050,12 @@ export default {
         title: 'Kérdések és interpellációk',
         desc: 'Ki kérdez és ki válaszol: a kérdések útja a kérdező frakciójától '
           + 'a válaszadó tárcáig.',
+      },
+      topics: {
+        source: 'Felszólalások és irományok alapján',
+        title: 'Témák',
+        desc: 'Miről szól a plenáris ülés, és mi kerül irományként a Ház elé — '
+          + 'szakpolitikai témák szerint, évről évre és frakciónként.',
       },
       interjections: {
         source: 'Felszólalások alapján',

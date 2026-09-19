@@ -85,6 +85,15 @@ export const api = {
   // Cropped HLS clip URLs for an arbitrary [start,end] window of a speech, for
   // the client-side exporter (VIE-10). start/end are day-absolute seconds.
   speechClip: (uid, start, end) => get(`/proceedings/speeches/${uid}/clip`, { start, end }),
+  // Témák (TOPIC-9) — the CAP topic mix of the floor, and one topic's owners.
+  // The mix carries its own over-time buckets (they come out of the same scan),
+  // so the page's chart and its trend are one request; the detail is fetched only
+  // when a topic is opened. The document half is `billTopicMix` below: same
+  // shape, other module, because the two topic passes read different tables and
+  // switch off independently.
+  topicMix: (period) => get('/proceedings/topics', { period }),
+  topicDetail: (label, period) =>
+    get(`/proceedings/topics/${encodeURIComponent(label)}`, { period }),
   // representatives
   representatives: (params) => get('/representatives', params),
   representative: (id, period) => get(`/representatives/${id}`, { period }),
@@ -138,6 +147,7 @@ export const api = {
   bills: (params) => get('/bills', params),
   bill: (id) => get(`/bills/${id}`),
   billFacets: (params) => get('/bills/facets', params),
+  billTopicMix: (period) => get('/bills/topics', { period }),
   questionsSankey: (period, includeType = true, expandOther = false) =>
     get('/bills/questions/sankey',
         { period, include_type: includeType, expand_other: expandOther }),

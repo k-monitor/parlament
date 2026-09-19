@@ -25,7 +25,7 @@ export default {
   // `representatives` is the merged Felszólalók page: representatives, nationality
   // advocates and the other speakers in one list, picked apart by category chips
   // (REP-1). `advocates` / `speakers` name two of those chips.
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'All documents', questions: 'Questions', votes: 'Votes', analyses: 'Analyses', analysesIndex: 'Overview', cohesion: 'Faction analysis', interjections: 'Interjections', settlements: 'Settlements', settlementReps: 'Own constituency', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'All documents', questions: 'Questions', votes: 'Votes', analyses: 'Analyses', analysesIndex: 'Overview', cohesion: 'Faction analysis', topics: 'Topics', interjections: 'Interjections', settlements: 'Settlements', settlementReps: 'Own constituency', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -152,6 +152,18 @@ export default {
   // qualifies it — how much of the speech it speaks for, what it won against, how
   // much stayed uncertain, and which model decided at which threshold — lives in
   // the panel that opens on click.
+  // Strings of the two-series chart. Its own namespace because the page and the
+  // embedded version (§4C) render the same component.
+  topicMix: {
+    speeches: 'Speeches',
+    bills: 'Documents',
+    tip: {
+      speech: '{topic} — speeches: {pct} of the classified policy text '
+        + '({words} words), the subject of {n} speeches.',
+      bill: '{topic} — documents: {pct} of the classified policy text '
+        + '({words} words), the subject of {n} documents.',
+    },
+  },
   topics: {
     chipTitle: 'Topic: {topic} — click for details',
     panelLabel: 'Topic of this speech',
@@ -176,6 +188,49 @@ export default {
       method: 'Classified automatically by the ParlaCAP model from the text of '
         + 'the submitted document, block by block, at a {threshold}% confidence '
         + 'threshold. Indicative only, not an official categorisation.',
+    },
+    // The Témák analysis (TOPIC-9). Same namespace as the chip and the topic
+    // names: a topic means the same thing in both places.
+    page: {
+      title: 'What is Parliament about?',
+      lead: 'The agenda of the National Assembly by policy topic: what is talked '
+        + 'about in the chamber, and what is submitted to it. The two are not the '
+        + 'same list — the gap between them is itself a finding.',
+      help1: 'Every speech, and the text of every readable document, is classified '
+        + 'by a machine model into the 21 policy topics of the international CAP '
+        + 'codebook, paragraph by paragraph, at a {threshold}% confidence '
+        + 'threshold. Where the model is not confident enough, it says nothing.',
+      help2: 'The bars show how the classified policy text divides up, weighted by '
+        + 'words. Procedural, courtesy and personal passages ("other") are left '
+        + 'out, and chairing speeches never reach the model at all.',
+      unclassified: 'This deployment carries no topic classification.',
+      coverageSpeech: '{pct} of speeches carry a topic ({n} of {total})',
+      coverageBill: '{pct} of documents with readable text ({n} of {total})',
+      sortBy: 'Sort by',
+      chartCaption: 'How the classified text divides between policy topics',
+      clickHint: 'Pick a topic to see who speaks about it, which faction, and how '
+        + 'it has moved over the years.',
+      close: 'Close',
+      leadSpeech: '{pct} of the chamber’s classified policy text is about this, and '
+        + 'it is the subject of {n} speeches.',
+      leadNoSpeech: 'Nothing confidently classifiable was said about this topic in '
+        + 'the selected period.',
+      leadBill: 'Among documents it takes {pct}, and is the subject of {n} of them.',
+      trendCaption: '{topic}: what share of the chamber’s text was about it each year',
+      factions: 'Which faction talks about it',
+      factionsNote: 'The bar is how much of a faction’s own classified policy '
+        + 'speech goes here, so a small faction’s specialism is visible too. Below '
+        + 'it: how much of everything said on the topic was theirs.',
+      shareOfTopic: '{pct} of everything said on this topic',
+      noFaction: 'No faction',
+      speakers: 'Who talks about it',
+      speakersNote: 'The speakers who spend most words on this topic, with their '
+        + 'share of it.',
+      noDetail: 'No breakdown for this topic in the selected period.',
+      openBills: 'Documents on this topic',
+      method: 'Classified automatically by the ParlaCAP model, paragraph by '
+        + 'paragraph, at a {threshold}% confidence threshold. Indicative only, not '
+        + 'an official categorisation.',
     },
     names: {
       Macroeconomics: 'Macroeconomics',
@@ -863,6 +918,12 @@ export default {
         title: 'Questions and interpellations',
         desc: 'Who asks and who answers: the path of a question from the asker\'s '
           + 'faction to the ministry that replies.',
+      },
+      topics: {
+        source: 'From speeches and documents',
+        title: 'Topics',
+        desc: 'What the chamber talks about and what is put before it — by policy '
+          + 'topic, year by year and faction by faction.',
       },
       interjections: {
         source: 'From the proceedings',

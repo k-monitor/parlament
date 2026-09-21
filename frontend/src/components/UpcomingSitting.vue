@@ -11,6 +11,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../api.js'
+import { formatDateLocal } from '../format.js'
 import StateBlock from './StateBlock.vue'
 
 const props = defineProps({
@@ -37,9 +38,27 @@ const PREVIEW_ITEMS = 4
 
 const agenda = computed(() => data.value && data.value.agenda)
 const allDays = computed(() => (agenda.value && agenda.value.days) || [])
+
+// The napirend covers a whole sitting week and stays up while that week is being
+// held, so by Wednesday its Monday is a record and not a plan any more — and the
+// sitting-day page of that Monday is where the record belongs. On the home page,
+// where this block answers "what is the House about to do", a day is dropped once
+// its date has passed. Today is still coming: the sitting is held through it.
+// "Passed" is read on the Hungarian calendar, since the House sits in Budapest
+// and the reader need not be there. A day the document dates by weekday alone
+// cannot be judged, and is kept.
+const today = formatDateLocal(new Date().toISOString())
 const days = computed(() => (props.date
   ? allDays.value.filter((d) => d.date === props.date)
-  : allDays.value))
+  : allDays.value.filter((d) => !d.date || d.date >= today)))
+
+// Every day of the order paper is behind us: the document describes a sitting the
+// House has already held, which is the one thing this block must not show as
+// coming, so the home page drops it whole rather than leaving a heading over
+// nothing. A napirend carrying no days at all is a different case — an unreadable
+// PDF, or one published before anything was scheduled — and keeps its card,
+// because the link to the document is then the useful thing on it.
+const stale = computed(() => !props.date && allDays.value.length > 0 && !days.value.length)
 const hiddenCount = computed(() => (props.date ? 0
   : days.value.reduce((n, d) => n + Math.max(0, d.items.length - PREVIEW_ITEMS), 0)))
 
@@ -102,7 +121,7 @@ onMounted(load)
 </script>
 
 <template>
-  <section v-if="!date || days.length" class="card pad upcoming">
+  <section v-if="date ? days.length : !stale" class="card pad upcoming">
     <div class="upcoming__head">
       <h2>{{ date ? $t('upcoming.dayTitle') : $t('upcoming.title') }}</h2>
       <span v-if="agenda && agenda.extraordinary" class="badge">

@@ -1134,8 +1134,20 @@ section — **Elemzések** — with its own entry in the top bar.
   provenance line is the part that has to be there. It MUST be gated on the data
   actually being there, so a deployment that does not run the stage shows nothing
   rather than an empty promise.
+  The home page MUST show only the days still **ahead**: an order paper covers a
+  whole sitting week and stays up while that week is being held, so by Wednesday
+  its Monday is a record rather than a plan — and that record belongs to the
+  sitting-day page (NR-6), not to this block. A day is therefore dropped from the
+  home page once its date has passed, read on the Hungarian calendar and counting
+  the current day as still coming; once no day of the document is left the block
+  drops itself rather than heading an empty list with "the coming sitting". A
+  napirend with no days *at all* is a different case — an unreadable PDF, or one
+  published before anything was scheduled — and keeps its card, because the link
+  to the document is then the useful thing on it.
   > **✅ realized.** `GET /proceedings/upcoming` + `features.upcoming_agenda` in
-  > `/meta`; `frontend/src/components/UpcomingSitting.vue` on `HomeView`.
+  > `/meta`; `frontend/src/components/UpcomingSitting.vue` on `HomeView`, which
+  > drops past days (and hides itself once none remain) in home mode only — the
+  > endpoint keeps serving the whole document, since NR-6 asks it for held days.
 
 - **NR-6 (SHOULD).** A **sitting-day page with nothing in it yet** — an announced
   day, or one parlament.hu has not populated — SHOULD show that day's entry from

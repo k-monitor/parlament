@@ -25,7 +25,7 @@ export default {
   // `representatives` is the merged Felszólalók page: representatives, nationality
   // advocates and the other speakers in one list, picked apart by category chips
   // (REP-1). `advocates` / `speakers` name two of those chips.
-  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', factions: 'Factions', bills: 'Bills', documents: 'All documents', questions: 'Questions', votes: 'Votes', analyses: 'Analyses', analysesIndex: 'Overview', cohesion: 'Faction analysis', topics: 'Topics', interjections: 'Interjections', settlements: 'Settlements', settlementReps: 'Own constituency', about: 'About' },
+  nav: { home: 'Home', menu: 'Main menu', submenu: 'submenu', search: 'Search', sessions: 'Sittings', representatives: 'Speakers', advocates: 'Nationality advocates', speakers: 'Other speakers', officials: 'Office holders', portfolios: 'Portfolios', committees: 'Committees', factions: 'Factions', bills: 'Bills', documents: 'All documents', questions: 'Questions', votes: 'Votes', analyses: 'Analyses', analysesIndex: 'Overview', cohesion: 'Faction analysis', topics: 'Topics', interjections: 'Interjections', settlements: 'Settlements', settlementReps: 'Own constituency', about: 'About' },
   share: {
     label: 'Share', menu: 'Share options', native: 'Share…',
     facebook: 'Facebook', x: 'X', bluesky: 'Bluesky',
@@ -460,6 +460,87 @@ export default {
   },
   // "Find your MP" — settlement → single-member constituency → MP (REP-10).
   // Portfolios (§6C): the government side of the record.
+  committees: {
+    title: 'Committees',
+    intro: 'The committees of the National Assembly: who sits on them, when they '
+      + 'met, and which documents they handled.',
+    unit: 'committee',
+    searchPlaceholder: 'Search by committee name…',
+    scope: 'in cycle {cycle}',
+    noResults: 'No committee matches these filters.',
+    backToList: 'Committees',
+    kinds: {
+      'állandó': 'Standing',
+      eseti: 'Ad hoc',
+      'vizsgáló': 'Inquiry',
+      'nemzetiségi': 'Nationalities',
+      'törvényalkotási': 'Legislative',
+    },
+    kindFilter: 'Filter by committee kind',
+    allKinds: 'All',
+    showSubcommittees: 'With subcommittees',
+    subcommittee: 'subcommittee',
+    subcommitteesOf: 'Subcommittee of {name}',
+    sort: 'Sort',
+    sorts: {
+      official: 'Official order',
+      name: 'By name',
+      meetings: 'Meetings',
+      duration: 'Time in session',
+      members: 'Members',
+    },
+    upcoming: 'Upcoming meetings',
+    upcomingNote: 'Meetings the committees have scheduled but not yet held.',
+    cancelled: 'cancelled',
+    membersShort: 'members',
+    meetingsShort: 'meetings',
+    chair: 'chair',
+    roles: {
+      chair: 'chair',
+      'deputy-chair': 'deputy chair',
+      member: 'member',
+      other: 'other',
+    },
+    members: 'Members and officers',
+    formerMembers: 'Former members',
+    formerMembersNote: 'People whose seat ended during the cycle.',
+    noMembers: 'No membership is recorded for this committee.',
+    subcommittees: 'Subcommittees',
+    meetings: 'Meetings',
+    noMeetings: 'No meeting is recorded for this committee.',
+    minutes: 'Minutes',
+    noMinutes: 'No published minutes',
+    quorum: 'Quorum',
+    duration: 'Duration',
+    date: 'Date',
+    meetingKind: 'Kind',
+    documents: 'Documents',
+    discussed: 'Documents handled',
+    tabled: 'Documents tabled',
+    noDocuments: 'No such document in this cycle.',
+    referredAt: 'Referred',
+    committeeStatus: 'Committee stage',
+    sponsors: 'Submitted by',
+    more: 'Show {count} more',
+    site: 'Committee website',
+    email: 'Contact',
+    created: 'Created',
+    ended: 'Dissolved',
+    profileTitle: 'Committee seats',
+    profileEmpty: 'No committee seat recorded for this cycle.',
+    current: 'current',
+    until: '–{date}',
+    since: '{date}–',
+    methodology: 'Committee data comes from parlament.hu\'s own committee '
+      + 'registry. Membership is assembled from two queries: the roster gives the '
+      + 'composition as it stands (for a closed cycle, at its end), and the '
+      + 'changes listing gives dated terms. For a closed cycle the second is '
+      + 'complete — every seat ends when the term does — while for the running '
+      + 'cycle it holds only the changes so far, which is why both are shown. '
+      + 'Meeting counts and durations are the source\'s own totals, which count '
+      + 'more sittings than it lists individually; both figures are reported. '
+      + 'Minutes are linked, not copied.',
+  },
   portfolios: {
     title: 'Portfolios',
     intro: 'Which ministry was asked what, which portfolio laid which documents '

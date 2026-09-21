@@ -15,7 +15,7 @@ from pathlib import Path
 # PARLAMONITOR_MODULES is never registered: its API routes 404 and the frontend,
 # which reads /api/v1/meta, hides its nav entry (EXT-6).
 ALL_MODULES = ("proceedings", "representatives", "bills", "votes", "portfolios",
-               "settlements", "interjections")
+               "settlements", "interjections", "committees")
 
 # Per-speech types (felszólalás típusa) whose speeches are procedural/chairing
 # and therefore excluded from representative/faction statistics (STAT-1). Kept

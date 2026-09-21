@@ -39,8 +39,8 @@ const showAnalyses = computed(() => ANALYSES.some(analysisEnabled))
 const NAV_SECTIONS = {
   reps: {
     match: ['representatives', 'lookup', 'advocates', 'speakers', 'allSpeakers',
-            'officials', 'portfolios', 'portfolio', 'factions', 'profile',
-            'compare'],
+            'officials', 'portfolios', 'portfolio', 'committees', 'committee',
+            'factions', 'profile', 'compare'],
     // `profile` is a detail page of every person tab — which one is decided at
     // runtime by the kind of person the profile is (see `tabActive`).
     tabs: [
@@ -66,6 +66,9 @@ const NAV_SECTIONS = {
       // the tab goes when the module is switched off (EXT-6) while the rest of
       // the section stays.
       { name: 'portfolios', key: 'portfolios', group: 'bodies', detail: ['portfolio'] },
+      // Bizottságok (§6F): the other body the same people sit in. Its own
+      // module too, so the tab goes when it is switched off (EXT-6).
+      { name: 'committees', key: 'committees', group: 'bodies', detail: ['committee'] },
       { name: 'factions', key: 'factions', group: 'bodies' },
     ],
   },
@@ -130,6 +133,7 @@ const sectionTabs = computed(() =>
       return t.name === 'analyses' || analysisAvailable(ANALYSIS_BY_ROUTE[t.name])
     }
     if (t.name === 'portfolios') return store.moduleEnabled('portfolios')
+    if (t.name === 'committees') return store.moduleEnabled('committees')
     // The rest of this bar belongs to the representatives module, and one of its
     // tabs (Tárcák) is a module that can outlive it — so a deployment with
     // representatives switched off must not be left with tabs that 404 (EXT-6).

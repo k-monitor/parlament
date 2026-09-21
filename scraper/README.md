@@ -17,6 +17,7 @@ kept only as reference material; nothing here imports it at runtime.
 | `processed/representatives-<cycle>.json` | `parlamonitor.representatives` | the MP registry for a cycle: bio, faction & committee history, constituency, education, and per-cycle speech / bill-submission counts. |
 | `processed/advocates-<cycle>.json` | `parlamonitor.advocates` | the **nationality-advocate** registry (*nemzetiségi szószólók*) for a cycle: same record shape as an MP plus the `nationality` they speak for. They are not in the MP roster, but share its id space — so the file is additive and needs no re-run of the MP stage. |
 | `processed/officeholders.json` | `parlamonitor.officeholders` | the **office-holder** registry (*tisztségviselők*): every recorded term of government / House office with its **real** start and end date (open while still held) and the portal's own office **category**, grouped by person. Cycle-less, and the only source that dates the office of a **non-MP** minister or state secretary — who is in no roster at all. The category is not in the data: it is *which* per-category listing returned the row, so the stage asks for each category in turn (six paged listings) and tags what comes back. |
+| `processed/committees-<cycle>.json` | `parlamonitor.committees` | the **committee** registry (*bizottságok*) for a cycle: every body — main committees and subcommittees in one flat list keyed by its own id — with its type, dates and contact, plus who sits on it (`members`, the roster on one date), every **dated** membership and office term (`terms`), every `meeting` with its minutes PDF, and the irományok it dealt with (`documents`) and tabled (`submissions`), plus the meetings it has scheduled but not yet held (`upcoming` — state, not history). Membership needs both listings: see [Committees](#committees-6f). |
 | `documents/<cycle>/` | `parlamonitor.documents` | **optional** mirror of the iromány document *files* themselves — the extracted text (`text/<docid>.txt.xz`), the source PDF (`pdf/<docid>.pdf`), or both, plus an `index.json` manifest. **Off by default**; see [Document files](#document-files-doc-1). |
 | `processed/aktualis.json` | `parlamonitor.aktualis` | the **Aktuális** page: the documents it links (napirend, ülésterv, submission deadlines, legislative programme) and the **order paper for the sitting that is coming**, parsed out of the napirend PDF into days, timetables and agenda items — plus the House Committee's next meeting. The one source on the site for what the House is *about to* do; see [The Aktuális page](#the-aktuális-page-nr-1). |
 | `logs/ingest-<ts>.json` | both | per-run ingestion log (run time, sittings added, errors, backend). |
@@ -140,6 +141,9 @@ python -m parlamonitor representatives --cycle 43 --no-details ./data
 
 # Full registry with per-MP detail + portraits (heavier; one run per cycle)
 python -m parlamonitor representatives --cycle 43 --photos ./data
+
+# Committees (bizottságok): bodies, membership, meetings and irományok
+python -m parlamonitor committees --cycle 43 ./data
 
 # Nationality advocates (szószólók) — one cycle, or backfill every cycle that
 # has them (40 on). Portraits are downloaded by default (~13 people per cycle).
@@ -379,6 +383,60 @@ skipped, and a repeat pass over cycle 43 costs no requests at all. A 404 or an
 over-cap document is *settled* and not asked about again; only a genuine fetch
 error is retried next run. `--force` re-fetches everything.
 
+### Committees (§6F)
+
+The committee registry is nine Felicitas queries behind five portal pages
+(*Bizottságok és albizottságaik*, *Bizottságok tagjai és tisztségviselői*,
+*Bizottsági tagság, tisztség változásai*, *Bizottsági jegyzőkönyvek*,
+*Bizottságok által tárgyalt irományok*). Each was found the documented way —
+`data-page` on the page, then its page definition — not guessed.
+
+Three things about the shape are worth knowing before touching this stage.
+
+**A body's identity is not in the column you'd expect.** The committee listing
+is built for a two-level table: one row per *(main committee, body)* pair, where
+`albizottsagId`/`albizottsagNev` name the body the row is about and
+`bizottsagId`/`bizottsagNev` *always* name the main committee. On a main
+committee's own row the two agree; on a subcommittee's they do not. Read the
+wrong pair and every subcommittee is silently renamed after its parent.
+`bizottsagKod` is the parent's on both, which is why it is dropped for
+subcommittees — it builds the *homepage URL*, and the child would point at the
+parent's page.
+
+**Membership needs two queries, not one.** The roster
+(`bizottsag-tagjai-query`) answers "who sits on this *on this date*" and the
+term listing (`…-tagsag-tisztseg-valtozasai-…`) "which seats started or ended
+during the cycle". Neither alone is the cycle's membership:
+
+| | roster | terms |
+| --- | --- | --- |
+| **closed cycle** | its final state | **complete** — every seat ends when the term does |
+| **running cycle** | **complete** — who sits today | only the churn so far |
+
+Measured on cycle 42: the roster gave 212 *(committee, person)* pairs, the term
+listing 426 — every one of the roster's plus 214 more it cannot show, people who
+left before the cycle ended. On cycle 43 the same term query returns 19 rows.
+So both are fetched and the API unions them, which is also why the roster query
+is asked twice per cycle: `pBizottsagAlbizottsagai` *switches* it between main
+committees and subcommittees rather than adding the latter to the former.
+
+**The two meeting figures differ on purpose.** `bizottsag-ulesei` lists meetings
+individually (with `ulesHosszaMasodPercben` in **seconds**, despite the upstream
+caption saying óra:perc), while `www-bizottsagi-ulesek-szama-query` gives
+per-committee totals (in **minutes**) that count sittings the listing does not
+include. Both are stored and both are shown; neither is recomputed from the
+other.
+
+**The schedule ahead is asked from today, not from the cycle's start.**
+`tervezett-bizottsagi-ules-idorend-query` takes `pIdoszakEleje` as a *from* date
+with no upper bound, so from the start of the term it returns every sitting the
+committees ever put in the diary — 369 rows for cycle 43 in September, against
+the five actually ahead. `committee_upcoming(..., from_date=…)` overrides it
+for a backfill.
+
+Everything the registry links — the jegyzőkönyv PDFs, the iromány texts — is
+**linked, not mirrored** (LEGAL-1); only the URL is stored.
+
 ### The Aktuális page (NR-1)
 
 Everything the Felicitas API exposes is a record of what the House **has done**.
@@ -543,6 +601,11 @@ python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
   speeches is never pruned this way: an existing record vanishing from a listing
   is an upstream glitch, so it is logged and kept. The DB row goes on the loader's
   next `--update`, which drops sittings whose processed file is gone.
+- **Committees:** re-read whole each pass (there is nothing upstream to key a
+  per-body cache on) and rewritten only when a count, a newly published minutes
+  file or the newest meeting moved. `--skip-committees` drops the stage;
+  `--no-detail` keeps the bodies and the membership but skips the per-body
+  iromány listings, which are most of its ~130 requests.
 - **Bills / votes:** the cheap list query runs, but per-item detail reuses the
   detail cache above, and the registry JSON is rewritten only when it differs.
 - **Representatives:** refreshed on a slow cadence (`--reps-max-age`, default 12h,

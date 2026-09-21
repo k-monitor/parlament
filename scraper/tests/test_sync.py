@@ -109,6 +109,7 @@ def patched(tmp_path, monkeypatch):
 
 def _run(fel, paths):
     return sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                         skip_committees=True,
                          skip_reps=True)
 
 
@@ -463,6 +464,7 @@ def _run_offices(fel, paths, *, force=False):
     """A poll with only the office-holder step live (the other domains need their
     own fakes, and the reps refresh would reach out to Wikidata)."""
     return sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                         skip_committees=True,
                          skip_reps=True, skip_advocates=True, force=force)
 
 
@@ -554,6 +556,7 @@ def test_sync_runs_the_mirror_once_asked(patched, monkeypatch):
                         speeches={"u1": [_sp("a", 10, 1)]})
     fel.http = object()          # the mirror fetches over the client's transport
     summary = sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                         skip_committees=True,
                             skip_reps=True, documents="text")
     assert summary["documents"] == {"fetched": 0}
     assert seen["retention"] == "text" and seen["compression"] == "xz"
@@ -575,17 +578,20 @@ def test_a_sync_pass_is_budgeted_so_the_first_one_cannot_run_away(patched,
     fel.http = object()
 
     sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                         skip_committees=True,
                   skip_reps=True, documents="text")
     assert seen["limit"] == config.DEFAULT_DOCUMENTS_PER_SYNC
 
     monkeypatch.setenv("PARLAMONITOR_DOCUMENTS_PER_SYNC", "7")
     sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                         skip_committees=True,
                   skip_reps=True, documents="text")
     assert seen["limit"] == 7
 
     # An explicit argument wins over the environment, and 0 means "no cap" —
     # which reaches the stage as None, its own word for unlimited.
     sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                         skip_committees=True,
                   skip_reps=True, documents="text", documents_limit=0)
     assert seen["limit"] is None
 
@@ -601,6 +607,7 @@ def test_a_failing_mirror_never_sinks_the_sync(patched, monkeypatch):
     fel = FakeFelicitas(days=[_day("u1", "2026-05-09", 1, 3600)],
                         speeches={"u1": [_sp("a", 10, 1)]})
     summary = sync.run_sync(fel, paths, 43, skip_bills=True, skip_votes=True,
+                         skip_committees=True,
                             skip_reps=True, documents="text")
     assert summary["sessions"] == ["43001"]
     assert any("documents:" in e for e in summary["errors"])

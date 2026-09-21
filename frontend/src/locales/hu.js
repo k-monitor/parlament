@@ -37,6 +37,7 @@ export default {
     speakers: 'Egyéb felszólalók',
     officials: 'Tisztségviselők',
     portfolios: 'Tárcák',
+    committees: 'Bizottságok',
     factions: 'Frakciók',
     bills: 'Törvényjavaslatok',
     // A szekció harmadik, gyűjtőfüle: minden iromány típus egy listában
@@ -543,6 +544,95 @@ export default {
   },
   // Tárcák (§6C): a kormányzati oldal – melyik minisztériumhoz milyen kérdés
   // érkezett, és melyik tárca mit nyújtott be.
+  committees: {
+    title: 'Bizottságok',
+    intro: 'Az Országgyűlés bizottságai: kik ülnek bennük, mikor üléseztek, és '
+      + 'milyen irományokkal foglalkoztak.',
+    unit: 'bizottság',
+    searchPlaceholder: 'Keresés bizottság neve szerint…',
+    scope: 'a(z) {cycle} ciklusban',
+    noResults: 'Nincs a feltételeknek megfelelő bizottság.',
+    backToList: 'Bizottságok',
+    // A forrás saját bizottságtípusai; a szűrőcsipek ezeket írják ki.
+    kinds: {
+      'állandó': 'Állandó',
+      eseti: 'Eseti',
+      'vizsgáló': 'Vizsgáló',
+      'nemzetiségi': 'Nemzetiségi',
+      'törvényalkotási': 'Törvényalkotási',
+    },
+    kindFilter: 'Szűrés bizottság típusa szerint',
+    allKinds: 'Mind',
+    showSubcommittees: 'Albizottságokkal',
+    subcommittee: 'albizottság',
+    subcommitteesOf: 'A(z) {name} albizottsága',
+    sort: 'Rendezés',
+    sorts: {
+      official: 'Hivatalos sorrend',
+      name: 'Név szerint',
+      meetings: 'Ülések száma',
+      duration: 'Ülések hossza',
+      members: 'Taglétszám',
+    },
+    // A bizottságok által kitűzött, még meg nem tartott ülések (BIZ-14).
+    upcoming: 'Következő ülések',
+    upcomingNote: 'A bizottságok által kitűzött, még meg nem tartott ülések.',
+    cancelled: 'elmarad',
+    // A kártyák számai – mindegyik mellé kiírjuk, mit számol.
+    membersShort: 'tag',
+    meetingsShort: 'ülés',
+    chair: 'elnök',
+    // Tisztségek: a forrás magyar megnevezését mutatjuk, ez csak a rendezéshez
+    // és a fordításhoz kell.
+    roles: {
+      chair: 'elnök',
+      'deputy-chair': 'alelnök',
+      member: 'tag',
+      other: 'egyéb',
+    },
+    members: 'Tagok és tisztségviselők',
+    formerMembers: 'Korábbi tagok',
+    formerMembersNote: 'Akiknek a tagsága a cikluson belül megszűnt.',
+    noMembers: 'Ehhez a bizottsághoz nincs rögzített tagság.',
+    subcommittees: 'Albizottságok',
+    meetings: 'Ülések',
+    noMeetings: 'Ehhez a bizottsághoz nincs rögzített ülés.',
+    minutes: 'Jegyzőkönyv',
+    noMinutes: 'Nincs közzétett jegyzőkönyv',
+    quorum: 'Határozatképesség',
+    duration: 'Időtartam',
+    date: 'Dátum',
+    meetingKind: 'Ülés típusa',
+    documents: 'Irományok',
+    discussed: 'Tárgyalt irományok',
+    tabled: 'Benyújtott irományok',
+    noDocuments: 'Ebben a ciklusban nincs ilyen iromány.',
+    referredAt: 'Kijelölés',
+    committeeStatus: 'Bizottsági állapot',
+    sponsors: 'Benyújtó',
+    more: 'További {count} megjelenítése',
+    site: 'A bizottság honlapja',
+    email: 'Elérhetőség',
+    created: 'Létrehozva',
+    ended: 'Megszűnt',
+    // A profilon megjelenő blokk (BIZ-7).
+    profileTitle: 'Bizottsági tagságok',
+    profileEmpty: 'Ebben a ciklusban nincs rögzített bizottsági tagsága.',
+    current: 'jelenleg is',
+    until: '–{date}',
+    since: '{date}–',
+    // Miért két forrásból áll a tagság – a hiányt kimondjuk, nem elrejtjük.
+    methodology: 'A bizottsági adatok a parlament.hu saját bizottsági '
+      + 'nyilvántartásából származnak. A tagság két lekérdezésből áll össze: a '
+      + '„Bizottságok tagjai és tisztségviselői” a jelenlegi (lezárt ciklusnál a '
+      + 'ciklus végi) összetételt adja, a „Bizottsági tagság, tisztség változásai” '
+      + 'pedig a dátumozott megbízatásokat. Lezárt ciklusnál a második teljes – '
+      + 'minden megbízatás a ciklus végén zárul –, a futó ciklusnál viszont csak '
+      + 'az addigi változásokat tartalmazza, ezért a kettőt együtt mutatjuk. Az '
+      + 'ülések számát és időtartamát a forrás összesítése adja, ami több ülést '
+      + 'számol, mint amennyit tételesen közöl; a kettőt külön írjuk ki. A '
+      + 'jegyzőkönyveket nem másoljuk, csak hivatkozzuk.',
+  },
   portfolios: {
     title: 'Tárcák',
     intro: 'Ez az oldal a minisztériumok alá tartozó kormányzati tisztségeket hivatott egységesíteni.',
@@ -754,7 +844,7 @@ export default {
       + 'udvariassági részek („egyéb”) nem számítanak bele, az ülésvezetőként '
       + 'elmondottak pedig egyáltalán nem kerülnek a modell elé.',
     topicsReferenceNote: 'A függőleges vonal azt mutatja, hogy ugyanebben az '
-      + 'időszakban a Ház egésze mennyit szánt az adott témára. Enélkül félrevezető '
+      + 'időszakban a Parlament egésze mennyit szánt az adott témára. Enélkül félrevezető '
       + 'az ábra: amiről egy képviselő beszél, az jórészt az, ami éppen napirenden volt.',
     topicsCaveat: 'Gépi besorolás, tájékoztató jelleggel — nem hivatalos minősítés, '
       + 'és nem a képviselő szakterületeinek listája.',
@@ -1050,8 +1140,8 @@ export default {
     received: 'Kapott közbeszólások',
     dragHint: 'Az ábra nagyítható és mozgatható; egy képviselő ki is húzható a kuszaságból.',
     close: 'Bezárás',
-    methodology: 'A gyorsírói jegyzőkönyv a hangosabb bekiabálásokat zárójelben, szó szerint, a félbeszakított felszólalás szövegébe írja: „(Balla György: Úgy van!)”. A Parlamonitor ezeket emeli ki, és köti össze a két képviselőt: a közbeszólót a zárójelben megnevezett név alapján, a másik oldalon pedig azt, akié a felszólalás. A név csak akkor számít, ha egyetlen képviselőre illik – ha a Házban egyszerre több azonos nevű képviselő ült (például két Tóth István), a közbeszólás megnevezetlen marad, nem tippelünk. Ugyanezt a szabályt használja a jegyzőkönyv-olvasó is, amikor a szövegben a közbeszóló nevét a profiljára linkeli, így az ábra és a jegyzőkönyv ugyanazt mondja.',
-    methodologyExclusions: 'Nem számítjuk bele az ülésvezetői felszólalások alatt elhangzott közbeszólásokat: egy szavazási blokk a jegyzőkönyvben egyetlen, órákig tartó levezető elnöki felszólalás, így egy egész délután bekiabálásai oda esnének, és az alelnökök lennének a Ház messze legtöbbet félbeszakított tagjai (ugyanaz a szabály, ami minden más képviselői statisztikából is kihagyja az ülésvezetést). Nem számítjuk azokat sem, amelyeknél a jegyzőkönyv csak az eseményt rögzíti, a szavakat nem („Gulyás Gergely közbeszól.”), és azokat sem, ahol a szavak megvannak, de a bekiabáló nem („Közbeszólások a Fidesz padsoraiból: Nem!”).',
+    methodology: 'A gyorsírói jegyzőkönyv a hangosabb bekiabálásokat zárójelben, szó szerint, a félbeszakított felszólalás szövegébe írja: „(Balla György: Úgy van!)”. A Parlamonitor ezeket emeli ki, és köti össze a két képviselőt: a közbeszólót a zárójelben megnevezett név alapján, a másik oldalon pedig azt, akié a felszólalás. A név csak akkor számít, ha egyetlen képviselőre illik – ha a Parlamentben egyszerre több azonos nevű képviselő ült (például két Tóth István), a közbeszólás megnevezetlen marad, nem tippelünk. Ugyanezt a szabályt használja a jegyzőkönyv-olvasó is, amikor a szövegben a közbeszóló nevét a profiljára linkeli, így az ábra és a jegyzőkönyv ugyanazt mondja.',
+    methodologyExclusions: 'Nem számítjuk bele az ülésvezetői felszólalások alatt elhangzott közbeszólásokat: egy szavazási blokk a jegyzőkönyvben egyetlen, órákig tartó levezető elnöki felszólalás, így egy egész délután bekiabálásai oda esnének, és az alelnökök lennének a Parlament messze legtöbbet félbeszakított tagjai (ugyanaz a szabály, ami minden más képviselői statisztikából is kihagyja az ülésvezetést). Nem számítjuk azokat sem, amelyeknél a jegyzőkönyv csak az eseményt rögzíti, a szavakat nem („Gulyás Gergely közbeszól.”), és azokat sem, ahol a szavak megvannak, de a bekiabáló nem („Közbeszólások a Fidesz padsoraiból: Nem!”).',
     coverage: 'A kiválasztott ciklusban {extracted} szó szerinti közbeszólás került elő, ebből {attributed} volt egyértelmű névhez köthető; {procedural} ülésvezetői felszólalás alatt hangzott el.',
   },
   // Elemzések (§4E) — a szekció nyitóoldala. A kártyák szövege itt van, a
@@ -1080,7 +1170,7 @@ export default {
       topics: {
         source: 'Felszólalások és irományok alapján',
         title: 'Témák',
-        desc: 'Miről szól a plenáris ülés, és mi kerül irományként a Ház elé — '
+        desc: 'Miről szól a plenáris ülés, és mi kerül irományként a Parlament elé — '
           + 'szakpolitikai témák szerint, évről évre és frakciónként.',
       },
       interjections: {

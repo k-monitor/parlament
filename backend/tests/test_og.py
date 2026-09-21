@@ -545,3 +545,33 @@ def test_home_and_list_routes_get_default_card(spa_client):
     # A real asset miss still 404s (never the shell) so the edge can't cache
     # HTML under a hashed-asset URL.
     assert client.get("/assets/missing-abcd.js").status_code == 404
+
+
+# --- committees (§6F) -------------------------------------------------------
+
+def test_committee_page_has_its_own_share_card(og_client):
+    """Without a route of its own the two-segment path falls through to
+    `/representatives/{person_id}` and a real page answers the 404 shell."""
+    r = og_client.get("/representatives/committees/biz-1")
+    assert r.status_code == 200
+    html = r.text
+    assert "Költségvetési Bizottság" in html
+    assert 'property="og:title"' in html
+    assert "GENERIC SITE DESCRIPTION" not in html
+    # The roster is the point of the page, so the names are in the crawlable
+    # body — linked where the person is one we hold…
+    assert "/representatives/k001" in html
+    assert "Kovács Béla" in html
+    # …and a plain label where they are not (SCR-5).
+    assert "Külső Elek" in html
+
+
+def test_committee_card_carries_a_breadcrumb_to_the_list(og_client):
+    html = og_client.get("/representatives/committees/biz-1").text
+    assert "/representatives/committees" in html
+    assert "Bizottságok" in html
+
+
+def test_unknown_committee_share_card_is_not_indexed(og_client):
+    r = og_client.get("/representatives/committees/nope")
+    assert "noindex" in r.text

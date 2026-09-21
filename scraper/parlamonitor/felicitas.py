@@ -37,6 +37,21 @@ not needed for v1.
     (bio, faction history, committees, constituency, education, per-cycle speech
     and bill counts) and a photo resource endpoint.
 
+**Committees** (``bizottsag-query-provider``) — verified 2026-09:
+
+  * ``bizottsag-lista-wwwquery``  (cycle) → every committee body of the cycle,
+    main committees and subcommittees in one listing.
+  * ``bizottsag-mini-adatlap-query`` (body id) → its type and contact details.
+  * ``bizottsag-tagjai-query``    (cycle + date) → the roster on that date, each
+    seat carrying the member's ``kepviseloId`` (EXT-2).
+  * ``bizottsagi-tagsag-tisztseg-valtozasai-reszletes-biz-query`` (cycle) → every
+    dated membership and office term.
+  * ``bizottsag-ulesei``          (cycle) → every meeting with its minutes PDF.
+  * ``www-bizottsagi-ulesek-szama-query`` (cycle) → per-committee meeting totals.
+  * ``bizottsagok-altal-targyalt-iromanyok-lista-query`` (body id) → the irományok
+    it dealt with; ``onallo-``/``nem-onallo-inditvanyok-query`` those it tabled.
+  * ``tervezett-bizottsagi-ules-idorend-query`` → the meetings still to come.
+
 Cycle date ranges (needed as query bounds) come from the list query's parameter
 ``rebind`` endpoint.
 """
@@ -45,6 +60,15 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timedelta, timezone
+
+try:                                        # stdlib since 3.9; absent on some
+    from zoneinfo import ZoneInfo           # minimal builds without tzdata
+    _HU_TZ = ZoneInfo("Europe/Budapest")
+except Exception:                           # pragma: no cover - platform detail
+    # Only ever used to pick "today" for a date bound, where an hour or two
+    # either side of midnight cannot change the answer that matters.
+    _HU_TZ = timezone(timedelta(hours=1))
 
 from . import magyarkozlony
 from .http_client import HttpClient, HttpError
@@ -132,6 +156,44 @@ OFFICE_CATEGORIES = {
     "senior": "pEgyebVezetoTisztseg",     # egyéb vezető tisztség (pl. köztársasági elnök)
     "other": "pEgyebTisztseg",            # egyéb tisztség (pl. MNB, Közbeszerzési Hatóság)
 }
+# Committees (*bizottságok*). One provider serves the whole domain — the
+# registry, the membership, the meetings and the iromány listings — and every
+# query is a plain cycle+date-range select like the roster's (verified 2026-09).
+# The queries behind each portal page were read off its own page definition
+# (`/felicitas/api/page-info/page-item/<data-page>`), not guessed.
+BIZOTTSAG_PROVIDER = (f"{BASE}/felicitas/api/query/select/"
+                     "bizottsagadatok-bizottsag-registry/bizottsag-query-provider")
+# A committee's own homepage on the portal: `/web/guest/<ciklus>-<bizottsagKod>`
+# (e.g. `/web/guest/43-002J`). The pattern is the Link component's own recipe on
+# the *Bizottsági honlapok* page (`bizottsag-lista-top`), which joins those two
+# fields with a dash — not a guess. Only main committees have one.
+COMMITTEE_SITE_BASE = f"{BASE}/web/guest"
+# Committee minutes (jegyzőkönyv) and iromány PDFs come back as site-absolute
+# paths ("/biz42/bizjkv42/GAB/2603091.pdf"); they are linked, never mirrored.
+COMMITTEE_FILE_BASE = BASE
+# A cycle has at most a few hundred committee rows and ~3 600 meetings, so every
+# listing is one or two requests at this width instead of dozens.
+_COMMITTEE_PAGE_SIZE = 1000
+# The roles a committee seat can carry, most senior first. Used to order a
+# roster and to normalise the upstream free-text `tisztsegNeve` into a stable
+# slug the UI translates (renaming one is a data migration, as with the office
+# categories above).
+COMMITTEE_ROLES = {
+    "elnök": "chair",
+    "alelnök": "deputy-chair",
+    "tag": "member",
+}
+
+
+def committee_role(label: str | None) -> str:
+    """Normalise an upstream `tisztsegNeve` to a stable role slug.
+
+    Anything unrecognised keeps `other` rather than being dropped: the label
+    itself is stored alongside, so an unseen role still renders correctly and
+    only loses its sort position."""
+    return COMMITTEE_ROLES.get((label or "").strip().lower(), "other")
+
+
 PHOTO_RESOURCE = (f"{BASE}/web/guest/felicitas/api/query/resource/"
                  "kepviseloexportok/kepviselo-exported-queries-provider/"
                  "kepviselo-kepek")
@@ -201,6 +263,11 @@ def rows_as_dicts(payload: dict) -> list[dict]:
     for row in payload.get("rows") or []:
         out.append({inv[i]: row[i] for i in range(len(row)) if i in inv})
     return out
+
+
+def _today() -> str:
+    """Today in the House's own timezone, as the portal's date params want it."""
+    return datetime.now(_HU_TZ).date().isoformat()
 
 
 def _parse_off(value: str) -> float:
@@ -893,6 +960,362 @@ class FelicitasClient:
             "factionStats": faction_stats,
         }
 
+    # ---- committees (bizottságok) ---------------------------------------
+
+    def _committee_scope(self, cycle: int, start: str, end: str) -> dict:
+        """The cycle+date-range envelope every committee query takes.
+
+        `pIdopont` is the date a "who sits on it now" question is answered for;
+        every caller that asks a *point-in-time* question overrides it. The rest
+        of the queries are range queries and ignore it."""
+        return {"pCiklus": int(cycle), "hCiklusElejeLimit": start,
+                "hCiklusVegeLimit": end, "pIdoszakEleje": start,
+                "pIdoszakVege": end, "pIdopont": end}
+
+    def committee_bodies(self, cycle: int, start: str, end: str) -> list[dict]:
+        """Every committee **body** of ``cycle`` — main committees and their
+        subcommittees — one row each.
+
+        The upstream listing is shaped for a two-level table rather than a list:
+        with ``pAlbizottsag`` it returns one row per (main committee, body) pair,
+        where ``albizottsagId``/``albizottsagNev`` name the body the row is about
+        and ``bizottsagId``/``bizottsagNev`` always name the **main** committee —
+        equal to each other on a main committee's own row (``fobizottsagSor``),
+        the parent's on a subcommittee's. So the body's identity is taken from the
+        `albizottsag*` pair and the parent recorded only for subcommittees, which
+        is what makes both levels one flat list keyed by a single id.
+
+        The dates are the body's own (a subcommittee is usually created months
+        into the term); `code` is the per-cycle committee code that also builds
+        the portal homepage URL, and `standingCode` the stable three-letter code
+        (AGB, GAB, …) that is the same body across cycles and keys its logo."""
+        rows = self.select_all(BIZOTTSAG_PROVIDER, "bizottsag-lista-wwwquery",
+                               {**self._committee_scope(cycle, start, end),
+                                "pAlbizottsag": True}, _COMMITTEE_PAGE_SIZE)
+        out: dict[str, dict] = {}
+        for r in rows:
+            is_main = bool(r.get("fobizottsagSor"))
+            bid = r.get("albizottsagId") or r.get("bizottsagId")
+            if not bid:
+                continue
+            # A body can be listed more than once (it is a row per parent pair);
+            # the first spelling wins so a re-listing cannot reorder the registry.
+            out.setdefault(bid, {
+                "committeeId": bid,
+                "name": (r.get("albizottsagNev") if not is_main
+                         else r.get("bizottsagNev")) or r.get("bizottsagNev"),
+                "parentId": None if is_main else r.get("bizottsagId"),
+                "parentName": None if is_main else r.get("bizottsagNev"),
+                "isSubcommittee": not is_main,
+                "standingCode": r.get("allandoBizottsagKod"),
+                # `bizottsagKod` is the *main* committee's code on every row of
+                # its block, subcommittees included — it is what builds that
+                # committee's homepage URL, so keeping it on a subcommittee would
+                # read as the subcommittee's own code and point at the parent.
+                "code": r.get("bizottsagKod") if is_main else None,
+                "cycle": r.get("ciklus"),
+                "dateStart": (r.get("letrahozasDatuma") or "")[:10] or None,
+                "dateEnd": (r.get("megszuntetesDatuma") or "")[:10] or None,
+                "ord": (r.get("fobizottsagSorszamField") if is_main
+                        else r.get("alBizottsagSorszamField")),
+            })
+        return list(out.values())
+
+    def committee_sheet(self, committee_id: str) -> dict | None:
+        """One body's header sheet (*mini adatlap*): its **type** (állandó,
+        eseti, vizsgáló, nemzetiségi, törvényalkotási), contact e-mail and
+        whether the portal publishes a homepage for it.
+
+        The type is the one field no listing carries, and it is not derivable
+        from the name — "A Kegyelmi Botrány Felelőseit Feltáró Vizsgálóbizottság"
+        happens to say so, "a Médiatanács elnökét és tagjait jelölő eseti
+        bizottság" does not, and a subcommittee has no type at all. One small
+        request per body, ~40 per cycle."""
+        rows = self.select_all(BIZOTTSAG_PROVIDER, "bizottsag-mini-adatlap-query",
+                               {"pId": committee_id})
+        if not rows:
+            return None
+        r = rows[0]
+        return {
+            "type": r.get("bizottsagTipus"),
+            # Addresses are published obfuscated ("agb[kukac]parlament.hu"); we
+            # keep them exactly as published rather than un-mangling them, which
+            # would republish an address the House chose to hide from crawlers.
+            "email": r.get("emailCim") or None,
+            "hasSite": bool(r.get("honlapKell")),
+            "active": bool(r.get("aktivBizottsag")),
+        }
+
+    def committee_members(self, cycle: int, start: str, end: str,
+                          as_of: str | None = None) -> list[dict]:
+        """Who sits on each committee **on one date** (`as_of`, default the end
+        of the range) — the portal's own "Bizottságok tagjai és tisztségviselői".
+
+        Two requests: the query answers for main committees or for subcommittees,
+        never both (`pBizottsagAlbizottsagai` switches it over rather than adding
+        to it), so each is asked for and the two are concatenated.
+
+        Each row is a committee carrying its roster in a nested sub-table; this
+        flattens it to one row per seat, tagged with the committee it is on. The
+        seat carries the member's ``kepviseloId`` — the same person-id space as a
+        speech's speaker — so the roster joins straight to a profile (EXT-2), and
+        the faction they held the seat for.
+
+        This is a **snapshot**, not a history: a member who left before ``as_of``
+        is not in it. :meth:`committee_terms` is the dated record."""
+        point = as_of or end
+        out: list[dict] = []
+        for sub in (False, True):
+            body = {**self._committee_scope(cycle, start, end),
+                    "pIdopont": point, "pTagok": True, "pBizottsag": [],
+                    "pBizottsagAlbizottsagai": sub, "pMunkatarsak": False}
+            for row in self.select_all(BIZOTTSAG_PROVIDER, "bizottsag-tagjai-query",
+                                       body, _COMMITTEE_PAGE_SIZE):
+                cid = row.get("bizottsagId")
+                for i, m in enumerate(_subrows(row.get("bizottsagiTagok"))):
+                    label = m.get("tisztsegNeve")
+                    out.append({
+                        "committeeId": cid,
+                        "personID": m.get("kepviseloId"),
+                        # An asterisk marks a name the registry records under an
+                        # earlier spelling (`vanKepviseloRegiNeve`); it is a
+                        # footnote marker, not part of the name.
+                        "name": (m.get("kepviseloNev") or "").rstrip("*").strip(),
+                        "role": committee_role(label),
+                        "roleLabel": label,
+                        "factionId": m.get("frakcioId"),
+                        "factionName": m.get("frakcioNeve"),
+                        "governing": m.get("kormanyparti"),
+                        "ord": i,
+                        "asOf": point,
+                    })
+        return out
+
+    def committee_terms(self, cycle: int, start: str, end: str) -> list[dict]:
+        """Every **dated** committee membership and office term of ``cycle``.
+
+        Behind the portal's *Bizottsági tagság, tisztség változásai* page. Despite
+        the name this is not only the mid-term churn: over a **closed** cycle every
+        seat ends when the term does, so the listing is the cycle's complete
+        membership record — for cycle 42 it returned all 212 seats the end-of-cycle
+        snapshot shows plus 214 more the snapshot cannot (people who left before
+        it). For the **running** cycle it is genuinely only the changes so far,
+        which is why :meth:`committee_members` is fetched as well and the two are
+        unioned downstream.
+
+        A row can carry a membership span (``tagsag*``), an office span
+        (``tisztseg*``) or both; each is emitted separately so a term is one row
+        with one pair of dates. ``replacing`` is whom the person took over from,
+        when the registry records it."""
+        rows = self.select_all(
+            BIZOTTSAG_PROVIDER,
+            "bizottsagi-tagsag-tisztseg-valtozasai-reszletes-biz-query",
+            {**self._committee_scope(cycle, start, end), "pTagvaltozas": True},
+            _COMMITTEE_PAGE_SIZE)
+        out: list[dict] = []
+        for r in rows:
+            base = {
+                "committeeId": r.get("bizottsagId"),
+                "personID": r.get("kepviseloId"),
+                # The name comes with the faction in brackets ("Fazekas Sándor
+                # (Fidesz)"); the bare name is what joins to a person row, and the
+                # faction is already carried by the seat, so the suffix is dropped.
+                "name": _strip_faction(r.get("kepviseloNeve")),
+                "factionName": _faction_suffix(r.get("kepviseloNeve")),
+            }
+            if r.get("tagsagKezdete"):
+                out.append({**base, "kind": "membership", "role": "member",
+                            "roleLabel": None,
+                            "dateStart": r.get("tagsagKezdete"),
+                            "dateEnd": r.get("tagsagVege"),
+                            "reason": r.get("tagsagValtozasOka"),
+                            "replacing": _replaced_name(r.get("tagsagKiHelyett"))})
+            if r.get("tisztsegKezdete"):
+                label = r.get("tisztsegMegnevezese")
+                out.append({**base, "kind": "office",
+                            "role": committee_role(label), "roleLabel": label,
+                            "dateStart": r.get("tisztsegKezdete"),
+                            "dateEnd": r.get("tisztsegVege"),
+                            "reason": r.get("tisztsegValtozasOka"),
+                            "replacing": _replaced_name(r.get("tisztsegKiHelyett"))})
+        return out
+
+    def committee_meetings(self, cycle: int, start: str, end: str) -> list[dict]:
+        """Every committee meeting held in ``cycle`` — date, kind, quorum,
+        duration and the minutes PDF.
+
+        ``pAlbizottsaggal`` includes the subcommittees' own meetings, so this is
+        one request per cycle for every body rather than one per committee. The
+        minutes path is site-absolute and resolved to a full URL here; it is
+        **linked, never mirrored** (LEGAL-1). A meeting with no published minutes
+        keeps its row — that a committee met and left no record is itself the
+        finding.
+
+        ``duration_s`` is seconds despite the upstream caption saying óra:perc
+        (a 27-minute meeting comes back as 1620)."""
+        body = {**self._committee_scope(cycle, start, end),
+                "pAlbizottsaggal": True, "pCsakAlbizottsag": False,
+                "pKihelyezettUles": False}
+        out = []
+        for r in self.select_all(BIZOTTSAG_PROVIDER, "bizottsag-ulesei", body,
+                                 _COMMITTEE_PAGE_SIZE):
+            path = r.get("jegyzokonyvPath")
+            out.append({
+                "meetingId": r.get("ulesId"),
+                "committeeId": r.get("bizottsagId"),
+                "committeeName": r.get("bizottsagNeve"),
+                "number": r.get("ulesSorszam"),
+                "numberInYear": r.get("evenBeluliSorszam"),
+                "datetime": r.get("ulesDatuma"),
+                "kind": r.get("ulesTipusa"),
+                "quorum": r.get("hatarozatkepesseg"),
+                "durationS": r.get("ulesHosszaMasodPercben"),
+                "minutesUrl": f"{COMMITTEE_FILE_BASE}{path}" if path else None,
+            })
+        return out
+
+    def committee_meeting_stats(self, cycle: int, start: str,
+                                end: str) -> list[dict]:
+        """Per-committee meeting **aggregates**: how many times it met, for how
+        long in total, and how the meetings broke down by quorum.
+
+        Upstream's own totals rather than ours: it counts meetings we do not list
+        individually (closed sittings of some bodies) and applies the House's own
+        quorum rules, so the two figures are reported side by side downstream
+        instead of one being recomputed from the other. ``totalMinutes`` is
+        minutes here, unlike the per-meeting seconds above.
+
+        The listing carries a trailing all-committees summary row
+        (``nemOsszesitoSor`` false), which is dropped: a sum over the rows is the
+        consumer's own business."""
+        body = {**self._committee_scope(cycle, start, end),
+                "pKihelyezettUles": False, "pAlbizottsaggal": True}
+        out = []
+        for r in self.select_all(BIZOTTSAG_PROVIDER,
+                                 "www-bizottsagi-ulesek-szama-query", body,
+                                 _COMMITTEE_PAGE_SIZE):
+            if not r.get("nemOsszesitoSor"):
+                continue
+            out.append({
+                "committeeId": r.get("bizId"),
+                "meetings": r.get("osszesen"),
+                "totalMinutes": r.get("idotartam"),
+                "quorate": r.get("osszesenHatarozatkepes"),
+                "inquorate": r.get("hatarozatkeptelen"),
+                "lostQuorum": r.get("hatarozatkeptelenneValtHatarozatkepes"),
+                "agendaRejected": r.get("nemFogadtaElHatarozatkepes"),
+            })
+        return out
+
+    def committee_documents(self, cycle: int, start: str, end: str,
+                            committee_id: str) -> list[dict]:
+        """The irományok one committee **dealt with** in ``cycle``.
+
+        One row per iromány: the document's own id — which joins to a held `bill`
+        (EXT-2) — its number and title, the committee's stage on it and the date
+        it was referred there. Submitter names ride along in a nested sub-table
+        carrying each sponsor's ``kepviseloId``, so a document's sponsors link to
+        profiles without name matching.
+
+        Asked for **per committee** even though the query runs cycle-wide: run
+        that way its rows name the committee only in a display header
+        ("Népjóléti Bizottság által tárgyalt irományok") and carry no committee
+        id at all, so the listing could only be re-attached to a body by matching
+        that string. ``pInputBizottsag`` scopes it instead, and the id comes from
+        the caller."""
+        body = {**self._committee_scope(cycle, start, end),
+                "pInputBizottsag": committee_id, "pFolyamatban": False,
+                "pUniosNapirendiPont": False, "pNemzetisegiNapirendiPont": False}
+        out = []
+        for r in self.select_all(
+                BIZOTTSAG_PROVIDER,
+                "bizottsagok-altal-targyalt-iromanyok-lista-query", body,
+                _COMMITTEE_PAGE_SIZE):
+            sponsors = [{"personID": s.get("kepviseloId"),
+                         "name": s.get("benyujto")}
+                        for s in _subrows(r.get("benyujto"))
+                        if s.get("benyujto") or s.get("kepviseloId")]
+            out.append({
+                "committeeId": committee_id,
+                "billId": r.get("iromanyId"),
+                "billNumber": r.get("iromanyszam"),
+                "title": r.get("iromanycim"),
+                "status": r.get("bizottsagiAllapot"),
+                "referredAt": r.get("kijelolesDatuma"),
+                "sponsors": sponsors,
+            })
+        return out
+
+    def committee_submissions(self, cycle: int, start: str, end: str,
+                              committee_id: str) -> list[dict]:
+        """The irományok one committee **submitted** — its own motions
+        (*önálló indítvány*) and the reports and unified proposals it tabled on
+        other people's bills (*nem önálló indítvány*).
+
+        Per committee rather than per cycle: without ``pEgyBizottsag`` both
+        queries answer for the whole House (17 954 rows in cycle 42), which is the
+        bills module's job, not this one's. A Törvényalkotási Bizottság alone
+        tabled 1 194 non-self-standing motions in that cycle, so the listing is
+        paged at the usual width."""
+        out = []
+        for query, kind in (("onallo-inditvanyok-query", "own"),
+                            ("nem-onallo-inditvanyok-query", "motion")):
+            body = {**self._committee_scope(cycle, start, end),
+                    "pEgyBizottsag": committee_id}
+            for r in self.select_all(BIZOTTSAG_PROVIDER, query, body,
+                                     _COMMITTEE_PAGE_SIZE):
+                text = _first_subrow(r.get("iromanyszoveg") or r.get("szoveg")) or {}
+                link = text.get("iromanyszovegLink")
+                out.append({
+                    "committeeId": committee_id,
+                    "kind": kind,
+                    "billId": r.get("onalloId") or r.get("modositoId"),
+                    "billNumber": r.get("iromanyszam"),
+                    "title": r.get("cim"),
+                    "docType": r.get("tipus"),
+                    "textUrl": f"{COMMITTEE_FILE_BASE}{link}" if link else None,
+                })
+        return out
+
+    def committee_upcoming(self, cycle: int, start: str, end: str, *,
+                           from_date: str | None = None) -> list[dict]:
+        """The committee meetings that are **scheduled but have not happened** —
+        the portal's *Adott időszak tervezett bizottsági ülései*.
+
+        The only committee-side answer to "what is about to happen", the way the
+        napirend is for the plenary (NR-1), and like it there is no history to
+        keep: the newest read is the whole truth.
+
+        ``pIdoszakEleje`` is a *from* date here with **no upper bound** — the
+        query is "everything scheduled on or after this day". So it defaults to
+        today, not to the cycle's start: asked from the start of the term it
+        returns every sitting the committees ever put in the diary (369 for
+        cycle 43 in September, against the couple of dozen still ahead), and
+        each one already held would land in the "upcoming" table as well as in
+        the meeting record. ``from_date`` overrides it for a backfill."""
+        first = from_date or _today()
+        body = {"pCiklus": int(cycle), "hCiklusElejeLimit": start,
+                "hCiklusVegeLimit": end, "pIdoszakEleje": first,
+                "pHelyszin": True, "pUnios": False, "pNemzetisegi": False}
+        out = []
+        for r in self.select_all(BIZOTTSAG_PROVIDER,
+                                 "tervezett-bizottsagi-ules-idorend-query", body,
+                                 _COMMITTEE_PAGE_SIZE):
+            for m in _subrows(r.get("adatok")):
+                out.append({
+                    "meetingId": m.get("id"),
+                    "committeeId": m.get("bizottsagId"),
+                    "committeeName": m.get("bizottsagNev"),
+                    "date": (r.get("nap") or "").replace(".", "-").strip("-"),
+                    "time": r.get("idopont"),
+                    "venue": " ".join(x for x in (m.get("helyszin"),
+                                                  m.get("hely")) if x) or None,
+                    # Upstream marks a cancelled sitting by filling this in; an
+                    # empty string means it is still on.
+                    "cancelled": bool((m.get("elmaradt") or "").strip()),
+                })
+        return out
+
 
 # A bill reference embedded in a speech's agenda event (nested ``esemenyId``
 # blob from aktusok). Best-effort: the structure varies, so we pull recognisable
@@ -910,6 +1333,34 @@ def _subrows(nested) -> list[dict]:
 def _first_subrow(nested) -> dict | None:
     rows = _subrows(nested)
     return rows[0] if rows else None
+
+
+# The committee registry writes a person as "Fazekas Sándor (Fidesz)" — name and
+# faction in one string — while every other listing keeps them apart. These split
+# it back, so the name that joins to a person row is the bare name (SCR-5: the
+# faction is kept, not thrown away).
+_FACTION_SUFFIX_RE = re.compile(r"\s*\(([^()]*)\)\s*$")
+
+
+def _strip_faction(label: str | None) -> str | None:
+    """"Fazekas Sándor (Fidesz)" -> "Fazekas Sándor"."""
+    if not label:
+        return None
+    # The trailing asterisk marks a name recorded under an earlier spelling.
+    return _FACTION_SUFFIX_RE.sub("", label).rstrip("*").strip() or None
+
+
+def _faction_suffix(label: str | None) -> str | None:
+    """"Fazekas Sándor (Fidesz)" -> "Fidesz"; None when no faction is given."""
+    m = _FACTION_SUFFIX_RE.search(label or "")
+    return (m.group(1).strip() or None) if m else None
+
+
+def _replaced_name(nested) -> str | None:
+    """Whom this term's holder took over from, from the ``kiHelyett`` sub-table
+    (usually empty — the seat was new, not inherited)."""
+    row = _first_subrow(nested)
+    return _strip_faction(row.get("tisztsegviseloNeve")) if row else None
 
 
 def _parse_stages(diagram) -> list[dict]:

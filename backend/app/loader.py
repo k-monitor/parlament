@@ -1001,6 +1001,273 @@ def load_votes(conn: sqlite3.Connection, registry: dict) -> int:
     return len(data)
 
 
+# ---------------------------------------------------------------------------
+# Committees (bizottságok) registry
+# ---------------------------------------------------------------------------
+
+def _ensure_committee_tables(conn: sqlite3.Connection) -> None:
+    """Create the §6F tables on a pre-existing DB, so the committees land on an
+    already-built deployment through the incremental update alone (which
+    snapshots the live DB rather than re-running schema.sql). Mirrors the
+    definitions in schema.sql — a no-op on a freshly built DB."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS committee (
+            id TEXT PRIMARY KEY,
+            period_number INTEGER REFERENCES electoral_period(number),
+            name TEXT NOT NULL,
+            parent_id TEXT REFERENCES committee(id),
+            kind TEXT, standing_code TEXT, code TEXT, email TEXT, site_url TEXT,
+            date_start TEXT, date_end TEXT, ord INTEGER,
+            meetings INTEGER, total_minutes INTEGER, quorate INTEGER,
+            inquorate INTEGER);
+        CREATE INDEX IF NOT EXISTS idx_committee_period ON committee(period_number);
+        CREATE INDEX IF NOT EXISTS idx_committee_parent ON committee(parent_id);
+        CREATE TABLE IF NOT EXISTS committee_member (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            committee_id TEXT NOT NULL REFERENCES committee(id),
+            person_id TEXT REFERENCES person(person_id),
+            name TEXT, role TEXT, role_label TEXT,
+            faction_id INTEGER REFERENCES faction(id), faction_name TEXT,
+            governing INTEGER, ord INTEGER);
+        CREATE INDEX IF NOT EXISTS idx_committee_member_committee
+            ON committee_member(committee_id);
+        CREATE INDEX IF NOT EXISTS idx_committee_member_person
+            ON committee_member(person_id);
+        CREATE TABLE IF NOT EXISTS committee_term (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            committee_id TEXT NOT NULL REFERENCES committee(id),
+            person_id TEXT REFERENCES person(person_id),
+            name TEXT, kind TEXT, role TEXT, role_label TEXT, faction_name TEXT,
+            date_start TEXT, date_end TEXT, reason TEXT, replacing TEXT);
+        CREATE INDEX IF NOT EXISTS idx_committee_term_committee
+            ON committee_term(committee_id);
+        CREATE INDEX IF NOT EXISTS idx_committee_term_person
+            ON committee_term(person_id);
+        CREATE TABLE IF NOT EXISTS committee_meeting (
+            id TEXT PRIMARY KEY,
+            committee_id TEXT NOT NULL REFERENCES committee(id),
+            period_number INTEGER REFERENCES electoral_period(number),
+            number INTEGER, number_in_year TEXT, held_at TEXT, kind TEXT,
+            quorum TEXT, duration_s INTEGER, minutes_url TEXT);
+        CREATE INDEX IF NOT EXISTS idx_committee_meeting_committee
+            ON committee_meeting(committee_id);
+        CREATE INDEX IF NOT EXISTS idx_committee_meeting_period
+            ON committee_meeting(period_number);
+        CREATE INDEX IF NOT EXISTS idx_committee_meeting_date
+            ON committee_meeting(held_at);
+        CREATE TABLE IF NOT EXISTS committee_document (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            committee_id TEXT NOT NULL REFERENCES committee(id),
+            period_number INTEGER REFERENCES electoral_period(number),
+            role TEXT, bill_id TEXT, bill_number TEXT, title TEXT,
+            doc_type TEXT, status TEXT, referred_at TEXT, text_url TEXT,
+            sponsors TEXT);
+        CREATE INDEX IF NOT EXISTS idx_committee_document_committee
+            ON committee_document(committee_id);
+        CREATE INDEX IF NOT EXISTS idx_committee_document_bill
+            ON committee_document(bill_id);
+        CREATE INDEX IF NOT EXISTS idx_committee_document_period
+            ON committee_document(period_number);
+        CREATE TABLE IF NOT EXISTS committee_upcoming (
+            id TEXT PRIMARY KEY,
+            committee_id TEXT REFERENCES committee(id),
+            period_number INTEGER REFERENCES electoral_period(number),
+            committee_name TEXT, starts_on TEXT, starts_at TEXT, venue TEXT,
+            cancelled INTEGER DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS idx_committee_upcoming_date
+            ON committee_upcoming(starts_on);
+        CREATE INDEX IF NOT EXISTS idx_committee_upcoming_period
+            ON committee_upcoming(period_number);
+    """)
+
+
+def load_committees(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load a cycle's committees (Committees module, §6F). Re-ingesting a cycle
+    replaces its committees and everything hanging off them (idempotent, ING-4).
+
+    Seats and terms join to the shared person and faction entities, and each
+    iromány keeps its upstream id so it resolves to a held `bill` at query time
+    (EXT-2) — the same late-binding `vote_subject` uses, so re-ingesting bills
+    cannot break committees (EXT-1).
+
+    Must run after representatives (so a seat's holder is a loaded `person`) and
+    after bills (so the documents resolve). A committee member who is not in the
+    roster — a minister sitting ex officio, an MP whose mandate the cycle's
+    registry predates — keeps their name label and no link, like every other
+    unresolved person reference (SCR-5); no stub person is created, because a
+    committee seat alone is not a parliamentary career the site can show.
+    """
+    _ensure_committee_tables(conn)
+    meta = registry.get("meta", {})
+    period = meta.get("cycle")
+    bodies = registry.get("data", [])
+
+    if period is not None:
+        conn.execute("INSERT INTO electoral_period(number) VALUES (?) "
+                     "ON CONFLICT(number) DO NOTHING", (period,))
+
+    # Replace this cycle's committees, children first for the FKs. The children
+    # are keyed by their committee, so they are deleted through it.
+    held = ("SELECT id FROM committee WHERE period_number IS ?")
+    for tbl in ("committee_member", "committee_term", "committee_meeting",
+                "committee_document"):
+        conn.execute(f"DELETE FROM {tbl} WHERE committee_id IN ({held})", (period,))
+    # The schedule is keyed by cycle rather than by committee: it can name a
+    # body the registry does not hold (an eseti bizottság announced before it
+    # is constituted), so deleting it through `committee` would leave those rows
+    # behind for ever.
+    conn.execute("DELETE FROM committee_upcoming WHERE period_number IS ?",
+                 (period,))
+    # Subcommittees reference their parent, so they go before the parents do.
+    conn.execute("DELETE FROM committee WHERE period_number IS ? "
+                 "AND parent_id IS NOT NULL", (period,))
+    conn.execute("DELETE FROM committee WHERE period_number IS ?", (period,))
+
+    known_people = {r[0] for r in conn.execute("SELECT person_id FROM person")}
+
+    def _person(pid):
+        return pid if pid in known_people else None
+
+    faction_ids: dict[str, int | None] = {}
+
+    def _faction(name):
+        if not name:
+            return None
+        if name not in faction_ids:
+            row = conn.execute("SELECT id FROM faction WHERE label=?",
+                               (name.strip(),)).fetchone()
+            faction_ids[name] = row["id"] if row else None
+        return faction_ids[name]
+
+    # Main committees before subcommittees: the child's parent_id is a real FK,
+    # so the parent row has to exist first.
+    for body in sorted(bodies, key=lambda b: bool(b.get("parentId"))):
+        stats = body.get("meetingStats") or {}
+        conn.execute(
+            """INSERT INTO committee(id, period_number, name, parent_id, kind,
+                   standing_code, code, email, site_url, date_start, date_end,
+                   ord, meetings, total_minutes, quorate, inquorate)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (body.get("committeeId"), period, body.get("name"),
+             body.get("parentId"), body.get("type"), body.get("standingCode"),
+             body.get("code"), body.get("email"), body.get("siteUrl"),
+             body.get("dateStart"), body.get("dateEnd"), body.get("ord"),
+             stats.get("meetings"), stats.get("totalMinutes"),
+             stats.get("quorate"), stats.get("inquorate")))
+
+    ids = {b.get("committeeId") for b in bodies}
+
+    dropped: dict[str, int] = {}
+
+    def _rows(key):
+        """The registry's rows for `key`, minus any naming a body this cycle's
+        listing does not hold — an FK the DELETE above would later orphan.
+
+        A drop here is not routine: it means the registry's own body listing
+        disagrees with its detail, which is exactly what the `albizottsagId` /
+        `bizottsagId` trap produces (see the scraper README). So they are
+        counted and warned about rather than passed over — otherwise a half-read
+        registry loads silently and only the row counts, logged from the file's
+        own `meta`, would ever have said so."""
+        kept = [r for r in (registry.get(key) or []) if r.get("committeeId") in ids]
+        missing = len(registry.get(key) or []) - len(kept)
+        if missing:
+            dropped[key] = missing
+        return kept
+
+    for m in _rows("members"):
+        conn.execute(
+            """INSERT INTO committee_member(committee_id, person_id, name, role,
+                   role_label, faction_id, faction_name, governing, ord)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (m["committeeId"], _person(m.get("personID")), m.get("name"),
+             m.get("role"), m.get("roleLabel"), _faction(m.get("factionName")),
+             m.get("factionName"), 1 if m.get("governing") else 0, m.get("ord")))
+
+    for t in _rows("terms"):
+        conn.execute(
+            """INSERT INTO committee_term(committee_id, person_id, name, kind,
+                   role, role_label, faction_name, date_start, date_end, reason,
+                   replacing)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (t["committeeId"], _person(t.get("personID")), t.get("name"),
+             t.get("kind"), t.get("role"), t.get("roleLabel"),
+             t.get("factionName"), t.get("dateStart"), t.get("dateEnd"),
+             t.get("reason"), t.get("replacing")))
+
+    for mt in _rows("meetings"):
+        conn.execute(
+            """INSERT INTO committee_meeting(id, committee_id, period_number,
+                   number, number_in_year, held_at, kind, quorum, duration_s,
+                   minutes_url)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (mt.get("meetingId"), mt["committeeId"], period, mt.get("number"),
+             mt.get("numberInYear"), mt.get("datetime"), mt.get("kind"),
+             mt.get("quorum"), mt.get("durationS"), mt.get("minutesUrl")))
+
+    for d in _rows("documents"):
+        conn.execute(
+            """INSERT INTO committee_document(committee_id, period_number, role,
+                   bill_id, bill_number, title, doc_type, status, referred_at,
+                   text_url, sponsors)
+               VALUES (?,?,'discussed',?,?,?,NULL,?,?,NULL,?)""",
+            (d["committeeId"], period, d.get("billId"), d.get("billNumber"),
+             d.get("title"), d.get("status"), d.get("referredAt"),
+             json.dumps(d.get("sponsors") or [], ensure_ascii=False)))
+
+    for d in _rows("submissions"):
+        conn.execute(
+            """INSERT INTO committee_document(committee_id, period_number, role,
+                   bill_id, bill_number, title, doc_type, status, referred_at,
+                   text_url, sponsors)
+               VALUES (?,?,?,?,?,?,?,NULL,NULL,?,NULL)""",
+            (d["committeeId"], period, d.get("kind"), d.get("billId"),
+             d.get("billNumber"), d.get("title"), d.get("docType"),
+             d.get("textUrl")))
+
+    # …and inserted with the committee link resolved only where we hold the
+    # body, so the FK holds and the row still shows with its name (SCR-5).
+    for u in registry.get("upcoming") or []:
+        uid = u.get("meetingId")
+        if not uid:
+            continue
+        cid = u.get("committeeId")
+        conn.execute(
+            """INSERT INTO committee_upcoming(id, committee_id, period_number,
+                   committee_name, starts_on, starts_at, venue, cancelled)
+               VALUES (?,?,?,?,?,?,?,?)
+               ON CONFLICT(id) DO UPDATE SET
+                   committee_id=excluded.committee_id,
+                   period_number=excluded.period_number,
+                   committee_name=excluded.committee_name,
+                   starts_on=excluded.starts_on, starts_at=excluded.starts_at,
+                   venue=excluded.venue, cancelled=excluded.cancelled""",
+            (uid, cid if cid in ids else None, period, u.get("committeeName"),
+             u.get("date"), u.get("time"), u.get("venue"),
+             1 if u.get("cancelled") else 0))
+
+    conn.commit()
+    # Counted from the DB, not from the registry's own `meta`: those are what
+    # the scrape found, and the whole point of the filter above is that the two
+    # can differ. A load that dropped rows must not report a clean one.
+    def _n(table):
+        return conn.execute(
+            f"SELECT COUNT(*) FROM {table} t JOIN committee c ON c.id = t.committee_id "
+            "WHERE c.period_number IS ?", (period,)).fetchone()[0]
+
+    logger.info("Loaded %d committees (cycle %s): %d seats, %d terms, "
+                "%d meetings, %d documents", len(bodies), period,
+                _n("committee_member"), _n("committee_term"),
+                _n("committee_meeting"), _n("committee_document"))
+    if dropped:
+        logger.warning(
+            "Cycle %s committees: %s row(s) named a body the registry's own "
+            "listing does not hold and were NOT loaded — the scrape is "
+            "inconsistent with itself; re-run the committees stage",
+            period, ", ".join(f"{n} {k}" for k, n in sorted(dropped.items())))
+    return len(bodies)
+
+
 # Bills have no clean per-bill permalink on the modern portal; the text PDF is
 # the most specific resolvable original (LEGAL-1). This generic search page is
 # the fallback when a bill has no text.
@@ -4428,6 +4695,12 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         for vp in sorted((data_dir / "processed").glob("votes-*.json")):
             load_votes(conn, json.loads(vp.read_text()))
 
+        # Committees after bills for the same reason: a committee's iromány
+        # listings resolve against held bills, and its seats against the roster
+        # loaded above (EXT-2).
+        for cp in sorted((data_dir / "processed").glob("committees-*.json")):
+            load_committees(conn, json.loads(cp.read_text()))
+
         sessions = sorted((data_dir / "processed").glob("*-session.json"))
         loaded = 0
         for sp in sessions:
@@ -4510,13 +4783,13 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
 # ---------------------------------------------------------------------------
 
 # The processed-file globs, in the load order full builds use (reps → advocates →
-# bills → votes → sessions) so cross-module person/faction/bill links resolve
+# bills → votes → committees → sessions) so cross-module person/faction/bill links resolve
 # (EXT-2). A newly-added glob is "changed" for every existing DB (nothing is in its
 # load_state yet), which is exactly how a new domain lands on an already-built
 # deployment through the incremental path alone.
 _PROCESSED_GLOBS = ("representatives-*.json", "advocates-*.json", "bills-*.json",
-                    "votes-*.json", "*-session.json", "officeholders.json",
-                    "aktualis.json")
+                    "votes-*.json", "committees-*.json", "*-session.json",
+                    "officeholders.json", "aktualis.json")
 
 
 def _file_sig(path: Path) -> tuple[float, int]:
@@ -4722,6 +4995,8 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
                 reloaded_bill_periods.add(int(cycle))
         for p in changed["votes-*.json"]:
             load_votes(conn, json.loads(p.read_text()))
+        for p in changed["committees-*.json"]:
+            load_committees(conn, json.loads(p.read_text()))
 
         for p in changed["*-session.json"]:
             record = json.loads(p.read_text())

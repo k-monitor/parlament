@@ -122,6 +122,20 @@ export const api = {
   portfolio: (slug, period) => get(`/portfolios/${slug}`, { period }),
   portfolioTrend: (slug, period) => get(`/portfolios/${slug}/trend`, { period }),
   portfolioSpeeches: (slug, params) => get(`/portfolios/${slug}/speeches`, params),
+  // Bizottságok (§6F). Its own module, but — like Tárcák — its pages live in
+  // the Representatives section's tab bar (BIZ-2). The meeting and document
+  // lists are paged endpoints of their own rather than part of the sheet: a
+  // committee of a full cycle has hundreds of each, and the sheet is what the
+  // page needs before it can draw anything.
+  committees: (params) => get('/committees', params),
+  // What the committees are about to do (BIZ-14) — the committee-side
+  // counterpart of the sitting list's upcoming block (NR-5).
+  committeesUpcoming: (period) => get('/committees/upcoming', { period }),
+  committee: (id) => get(`/committees/${id}`),
+  committeeMeetings: (id, params) => get(`/committees/${id}/meetings`, params),
+  committeeDocuments: (id, params) => get(`/committees/${id}/documents`, params),
+  // One person's seats, for the block on their profile (BIZ-7).
+  repCommittees: (id, period) => get(`/committees/representative/${id}`, { period }),
   // "Who represents me?" (REP-10). Not period-scoped: constituency boundaries are
   // redrawn between elections, so the answer belongs to the cycle the boundary data
   // elects, which the response names.

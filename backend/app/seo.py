@@ -84,6 +84,7 @@ STATIC_PATHS: tuple[tuple[str, str | tuple[str, ...] | None], ...] = (
     ("/representatives/speakers", "representatives"),
     ("/representatives/officials", "representatives"),
     ("/representatives/portfolios", "portfolios"),
+    ("/representatives/committees", "committees"),
     ("/bills", "bills"),
     # Kérdések (BILL-13) — the questions browse page, its own entry point into the
     # 90 000-odd question-type irományok the all-irományok list below buries.
@@ -160,6 +161,9 @@ def _sections() -> tuple[_Section, ...]:
     ses = period_and(window, "period_number")                       # "" when unwindowed
     sp_where = f"WHERE {period_sql(window, 'sp.period_number')}" if window else ""
     votes_where = f" WHERE {period_sql(window, 'period_number')}" if window else ""
+    # Appended to an existing WHERE (the committee sections already filter on
+    # `parent_id IS NULL`), so this is an AND rather than a WHERE of its own.
+    committees_and = period_and(window, "period_number")
     return (
       _Section(
         "sessions", "proceedings",
@@ -255,6 +259,24 @@ def _sections() -> tuple[_Section, ...]:
         "/representatives/portfolios/{tarca_slug}",
         "Egy tárca (ministry): kik vezették, milyen kérdéseket kapott és mit "
         "nyújtott be a Parlament elé.",
+      ),
+      # The committees (§6F). Like the tárcák: a couple of hundred pages, each a
+      # standing entry point into one body's whole record — the page a search
+      # for "Mentelmi Bizottság tagjai" should be able to land on. Only the main
+      # committees are advertised: a subcommittee's page is reachable from its
+      # parent and carries three names and a handful of meetings, which is not
+      # an entry point into anything.
+      _Section(
+        "committees", "committees",
+        f"SELECT COUNT(*) FROM committee WHERE parent_id IS NULL{committees_and}",
+        f"""SELECT '/representatives/committees/' || id AS path,
+                   NULL AS lastmod
+             FROM committee WHERE parent_id IS NULL{committees_and}
+            ORDER BY period_number DESC, ord, id
+            LIMIT :limit OFFSET :offset""",
+        "/representatives/committees/{bizottsag_id}",
+        "Egy bizottság (committee): tagjai és tisztségviselői, ülései a "
+        "jegyzőkönyvekkel, és az általa tárgyalt és benyújtott irományok.",
       ),
       _Section(
         "votes", "votes",

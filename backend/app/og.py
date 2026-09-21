@@ -270,6 +270,10 @@ _ROUTE_CARDS: dict[str, tuple[str, str]] = {
         "Tárcák",
         "Melyik minisztériumhoz milyen kérdések érkeztek, melyik tárca mit "
         "nyújtott be a Parlament elé, és kik vezették."),
+    "/representatives/committees": (
+        "Bizottságok",
+        "Az Országgyűlés bizottságai: tagjaik és tisztségviselőik, hány ülést "
+        "tartottak, és milyen irományokkal foglalkoztak."),
     # Összehasonlítás (REP-15). Without a card this path falls through to the
     # person-profile route, finds no person called "compare", and would answer a
     # real page with a 404 shell. The people compared ride in `?ids=`, which
@@ -613,6 +617,30 @@ def _portfolio_body(name: str, kind_hu: str, counts: dict,
     return _wrap(body)
 
 
+def _committee_body(c, members: list, counts: dict) -> str:
+    """The committee's roster and headline figures — the facts a crawler (and a
+    reader with JS off) can see without the SPA. The roster is the point of the
+    page, so the names are here in full rather than summarised into a count."""
+    facts = [x for x in (c["kind"], c["parent_name"]) if x]
+    if counts.get("members"):
+        facts.append(f"{counts['members']} tag")
+    if c["meetings"]:
+        facts.append(f"{c['meetings']} ülés")
+    if counts.get("discussed"):
+        facts.append(f"{counts['discussed']} tárgyalt iromány")
+    body = f"<h1>{_esc(c['name'])}</h1>"
+    if facts:
+        body += "<p>" + " · ".join(_esc(x) for x in facts) + "</p>"
+    if members:
+        body += "<h2>Tagok és tisztségviselők</h2><ul>" + "".join(
+            "<li>"
+            + (_link(f"/representatives/{pid}", nm) if pid else _esc(nm))
+            + (" – " + _esc(label) if label else "")
+            + (" (" + _esc(faction) + ")" if faction else "")
+            + "</li>" for pid, nm, _role, label, faction in members) + "</ul>"
+    return _wrap(body)
+
+
 def _vote_body(v, subjects: list, title: str) -> str:
     """The vote's result and tally, with the irományok it decided linked."""
     counts = " · ".join(
@@ -880,6 +908,76 @@ def register(app) -> None:
                 ("Parlamonitor", "/"), ("Tárcák", "/representatives/portfolios"),
                 (_truncate(p["name"], 60), f"/representatives/portfolios/{slug}")])],
             body=_portfolio_body(p["name"], kind_hu, counts, holders))
+
+    @app.get("/representatives/committees/{committee_id}",
+             response_class=HTMLResponse, include_in_schema=False)
+    def share_committee(committee_id: str, request: Request,
+                        db: sqlite3.Connection = Depends(get_db)):
+        """Metadata for one committee's sheet (§6F). Its own two-segment route,
+        like the tárca above: `/representatives/{person_id}` never sees it, and
+        without this the page would fall through to the bare app shell with the
+        generic site card. A DB with no committee tables yet answers the generic
+        card rather than a 500 (EXT-6)."""
+        try:
+            c = db.execute("""
+                SELECT c.id, c.name, c.kind, c.meetings, c.period_number,
+                       p.name AS parent_name
+                  FROM committee c
+                  LEFT JOIN committee p ON p.id = c.parent_id
+                 WHERE c.id = ?""", (committee_id,)).fetchone()
+        except sqlite3.Error:
+            return plain(request)
+        if not c or not period_in_scope(c["period_number"]):
+            return _missing(request)
+        try:
+            members = [(r["person_id"], r["name"], r["role"], r["role_label"],
+                        r["faction_name"]) for r in db.execute(
+                """SELECT person_id, name, role, role_label, faction_name
+                     FROM committee_member WHERE committee_id = ?
+                    ORDER BY CASE role WHEN 'chair' THEN 0
+                                       WHEN 'deputy-chair' THEN 1
+                                       WHEN 'member' THEN 2 ELSE 3 END, ord
+                    LIMIT 40""", (committee_id,))]
+            counts = {
+                # The listing above is capped, so the *count* is its own query:
+                # a committee of 42 must not be described as one of 40.
+                "members": db.execute(
+                    "SELECT COUNT(*) n FROM committee_member "
+                    "WHERE committee_id = ?", (committee_id,)).fetchone()["n"],
+                "discussed": db.execute(
+                    "SELECT COUNT(*) n FROM committee_document "
+                    "WHERE committee_id = ? AND role = 'discussed'",
+                    (committee_id,)).fetchone()["n"],
+            }
+        except sqlite3.Error:
+            return plain(request)
+
+        # Matched on the normalised slug, not the free-text Hungarian title the
+        # source happens to use — the same key the ORDER BY above ranks on.
+        chair = next((nm for _, nm, role, _, _ in members if role == "chair"), None)
+        title = f"{c['name']} – tagok és ülések"
+        bits = [f"{counts['members']} tag"]
+        if chair:
+            bits.append(f"elnöke {chair}")
+        if c["meetings"]:
+            bits.append(f"{c['meetings']} ülés")
+        description = (f"{c['name']}: " + ", ".join(bits)
+                       + ", a jegyzőkönyvekkel és a bizottság által tárgyalt "
+                         "irományokkal a Parlamonitoron.")
+        return render(
+            request, title=_truncate(title, 120),
+            description=_truncate(description),
+            url_path=f"/representatives/committees/{committee_id}",
+            og_type="article",
+            # No `article:published_time`: like a tárca, a committee is a
+            # standing body rather than a dated document. Its creation date is a
+            # fact about the body, not a publication date for this page.
+            jsonld=[_breadcrumbs(request, [
+                ("Parlamonitor", "/"),
+                ("Bizottságok", "/representatives/committees"),
+                (_truncate(c["name"], 60),
+                 f"/representatives/committees/{committee_id}")])],
+            body=_committee_body(c, members, counts))
 
     @app.get("/sessions/{session_id}", response_class=HTMLResponse,
              include_in_schema=False)

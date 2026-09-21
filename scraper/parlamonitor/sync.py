@@ -28,6 +28,9 @@ What each poll checks, cheaply:
   day is later **cancelled** (it drops out of the listing) its files are pruned,
   which also frees the ülésnap number it held for the day announced in its place.
   A finished sitting whose text we already hold is never re-fetched.
+* **Committees** — the registry is re-read whole (there is nothing to key a
+  per-body cache on) and rewritten only when a count, a published minutes file
+  or the newest meeting moved.
 * **Bills / votes** — the cheap list query runs, but per-item detail reuses the
   on-disk detail cache (``detail_cache``), so an unchanged cycle spends network
   only on the list; the registry JSON is rewritten only when its contents differ.
@@ -69,6 +72,8 @@ from .proceedings.scrape import (_write_json, cycle_days, prune_cancelled,
 from .proceedings.transform import transform_day
 from .representatives.scrape import (fetch_missing_photos, fetch_representatives,
                                      save_representatives)
+from .committees.scrape import (fetch_committees, save_committees,
+                                load_previous as load_committees_file)
 from .votes.scrape import fetch_votes, save_votes
 
 logger = logging.getLogger(__name__)
@@ -221,6 +226,52 @@ def _votes_fingerprint(records: list[dict]) -> str:
     count plus the newest datetime is enough to spot new votes."""
     latest = max((r.get("datetime") or "" for r in records), default="")
     return f"{len(records)}:{latest}"
+
+
+def _committees_fingerprint(registry: dict) -> str:
+    """Signature of the committee registry.
+
+    Counts alone will not do. A committee list barely moves within a term, and
+    the changes a pass exists to notice mostly leave every count where it was:
+    a seat changing hands (one member out, one in), a committee renamed, a
+    bill's committee stage advancing, a jegyzőkönyv finally published, a
+    scheduled meeting moved to another room. So each listing contributes a
+    digest of the *content* that identifies it, not just its length — cheap
+    (a few thousand short strings) and computed once per pass.
+    """
+    def digest(rows, fields) -> str:
+        h = hashlib.sha1()
+        for line in sorted("|".join(str(r.get(f)) for f in fields) for r in rows or []):
+            h.update(line.encode("utf-8"))
+        return h.hexdigest()[:12]
+
+    parts = [
+        str(len(registry.get("data") or [])),
+        # Renames and type/homepage changes, not just how many bodies there are.
+        digest(registry.get("data"),
+               ("committeeId", "name", "parentId", "type", "dateEnd")),
+        # Who sits where, in what role and for whom — a 1-for-1 swap moves this.
+        digest(registry.get("members"),
+               ("committeeId", "personID", "role", "factionName")),
+        digest(registry.get("terms"),
+               ("committeeId", "personID", "kind", "role", "dateStart",
+                "dateEnd", "reason")),
+        # Includes minutesUrl, so a jegyzőkönyv appearing on a known meeting
+        # registers even though nothing was added.
+        digest(registry.get("meetings"),
+               ("meetingId", "datetime", "quorum", "durationS", "minutesUrl")),
+        # `status` is the committee's stage on the bill: it advances without
+        # any document being added or removed.
+        digest(registry.get("documents"),
+               ("committeeId", "billId", "status", "referredAt")),
+        digest(registry.get("submissions"),
+               ("committeeId", "kind", "billId", "textUrl")),
+        # The schedule ahead is state rather than history: a meeting moved to
+        # another room, or called off, changes no count either.
+        digest(registry.get("upcoming"),
+               ("meetingId", "committeeId", "date", "time", "venue", "cancelled")),
+    ]
+    return ":".join(parts)
 
 
 # --- proceedings -----------------------------------------------------------
@@ -419,6 +470,29 @@ def _sync_votes(felicitas: FelicitasClient, paths: Paths, cycle: int, state: dic
     return True
 
 
+def _sync_committees(felicitas: FelicitasClient, paths: Paths, cycle: int,
+                     state: dict, *, force: bool, with_detail: bool) -> bool:
+    """Re-read the cycle's committees and rewrite the registry if anything moved.
+
+    Unlike bills and votes there is no per-item detail cache to reuse: the
+    per-body requests (the iromány listings) are the bulk of the pass and
+    upstream gives nothing to key a cache on. At ~130 requests for a 40-body
+    cycle that is still the cheapest of the heavy stages, but it is also the
+    one a pass can most usefully do without, which is what ``--no-detail``
+    (and ``--skip-committees``) are for."""
+    start, end = _cycle_range(felicitas, cycle)
+    registry = fetch_committees(felicitas, cycle, start, end,
+                                with_detail=with_detail,
+                                previous=load_committees_file(paths, cycle))
+    fp = _committees_fingerprint(registry)
+    if not force and (state.get("committees") or {}).get("fp") == fp:
+        return False
+    save_committees(paths, cycle, registry)
+    state["committees"] = {"fp": fp, "count": registry["meta"]["count"],
+                           "at": _now()}
+    return True
+
+
 def _sync_representatives(felicitas: FelicitasClient, paths: Paths, cycle: int,
                           state: dict, *, force: bool, with_detail: bool,
                           reps_max_age: float) -> bool:
@@ -527,6 +601,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
              force: bool = False, no_detail: bool = False,
              no_offsets: bool = False, reps_max_age: float = DEFAULT_REPS_MAX_AGE,
              skip_bills: bool = False, skip_votes: bool = False,
+             skip_committees: bool = False,
              skip_reps: bool = False, skip_advocates: bool = False,
              skip_office_holders: bool = False, skip_aktualis: bool = False,
              timing_backend: str | None = None,
@@ -541,7 +616,8 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
     state = load_state(paths.sync_state)
     summary = {"cycle": cycle, "checkedAt": _now(),
                "sessions": [], "removedSessions": [], "bills": False,
-               "votes": False, "representatives": False, "advocates": False,
+               "votes": False, "committees": False,
+               "representatives": False, "advocates": False,
                "officeHolders": False, "documents": False, "aktualis": False,
                "errors": []}
 
@@ -586,6 +662,17 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
             logger.exception("Votes sync failed")
             summary["errors"].append(f"votes: {e}")
 
+    # After bills and votes: the committee registry's iromány listings are only
+    # worth re-reading once the documents they point at are on record.
+    if not skip_committees:
+        try:
+            summary["committees"] = _sync_committees(
+                felicitas, paths, cycle, state, force=force,
+                with_detail=not no_detail)
+        except Exception as e:
+            logger.exception("Committees sync failed")
+            summary["errors"].append(f"committees: {e}")
+
     if not skip_reps:
         try:
             summary["representatives"] = _sync_representatives(
@@ -627,6 +714,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
 
     summary["changed"] = bool(summary["sessions"] or summary["removedSessions"]
                               or summary["bills"] or summary["votes"]
+                              or summary["committees"]
                               or summary["representatives"]
                               or summary["advocates"]
                               or summary["aktualis"])

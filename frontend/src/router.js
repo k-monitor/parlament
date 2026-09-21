@@ -109,6 +109,22 @@ const routes = [
     component: () => import('./modules/portfolios/PortfolioView.vue'), props: true,
   },
   {
+    // Bizottságok (§6F) — the bodies the House does most of its work in. Its own
+    // module (so it switches off on its own, EXT-6) but, like Tárcák, its pages
+    // live in the Representatives section's tab bar: a committee is a group of
+    // the same people the section is already about (BIZ-2). Declared before
+    // `/representatives/:id` like the other static segments, so "committees" is
+    // never taken for a person id.
+    path: '/representatives/committees', name: 'committees',
+    meta: { module: 'committees' },
+    component: () => import('./modules/committees/CommitteeListView.vue'),
+  },
+  {
+    path: '/representatives/committees/:id', name: 'committee',
+    meta: { module: 'committees' },
+    component: () => import('./modules/committees/CommitteeView.vue'), props: true,
+  },
+  {
     // "Who represents me?" — find your own constituency and its MP (REP-10). Not a
     // page of its own but the **place mode of the Felszólalók page**: the same
     // question ("which of these people is mine") keyed by a settlement instead of

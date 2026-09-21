@@ -437,6 +437,119 @@ def _aktualis_registry():
     }
 
 
+
+def _committees_registry():
+    """Two bodies of one cycle: a main committee with a subcommittee under it.
+
+    The roster holds a chair who is a known MP (k001, so the person link
+    resolves) and a member who is not in the roster (x777, so the seat keeps its
+    label and no link — SCR-5). The term list holds one *former* member who is
+    on no current roster, which is the case the snapshot alone cannot show, plus
+    a term for the sitting chair so the merge-into-one-seat path is exercised.
+    One document is a held bill (bill-uuid-1) and one is not, and one meeting
+    has published minutes while the other has none.
+    """
+    return {
+        "meta": {"cycle": 43, "dateFrom": "2026-05-09", "dateTo": "2026-06-19",
+                 "membersAsOf": "2026-06-19", "source": "felicitas-bizottsag-api",
+                 "scrapedAt": "2026-06-19T00:00:00+00:00", "count": 2,
+                 "withDetail": True,
+                 "counts": {"bodies": 2, "members": 3, "terms": 2,
+                            "meetings": 2, "documents": 2, "submissions": 1}},
+        "data": [
+            {"committeeId": "biz-1", "name": "Költségvetési Bizottság",
+             "parentId": None, "parentName": None, "isSubcommittee": False,
+             "standingCode": "KTB", "code": "002A", "cycle": 43,
+             "dateStart": "2026-05-09", "dateEnd": None, "ord": 1,
+             "type": "állandó", "email": "ktb[kukac]parlament.hu", "active": True,
+             "siteUrl": "https://www.parlament.hu/web/guest/43-002A",
+             "meetingStats": {"committeeId": "biz-1", "meetings": 4,
+                              "totalMinutes": 300, "quorate": 3, "inquorate": 1,
+                              "lostQuorum": 0, "agendaRejected": 0}},
+            {"committeeId": "biz-1a", "name": "Ellenőrző Albizottság",
+             "parentId": "biz-1", "parentName": "Költségvetési Bizottság",
+             "isSubcommittee": True, "standingCode": None, "code": None,
+             "cycle": 43, "dateStart": "2026-06-01", "dateEnd": None, "ord": 1,
+             "type": None, "email": None, "active": True, "siteUrl": None,
+             "meetingStats": None},
+        ],
+        "members": [
+            {"committeeId": "biz-1", "personID": "k001", "name": "Kovács Béla",
+             "role": "chair", "roleLabel": "elnök", "factionId": 7,
+             "factionName": "Fidesz", "governing": True, "ord": 0,
+             "asOf": "2026-06-19"},
+            {"committeeId": "biz-1", "personID": "x777", "name": "Külső Elek",
+             "role": "member", "roleLabel": "tag", "factionId": None,
+             "factionName": "független", "governing": False, "ord": 1,
+             "asOf": "2026-06-19"},
+            {"committeeId": "biz-1a", "personID": "k001", "name": "Kovács Béla",
+             "role": "member", "roleLabel": "tag", "factionId": 7,
+             "factionName": "Fidesz", "governing": True, "ord": 0,
+             "asOf": "2026-06-19"},
+        ],
+        "terms": [
+            {"committeeId": "biz-1", "personID": "k001", "name": "Kovács Béla",
+             "factionName": "Fidesz", "kind": "office", "role": "chair",
+             "roleLabel": "elnök", "dateStart": "2026-05-09T12:00:00Z",
+             "dateEnd": None, "reason": None, "replacing": None},
+            {"committeeId": "biz-1", "personID": "n002", "name": "Nagy Anna",
+             "factionName": "TISZA", "kind": "membership", "role": "member",
+             "roleLabel": None, "dateStart": "2026-05-09T12:00:00Z",
+             "dateEnd": "2026-06-01T12:00:00Z", "reason": "lemondott",
+             "replacing": None},
+        ],
+        "meetings": [
+            {"meetingId": "ules-1", "committeeId": "biz-1",
+             "committeeName": "Költségvetési Bizottság", "number": 2,
+             "numberInYear": "2/2026", "datetime": "2026-06-10T09:00:00Z",
+             "kind": "nyilvános", "quorum": "Határozatképes", "durationS": 3600,
+             "minutesUrl": "https://www.parlament.hu/biz43/x/1.pdf"},
+            {"meetingId": "ules-2", "committeeId": "biz-1",
+             "committeeName": "Költségvetési Bizottság", "number": 1,
+             "numberInYear": "1/2026", "datetime": "2026-05-20T09:00:00Z",
+             "kind": "zárt", "quorum": "Határozatképtelen", "durationS": 600,
+             "minutesUrl": None},
+        ],
+        "documents": [
+            {"committeeId": "biz-1", "billId": "bill-uuid-1",
+             "billNumber": "T/100",
+             "title": "A költségvetésről szóló törvényjavaslat",
+             "status": "részletes vita lezárva",
+             "referredAt": "2026-05-20T10:00:00Z",
+             "sponsors": [{"personID": "k001", "name": "Kovács Béla"}]},
+            {"committeeId": "biz-1", "billId": "iromany-unheld",
+             "billNumber": "H/9", "title": "Egy nem tárolt határozati javaslat",
+             "status": None, "referredAt": "2026-05-21T10:00:00Z",
+             "sponsors": [{"personID": None, "name": "kormány"}]},
+        ],
+        "submissions": [
+            {"committeeId": "biz-1", "kind": "motion", "billId": "irom-9",
+             "billNumber": "100/3", "title": "Összegző módosító javaslat",
+             "docType": "Összegző jelentés",
+             "textUrl": "https://www.parlament.hu/irom43/00100/00100-0003.pdf"},
+        ],
+        # The schedule ahead: one meeting of a body we hold and one of a body
+        # we do not (announced before it is constituted), so the unlinked case
+        # is covered. Dates are relative to the run, since the endpoint drops
+        # anything already past.
+        "upcoming": [
+            {"meetingId": "next-1", "committeeId": "biz-1",
+             "committeeName": "Költségvetési Bizottság",
+             "date": _soon(7), "time": "10:30",
+             "venue": "Széll Kálmán terem", "cancelled": False},
+            {"meetingId": "next-2", "committeeId": "biz-unknown",
+             "committeeName": "a Médiatanács tagjait jelölő eseti bizottság",
+             "date": _soon(9), "time": "9:00", "venue": None,
+             "cancelled": True},
+        ],
+    }
+
+
+def _soon(days: int) -> str:
+    from datetime import date, timedelta
+    return (date.today() + timedelta(days=days)).isoformat()
+
+
 @pytest.fixture
 def data_dir(tmp_path):
     """A synthetic scraper data directory (processed/*.json) the loader builds
@@ -450,6 +563,8 @@ def data_dir(tmp_path):
         json.dumps(_bills_registry(), ensure_ascii=False))
     (data / "processed" / "votes-43.json").write_text(
         json.dumps(_votes_registry(), ensure_ascii=False))
+    (data / "processed" / "committees-43.json").write_text(
+        json.dumps(_committees_registry(), ensure_ascii=False))
     (data / "processed" / "43001-session.json").write_text(
         json.dumps(_session_record(), ensure_ascii=False))
     (data / "processed" / "officeholders.json").write_text(

@@ -37,6 +37,9 @@ politeness/transport knobs come from the environment or flags, never hard-coded
     python -m parlamonitor advocates --cycle 43 ./data
     python -m parlamonitor advocates --all-cycles ./data
 
+    # Committees (bizottságok): bodies, membership, meetings and irományok
+    python -m parlamonitor committees --cycle 43 ./data
+
     # Office holders (tisztségviselők): every office term with its real dates
     python -m parlamonitor officeholders ./data
 
@@ -67,6 +70,8 @@ from .aktualis.scrape import fetch_aktualis, load_previous, save_aktualis
 from .bills.legacy import CYCLE as ARCHIVE_CYCLE
 from .bills.legacy import faction_ids_from_registries, fetch_legacy_bills
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
+from .committees.scrape import (fetch_committees, save_committees,
+                                load_previous as load_committees_file)
 from .documents.scrape import fetch_documents, load_registry
 from .officeholders.scrape import fetch_office_holders, save_office_holders
 from .votes.scrape import fetch_votes, save_votes
@@ -552,6 +557,32 @@ def cmd_votes(args) -> None:
     })
 
 
+def cmd_committees(args) -> None:
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    felicitas = _client(args)
+
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            start, end = _resolve_range(felicitas, args.cycle, args)
+            registry = fetch_committees(
+                felicitas, args.cycle, start, end,
+                with_detail=not args.no_detail, as_of=args.as_of,
+                # Only read when the detail is skipped, but always passed: the
+                # stage decides, not the caller.
+                previous=load_committees_file(paths, args.cycle))
+            save_committees(paths, args.cycle, registry)
+    finally:
+        felicitas.close()
+
+    _write_log(paths, {
+        "command": "committees",
+        "cycle": args.cycle,
+        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        **registry["meta"]["counts"],
+    })
+
+
 def _documents_summary(documents) -> object:
     """The document stage's line in a sync summary: ``False`` when it is off (the
     default), else just the counts that say whether the pass did any work — the
@@ -587,7 +618,9 @@ def cmd_sync(args) -> None:
                 felicitas, paths, cycle, force=args.force,
                 no_detail=args.no_detail, no_offsets=args.no_offsets,
                 reps_max_age=reps_max_age, skip_bills=args.skip_bills,
-                skip_votes=args.skip_votes, skip_reps=args.skip_reps,
+                skip_votes=args.skip_votes,
+                skip_committees=args.skip_committees,
+                skip_reps=args.skip_reps,
                 skip_advocates=args.skip_advocates,
                 skip_office_holders=args.skip_officeholders,
                 skip_aktualis=args.skip_aktualis,
@@ -845,6 +878,23 @@ def build_parser() -> argparse.ArgumentParser:
                          "(default: only new votes are fetched)")
     sp.set_defaults(func=cmd_votes)
 
+    sp = sub.add_parser("committees",
+                        help="scrape the cycle's committees (bizottságok): bodies, "
+                             "membership, meetings and irományok")
+    _common(sp)
+    sp.add_argument("--from", dest="date_from", default=None,
+                    help="ISO start date (default: cycle start)")
+    sp.add_argument("--to", dest="date_to", default=None,
+                    help="ISO end date (default: cycle end or today)")
+    sp.add_argument("--as-of", default=None,
+                    help="date the membership snapshot is taken on "
+                         "(default: the end of the range)")
+    sp.add_argument("--no-detail", action="store_true",
+                    help="skip the per-committee requests (type, contact and the "
+                         "iromány listings) for a fast bodies+members refresh; "
+                         "whatever the previous run fetched is carried forward")
+    sp.set_defaults(func=cmd_committees)
+
     sp = sub.add_parser("sync", help="one low-load sync pass over the latest cycle "
                                      "(re-scrape only what changed)")
     _common(sp, cycle_required=False)
@@ -862,6 +912,7 @@ def build_parser() -> argparse.ArgumentParser:
                          "PARLAMONITOR_SYNC_REPS_MAX_AGE)")
     sp.add_argument("--skip-bills", action="store_true")
     sp.add_argument("--skip-votes", action="store_true")
+    sp.add_argument("--skip-committees", action="store_true")
     sp.add_argument("--skip-reps", action="store_true")
     sp.add_argument("--skip-advocates", action="store_true",
                     help="skip the nationality-advocate refresh")

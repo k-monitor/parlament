@@ -522,6 +522,152 @@ CREATE TABLE vote_faction_stat (
 CREATE INDEX idx_vote_faction_stat_vote ON vote_faction_stat(vote_id);
 
 -- ---------------------------------------------------------------------------
+-- Committees module (bizottságok, §6F) — a self-contained vertical slice
+-- (EXT-1) over parlament.hu's own committee registry. It owns these tables and
+-- links out to the shared core entities rather than copying them (EXT-2): a
+-- seat's holder is a `person`, the faction it was held for a `faction`, and an
+-- iromány a committee dealt with or tabled is resolved to a held `bill` at
+-- query time (like `vote_subject`, by the shared upstream id and NOT by a hard
+-- FK, so re-ingesting bills can never break committees).
+--
+-- Ids are the upstream Felicitas committee/meeting ids. They are TEXT because
+-- upstream changed representation mid-registry: cycles up to 42 use numeric
+-- keys ("2742531"), cycle 43 UUIDs. Both are opaque to us.
+-- ---------------------------------------------------------------------------
+
+-- One row per committee **body** — a main committee or a subcommittee, which
+-- differ only by `parent_id`. Flattening the two levels into one table is what
+-- lets a meeting, a seat or a document reference "the body it belongs to"
+-- without caring which kind it is; a subcommittee is then just a committee that
+-- has a parent, and the list page groups on that.
+CREATE TABLE committee (
+    id             TEXT PRIMARY KEY,     -- Felicitas bizottságId (of the body itself)
+    period_number  INTEGER REFERENCES electoral_period(number),
+    name           TEXT NOT NULL,
+    parent_id      TEXT REFERENCES committee(id),  -- NULL on a main committee
+    kind           TEXT,                 -- állandó | eseti | vizsgáló | nemzetiségi |
+                                         -- törvényalkotási; NULL for a subcommittee
+    standing_code  TEXT,                 -- stable 3-letter code (AGB, GAB, …), main only
+    code           TEXT,                 -- per-cycle code that builds the homepage URL
+    email          TEXT,                 -- as published (obfuscated "x[kukac]parlament.hu")
+    site_url       TEXT,                 -- the body's own page on parlament.hu, when it has one
+    date_start     TEXT,                 -- the body's own creation date
+    date_end       TEXT,
+    ord            INTEGER,              -- upstream display order within its level
+    -- Upstream's own meeting aggregates, kept beside the meeting rows rather
+    -- than recomputed from them: it counts sittings we do not list individually
+    -- and applies the House's quorum rules, so the two are shown side by side.
+    meetings       INTEGER,
+    total_minutes  INTEGER,
+    quorate        INTEGER,
+    inquorate      INTEGER
+);
+CREATE INDEX idx_committee_period ON committee(period_number);
+CREATE INDEX idx_committee_parent ON committee(parent_id);
+
+-- Who sits on a committee **now** (at the registry's snapshot date, which
+-- `committee.period_number`'s registry records in build_meta). One row per seat.
+-- `person_id` joins to the shared person entity (EXT-2); a member the roster
+-- does not hold keeps their name label only, as elsewhere (SCR-5).
+CREATE TABLE committee_member (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    committee_id TEXT NOT NULL REFERENCES committee(id),
+    person_id    TEXT REFERENCES person(person_id),
+    name         TEXT,
+    role         TEXT,                   -- chair | deputy-chair | member | other
+    role_label   TEXT,                   -- the upstream Hungarian title
+    faction_id   INTEGER REFERENCES faction(id),
+    faction_name TEXT,
+    governing    INTEGER,                -- held the seat for a governing party
+    ord          INTEGER
+);
+CREATE INDEX idx_committee_member_committee ON committee_member(committee_id);
+CREATE INDEX idx_committee_member_person ON committee_member(person_id);
+
+-- Every **dated** committee term: a membership span or an office span, with the
+-- reason it ended and whom the holder replaced. This is the historical record
+-- the snapshot above cannot be — it holds the people who already left — and the
+-- two are unioned to answer "was this person ever on this committee".
+CREATE TABLE committee_term (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    committee_id TEXT NOT NULL REFERENCES committee(id),
+    person_id    TEXT REFERENCES person(person_id),
+    name         TEXT,
+    kind         TEXT,                   -- membership | office
+    role         TEXT,                   -- chair | deputy-chair | member | other
+    role_label   TEXT,
+    faction_name TEXT,
+    date_start   TEXT,
+    date_end     TEXT,
+    reason       TEXT,                   -- why it ended ("államtitkári kinevezés")
+    replacing    TEXT                    -- whom the holder took over from
+);
+CREATE INDEX idx_committee_term_committee ON committee_term(committee_id);
+CREATE INDEX idx_committee_term_person ON committee_term(person_id);
+
+-- One row per meeting held. A meeting with no published minutes keeps its row:
+-- that a committee met and left no record is itself the finding, and the list
+-- says so rather than hiding it.
+CREATE TABLE committee_meeting (
+    id            TEXT PRIMARY KEY,      -- Felicitas ülésId
+    committee_id  TEXT NOT NULL REFERENCES committee(id),
+    period_number INTEGER REFERENCES electoral_period(number),
+    number        INTEGER,               -- running number within the term
+    number_in_year TEXT,                 -- "4/2026"
+    held_at       TEXT,                  -- ISO datetime
+    kind          TEXT,                  -- nyilvános | zárt | …
+    quorum        TEXT,                  -- "Határozatképes" / "Határozatképtelen"
+    duration_s    INTEGER,
+    minutes_url   TEXT                   -- the jegyzőkönyv PDF, linked not mirrored
+);
+CREATE INDEX idx_committee_meeting_committee ON committee_meeting(committee_id);
+CREATE INDEX idx_committee_meeting_period ON committee_meeting(period_number);
+CREATE INDEX idx_committee_meeting_date ON committee_meeting(held_at);
+
+-- The irományok a committee **dealt with** (`role` = 'discussed', with the
+-- committee's stage on it and the date it was referred there) and those it
+-- **tabled** itself (`role` = 'own' for its own motions, 'motion' for the
+-- reports and unified proposals it filed on other people's bills). One table
+-- because both are "this committee and this document", and the list page shows
+-- them as two tabs of one section.
+-- `bill_id` is the upstream iromány id, resolved to a held `bill` at query time.
+CREATE TABLE committee_document (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    committee_id  TEXT NOT NULL REFERENCES committee(id),
+    period_number INTEGER REFERENCES electoral_period(number),
+    role          TEXT,                  -- discussed | own | motion
+    bill_id       TEXT,                  -- upstream iromanyId (joins to bill.id when held)
+    bill_number   TEXT,                  -- "T/570"
+    title         TEXT,
+    doc_type      TEXT,                  -- "Összegző jelentés", "Egységes javaslat", …
+    status        TEXT,                  -- the committee's stage on it
+    referred_at   TEXT,
+    text_url      TEXT,                  -- the document PDF on parlament.hu
+    sponsors      TEXT                   -- JSON [{personID, name}] as recorded
+);
+CREATE INDEX idx_committee_document_committee ON committee_document(committee_id);
+CREATE INDEX idx_committee_document_bill ON committee_document(bill_id);
+CREATE INDEX idx_committee_document_period ON committee_document(period_number);
+
+-- The meetings that are SCHEDULED but have not happened — the committee-side
+-- counterpart of the plenary's order paper (NR-1). State, not history: the
+-- source only ever states the current schedule, so each load replaces the
+-- cycle's rows wholesale and nothing here is kept once the meeting is held
+-- (it reappears as a `committee_meeting`, with its minutes).
+CREATE TABLE committee_upcoming (
+    id            TEXT PRIMARY KEY,      -- Felicitas meghívó/ülés id
+    committee_id  TEXT REFERENCES committee(id),
+    period_number INTEGER REFERENCES electoral_period(number),
+    committee_name TEXT,                 -- as scheduled (a body we may not hold)
+    starts_on     TEXT,                  -- ISO date
+    starts_at     TEXT,                  -- "10:30", as published
+    venue         TEXT,
+    cancelled     INTEGER DEFAULT 0      -- upstream marks a dropped sitting
+);
+CREATE INDEX idx_committee_upcoming_date ON committee_upcoming(starts_on);
+CREATE INDEX idx_committee_upcoming_period ON committee_upcoming(period_number);
+
+-- ---------------------------------------------------------------------------
 -- NER/NEL stage (§10): named entities recognized in transcript sentences, and the
 -- subset of them linked out. `entity` is one row per mention (its char span in the
 -- sentence, for inline linking), tagged `kind` with the NER label — every label the

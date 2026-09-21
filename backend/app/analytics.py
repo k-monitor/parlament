@@ -137,6 +137,15 @@ SOURCES: dict[str, dict[str, str]] = {
               "person": "", "value": ""},
     # The tárca list (§6C) — not paginated, so it has no sort.
     "portfolios": {"kind": ""},
+    # The committee list (§6F). The subcommittee toggle is a filter like any
+    # other here — whether readers reach for it is exactly the kind of thing
+    # this table exists to answer. It is the one BOOLEAN filter in this map, so
+    # its default is spelled the way `str()` renders the endpoint's own
+    # (`"False"`); `_norm_value` turns the unset case into `""`, which falls
+    # back to that default, so an omitted param and an explicit `false` still
+    # produce the same key.
+    "committees": {"sort": "official", "kind": "",
+                   "include_subcommittees": "False"},
 }
 
 # Parameter names a caller may pass that are NOT filters — they are either the

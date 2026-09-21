@@ -10,6 +10,7 @@ reference pipeline so its outputs stay comparable:
         <session>-session.json                    # the published session record
         representatives-<cycle>.json              # the MP registry for a cycle
         advocates-<cycle>.json                    # the nationality-advocate registry
+        committees-<cycle>.json                   # the committee registry for a cycle
       documents/
         <cycle>/
           text/<docid>.txt.xz                     # extracted document text (DOC-1)
@@ -359,6 +360,14 @@ class Paths:
 
     def votes_file(self, cycle: int) -> Path:
         return self.processed / f"votes-{int(cycle)}.json"
+
+    # --- committees (bizottságok) ------------------------------------------
+    # Per cycle like the bills and votes registries: a committee body, its
+    # membership and its meetings all belong to one electoral term, and the
+    # upstream queries are cycle-scoped to begin with.
+
+    def committees_file(self, cycle: int) -> Path:
+        return self.processed / f"committees-{int(cycle)}.json"
 
     # --- iromány document files (DOC-1) -------------------------------------
     # Deliberately NOT under ``processed/``: these are a mirror of upstream

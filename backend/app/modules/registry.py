@@ -23,6 +23,7 @@ class ModuleSpec:
 def load_modules() -> list[ModuleSpec]:
     # Imported lazily so a syntax error in one module can't break import order.
     from .bills.router import router as bills_router
+    from .committees.router import router as committees_router
     from .interjections.router import router as interjections_router
     from .portfolios.router import router as portfolios_router
     from .proceedings.router import router as proceedings_router
@@ -38,6 +39,12 @@ def load_modules() -> list[ModuleSpec]:
         # which it never does. Reads the shared sentence/speech/person rows through
         # its own derived tables (EXT-2) and owns no scraping.
         ModuleSpec("settlements", "Települések", settlements_router),
+        # Bizottságok (§6F): the committee side of the House — who sits on which
+        # body, when it met and what it dealt with. Its own scraper and tables,
+        # linking out to the shared person/faction/bill entities (EXT-2); its
+        # pages live in the Representatives section's tab bar next to Tárcák
+        # (BIZ-2), and it switches off on its own like every other module.
+        ModuleSpec("committees", "Bizottságok", committees_router),
         # Its pages live in the Representatives section's tab bar (MIN-5), but it
         # is its own slice: it reads the bills module's tables and owns none of
         # them, so it switches off independently of both (EXT-1/EXT-6).

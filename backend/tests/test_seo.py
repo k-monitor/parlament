@@ -74,7 +74,7 @@ def test_sitemap_index_lists_a_child_per_section(seo_client):
     locs = _locs(r.text)
     names = {re.search(r"/sitemap-(.+)-\d+\.xml$", loc).group(1) for loc in locs}
     assert names == {"core", "sessions", "speeches", "representatives",
-                     "bills", "documents", "portfolios", "votes"}
+                     "bills", "documents", "portfolios", "committees", "votes"}
     assert all(loc.startswith("https://parlamonitor.k-monitor.hu/") for loc in locs)
 
 

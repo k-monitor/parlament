@@ -66,6 +66,24 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 // (EXT-6) and its failure never touches the rest of the profile.
 const showSettlements = computed(() => store.moduleEnabled('settlements'))
 const settlements = ref(null)
+// Bizottságok (§6F / BIZ-7). Its own module too, and what it adds over the
+// biography list already on this page is the link: a seat here opens the
+// committee, carries the role and the faction the seat was held for, and dates
+// the terms that ended. Where the module has nothing for this person in scope —
+// switched off, or a cycle whose committees were never scraped — the biography
+// list stays exactly as it was, so the section never regresses to empty.
+const showCommittees = computed(() => store.moduleEnabled('committees'))
+const committees = ref(null)
+// Only prefer the module's list when it covers the whole scope being asked
+// about. The scraper runs per cycle, so a deployment can hold 40–43 while the
+// corpus goes back to 34 — and this list, being cycle-scoped, would then
+// silently drop every seat before that, which the career-wide biography list
+// from the MP's own adatlap does carry. Partial coverage therefore falls back
+// to the complete-but-unlinked list rather than showing a convincing subset.
+const committeeSeats = computed(() => {
+  const c = committees.value
+  return c && c.covers_scope ? c.items : []
+})
 
 // The member's own policy-topic mix (TOPIC-10). Not a module of its own: the
 // proceedings module carries it, but the classification pass needs a GPU, so a
@@ -157,6 +175,18 @@ function termRange(c) {
   const end = formatDateLocal(c && c.end)
   if (!start && !end) return ''
   return `${start || '?'} – ${end || t('profile.present')}`
+}
+
+// A committee seat's span. A seat still held shows only when it began (or
+// nothing at all, for the many the registry never dated); one that ended shows
+// both ends, which is the whole point of keeping the term rows.
+function seatRange(c) {
+  const start = formatDateLocal(c.dateStart)
+  const end = formatDateLocal(c.dateEnd)
+  if (start && end) return `${start} – ${end}`
+  if (c.current) return start ? `${start} – ${t('profile.present')}` : ''
+  if (end) return `? – ${end}`
+  return start
 }
 
 // A faction spell's span. The dates are the point (REP-14) — the cycle label is
@@ -381,12 +411,15 @@ async function load() {
     const settlementsReq = showSettlements.value
       ? api.repSettlements(props.id, period).catch(() => null)
       : Promise.resolve(null)
+    const committeesReq = showCommittees.value
+      ? api.repCommittees(props.id, period).catch(() => null)
+      : Promise.resolve(null)
     // A deployment that classified nothing answers this 503 (TOPIC-7); like every
     // other panel here it costs the profile a card, never the page.
     const topicsReq = showTopics.value
       ? api.repTopics(props.id, period).catch(() => null)
       : Promise.resolve(null)
-    const [p, s, act, days, qd, lb, od, v, tel, top] = await Promise.all([
+    const [p, s, act, days, qd, lb, od, v, tel, top, biz] = await Promise.all([
       api.representative(props.id, period),
       api.repStatistics(props.id, period),
       activityReq,
@@ -397,12 +430,13 @@ async function load() {
       votesReq,
       settlementsReq,
       topicsReq,
+      committeesReq,
     ])
     if (seq !== loadSeq) return  // superseded by a newer navigation
     profile.value = p; stats.value = s; activity.value = act
     speechDays.value = days; voteDays.value = v
     questions.value = qd; lawBills.value = lb; otherDocs.value = od
-    settlements.value = tel; topics.value = top
+    settlements.value = tel; topics.value = top; committees.value = biz
     // Tell the app shell which person tab this profile belongs under: only the
     // profile response knows which of the four kinds of person this is (one route
     // serves them all), and the sub-tab highlight follows it.
@@ -711,9 +745,30 @@ watch(() => store.cycles.join(','), load)
             </ul>
           </section>
 
-          <section class="card pad" v-if="profile.committees && profile.committees.length">
+          <section
+            class="card pad"
+            v-if="committeeSeats.length || (profile.committees && profile.committees.length)"
+          >
             <h2>{{ $t('profile.committees') }}</h2>
-            <ul class="plain">
+            <!-- The committees module's own answer: each seat links to the
+                 committee, and a seat already given up says when and why. -->
+            <ul v-if="committeeSeats.length" class="plain">
+              <li v-for="(c, i) in committeeSeats" :key="c.committeeId + '-' + i"
+                  class="small">
+                <RouterLink :to="{ name: 'committee', params: { id: c.committeeId } }">
+                  {{ c.name }}
+                </RouterLink>
+                <span class="muted" v-if="c.roleLabel || c.role">
+                  — {{ c.roleLabel || $t('committees.roles.' + c.role) }}
+                </span>
+                <span class="muted term" v-if="seatRange(c)">{{ seatRange(c) }}</span>
+                <span class="muted" v-if="c.reason"> · {{ c.reason }}</span>
+              </li>
+            </ul>
+            <!-- Fallback: the plain biography list from the MP's own adatlap,
+                 which covers every cycle including those the committee scraper
+                 has not run for. -->
+            <ul v-else class="plain">
               <li v-for="(c, i) in profile.committees.slice(0, 12)" :key="i" class="small">
                 {{ c.committee || c }} <span class="muted" v-if="c.role">— {{ c.role }}</span>
                 <span class="muted term" v-if="termRange(c)">{{ termRange(c) }}</span>

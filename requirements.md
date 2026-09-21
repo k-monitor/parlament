@@ -3219,11 +3219,123 @@ down far more than they shout), and how much of both crosses the aisle.
 
 ---
 
+## 6F. Functional Requirements — Module: Committees (Bizottságok)
+
+Most of what the National Assembly does, it does not do in the chamber. A bill
+is referred to a committee, argued over there, amended there, and reaches the
+floor as a text the committee has already settled; the plenary debate is the
+last act, not the work. The site, until now, only had the last act.
+
+The committees are also the only body that puts a **name to a subject**. A
+member's profile can say they gave 40 speeches and submitted 12 irományok, but
+not what they are *for* — whereas a seat on the Mentelmi Bizottság or the
+Költségvetési Bizottság says it in two words. That mapping — person → subject —
+exists nowhere else in the corpus.
+
+parlament.hu publishes the whole registry and has for ten terms: the bodies,
+their membership with exact dates, every meeting with its minutes, and the
+documents each committee handled. It is public, complete and — unlike the
+transcripts — needs no processing to be useful. It was simply not being read.
+
+- **BIZ-1 (MUST).** The unit is a **committee body**: a main committee or a
+  subcommittee, in **one flat set keyed by the body's own id**, a subcommittee
+  being distinguished only by carrying a parent. A meeting, a seat and a
+  document then reference "the body they belong to" without caring which kind it
+  is. (The upstream listing is shaped for a two-level table and names a
+  subcommittee in different columns from a main committee — see the scraper
+  README; reading the wrong pair renames every subcommittee after its parent.)
+- **BIZ-2 (MUST).** The pages live in the **Representatives section's tab bar**,
+  in its *bodies* group beside Tárcák and Frakciók (cf. MIN-5): a committee is a
+  group of the same people that section is already about. It is nonetheless its
+  own module — own scraper stage, own tables, own routes — and switches off on
+  its own (EXT-1/EXT-6).
+- **BIZ-3.** The **list page** shows the cycle scope's committees with, for each,
+  its kind, its chair(s) linked to their profiles, its seat count and how much it
+  met. Subcommittees are **off by default** and nested under their parent when
+  asked for: there are twice as many of them, each with three members, and mixed
+  in as peers they bury the bodies a reader came for. A subcommittee whose parent
+  a filter excluded is still listed, naming its parent, rather than vanishing.
+- **BIZ-4.** The **committee page** carries the roster (by seniority, each member
+  linked), the subcommittees, the meeting record with its minutes, and the
+  irományok the committee dealt with and tabled — the last three paged, since a
+  full cycle runs to hundreds of each.
+- **BIZ-5 (MUST).** **Membership is the union of two sources, and the site must
+  not present either alone as the answer.** The roster query answers "who sits on
+  this today"; the term query answers "which seats began or ended during the
+  cycle". Over a *closed* cycle the second is complete (every seat ends when the
+  term does) and the first is its final state; over the *running* cycle it is the
+  other way round. Measured on cycle 42: 212 pairs from the roster, 426 from the
+  terms — every one of the roster's, plus 214 people who had already left.
+- **BIZ-6.** A seat from the roster is reported as **current only while the body
+  itself is** (`committee.date_end` unset). The roster is a snapshot, and for a
+  closed cycle it is the snapshot of its last day — so without this test every
+  seat of every archive cycle reads as still held. A seat on a body that has
+  ended is dated to the day the body did.
+- **BIZ-7.** A member's profile gains a **committee-seats block**: their seats in
+  the cycle scope, linked to the committee, current ones first, past ones dated
+  and carrying why they ended. The plain biography list the MP's own adatlap
+  supplies stays as the fallback for a cycle the committee scraper has not run
+  for, so the section never regresses to empty (SCR-5).
+- **BIZ-8.** Two thirds of the registry's recorded end **reasons** are the
+  Assembly's own term ending ("az Országgyűlés megbízatása megszűnt", "ciklus
+  vége" — 1 216 of ~1 800 rows). They say nothing the end date does not, so they
+  are **not shown as reasons**; what is shown is what distinguishes a departure —
+  recalled by the faction, appointed state secretary, resigned, died.
+- **BIZ-9.** A meeting with **no published minutes keeps its row**, saying so.
+  That a committee met and left no record is itself the finding; dropping such
+  rows would make the published minutes look like the whole history. (Of cycle
+  43's 197 meetings, 130 have minutes.)
+- **BIZ-10.** Upstream publishes **two meeting figures that genuinely differ** —
+  a per-committee total that counts sittings it does not list individually, and
+  the individual listing. Both are stored and both are shown; neither is
+  recomputed from the other, and the methodology note says why they disagree.
+- **BIZ-11 (MUST).** An iromány a committee handled links to a **held `bill`**
+  where we hold it and stays a plain label where we do not (SCR-5), resolved at
+  query time by the shared upstream id rather than a hard FK — so re-ingesting
+  bills can never break committees (EXT-1), exactly as `vote_subject` does.
+- **BIZ-12.** Minutes PDFs, iromány texts and a committee's own homepage on
+  parlament.hu are **linked, never mirrored** (LEGAL-1); the contact address is
+  reproduced exactly as the House publishes it (obfuscated) and never turned into
+  a `mailto:`.
+- **BIZ-14.** The registry also carries the meetings a committee has
+  **scheduled but not yet held** — the committee-side counterpart of the
+  plenary's order paper (NR-1) and the only forward-looking thing the domain
+  has, so it sits above the record on the list page. Like the napirend it is
+  **state, not history**: each load replaces it, and nothing is kept once the
+  meeting is held (it reappears as a meeting, with its minutes). A called-off
+  sitting is kept and marked — that a committee dropped a meeting is worth
+  seeing — and a body announced before it is constituted is listed unlinked
+  (SCR-5).
+- **BIZ-13.** Committee pages are crawlable: the list and each **main** committee
+  are in the sitemap with their own share card and a JS-free body carrying the
+  roster (§8.6). Subcommittees are reachable from their parent but not advertised
+  as entry points — three names and a handful of meetings is not one.
+
+> **Shipped 2026-09-21** for cycles 40–43 (the cycles the rest of the corpus is
+> richest for; the API serves 34–43 and the stage takes a `--cycle` like every
+> other). 167 bodies, 1 270 seats, 1 776 dated terms, 3 725 meetings and 18 875
+> document links, with 1 269 of 1 270 seats resolving to a `person` row.
+>
+> One trap worth recording, since it is invisible until the numbers are read:
+> the upcoming-meetings query takes a *from* date with **no upper bound**, so
+> asked from the start of the term it returns every sitting the committees ever
+> put in the diary — 369 rows for cycle 43 in September against the five
+> actually ahead, each already-held one landing in the schedule as well as in
+> the meeting record. It is asked from **today**.
+>
+> Another clean pass of the EXT-1 probe: a new scraper stage and
+> `committees-<cycle>.json`, five `committee*` tables, `/api/v1/committees`
+> routes, two views and a profile block — no schema change to any other module.
+> The one thing it changed elsewhere is the profile's existing committee list,
+> which now prefers the linked version and keeps the old one as its fallback.
+
+---
+
 ## 7. Extensibility — Module Architecture
 
-The site must accommodate new data domains (next likely: **Bills/irományok**,
-**Votes/szavazások**, **Committees/bizottságok**, **Interpellations**) without
-rework of existing features.
+The site must accommodate new data domains (Bills/irományok, Votes/szavazások
+and Committees/bizottságok have since been built this way; next likely:
+**Interpellations**, **amendment tracking**) without rework of existing features.
 
 - **EXT-1 (MUST).** A **module** is a vertical slice owning its own:
   scraper/ingestion step, DB tables, backend API routes, and frontend
@@ -3286,8 +3398,9 @@ rework of existing features.
 > → bill, bill vote → vote) are resolved at query time through shared keys
 > (`iromany_id`/`szavazasId`), not hard foreign keys, so the modules stay
 > decoupled and either can be re-ingested independently (EXT-1). These two
-> modules stand as the worked examples for the remaining domains (committees,
-> interpellations).
+> modules stand as the worked examples for the remaining domains — the
+> **Committees module (§6F)** was then built straight off them, and the pattern
+> held a third time (see its own note).
 >
 > The **Portfolios module (§6C)** is the third, and the first to be built with
 > *no source of its own at all*: it owns no scraper stage and no source file,
@@ -3574,11 +3687,14 @@ what was said.
   (BILL-13) and every type together on the "Minden iromány" page (BILL-9) — so
   document-level coverage of irományok is complete. **Votes** are now implemented as the
   second additive module (§6B): the roll-call list, per-MP breakdown, per-faction
-  breakdown, and bidirectional links to bills and representatives. **Committees**
-  and a richer dedicated **interpellations** module (linking interpelláció →
-  answer → debate speech, beyond the document-level listing already provided by
-  §6A) remain planned future **modules** (§7); the architecture
-  already accommodates them, with Bills and Votes as the worked examples.
+  breakdown, and bidirectional links to bills and representatives.
+  **Committees** are now implemented too (§6F): the bodies with their
+  subcommittees, dated membership, the meeting record with its minutes, and the
+  irományok each committee handled. A richer dedicated **interpellations**
+  module (linking interpelláció → answer → debate speech, beyond the
+  document-level listing already provided by §6A) remains a planned future
+  **module** (§7); the architecture already accommodates it, with Bills, Votes
+  and Committees as the worked examples.
   Within Votes, the **party-cohesion analysis** has since shipped (VOTE-8,
   *Frakcióelemzés*); the **hemicycle seating chart** and further vote-based
   statistics (defection rates) remain future work (VOTE-8).

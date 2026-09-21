@@ -106,6 +106,14 @@ function fetchForKind() {
         api.representative(q.id, period.value),
         api.repStatistics(q.id, period.value),
       ]).then(([rep, stats]) => ({ rep, stats }))
+    // One member's agenda (TOPIC-10). The name is fetched beside the mix for the
+    // figure's title: the embed is read away from the profile, where "Egészségügy
+    // 14 %" with nobody's name on it says nothing.
+    case 'rep-topics':
+      return Promise.all([
+        api.repTopics(q.id, period.value),
+        api.representative(q.id, period.value).catch(() => null),
+      ]).then(([mix, rep]) => ({ mix, rep }))
     default:
       return Promise.reject(new Error('unknown embed kind'))
   }
@@ -183,6 +191,13 @@ const pieExtra = computed(() => {
 // panel validates it and keeps its tabs clickable inside the iframe.
 const cohesionTab = computed(() => (typeof route.query.tab === 'string' ? route.query.tab : ''))
 
+// ---- rep-topics -----------------------------------------------------------
+// The House's own share per topic, which the API already sends on every row — the
+// baseline the member's bars are read against, exactly as on the profile.
+const repTopicReference = computed(() => Object.fromEntries(
+  (props.kind === 'rep-topics' ? data.value?.mix?.topics || [] : [])
+    .map((topic) => [topic.label, topic.house_share])))
+
 // ---- shared: title, empty state, on-site link -----------------------------
 const title = computed(() => {
   switch (props.kind) {
@@ -200,6 +215,10 @@ const title = computed(() => {
       return data.value?.rep?.label
         ? `${data.value.rep.label} — ${t('profile.voteBreakdown')}`
         : t('profile.voteBreakdown')
+    case 'rep-topics':
+      return data.value?.rep?.label
+        ? `${data.value.rep.label} — ${t('profile.topics')}`
+        : t('profile.topics')
     default: return 'Parlamonitor'
   }
 })
@@ -220,6 +239,7 @@ const isEmpty = computed(() => {
       return period.value.length !== 1
         || !(data.value.factions && data.value.factions.length >= 2)
     case 'vote-participation': return !(voteBreakdown.value && voteBreakdown.value.total)
+    case 'rep-topics': return !(data.value.mix?.topics || []).length
     default: return true
   }
 })
@@ -254,6 +274,7 @@ const siteHref = computed(() => {
       if (q.by) usp.set('by', q.by)
       break
     case 'vote-participation': path = q.id ? `/representatives/${q.id}` : '/representatives'; break
+    case 'rep-topics': path = q.id ? `/representatives/${q.id}` : '/representatives'; break
   }
   return `${location.origin}${path}?${usp.toString()}`
 })
@@ -328,6 +349,19 @@ const siteHref = computed(() => {
           <CohesionPanel
             v-else-if="kind === 'faction-cohesion'"
             :data="data" :scope-label="scopeLabel" hide-header :tab="cohesionTab"
+          />
+
+          <!-- One member's topic mix (TOPIC-10), with the House's own share as
+               the tick each bar is read against. Every topic is shown: an embed
+               has no "show all" to open. -->
+          <TopicMixChart
+            v-else-if="kind === 'rep-topics'"
+            :speech="data.mix"
+            :reference="repTopicReference"
+            :reference-label="$t('profile.topicsHouse')"
+            :series-label="$t('profile.topicsOwn')"
+            :interactive="false"
+            :caption="$t('profile.topicsCaption')"
           />
 
           <!-- Representative vote participation (REP-3) -->

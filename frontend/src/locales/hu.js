@@ -229,6 +229,9 @@ export default {
   topicMix: {
     speeches: 'Felszólalások',
     bills: 'Irományok',
+    // Csak tartalék: a viszonyítási alapot (a függőleges vonalat) rendesen a
+    // hívó oldal nevezi meg, mert az tudja, mihez képest olvasandók a sávok.
+    reference: 'Viszonyítási alap',
     tip: {
       speech: '{topic} – felszólalások: a besorolt szakpolitikai szöveg {pct}-a '
         + '({words} szó), {n} felszólalás témája.',
@@ -265,7 +268,7 @@ export default {
     page: {
       title: 'Miről szól a Parlament?',
       lead: 'Az Országgyűlés napirendje szakpolitikai témák szerint: miről beszélnek '
-        + 'a plenáris ülésen, és mi kerül irományként a Ház elé. A kettő nem '
+        + 'a plenáris ülésen, és mi kerül irományként a Parlament elé. A kettő nem '
         + 'ugyanaz a lista — a különbség maga is eredmény.',
       help1: 'Minden felszólalást és minden olvasható iromány szövegét gépi '
         + 'osztályozó sorolja be a CAP nemzetközi kódrendszerének 21 '
@@ -736,6 +739,29 @@ export default {
     vbNotMp: 'Nem volt képviselő',
     vbNotMpNote: 'Ezek a szavazások a képviselői mandátuma előtt (vagy után) zajlottak, ezért nem számítanak bele a részvételbe.',
     billsUnavailable: 'A benyújtott indítványok adatai a Törvényjavaslatok modul bevezetése után lesznek elérhetők.',
+    // Beszédtémák (TOPIC-10): a képviselő saját felszólalásainak témamegoszlása,
+    // a Ház egészének megoszlásához mérve. Viszonyítás nélkül az ábrát a
+    // képviselő jellemzésének olvasná az ember, holott többnyire a napirendet
+    // mutatja — ezért van a vonal, és ezért mondjuk is ki, mit jelent.
+    topics: 'Beszédtémák',
+    topicsOwn: 'Ez a képviselő',
+    topicsHouse: 'A Parlamenti átlag',
+    topicsCaption: 'A képviselő besorolt szakpolitikai szövegének megoszlása témák szerint',
+    topicsHelp: 'A felszólalások szövegét gépi osztályozó sorolja be a CAP '
+      + 'nemzetközi kódrendszerének 21 szakpolitikai témájába, bekezdésenként, '
+      + '{threshold}%-os megbízhatósági küszöbbel. A sávok a képviselő saját '
+      + 'besorolt szövegének megoszlását mutatják szavak szerint; az ügyrendi és '
+      + 'udvariassági részek („egyéb”) nem számítanak bele, az ülésvezetőként '
+      + 'elmondottak pedig egyáltalán nem kerülnek a modell elé.',
+    topicsReferenceNote: 'A függőleges vonal azt mutatja, hogy ugyanebben az '
+      + 'időszakban a Ház egésze mennyit szánt az adott témára. Enélkül félrevezető '
+      + 'az ábra: amiről egy képviselő beszél, az jórészt az, ami éppen napirenden volt.',
+    topicsCaveat: 'Gépi besorolás, tájékoztató jelleggel — nem hivatalos minősítés, '
+      + 'és nem a képviselő szakterületeinek listája.',
+    topicsCoverage: 'A felszólalásainak {pct}-a kapott témát ({n} / {total}); '
+      + 'a többiről a modell nem nyilatkozik.',
+    topicsShowAll: 'Mind a(z) {n} téma',
+    topicsAnalysis: 'Témák: miről szól a Parlament',
     activity: 'Aktivitás',
     activityHelp: 'Napi aktivitás: az adott napon elhangzott felszólalások és benyújtott irományok száma. A sötétebb szín nagyobb aktivitást jelez. Az ötletet a GitHub hasonló diagramja adta.',
     activityAriaLabel: 'Aktivitási naptár: {days} aktív nap',

@@ -94,6 +94,11 @@ export const api = {
   topicMix: (period) => get('/proceedings/topics', { period }),
   topicDetail: (label, period) =>
     get(`/proceedings/topics/${encodeURIComponent(label)}`, { period }),
+  // One member's slice of the same blocks (TOPIC-10), for the figure on their
+  // profile. Every row carries the floor's own share beside it, so the profile
+  // never has to fetch the House mix separately to draw its reference.
+  repTopics: (id, period) =>
+    get(`/proceedings/topics/representative/${id}`, { period }),
   // representatives
   representatives: (params) => get('/representatives', params),
   representative: (id, period) => get(`/representatives/${id}`, { period }),

@@ -10,6 +10,7 @@ import { formatDate, formatDateLocal, formatLongDate, formatMonth, formatSpeakin
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import PieChart from '../../components/PieChart.vue'
+import TopicMixChart from '../../components/TopicMixChart.vue'
 import ActivityBoard from '../../components/ActivityBoard.vue'
 import HelpTip from '../../components/HelpTip.vue'
 import ShareButton from '../../components/ShareButton.vue'
@@ -66,10 +67,18 @@ const showVotes = computed(() => store.moduleEnabled('votes'))
 const showSettlements = computed(() => store.moduleEnabled('settlements'))
 const settlements = ref(null)
 
+// The member's own policy-topic mix (TOPIC-10). Not a module of its own: the
+// proceedings module carries it, but the classification pass needs a GPU, so a
+// deployment can serve every speech on this page with no topic on any of them —
+// which is a capability flag, not a module switch (the Témák analysis is gated
+// on the same one). A profile then simply has no such panel.
+const showTopics = computed(() => store.featureEnabled('speech_topics'))
+const topics = ref(null)
+
 // Long lists (bills, votes, speeches) are collapsed to a preview so the profile
 // stays scannable; a per-section toggle reveals the rest of what's loaded.
 const COLLAPSE_LIMIT = 8
-const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false, declarations: false, salary: false })
+const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false, declarations: false, salary: false, topics: false })
 function shown(list, key) {
   return expanded[key] ? list : list.slice(0, COLLAPSE_LIMIT)
 }
@@ -289,6 +298,38 @@ const voteBreakdownExtra = computed(() => {
   return n ? [{ key: 'not_mp', label: t('profile.vbNotMp'), value: n, color: '#c3c7cc' }] : []
 })
 
+// ---------------------------------------------------------------------------
+// The topic mix (TOPIC-10)
+// ---------------------------------------------------------------------------
+
+// A member with several terms behind them touches most of the 21 labels, and the
+// tail of that list is single speeches. The figure shows the top of it and opens
+// to the whole — never truncated silently, because "these are the topics they
+// speak about" and "these are their eight commonest" are different claims.
+const topicRows = computed(() => topics.value?.topics || [])
+const shownTopics = computed(() => ({
+  topics: expanded.topics ? topicRows.value : topicRows.value.slice(0, COLLAPSE_LIMIT),
+}))
+
+// The House's own mix in the same scope, as the chart's baseline: `house_share`
+// rides on every row, so the reference costs the page no second request and
+// cannot drift from the Témák analysis that plots the same numbers as bars.
+const topicReference = computed(() => Object.fromEntries(
+  topicRows.value.map((t_) => [t_.label, t_.house_share])))
+
+// What the figure is drawn from (TRUST-1): how many of their speeches carry a
+// topic at all. Chairing turns were never put to the model, a speech with no
+// transcript could not be, and roughly a third of what was classified stays
+// under the confidence bar — so this is never "all of them", and a reader who is
+// not told reads the shares as a census of everything the member ever said.
+const topicCoverage = computed(() => {
+  const c = topics.value?.coverage
+  if (!c || !c.speeches) return null
+  return { labelled: c.labelled, total: c.speeches, share: c.labelled / c.speeches }
+})
+const topicThreshold = computed(() => Math.round((topics.value?.threshold ?? 0.9) * 100))
+const topicPct = (v) => `${Math.round((v || 0) * 100).toLocaleString(numLocale.value)}%`
+
 // "Felszólalások száma" / "Összes beszédidő" jump to the speeches list already
 // on this (shareable) profile — there is no standalone per-MP speech page.
 const speechesSection = ref(null)
@@ -309,11 +350,12 @@ async function load() {
   // the wrong sub-tab lit while the next person loads.
   store.profileTab = null
   profile.value = stats.value = activity.value = speechDays.value = voteDays.value = null
-  questions.value = lawBills.value = otherDocs.value = null
+  questions.value = lawBills.value = otherDocs.value = topics.value = null
   for (const m of [dayCache, openDays, voteDayCache, openVoteDays])
     for (const k of Object.keys(m)) delete m[k]
   expanded.questions = expanded.lawbills = expanded.other = expanded.votes
-    = expanded.days = expanded.declarations = expanded.salary = false
+    = expanded.days = expanded.declarations = expanded.salary
+    = expanded.topics = false
   zodiacRevealed.value = false
   try {
     // Everything on the profile is scoped to the global cycle scope
@@ -339,7 +381,12 @@ async function load() {
     const settlementsReq = showSettlements.value
       ? api.repSettlements(props.id, period).catch(() => null)
       : Promise.resolve(null)
-    const [p, s, act, days, qd, lb, od, v, tel] = await Promise.all([
+    // A deployment that classified nothing answers this 503 (TOPIC-7); like every
+    // other panel here it costs the profile a card, never the page.
+    const topicsReq = showTopics.value
+      ? api.repTopics(props.id, period).catch(() => null)
+      : Promise.resolve(null)
+    const [p, s, act, days, qd, lb, od, v, tel, top] = await Promise.all([
       api.representative(props.id, period),
       api.repStatistics(props.id, period),
       activityReq,
@@ -349,12 +396,13 @@ async function load() {
       otherReq,
       votesReq,
       settlementsReq,
+      topicsReq,
     ])
     if (seq !== loadSeq) return  // superseded by a newer navigation
     profile.value = p; stats.value = s; activity.value = act
     speechDays.value = days; voteDays.value = v
     questions.value = qd; lawBills.value = lb; otherDocs.value = od
-    settlements.value = tel
+    settlements.value = tel; topics.value = top
     // Tell the app shell which person tab this profile belongs under: only the
     // profile response knows which of the four kinds of person this is (one route
     // serves them all), and the sub-tab highlight follows it.
@@ -581,6 +629,56 @@ watch(() => store.cycles.join(','), load)
               </div>
             </div>
 
+          </section>
+
+          <!-- Miről beszél? (TOPIC-10). The member's own speeches divided between
+               the CAP policy topics, each bar read against a tick showing what the
+               whole House gave that topic in the same scope — without which the
+               figure reads as a personality when it is mostly the agenda. Rows
+               are not controls here: there is no per-member topic list to open
+               them into (§10), so the way on is the Témák analysis below. -->
+          <section class="card pad" v-if="showTopics && topicRows.length">
+            <div class="sechead">
+              <h2>{{ $t('profile.topics') }}</h2>
+              <HelpTip :label="$t('profile.topics')">
+                <p>{{ $t('profile.topicsHelp', { threshold: topicThreshold }) }}</p>
+                <p>{{ $t('profile.topicsReferenceNote') }}</p>
+                <p>{{ $t('profile.topicsCaveat') }}</p>
+              </HelpTip>
+            </div>
+            <!-- Before the figure, not under it: every share below is a share of
+                 the labelled part only (TRUST-1). -->
+            <p v-if="topicCoverage" class="small muted topiccov">
+              {{ $t('profile.topicsCoverage', { pct: topicPct(topicCoverage.share),
+                                                n: topicCoverage.labelled,
+                                                total: topicCoverage.total }) }}
+            </p>
+            <TopicMixChart
+              :speech="shownTopics"
+              :reference="topicReference"
+              :reference-label="$t('profile.topicsHouse')"
+              :series-label="$t('profile.topicsOwn')"
+              :interactive="false"
+              :caption="$t('profile.topicsCaption')"
+            />
+            <button v-if="topicRows.length > COLLAPSE_LIMIT" type="button"
+                    class="btn small showmore" :aria-expanded="expanded.topics"
+                    @click="expanded.topics = !expanded.topics">
+              {{ expanded.topics ? $t('profile.showLess')
+                                 : $t('profile.topicsShowAll', { n: topicRows.length }) }}
+            </button>
+            <div class="fig-foot">
+              <!-- Out to the same labels read as an agenda: who else speaks about
+                   them, and how the House's own mix moved. -->
+              <router-link class="small topiclink" :to="{ name: 'topics' }">
+                {{ $t('profile.topicsAnalysis') }} &rarr;
+              </router-link>
+              <EmbedButton
+                kind="rep-topics" :params="{ id: props.id }"
+                :title="(profile && profile.label ? profile.label + ' — ' : '') + $t('profile.topics')"
+                :height="185 + topicRows.length * 32" :max-width="620"
+              />
+            </div>
           </section>
 
           <section class="card pad" v-if="profile.faction_history && profile.faction_history.length">
@@ -999,6 +1097,10 @@ watch(() => store.cycles.join(','), load)
    wrap (narrow viewports) it lines up with the bio instead of floating right. */
 .pside { display: flex; flex-direction: column; gap: .5rem; min-width: 0; max-width: 100%; }
 .pactivity { max-width: 100%; min-width: 0; }
+.topiccov { margin: 0 0 .6rem; }
+/* The link out sits at the left end of the figure's footer row, opposite the
+   embed control (`.fig-foot` pushes its last child to the right). */
+.topiclink { margin-right: auto; }
 .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; align-items: start; }
 .pcol { display: flex; flex-direction: column; gap: 1.2rem; }
 .bignums { display: flex; gap: 2rem; flex-wrap: wrap; }

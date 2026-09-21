@@ -157,6 +157,9 @@ export default {
   topicMix: {
     speeches: 'Speeches',
     bills: 'Documents',
+    // A fallback only: the caller names the reference line, because it is the
+    // caller that knows what the bars are being read against.
+    reference: 'Reference',
     tip: {
       speech: '{topic} — speeches: {pct} of the classified policy text '
         + '({words} words), the subject of {n} speeches.',
@@ -650,6 +653,26 @@ export default {
     vbNotMp: 'Not an MP at the time',
     vbNotMpNote: 'These votes took place before (or after) their mandate, so they are not counted in the participation total.',
     billsUnavailable: 'Bills-submitted data will be available once the Bills module ships.',
+    // Speech topics (TOPIC-10) — the member's own mix, read against the House's.
+    topics: 'Speech topics',
+    topicsOwn: 'This member',
+    topicsHouse: 'The whole House',
+    topicsCaption: 'How this member’s classified policy text divides between topics',
+    topicsHelp: 'A machine classifier sorts the text of every speech into the 21 '
+      + 'policy topics of the international CAP codebook, paragraph by paragraph, '
+      + 'at a {threshold}% confidence threshold. The bars show how the member’s own '
+      + 'classified text divides, weighted by words; procedural and courtesy '
+      + 'passages (“other”) are excluded, and speeches made from the chair never '
+      + 'reach the model at all.',
+    topicsReferenceNote: 'The vertical tick is what the House as a whole gave that '
+      + 'topic over the same period. Without it the figure misleads: what a member '
+      + 'talks about is mostly whatever was on the agenda.',
+    topicsCaveat: 'Indicative machine classification — not an official designation, '
+      + 'and not a list of the member’s specialisms.',
+    topicsCoverage: '{pct} of their speeches carry a topic ({n} / {total}); on the '
+      + 'rest the model says nothing.',
+    topicsShowAll: 'All {n} topics',
+    topicsAnalysis: 'Topics: what Parliament is about',
     activity: 'Activity',
     activityHelp: 'Daily activity: the number of speeches given and documents submitted on that day. Darker means more activity. We got the idea from GitHub\'s similar chart.',
     activityAriaLabel: 'Activity calendar: {days} active days',

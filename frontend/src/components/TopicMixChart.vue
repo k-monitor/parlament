@@ -23,6 +23,15 @@
 // name reads both. The topics themselves are *not* colour-coded — 21 hues is far
 // past what stays distinguishable, the same reason TopicBadge has none.
 //
+// **A third use, one series and a baseline (TOPIC-10).** A representative profile
+// draws the same rows for one member, and passes the floor's mix as `reference`:
+// a tick across each track instead of a second bar. That is a deliberate
+// asymmetry. Speeches against irományok are two agendas of equal standing, so
+// they get two bars; a member against the House is a figure and the norm it is
+// high or low against, and drawing the norm as a bar of its own would invite the
+// reader to compare their sizes when the only thing that means anything is which
+// side of the tick the bar ends on.
+//
 // Shared with the embed view (§4C), so the figure a journalist drops into their
 // page is this component and not a second implementation of it.
 import { computed } from 'vue'
@@ -39,6 +48,18 @@ const props = defineProps({
   // Which series the ranking follows. The document agenda has its own order, and
   // seeing the same 21 rows resorted is how the difference becomes visible.
   sortBy: { type: String, default: 'speech' },   // 'speech' | 'bill'
+  // A baseline to read the bars against, as `{ label: share }` — the House's own
+  // mix on a representative profile (TOPIC-10), drawn as a tick across the track
+  // rather than as a second bar. It is a *reference*, not a series: one member's
+  // topics and the floor's are not two things of equal standing to compare, they
+  // are a figure and the norm it is high or low against, and a second full bar
+  // would say otherwise (and double the height of a card-sized figure).
+  reference: { type: Object, default: null },
+  // What the tick is, named in the legend — never left to the reader to infer.
+  referenceLabel: { type: String, default: '' },
+  // Overrides the name of the bar series where "Felszólalások" is not what the
+  // bars are ("Ez a képviselő", on a profile). Empty keeps the shared wording.
+  seriesLabel: { type: String, default: '' },
   // The label currently opened in the page's detail panel, if any.
   selected: { type: String, default: '' },
   // Rows are buttons on the page (they open a topic) and plain rows in an embed,
@@ -58,6 +79,13 @@ const num = (v) => (v || 0).toLocaleString('hu-HU')
 const hasSpeech = computed(() => !!props.speech?.topics?.length)
 const hasBill = computed(() => !!props.bill?.topics?.length)
 const bothSeries = computed(() => hasSpeech.value && hasBill.value)
+const speechName = computed(() => props.seriesLabel || t('topicMix.speeches'))
+// The reference is per topic and may simply not cover one (a topic the member
+// spoke about and the House, in this scope, did not): no tick, not a zero.
+const refShare = (label) => {
+  const v = props.reference ? props.reference[label] : null
+  return typeof v === 'number' ? v : null
+}
 
 const rows = computed(() => {
   const byLabel = new Map()
@@ -85,13 +113,23 @@ const rows = computed(() => {
     || a.name.localeCompare(b.name, 'hu'))
 })
 
+const hasReference = computed(() =>
+  !!props.reference && rows.value.some((r) => refShare(r.label) !== null))
+
 // The longest bar in the figure defines the track, across both series, so the two
 // stay on one scale — a series scaled to its own maximum would make a 4 % topic
-// and a 14 % one look alike.
+// and a 14 % one look alike. The reference counts towards it too: a baseline the
+// member is far below would otherwise sit off the end of the track.
 const max = computed(() => Math.max(
-  0.01, ...rows.value.flatMap((r) => [r.speech?.share || 0, r.bill?.share || 0])))
+  0.01,
+  ...rows.value.flatMap((r) => [r.speech?.share || 0, r.bill?.share || 0,
+                                refShare(r.label) || 0])))
 
 const width = (share) => `${Math.max(share ? 1.5 : 0, (share / max.value) * 100)}%`
+// Never past the track's own end: at the scale maximum the tick would otherwise
+// hang half outside the figure.
+const refLeft = (share) =>
+  `min(calc(100% - 2px), ${(share / max.value) * 100}%)`
 
 // What one bar is worth spelling out on hover: the share it shows, the text
 // behind it, and how many items the topic is the subject of — the same
@@ -110,9 +148,21 @@ function barTitle(row, side) {
 // on a plain element would simply be ignored — as visually hidden text.
 function rowValues(row) {
   const parts = []
-  if (row.speech) parts.push(`${t('topicMix.speeches')}: ${pct(row.speech.share)}`)
+  if (row.speech) parts.push(`${speechName.value}: ${pct(row.speech.share)}`)
   if (row.bill) parts.push(`${t('topicMix.bills')}: ${pct(row.bill.share)}`)
+  // The tick is the whole point of the row where there is one, so it is read out
+  // with the bar rather than left to the hover title no screen reader reaches.
+  const ref = refShare(row.label)
+  if (ref !== null && props.referenceLabel) {
+    parts.push(`${props.referenceLabel}: ${pct(ref)}`)
+  }
   return parts.join(' · ')
+}
+
+function refTitle(row) {
+  const ref = refShare(row.label)
+  if (ref === null) return ''
+  return `${props.referenceLabel || t('topicMix.reference')}: ${pct(ref)}`
 }
 
 function rowLabel(row) {
@@ -124,11 +174,16 @@ function rowLabel(row) {
   <figure class="mix">
     <figcaption v-if="caption" class="small soft mix-cap">{{ caption }}</figcaption>
 
-    <!-- A legend whenever there are two series; with one, the caption already
-         names what the bars are (no legend box for a single series). -->
-    <ul v-if="bothSeries" class="mix-legend">
-      <li><span class="swatch sp" aria-hidden="true" />{{ $t('topicMix.speeches') }}</li>
-      <li><span class="swatch bi" aria-hidden="true" />{{ $t('topicMix.bills') }}</li>
+    <!-- A legend whenever the figure carries more than one mark — two series, or
+         one series and the reference tick. With a single bar and nothing to read
+         it against, the caption already names what the bars are and a box with
+         one swatch would only restate it. -->
+    <ul v-if="bothSeries || hasReference" class="mix-legend">
+      <li><span class="swatch sp" aria-hidden="true" />{{ speechName }}</li>
+      <li v-if="bothSeries"><span class="swatch bi" aria-hidden="true" />{{ $t('topicMix.bills') }}</li>
+      <li v-if="hasReference">
+        <span class="swatch ref" aria-hidden="true" />{{ referenceLabel || $t('topicMix.reference') }}
+      </li>
     </ul>
 
     <ul class="mix-rows">
@@ -154,6 +209,10 @@ function rowLabel(row) {
                 <span
                   v-if="row.speech" class="fill sp" :style="{ width: width(row.speech.share) }"
                   :title="barTitle(row, 'speech')"
+                />
+                <span
+                  v-if="refShare(row.label) !== null" class="ref"
+                  :style="{ left: refLeft(refShare(row.label)) }" :title="refTitle(row)"
                 />
               </span>
               <span class="val">{{ row.speech ? pct(row.speech.share) : '–' }}</span>
@@ -191,6 +250,15 @@ function rowLabel(row) {
 .swatch { width: .7rem; height: .7rem; border-radius: 2px; display: inline-block; }
 .swatch.sp { background: var(--sp); }
 .swatch.bi { background: var(--bi); }
+/* The reference reads as a rule, not as a third colour. Its legend key is a
+   miniature of the row it appears in — a length of track with the tick across it
+   — because the bare 2px tick on the legend's own background is too slight to be
+   recognised as the thing on the bars. */
+.swatch.ref { position: relative; width: 1rem; height: .55rem; background: #eceae4; }
+.swatch.ref::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: .5rem; width: 2px;
+  background: var(--ink);
+}
 
 .mix-rows { list-style: none; margin: 0; padding: 0; }
 
@@ -220,7 +288,17 @@ function rowLabel(row) {
 
 .mix-bars { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .mix-bar { display: grid; grid-template-columns: 1fr 3.2rem; align-items: center; gap: .5rem; }
-.track { height: 9px; border-radius: 4px; background: #eceae4; overflow: hidden; }
+.track { position: relative; height: 9px; border-radius: 4px; background: #eceae4; overflow: hidden; }
+/* The baseline tick. Ink rather than a hue — it is the norm the bars are read
+   against, not a series of its own — with a hairline of surface around it so it
+   stays visible where it crosses the fill instead of disappearing into it. */
+.ref {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  /* Centred on the value rather than starting at it — 1px, but the whole point
+     of the mark is where exactly it falls against the bar's end. */
+  transform: translateX(-1px);
+  background: var(--ink); box-shadow: 0 0 0 1px rgba(255, 255, 255, .85);
+}
 .fill { display: block; height: 100%; border-radius: 4px; }
 .fill.sp { background: var(--sp); }
 .fill.bi { background: var(--bi); }

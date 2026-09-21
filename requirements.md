@@ -1323,11 +1323,11 @@ section — **Elemzések** — with its own entry in the top bar.
   left to the threshold. The parameters are **configurable, not hard-coded**
   (OPS-4) and **published in the site manifest**, the threshold in force included,
   so every label can state how it was produced (TRUST-1 / REP-5).
-  > **Not yet built (§10):** per-representative topic profiles and topic facets
-  > in search. The stored unit is deliberately the block, and the label is
-  > indexed, so both are queries against what already exists rather than a
-  > reclassification. (Topic classification of **irományok** was the third of
-  > these and is now TOPIC-8 below.)
+  > **Not yet built (§10):** topic facets in search. The stored unit is
+  > deliberately the block, and the label is indexed, so it is a query against
+  > what already exists rather than a reclassification — which is how the other
+  > two arrived: the **per-representative topic profile** is now TOPIC-10 below,
+  > and topic classification of **irományok** is TOPIC-8.
 - **TOPIC-8 (SHOULD).** The same labels are carried by **irományok**, wherever one
   appears as an item the reader can act on: the bills list, the *Kérdések* list
   (BILL-13), the *Minden iromány* list (BILL-9) and the iromány detail view. It answers the same question the
@@ -1429,10 +1429,48 @@ section — **Elemzések** — with its own entry in the top bar.
   > (`speech_topics` in `/meta`), which the router honours as a 404 — the first
   > analysis whose data can be missing while its module is mounted.
   >
-  > **Still not built (§10):** a topic filter in the proceedings search, and the
-  > per-representative topic profile. The page therefore links out to the iromány
-  > list (which does filter by topic) and to a speaker's profile, but there is no
-  > "every speech on this topic" list to link to yet — so none is offered.
+  > **Still not built (§10):** a topic filter in the proceedings search. The page
+  > links out to the iromány list (which does filter by topic) and to a speaker's
+  > profile — which now answers the mirror-image question itself (TOPIC-10) — but
+  > there is still no "every speech on this topic" list to link to, so none is
+  > offered.
+
+- **TOPIC-10 (SHOULD).** The same mix is read **one member at a time**, as a
+  figure on their representative profile: how their own speeches divide between
+  the CAP topics. It is the Témák page's question asked of a person, so it is
+  deliberately the same measure through the same fold at the same threshold — a
+  member's share is their words on a topic over their *own* classified policy
+  text, and the item count beside it is resolved by the same dominant-topic rule,
+  so it names the set of speeches whose chips carry that label.
+  - **The House's own share is drawn beside every bar, and it is not optional.**
+    Most of what any member talks about is whatever was on the agenda, so a figure
+    of one person's shares alone reads as a portrait of them when it is mostly a
+    portrait of the term. The reference is the floor's mix for the same scope —
+    the very number the Témák page plots, read off that page's memoised aggregate
+    rather than computed a second time, so the two cannot disagree. It is a **tick
+    across the bar's track, not a second bar**: speeches against irományok are two
+    agendas of equal standing (TOPIC-9) and earn two bars, but a member against
+    the House is a figure and the norm it sits above or below, and the only thing
+    worth reading off it is which side of the tick the bar ends on.
+  - The reference is the House's **share of words**, never an average over
+    members — that would let a handful of talkative back-benchers define the norm.
+  - **Coverage is stated before the figure** (TRUST-1): how many of the member's
+    speeches carry a topic at all, since chairing turns are never classified
+    (STAT-1), a speech with no transcript cannot be, and roughly a third of the
+    rest stays under the threshold. The ranked list shows its head and opens to
+    all of it — "the topics they speak about" and "their eight commonest" are
+    different claims, and the shorter one is never made silently.
+  - Rows are **not controls**. There is no per-member topic list to open them into
+    (§10), so the way on is the Témák analysis, linked from the panel. The figure
+    is **embeddable** (§4C), and on a deployment that classified nothing the panel
+    is **absent rather than empty** — gated on the same capability flag as the
+    analysis, not on a module switch.
+  > **✅ realized.** `/proceedings/topics/representative/{person_id}` folds the
+  > member's own blocks through the shared `parlacap.topic_mix` and hangs
+  > `house_share` on each row, taken from the floor mix's cached aggregate
+  > (`_floor_mix`, now shared with `/proceedings/topics` — one computation, two
+  > readers). The figure is `components/TopicMixChart.vue` once more, given a
+  > `reference` prop for the tick; the embed kind is `rep-topics`.
 
 ---
 

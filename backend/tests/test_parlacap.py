@@ -1278,3 +1278,105 @@ def test_the_document_mix_says_so_when_nothing_was_classified(client, conn,
     conn.execute("DROP TABLE bill_topic")
     conn.commit()
     assert client.get("/api/v1/bills/topics?period=43").status_code == 503
+
+
+# --- one member's own agenda (TOPIC-10) -------------------------------------
+# The same corpus read one speaker at a time. What has to hold is that a profile
+# and the analysis page never tell different stories about the same words: the
+# member's figure is their slice of the very same blocks, and the reference it is
+# read against is the floor mix the Témák page itself plots.
+
+def _rep_mix(client, person_id, **params):
+    from urllib.parse import urlencode
+    body = client.get(f"/api/v1/proceedings/topics/representative/{person_id}"
+                      + ("?" + urlencode(params, doseq=True) if params else ""))
+    assert body.status_code == 200, body.text
+    return body.json()
+
+
+def test_a_members_mix_is_their_own_words(floor_client, conn):
+    """The shares are of what *this member* said, not of the floor."""
+    body = _rep_mix(floor_client, "k001")
+    stored = dict(conn.execute(
+        "SELECT t.label, SUM(t.words) FROM speech_topic t "
+        "JOIN speech sp ON sp.uid = t.speech_id "
+        "WHERE sp.person_id = 'k001' AND t.score >= ? AND t.label <> 'Other' "
+        "GROUP BY t.label", (settings.parlacap_threshold,)).fetchall())
+    assert {t["label"]: t["words"] for t in body["topics"]} == stored
+    assert sum(t["share"] for t in body["topics"]) == pytest.approx(1.0)
+    assert body["person_id"] == "k001"
+
+
+def test_the_chair_is_never_in_a_members_mix(floor_client):
+    """Kovács chaired a sitting and talked about transport as a member on another.
+    Only the second is his subject — the chairing turn is not classified at all
+    (STAT-1), and the two must not pool."""
+    body = _rep_mix(floor_client, "k001")
+    transport = _labels(body)["Transportation"]
+    assert transport["words"] == 61          # the member's speech, not the chair's 81
+
+
+def test_a_members_topic_carries_the_houses_share_beside_it(floor_client):
+    """The reference that stops the figure reading as a personality test: every
+    row also carries what the whole House gave that topic in the same scope, and
+    it is the number the Témák page draws — not a second computation of it."""
+    body = _rep_mix(floor_client, "k001")
+    floor = _labels(_mix(floor_client))
+    for topic in body["topics"]:
+        assert topic["house_share"] == pytest.approx(floor[topic["label"]]["share"])
+    rows = _labels(body)
+    # Kovács is the House's energy speaker and barely its health one, which is
+    # visible only against the reference: both are shares of his own words.
+    assert rows["Energy"]["share"] > rows["Energy"]["house_share"]
+    assert rows["Health"]["share"] < rows["Health"]["house_share"]
+
+
+def test_a_members_count_is_the_speeches_whose_chip_says_so(floor_client):
+    """`count` is the dominant-topic rule, so it is the set of speeches a reader
+    would find — which is why a topic can hold words and still be the subject of
+    none of them."""
+    rows = _labels(_rep_mix(floor_client, "k001"))
+    assert rows["Energy"]["count"] == 1        # the speech it won on words
+    assert rows["Transportation"]["count"] == 1
+    # Health lost that same speech to Energy: real words, no speech of its own.
+    assert rows["Health"]["words"] > 0
+    assert rows["Health"]["count"] == 0
+
+
+def test_a_members_coverage_says_what_the_picture_is_drawn_from(floor_client):
+    """A profile has to state how much of the member's speech carries a label at
+    all before it shows the shape of it (TRUST-1)."""
+    cov = _rep_mix(floor_client, "k001")["coverage"]
+    # Four speeches of his have a transcript and are not chairing turns; three of
+    # them carry marker text the stand-in model recognises, and two of those came
+    # out with a subject — the fourth stayed under the confidence bar. Every step
+    # of that narrowing is reported, because each one loses different speech.
+    assert cov["speeches"] == 4
+    assert cov["classified"] == 3
+    assert cov["labelled"] == 2
+    assert cov["confident_blocks"] < cov["blocks"]
+
+
+def test_a_members_mix_is_cycle_scoped(floor_client):
+    """Same scope rule as everything else on the profile (§4A) — and the
+    reference moves with it rather than staying the whole corpus's."""
+    body = _rep_mix(floor_client, "k001", period=39)
+    assert body["topics"] == []
+    assert body["coverage"]["speeches"] == 0
+    both = _rep_mix(floor_client, "n002")
+    years = {b["period"] for b in both["trend"]["buckets"]}
+    assert years == {"2026", "2027"}
+
+
+def test_an_unknown_member_has_no_mix(floor_client):
+    assert floor_client.get(
+        "/api/v1/proceedings/topics/representative/nobody").status_code == 404
+
+
+def test_a_db_with_no_topics_says_so_for_a_member_too(floor_client, conn):
+    """Absent classification is reported as such here exactly as on the analysis
+    page: a profile must not draw an empty chart and call it an agenda."""
+    conn.execute("DROP TABLE speech_topic")
+    conn.commit()
+    assert floor_client.get(
+        "/api/v1/proceedings/topics/representative/k001").status_code == 503

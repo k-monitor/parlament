@@ -1099,6 +1099,18 @@ def topic_mix(period: Optional[List[int]] = Query(None),
         raise HTTPException(
             status_code=503,
             detail="No topic classification in this database (TOPIC-7).")
+    return _floor_mix(db, period)
+
+
+def _floor_mix(db: sqlite3.Connection, period: Optional[List[int]]) -> dict:
+    """The mix above, as a function rather than a response.
+
+    It has two readers now — the Témák page and every representative profile,
+    which plots a member's own mix against the floor's (TOPIC-10) — and they
+    share the one memoised result. That is not only thrift: a profile that drew
+    its reference line from a second, separately-computed floor mix could show a
+    member above a bar the analysis page draws below them.
+    """
 
     def compute():
         params = parlacap.topic_params()
@@ -1259,6 +1271,111 @@ def topic_detail(label: str,
         "topic_detail",
         (period_key(period), parlacap.topic_params()["topic_threshold"]), compute)
     return everything[label]
+
+
+# ---------------------------------------------------------------------------
+# One member's own agenda (TOPIC-10) — the figure on a representative profile
+# ---------------------------------------------------------------------------
+
+@router.get("/topics/representative/{person_id}")
+def representative_topic_mix(
+        person_id: str,
+        period: Optional[List[int]] = Query(None),
+        db: sqlite3.Connection = Depends(get_db)):
+    """What one member spends their floor time on (TOPIC-10).
+
+    The Témák analysis asks what the House talks about; a profile asks the same
+    question of one person. It *is* the same question, so it is the same scan
+    through the same fold (`parlacap.topic_mix`) at the same read-time threshold,
+    restricted to this speaker's speeches — a member's health figure is their
+    health words over their own classified policy words, exactly as the floor's is.
+    Nothing new is derived here and nothing is stored (TOPIC-6).
+
+    **`house_share` on every row is what keeps the figure from being read as a
+    personality test.** A member who gave 12 % of their words to health care in a
+    term when the whole House gave 11 % to it is not a health specialist, and a
+    bar chart of their 12 % alone would say they were: most of what any member
+    talks about is simply what was on the agenda. The reference is the floor's own
+    mix for the same scope, read off the Témák page's cached aggregate rather than
+    rescanned (see :func:`_floor_mix`). It is deliberately the House's *share of
+    words* and not an average over members — the latter would let a handful of
+    talkative back-benchers define the norm.
+
+    Coverage travels with it for the reason it does on the analysis page
+    (TRUST-1): chairing speeches are never classified at all (STAT-1), a speech
+    with no transcript cannot be, and at the threshold in force roughly a third of
+    the blocks that were classified say nothing. `speeches` is the population,
+    `labelled` the part of it this picture is actually drawn from.
+    """
+    # A speaker the registry does not carry has no profile to put this on, so the
+    # unknown id is answered as the profile endpoints answer it.
+    if not db.execute("SELECT 1 FROM person WHERE person_id = ?",
+                      (person_id,)).fetchone():
+        raise HTTPException(404, "Representative not found")
+    if not _has_speech_topics(db):
+        raise HTTPException(
+            status_code=503,
+            detail="No topic classification in this database (TOPIC-7).")
+
+    def compute():
+        params = {**parlacap.topic_params(), "pid": person_id}
+        # `speech` carries the cycle number itself, so the person filter and the
+        # cycle scope are one indexed lookup (`idx_speech_person`) and the block
+        # rows follow by primary key — one member's figure never scans
+        # `speech_topic` whole, which is what makes it cheap enough for a profile.
+        per = period_and(period, "sp.period_number")
+        rows = db.execute(
+            f"""SELECT substr(s.date, 1, 4) AS y, t.label AS label,
+                       t.score >= :topic_threshold AS conf,
+                       SUM(t.words) AS words, COUNT(*) AS blocks
+                FROM speech_topic t
+                JOIN speech sp ON sp.uid = t.speech_id
+                JOIN session s ON s.id = t.session_id
+                WHERE sp.person_id = :pid{per}
+                GROUP BY y, label, conf""", params).fetchall()
+
+        # The dominant-topic rule is a window query with nothing to join to, so
+        # "this member's speeches" reaches it as a subquery over `speech` rather
+        # than as a join (`parlacap.dominant_topic_sql`). The counts it yields are
+        # the speeches whose own chip carries the label — the same rule, so a
+        # count here is the size of a set the reader could go and read.
+        scope = (" AND speech_id IN (SELECT uid FROM speech WHERE person_id = :pid"
+                 + period_and(period, "period_number") + ")")
+        dominant = dict(db.execute(
+            "SELECT label, COUNT(*) FROM ("
+            + parlacap.dominant_topic_sql(scope, "speech") + ") GROUP BY label",
+            params).fetchall())
+
+        classified = db.execute(
+            f"""SELECT COUNT(DISTINCT t.speech_id) FROM speech_topic t
+                JOIN speech sp ON sp.uid = t.speech_id
+                WHERE sp.person_id = :pid{per}""", params).fetchone()[0]
+        # The population the pass could have covered: their non-procedural
+        # speeches that have a transcript at all.
+        speeches = db.execute(
+            "SELECT COUNT(*) FROM speech WHERE person_id = :pid"
+            " AND procedural = 0 AND has_text = 1"
+            + period_and(period, "period_number"), params).fetchone()[0]
+
+        mix = parlacap.topic_mix(
+            [(r["y"], r["label"], r["conf"], r["words"] or 0, r["blocks"])
+             for r in rows],
+            dominant,
+            {"speeches": speeches, "classified": classified,
+             "labelled": sum(dominant.values())})
+
+        # Read off the floor's cached mix; never written back into it.
+        house = {t["label"]: t["share"] for t in _floor_mix(db, period)["topics"]}
+        for topic in mix["topics"]:
+            topic["house_share"] = house.get(topic["label"], 0.0)
+        return {"person_id": person_id, **mix}
+
+    # Keyed by the person as well as the scope and the threshold, for the same
+    # reason the floor mix is keyed by the last two (TOPIC-6).
+    return cached_aggregate(
+        "rep_topic_mix",
+        (person_id, period_key(period),
+         parlacap.topic_params()["topic_threshold"]), compute)
 
 
 @router.get("/sessions/{session_id}")

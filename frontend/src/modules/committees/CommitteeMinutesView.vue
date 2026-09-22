@@ -218,8 +218,7 @@ watch(() => props.meetingId, () => {
           ‹ {{ $t('sessions.tabCommittees') }}
         </RouterLink>
         <span aria-hidden="true"> · </span>
-        <RouterLink :to="{ name: 'committee', params: { id: data.committeeId },
-                           query: { tab: 'meetings' } }">
+        <RouterLink :to="{ name: 'committee', params: { id: data.committeeId } }">
           {{ data.committeeName }}
         </RouterLink>
       </p>

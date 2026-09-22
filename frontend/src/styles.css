@@ -124,6 +124,25 @@ mark { background: var(--mark); color: var(--mark-ink); padding: 0 .1em; border-
 .chip-link { color: var(--ink-soft); text-decoration: none; cursor: pointer; border-radius: 999px; }
 .chip-link:hover, .chip-link:focus-visible { color: var(--ink); text-decoration: underline; }
 
+/* Filter pill. The one control the browse sections share for "narrow this list
+   to one category": the speaker categories on Felszólalók, the committee kinds
+   on Bizottságok. Rounded and filled when selected, so the chosen one reads as
+   the state of the list below rather than as another link. Works as a <button>
+   or as a <router-link>, hence the font and cursor resets. */
+.filterpill {
+  display: inline-flex; align-items: center; gap: .35rem;
+  padding: .32rem .8rem; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); font: inherit; font-size: .85rem; font-weight: 600;
+  line-height: 1.45; color: var(--ink-soft); cursor: pointer;
+}
+.filterpill:hover {
+  color: var(--accent); border-color: var(--accent);
+  background: var(--accent-soft); text-decoration: none;
+}
+.filterpill.active, .filterpill.active:hover {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
+}
+
 .badge {
   display: inline-flex; align-items: center; gap: .3rem; font-size: .72rem;
   background: #f0eee8; color: var(--ink-soft); border-radius: 999px; padding: .12rem .55rem;

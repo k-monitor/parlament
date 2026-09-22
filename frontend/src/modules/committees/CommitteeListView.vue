@@ -172,12 +172,12 @@ onUnmounted(() => clearTimeout(searchTimer))
       <div v-if="data && data.kinds.length" class="chips" role="group"
            :aria-label="$t('committees.kindFilter')">
         <button
-          type="button" class="chip chip-btn" :class="{ on: !f.kind }"
+          type="button" class="filterpill" :class="{ active: !f.kind }"
           :aria-pressed="!f.kind" @click="pickKind('')"
         >{{ $t('committees.allKinds') }}</button>
         <button
           v-for="k in data.kinds" :key="k.kind"
-          type="button" class="chip chip-btn" :class="{ on: f.kind === k.kind }"
+          type="button" class="filterpill" :class="{ active: f.kind === k.kind }"
           :aria-pressed="f.kind === k.kind" @click="pickKind(k.kind)"
         >{{ $t('committees.kinds.' + k.kind) }} <span class="n">{{ k.count }}</span></button>
       </div>
@@ -311,10 +311,16 @@ onUnmounted(() => clearTimeout(searchTimer))
   display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem;
   margin-top: .6rem;
 }
-.chips { display: flex; flex-wrap: wrap; gap: .35rem; }
-.chip-btn { cursor: pointer; border: 1px solid var(--line); background: none; }
-.chip-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-.chip-btn .n { opacity: .65; margin-left: .15rem; font-variant-numeric: tabular-nums; }
+/* .filterpill is global (styles.css) — the same pill the speaker categories use.
+   The row takes the full width so the pills always sit on a line of their own, as
+   they do on Felszólalók: which kind the list is narrowed to is the first thing
+   read under the search box, and the checkbox and the sort follow beneath it
+   rather than trailing off whichever pill happens to end the row. */
+.chips { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: .4rem; }
+/* How many committees the kind holds. Quieter than the label it follows: it
+   annotates the filter, it is not part of its name. */
+.filterpill .n { opacity: .65; font-variant-numeric: tabular-nums; font-weight: 500; }
+.filterpill.active .n { opacity: .8; }
 .subs, .sortsel { display: flex; align-items: center; gap: .35rem; }
 .sortsel { margin-left: auto; }
 .ahead { margin-bottom: 1rem; }

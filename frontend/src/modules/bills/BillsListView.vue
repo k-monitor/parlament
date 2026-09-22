@@ -30,6 +30,10 @@ const statuses = ref([])
 // CAP policy topics present in this slice, with their counts (TOPIC-8).
 const topics = ref([])
 
+// A committee-tabled iromány names the committee instead of a person (BIZ-28);
+// linked here as on the bill page, and only while that module is mounted (EXT-6).
+const showCommittees = computed(() => store.moduleEnabled('committees'))
+
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
 
@@ -252,6 +256,10 @@ onUnmounted(() => clearTimeout(t))
             <span class="muted">{{ $t('bills.submitters') }}:</span>
             <template v-for="(s, i) in b.sponsors" :key="i">
               <router-link v-if="s.person_id" :to="{ name: 'profile', params: { id: s.person_id } }">{{ s.name }}</router-link>
+              <router-link
+                v-else-if="s.committee && showCommittees"
+                :to="{ name: 'committee', params: { id: s.committee.id } }"
+              >{{ s.name }}</router-link>
               <span v-else>{{ s.name }}</span>
               <FactionBadge v-if="s.faction" :faction="s.faction" />
               <span v-if="i < b.sponsors.length - 1" aria-hidden="true">·</span>

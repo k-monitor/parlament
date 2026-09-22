@@ -608,6 +608,11 @@ export default {
       other: 'egyéb',
     },
     members: 'Tagok és tisztségviselők',
+    // A bizottság lapjának fülei (§6F / BIZ-4). A két irománylista a
+    // számkártyáján szereplő nevét viszi tovább, így a fül és a rákattintott
+    // szám ugyanazt mondja.
+    overviewTab: 'Áttekintés',
+    membersTab: 'Tagok',
     formerMembers: 'Korábbi tagok',
     formerMembersNote: 'Akiknek a tagsága a cikluson belül megszűnt.',
     noMembers: 'Ehhez a bizottsághoz nincs rögzített tagság.',
@@ -668,6 +673,10 @@ export default {
       + 'csak a felvétel érhető el.',
     backToCommittee: 'Vissza a bizottsághoz',
     agenda: 'Napirendi javaslat',
+    // Az ülés napirendje a listasorok fölé húzva (BIZ-4b) — a plenáris
+    // ülésnapok szófelhő-előnézetének bizottsági párja.
+    agendaPreview: 'Az ülés napirendje',
+    agendaMore: 'és további {count} napirendi pont',
     participants: 'Az ülés résztvevői',
     transcript: 'Az ülés jegyzőkönyve',
     present: 'Megjelent',
@@ -694,6 +703,9 @@ export default {
     video: 'Felvétel',
     watch: 'Megtekintés',
     videoPart: 'folytatás',
+    // Az ülés sorában a felvétel a csatorna jelével szerepel, szöveg nélkül;
+    // ez a jel neve a képernyőolvasónak és az egérrel rámutatónak.
+    watchOnYoutube: 'Megtekintés a YouTube-on',
     noVideos: 'Ehhez a bizottsághoz nincs felvétel.',
     videoCoverage: 'Az Országgyűlés YouTube-csatornáján {from} óta vannak '
       + 'felvételek; a korábbi ülésekről nem készült közzétett közvetítés.',

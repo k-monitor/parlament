@@ -623,3 +623,31 @@ def test_committee_share_card_describes_a_recording_only_sitting(og_client, conn
     assert "jegyzőkönyve" not in html
     # The recording is linked, never embedded (LEGAL-1).
     assert "https://www.youtube.com/watch?v=vid-4" in html
+
+
+def test_share_bill_links_its_committee_submitter(og_client, db_path):
+    """The crawlable body links a committee that tabled the iromány to its own
+    sheet, which is in the sitemap too (BIZ-13/BIZ-28) — and the structured data
+    calls a sponsor with no person behind it an Organization, not a Person. A body
+    the registry does not hold (Házbizottság) keeps its name and gains no link."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("""INSERT INTO bill (id, bill_number, number_sort, period_number,
+                     title, type, main_type, status)
+                 VALUES ('biz-bill','S/681',681,43,
+                         'Az Alkotmánybíróság új tagjainak megválasztásáról',
+                         'az Országgyűlés személyi döntését kezdeményező indítvány',
+                         'S','kihirdetve')""")
+    c.executemany("""INSERT INTO bill_sponsor (bill_id, person_id, faction_id, label, ord)
+                     VALUES ('biz-bill', NULL, NULL, ?, ?)""",
+                  [("Költségvetési Bizottság", 0), ("Házbizottság", 1)])
+    c.execute("""INSERT INTO committee_document (committee_id, period_number, role,
+                     bill_id, bill_number, title)
+                 VALUES ('biz-1', 43, 'own', 'biz-bill', 'S/681',
+                         'Az Alkotmánybíróság új tagjainak megválasztásáról')""")
+    c.commit(); c.close()
+
+    html = og_client.get("/documents/biz-bill").text
+    assert '<a href="/representatives/committees/biz-1">Költségvetési Bizottság</a>' in html
+    assert "<li>Házbizottság</li>" in html
+    assert '"@type": "Organization", "name": "Költségvetési Bizottság"' in html

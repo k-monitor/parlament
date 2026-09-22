@@ -142,6 +142,11 @@ export const api = {
   // page's second tab lists.
   committeeMeetingsAll: (params) => get('/committees/meetings', params),
   committeeMinutes: (meetingId) => get(`/committees/meetings/${meetingId}/minutes`),
+  // Just the agenda headings of one sitting (BIZ-4b), for the hover preview on
+  // the meeting lists — `committeeMinutes` above would pull the whole
+  // transcript to show five titles.
+  committeeMeetingAgenda: (meetingId, limit) =>
+    get(`/committees/meetings/${meetingId}/agenda`, { limit }),
   // The committee's recordings on the House's own YouTube channel (BIZ-16).
   committeeVideos: (id, params) => get(`/committees/${id}/videos`, params),
   // One person's seats, for the block on their profile (BIZ-7).

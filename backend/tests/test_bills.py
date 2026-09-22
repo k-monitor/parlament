@@ -830,3 +830,55 @@ def test_questions_list_faction_none_matches_unfactioned(client, db_path):
     r = client.get("/api/v1/bills/questions/list",
                    params={"faction": "none", "answerer": "unanswered"}).json()
     assert any(b["bill_number"] == "K/9" for b in r["bills"])
+
+
+def _seed_committee_tabled_bill(db_path):
+    """An iromány a committee tabled in its own name, alongside one submitted by a
+    body that only reads like a committee. `committee_document` carries the first
+    (role 'own', the committees module's own record of what a body tabled) and
+    knows nothing of the second."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("""INSERT INTO bill (id, bill_number, number_sort, period_number,
+                     title, type, main_type, status)
+                 VALUES ('biz-bill','S/681',681,43,
+                         'Az Alkotmánybíróság új tagjainak megválasztásáról',
+                         'az Országgyűlés személyi döntését kezdeményező indítvány',
+                         'S','kihirdetve')""")
+    c.executemany("""INSERT INTO bill_sponsor (bill_id, person_id, faction_id, label, ord)
+                     VALUES ('biz-bill', NULL, NULL, ?, ?)""",
+                  [("Költségvetési Bizottság", 0), ("Házbizottság", 1)])
+    c.execute("""INSERT INTO committee_document (committee_id, period_number, role,
+                     bill_id, bill_number, title)
+                 VALUES ('biz-1', 43, 'own', 'biz-bill', 'S/681',
+                         'Az Alkotmánybíróság új tagjainak megválasztásáról')""")
+    c.commit(); c.close()
+
+
+def test_committee_sponsor_links_to_its_committee(client, db_path):
+    """A committee that tabled an iromány is named *and* linked (BIZ-28): the
+    sponsor row carries the committee whose page lists this document back, on the
+    bill page and in the list alike. A sponsor that merely sounds like a committee
+    — the Házbizottság, which the registry does not hold — stays a plain label."""
+    _seed_committee_tabled_bill(db_path)
+    sponsors = client.get("/api/v1/bills/biz-bill").json()["sponsors"]
+    assert sponsors[0]["committee"] == {"id": "biz-1", "name": "Költségvetési Bizottság"}
+    assert sponsors[1]["committee"] is None
+
+    listed = {b["bill_number"]: b for b in
+              client.get("/api/v1/bills", params={"main_type_not": "T"}).json()["bills"]}
+    assert listed["S/681"]["sponsors"][0]["committee"]["id"] == "biz-1"
+
+
+def test_mp_sponsor_is_never_read_as_a_committee(client, db_path):
+    """A sponsor with a person behind it is a person: even where a committee of
+    the same name tabled the document, the MP keeps the profile link and gains no
+    committee of their own."""
+    import sqlite3
+    _seed_committee_tabled_bill(db_path)
+    c = sqlite3.connect(db_path)
+    c.execute("""UPDATE bill_sponsor SET person_id='k001', label='Költségvetési Bizottság'
+                  WHERE bill_id='biz-bill' AND ord=0""")
+    c.commit(); c.close()
+    s = client.get("/api/v1/bills/biz-bill").json()["sponsors"][0]
+    assert s["person_id"] == "k001" and s["committee"] is None

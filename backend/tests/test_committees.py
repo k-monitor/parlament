@@ -78,6 +78,25 @@ def test_committee_sheet_separates_current_and_former_members(client):
     assert c["counts"] == {"meetings": 2, "minutes": 1, "discussed": 2, "tabled": 1}
 
 
+def test_the_roster_carries_the_portrait_the_person_row_holds(conn, client):
+    """The roster is drawn as faces, so a seat that resolved to a person carries
+    that person's portrait — the same `person.photo_uri` the minutes' speaker
+    list takes. A seat that resolved to nobody (SCR-5) carries none and the
+    page falls back to its placeholder."""
+    conn.execute("UPDATE person SET photo_uri = '/media/photos/k001.jpg' "
+                 "WHERE person_id = 'k001'")
+    conn.execute("UPDATE person SET photo_uri = '/media/photos/n002.jpg' "
+                 "WHERE person_id = 'n002'")
+    conn.commit()
+    c = client.get("/api/v1/committees/biz-1").json()
+    assert {m["name"]: m["photoUri"] for m in c["members"]} == {
+        "Kovács Béla": "/media/photos/k001.jpg", "Külső Elek": None}
+    # A former member is a person too: the block that dates their departure
+    # shows them the same way.
+    assert [f["photoUri"] for f in c["formerMembers"]] == \
+        ["/media/photos/n002.jpg"]
+
+
 def test_an_officers_two_terms_are_one_seat(client):
     """Upstream records a chair twice — a `membership` span carrying no title
     (so it reads as plain "member") and an `office` span. Keyed by role those
@@ -429,6 +448,37 @@ def test_minutes_attendance_records_the_proxy_direction(conn):
     assert proxy["proxy_person_id"] == "k001"
     # A guest who is a known person still links; one who is not keeps the label.
     assert rows[("guest", "Vendég Viktor")]["org"] == "Pénzügyminisztérium"
+
+
+def test_agenda_endpoint_serves_the_headings_without_the_transcript(client):
+    """The hover preview's payload (BIZ-4b): the agenda points alone, ordered as
+    the document had them, with `total` saying what a `limit` cut off. The whole
+    minutes response would carry the transcript with it — 43 kB on average — to
+    show the same handful of titles."""
+    r = client.get("/api/v1/committees/meetings/ules-1/agenda")
+    assert r.status_code == 200
+    a = r.json()
+    assert a["total"] == 2
+    assert [(i["ordinal"], i["billNumber"]) for i in a["items"]] == [
+        (1, "T/100"), (2, None)]
+    assert a["items"][0]["title"].startswith("A költségvetésről szóló")
+    # Nothing of the document itself rides along.
+    assert set(a) == {"meetingId", "total", "items"}
+
+    # `limit` cuts the list, never the count the preview reports around it.
+    one = client.get("/api/v1/committees/meetings/ules-1/agenda",
+                     params={"limit": 1}).json()
+    assert (one["total"], len(one["items"])) == (2, 1)
+
+
+def test_agenda_of_an_unread_sitting_is_empty_not_an_error(client):
+    """A sitting whose jegyzőkönyv we have not read has no agenda to serve —
+    that is an answer (BIZ-9), so the list comes back empty. Only a meeting this
+    deployment does not hold at all is a 404."""
+    assert client.get("/api/v1/committees/meetings/ules-2/agenda").json() == {
+        "meetingId": "ules-2", "total": 0, "items": []}
+    assert client.get(
+        "/api/v1/committees/meetings/nincs-ilyen/agenda").status_code == 404
 
 
 def test_minutes_endpoint_serves_the_whole_sitting(client):

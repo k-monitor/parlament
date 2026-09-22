@@ -62,6 +62,11 @@ const meta = computed(() => {
 // page is mounted (EXT-6), exactly as the Kérdések diagram gates its own.
 const showPortfolios = computed(() => store.moduleEnabled('portfolios'))
 
+// A committee submits in its own name, with no person behind the label (BIZ-28).
+// Same gate, same reason: the name becomes the way into the committee's page only
+// while the committees module is mounted.
+const showCommittees = computed(() => store.moduleEnabled('committees'))
+
 // A promulgated bill links to its Magyar Közlöny issue: prefer the direct
 // gazette PDF, fall back to the issue-listing page.
 const kozlonyHref = computed(() => bill.value?.kozlony_doc_url || bill.value?.kozlony_url || null)
@@ -200,6 +205,12 @@ watch(() => props.id, load)
         <ul class="plain">
           <li v-for="(s, i) in bill.sponsors" :key="i" class="sponsor">
             <router-link v-if="s.person_id" :to="{ name: 'profile', params: { id: s.person_id } }">{{ s.name }}</router-link>
+            <!-- A committee submitter is the committee: the name itself is the
+                 link, as an MP's is, not a chip beside it. -->
+            <router-link
+              v-else-if="s.committee && showCommittees"
+              :to="{ name: 'committee', params: { id: s.committee.id } }"
+            >{{ s.name }}</router-link>
             <span v-else>{{ s.name }}</span>
             <FactionBadge v-if="s.faction" :faction="s.faction" />
             <!-- The raw label stays exactly as the source wrote it (TRUST-1); the

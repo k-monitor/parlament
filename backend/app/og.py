@@ -578,7 +578,9 @@ def _session_body(db: sqlite3.Connection, session_id: str, date_hu: str) -> str:
 
 
 def _bill_body(b, sponsors: list[tuple[str, str | None]], title: str) -> str:
-    """The iromány's identifying facts, with its sponsors linked."""
+    """The iromány's identifying facts, with its sponsors linked — to an MP's
+    profile, or to the committee's own sheet where a committee tabled it (BIZ-28);
+    each sponsor arrives with the path it links to, or none."""
     facts = []
     if b["type"]:
         facts.append("Típus: " + _esc(b["type"]))
@@ -592,9 +594,8 @@ def _bill_body(b, sponsors: list[tuple[str, str | None]], title: str) -> str:
         body += "<p>" + " · ".join(facts) + "</p>"
     if sponsors:
         body += "<h2>Benyújtók</h2><ul>" + "".join(
-            "<li>" + (_link(f"/representatives/{pid}", name) if pid
-                      else _esc(name)) + "</li>"
-            for name, pid in sponsors) + "</ul>"
+            "<li>" + (_link(href, name) if href else _esc(name)) + "</li>"
+            for name, href in sponsors) + "</ul>"
     return _wrap(body)
 
 
@@ -1215,13 +1216,32 @@ def register(app) -> None:
             else:
                 title = "Iromány"
 
-            sponsor_rows = [
-                (r["name"], r["person_id"]) for r in db.execute(
-                    """SELECT COALESCE(p.label, bs.label) AS name, bs.person_id
-                       FROM bill_sponsor bs
-                       LEFT JOIN person p ON p.person_id = bs.person_id
-                       WHERE bs.bill_id = ? ORDER BY bs.ord""", (bill_id,))
+            raw_sponsors = [(r["name"], r["person_id"]) for r in db.execute(
+                """SELECT COALESCE(p.label, bs.label) AS name, bs.person_id
+                   FROM bill_sponsor bs
+                   LEFT JOIN person p ON p.person_id = bs.person_id
+                   WHERE bs.bill_id = ? ORDER BY bs.ord""", (bill_id,))
                 if r["name"]]
+            # A committee tables irományok in its own name (BIZ-28); its sheet is
+            # in the sitemap (BIZ-13), so the crawlable body links there too. Its
+            # own try/except: a DB predating the module must degrade to an
+            # unlinked name, not drop the whole page to the generic card (EXT-6).
+            committees: dict[str, str] = {}
+            if any(pid is None for _, pid in raw_sponsors):
+                try:
+                    committees = {r["name"]: r["id"] for r in db.execute(
+                        """SELECT c.name, MIN(c.id) AS id
+                             FROM committee_document cd
+                             JOIN committee c ON c.id = cd.committee_id
+                            WHERE cd.role IN ('own', 'motion') AND cd.bill_id = ?
+                            GROUP BY c.name""", (bill_id,))}
+                except sqlite3.Error:
+                    committees = {}
+            sponsor_rows = [
+                (name, f"/representatives/{pid}" if pid
+                 else (f"/representatives/committees/{committees[name]}"
+                       if name in committees else None))
+                for name, pid in raw_sponsors]
             sponsors = [name for name, _ in sponsor_rows]
             if len(sponsors) > 3:
                 sponsor_text = ", ".join(sponsors[:3]) + " és mások"
@@ -1263,8 +1283,11 @@ def register(app) -> None:
             if b["submitted_date"]:
                 legislation["datePublished"] = b["submitted_date"]
             if sponsors:
-                legislation["creator"] = [{"@type": "Person", "name": n}
-                                          for n in sponsors]
+                # A sponsor with no person behind it is a body — the government
+                # through a tárca, or a committee — not a Person.
+                legislation["creator"] = [
+                    {"@type": "Person" if pid else "Organization", "name": n}
+                    for n, pid in raw_sponsors]
             if b["text_url"]:
                 legislation["isBasedOn"] = b["text_url"]
             # The browse page this iromány reads under. Three of them now, and

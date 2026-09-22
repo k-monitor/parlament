@@ -15,6 +15,7 @@ import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
 import { formatDate, formatSpeakingTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
+import CommitteeAgendaPreview from '../../components/CommitteeAgendaPreview.vue'
 import Pagination from '../../components/Pagination.vue'
 
 const route = useRoute()
@@ -43,6 +44,7 @@ function gotoPage(p) {
 
 function setTab(name) {
   closePreview()
+  agenda.value?.close()
   router.push({ name: 'sessions',
                 query: { ...route.query, tab: name === 'plenary' ? undefined : name,
                          offset: undefined } })
@@ -68,8 +70,9 @@ function meetingTarget(m) {
     return { name: 'committee-minutes', params: { meetingId: m.id } }
   }
   if (m.minutesUrl) {
-    return { name: 'committee', params: { id: m.committeeId },
-             query: { tab: 'meetings' } }
+    // The committee's own sheet, which opens on its meeting record (BIZ-4) —
+    // no tab parameter, the overview being the committee's plain address.
+    return { name: 'committee', params: { id: m.committeeId } }
   }
   return null
 }
@@ -176,6 +179,19 @@ function closePreview() {
   preview.value = null
 }
 
+// The committee tab's own preview (BIZ-4b), which asks the same question of the
+// other chamber: a plenary day is previewed by what was *said* on it, a
+// committee sitting by what was *on* it — a sitting day's cloud is built from a
+// whole day's speech, while a committee sitting has an agenda of five points
+// and a cloud of it would be five titles' worth of words. The popup is the
+// component's; only "which row is under the pointer" belongs here. Offered for
+// a sitting whose jegyzőkönyv we have read, the agenda coming out of that
+// document.
+const agenda = ref(null)
+function peekAgenda(m, ev) {
+  if (m.speeches) agenda.value?.open(m.id, ev.currentTarget)
+}
+
 // A fixed-position popup goes stale on scroll (it doesn't track the card), so just
 // dismiss it; the next hover re-opens it in the right place.
 onMounted(() => window.addEventListener('scroll', closePreview, { passive: true }))
@@ -229,6 +245,8 @@ onBeforeUnmount(() => {
         class="card pad scard"
         :class="{ notready: !m.speeches, inert: !meetingTarget(m) }"
         :aria-disabled="meetingTarget(m) ? undefined : 'true'"
+        @mouseenter="peekAgenda(m, $event)" @mouseleave="agenda?.close()"
+        @focus="peekAgenda(m, $event)" @blur="agenda?.close()"
       >
         <div class="sdate">{{ formatDate(m.heldAt) }}</div>
         <div class="ssitting cname">{{ m.committeeName }}</div>
@@ -289,6 +307,9 @@ onBeforeUnmount(() => {
     </div>
     <Pagination v-if="data" :page="page" :total-pages="totalPages" @goto="gotoPage" />
   </StateBlock>
+
+  <!-- One preview for the committee list; the card being hovered drives it. -->
+  <CommitteeAgendaPreview v-if="tab === 'committees'" ref="agenda" />
 
   <!-- Word-cloud hover preview: teleported to body so its fixed position is
        viewport-relative (unaffected by any ancestor overflow/transform) and it

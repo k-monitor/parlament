@@ -166,6 +166,38 @@ def _has_portfolios(db: sqlite3.Connection) -> bool:
                            "AND name='portfolio_bill'").fetchone())
 
 
+def _has_committees(db: sqlite3.Connection) -> bool:
+    """Whether the §6F committee tables are in this DB (they are ingested only for
+    the cycles the registry covers, and are absent from a DB built before them)."""
+    return bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                           "AND name='committee_document'").fetchone())
+
+
+def _committee_sponsors(db: sqlite3.Connection,
+                        bill_ids: list[str]) -> dict[tuple[str, str], dict]:
+    """The committee behind a committee-tabled iromány, keyed by ``(bill_id, label)``.
+
+    A sponsor that is a committee carries no `person_id` — the label is all the
+    iromány itself says (BIZ-28). Rather than re-resolve that free text against the
+    committee registry, this reads the link the committees module already holds:
+    `committee_document` records the irományok a committee **tabled** ('own' /
+    'motion'), so a name that matches there is a committee whose page exists and
+    that lists this iromány back. Names that only look like one — Házbizottság, the
+    NVB, the MNB's supervisory board — are absent from it and stay plain text.
+    """
+    if not bill_ids:
+        return {}
+    marks = ",".join("?" * len(bill_ids))
+    rows = db.execute(
+        f"""SELECT cd.bill_id, c.name, MIN(c.id) AS id
+              FROM committee_document cd
+              JOIN committee c ON c.id = cd.committee_id
+             WHERE cd.role IN ('own', 'motion') AND cd.bill_id IN ({marks})
+             GROUP BY cd.bill_id, c.name""", bill_ids).fetchall()
+    return {(r["bill_id"], r["name"]): {"id": r["id"], "name": r["name"]}
+            for r in rows}
+
+
 def _stages(stages_json: Optional[str]) -> list[dict]:
     """Parse the stored legislative-stage diagram and flag the current stage
     (the furthest reached) so the UI can split the timeline into past/future."""
@@ -185,8 +217,9 @@ def _stages(stages_json: Optional[str]) -> list[dict]:
 def _sponsors_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, list]:
     """Sponsor rows grouped by bill id (one query for a page of bills).
 
-    Each row carries whichever way in it has: an MP's ``person_id`` (EXT-2), and —
-    for the government's own irományok — the ``portfolio`` the label names (§6C).
+    Each row carries whichever way in it has: an MP's ``person_id`` (EXT-2), the
+    ``portfolio`` the label names for the government's own irományok (§6C), and the
+    ``committee`` that tabled it where a committee is the submitter (BIZ-28).
     """
     if not bill_ids:
         return {}
@@ -218,6 +251,7 @@ def _sponsors_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, list
             LEFT JOIN faction f ON f.id = bs.faction_id{pf_join}
             WHERE bs.bill_id IN ({placeholders})
             ORDER BY bs.bill_id, bs.ord""", bill_ids).fetchall()
+    committees = _committee_sponsors(db, bill_ids) if _has_committees(db) else {}
     out: dict[str, list] = {}
     for r in rows:
         out.setdefault(r["bill_id"], []).append({
@@ -228,6 +262,10 @@ def _sponsors_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, list
                         "color": r["faction_color"]} if r["faction_label"] else None,
             "portfolio": {"slug": r["portfolio_slug"], "name": r["portfolio_name"]}
                          if r["portfolio_slug"] else None,
+            # Only where no person is behind the label: an MP who happens to share a
+            # name with a body is a person first.
+            "committee": committees.get((r["bill_id"], r["label"]))
+                         if not r["person_id"] else None,
         })
     return out
 

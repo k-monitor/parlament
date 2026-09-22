@@ -3255,10 +3255,41 @@ transcripts — needs no processing to be useful. It was simply not being read.
   asked for: there are twice as many of them, each with three members, and mixed
   in as peers they bury the bodies a reader came for. A subcommittee whose parent
   a filter excluded is still listed, naming its parent, rather than vanishing.
-- **BIZ-4.** The **committee page** carries the roster (by seniority, each member
-  linked), the subcommittees, the meeting record with its minutes, and the
-  irományok the committee dealt with and tabled — the last three paged, since a
-  full cycle runs to hundreds of each.
+- **BIZ-4.** The **committee page** is **four tabs under the title**, because
+  those are four questions and a body of a full cycle answers each at length —
+  stacked on one page they bury each other. The first is the **overview**: the
+  headline counts in a row, each the way into the tab that itemises it, then the
+  subcommittees and the meeting record. The others are the **roster** (by
+  seniority, each member linked and shown with the portrait their `person` row
+  carries, past members dated beneath it), and the irományok the committee
+  **discussed** and **tabled**. Which tab is open is URL state (CYC-5), so a
+  link can point at a committee's record rather than always at its membership;
+  the lists are paged, a full cycle running to hundreds of each.
+- **BIZ-4a.** A meeting is **one row, and the row is the link**: it opens the
+  sitting — the readable jegyzőkönyv where we hold one, the recording-only page
+  where the House has published nothing yet (BIZ-27), the House's own PDF where
+  we have not read it — so nothing on the row has to be aimed at separately. The
+  row prints only what **distinguishes** the sitting: `nyilvános` and
+  `Határozatképes` are the ordinary case (3 044 and 3 626 of 3 725) and say
+  nothing repeated down 25 rows, so a chip appears where a sitting was closed or
+  could not vote, and the absence of a jegyzőkönyv is still stated (BIZ-9).
+- **BIZ-4b.** A meeting row **previews its agenda on hover**, the way a sitting
+  day previews its word cloud: a committee list is a column of dates and body
+  names and says nothing about the subject, which is the one thing a reader
+  scanning it wants. Both lists that carry committee sittings do it — the
+  committee's own sheet and the sittings page's committee tab (BIZ-24) — from
+  one shared component, so the two cannot drift apart. The *agenda*, not a word
+  cloud: a sitting day's cloud is distilled from a day of speech, while a
+  committee sitting has five headings, and a cloud of those would be five
+  titles' worth of words. It is served by **an endpoint of its own**: the
+  headings live in the minutes payload, but that is the whole document (43 kB
+  average, 250 kB at worst) and a list previewing its rows through it would
+  download a cycle of transcripts to show a dozen titles. Offered only where the
+  jegyzőkönyv has been read, the agenda being parsed out of it (BIZ-15), so a
+  hover that could only come back empty never fires a request; the popup never
+  takes the pointer, so it cannot swallow the click on the row beneath it; and
+  it says how many points it is **not** showing, a five-point preview of a
+  fourteen-point sitting otherwise reading as the whole agenda.
 - **BIZ-5 (MUST).** **Membership is the union of two sources, and the site must
   not present either alone as the answer.** The roster query answers "who sits on
   this today"; the term query answers "which seats began or ended during the
@@ -3293,6 +3324,21 @@ transcripts — needs no processing to be useful. It was simply not being read.
   where we hold it and stays a plain label where we do not (SCR-5), resolved at
   query time by the shared upstream id rather than a hard FK — so re-ingesting
   bills can never break committees (EXT-1), exactly as `vote_subject` does.
+- **BIZ-28.** The cross-link runs **both ways**: an iromány a committee *tabled*
+  names the committee as its benyújtó, and on the iromány's own page that name is
+  the link into the committee — the way an MP submitter's name is the link into
+  their profile. A committee sponsor carries **no person id**, so the link is
+  resolved the way the tárca one is (§6C): not by matching the free-text label
+  against the registry, but through `committee_document`'s own record of what each
+  body tabled ('own' / 'motion'), so what the link points at is always a page that
+  lists this iromány back — the mirror of BIZ-11. Everything that only *reads* like
+  a committee — Házbizottság, the Nemzeti Választási Bizottság, the MNB's
+  Felügyelőbizottsága — is absent from that record and stays a plain label, as does
+  every committee sponsor in the cycles the registry does not cover (EXT-6). The
+  submitter feed does carry an upstream `bizottsagId`, but it is **not** used: the
+  loader has never stored it, and committee ids are not one id space across the
+  cycles, so a record we can check beats an id we cannot.
+
 - **BIZ-12.** Minutes PDFs, iromány texts and a committee's own homepage on
   parlament.hu are **linked, never mirrored** (LEGAL-1); the contact address is
   reproduced exactly as the House publishes it (obfuscated) and never turned into
@@ -3401,8 +3447,11 @@ this bill" is a question the corpus cannot answer at all.
 
 - **BIZ-16 (MUST).** Committee meetings are **streamed to the House's own
   YouTube channel**, and those recordings are shown against the sitting they
-  belong to. There is no id shared with the committee registry and nothing in a
-  video's metadata names the meeting, so **the title is the whole of the join**:
+  belong to — **the mark of the channel on that sitting's row** (BIZ-4a), not a
+  list of their own, a recording being one of a sitting's two records rather
+  than a thing to browse. There is no id shared with the committee registry and
+  nothing in a video's metadata names the meeting, so **the title is the whole
+  of the join**:
   it carries the date and the body, and both are parsed out of it and matched.
   Videos are linked, never embedded or mirrored (LEGAL-1).
 - **BIZ-22.** Matching is **by name and date, and fails in two independent ways,
@@ -3422,8 +3471,9 @@ this bill" is a question the corpus cannot answer at all.
   in total, back to 2024-02-26, and that is genuinely all of it (the uploads
   playlist is exactly the union of the *videos* and *streams* tabs). So cycles 40
   and 41 have no recordings to find and cycle 42 only its last two years. The
-  site **says so** rather than showing an empty list, because an unexplained gap
-  reads as a fault in the site rather than a fact about the House.
+  site **says so**, in the committee's methodology note, rather than leaving the
+  gap unexplained, because an unexplained gap reads as a fault in the site
+  rather than a fact about the House.
 
 > **Shipped 2026-09-21** for cycles 40–43 (the cycles the rest of the corpus is
 > richest for; the API serves 34–43 and the stage takes a `--cycle` like every

@@ -519,6 +519,11 @@ export default {
       other: 'other',
     },
     members: 'Members and officers',
+    // The committee sheet's tabs (§6F / BIZ-4). The two document lists keep the
+    // names their count cards give them, so the tab and the number a reader
+    // clicked read the same.
+    overviewTab: 'Overview',
+    membersTab: 'Members',
     formerMembers: 'Former members',
     formerMembersNote: 'People whose seat ended during the cycle.',
     noMembers: 'No membership is recorded for this committee.',
@@ -576,6 +581,10 @@ export default {
       + 'now there is only the recording.',
     backToCommittee: 'Back to the committee',
     agenda: 'Proposed agenda',
+    // The sitting's agenda on hovering a list row (BIZ-4b) — the committee
+    // counterpart of the sitting day's word-cloud preview.
+    agendaPreview: 'On the agenda',
+    agendaMore: 'and {count} more agenda points',
     participants: 'Who was present',
     transcript: 'The record of the sitting',
     present: 'Members present',
@@ -602,6 +611,9 @@ export default {
     video: 'Recording',
     watch: 'Watch',
     videoPart: 'continued',
+    // On a meeting row the recording is the channel's mark alone; this names it
+    // for a screen reader and on hover.
+    watchOnYoutube: 'Watch on YouTube',
     noVideos: 'No recording of this committee.',
     videoCoverage: 'The National Assembly\'s YouTube channel has recordings '
       + 'from {from} onwards; nothing was broadcast publicly before that.',

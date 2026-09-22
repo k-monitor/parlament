@@ -261,7 +261,7 @@ onUnmounted(() => clearTimeout(searchTimer))
     <nav class="rolechips" :aria-label="$t('reps.category')">
       <router-link
         v-for="tab in ROLE_TABS" :key="tab.role" :to="chipTo(tab)"
-        class="rolechip" :class="{ active: role === tab.role }"
+        class="filterpill" :class="{ active: role === tab.role }"
         :aria-current="role === tab.role ? 'page' : undefined"
       >{{ $t('reps.role.' + tab.role) }}</router-link>
     </nav>
@@ -365,20 +365,9 @@ onUnmounted(() => clearTimeout(searchTimer))
 
 /* Category chips. Pills rather than another tab strip: the section already has a
    tab bar one row above, and a second one would read as more navigation instead
-   of a filter of the list below it. */
+   of a filter of the list below it. The pill itself is .filterpill (styles.css),
+   shared with the other sections that filter a list by one category. */
 .rolechips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .7rem; }
-.rolechip {
-  display: inline-flex; align-items: center; padding: .32rem .8rem;
-  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
-  font-size: .85rem; font-weight: 600; line-height: 1.45; color: var(--ink-soft);
-}
-.rolechip:hover {
-  color: var(--accent); border-color: var(--accent);
-  background: var(--accent-soft); text-decoration: none;
-}
-.rolechip.active, .rolechip.active:hover {
-  background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
-}
 .rolenote { margin: .8rem 0 -.2rem; max-width: 62ch; }
 .replist { list-style: none; padding: 0; margin: 0; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
 .repcard { display: flex; flex-direction: column; gap: .5rem; }

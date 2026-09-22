@@ -523,6 +523,58 @@ def meeting_minutes(
     return out
 
 
+@router.get("/meetings/{meeting_id}/agenda")
+def meeting_agenda(
+    meeting_id: str,
+    db: sqlite3.Connection = Depends(get_db),
+    limit: int = Query(6, ge=1, le=50),
+):
+    """**What one sitting was about**, in a payload small enough to hover over
+    (BIZ-4b) — the agenda headings alone, without the transcript hanging off
+    them.
+
+    The same rows `/minutes` serves under `agenda`, but that response is the
+    whole document (43 kB on average, 250 kB at worst) and a list page that
+    previewed its rows through it would download a cycle of transcripts to show
+    a dozen titles. Hence a route of its own, paged by a `limit` the caller sets
+    to however many it means to show.
+
+    `total` is the count the limit cut from, so a preview can say that a sitting
+    had more points than it is showing rather than implying the list is the
+    whole agenda.
+
+    A sitting we hold no *read* record of has no agenda to serve and comes back
+    empty — that is an answer, not an error (BIZ-9). Only a meeting this
+    deployment does not have, or one outside the served cycle window (CYC-7),
+    is a 404.
+    """
+    _require_tables(db)
+    m = db.execute("SELECT period_number FROM committee_meeting WHERE id = ?",
+                   (meeting_id,)).fetchone()
+    if m is None or not period_in_scope(m["period_number"]):
+        raise HTTPException(404, "Meeting not found")
+    if not _table_exists(db, "committee_minutes_item"):
+        return {"meetingId": meeting_id, "total": 0, "items": []}
+    total = db.execute("SELECT COUNT(*) AS n FROM committee_minutes_item "
+                       "WHERE meeting_id = ?", (meeting_id,)).fetchone()["n"]
+    return {
+        "meetingId": meeting_id,
+        "total": total,
+        # `ord` is the order the points stood in the document; `ordinal` is the
+        # number the document gave them, which repeats across sittings and is
+        # missing from the unnumbered ones ("Egyebek"), so it labels a row but
+        # never orders one.
+        "items": [{
+            "ordinal": i["ordinal"], "title": i["title"],
+            "billNumber": i["bill_number"],
+        } for i in db.execute(
+            """SELECT ordinal, title, bill_number
+                 FROM committee_minutes_item
+                WHERE meeting_id = ?
+                ORDER BY ord, ordinal, id LIMIT ?""", (meeting_id, limit))],
+    }
+
+
 def _recording_only_sitting(db: sqlite3.Connection,
                             meeting_id: str) -> dict | None:
     """One sitting served for its **recording** alone (BIZ-27), or None.
@@ -623,8 +675,15 @@ def get_committee(
         raise HTTPException(404, "Committee not found")
 
     out = _committee_row(r)
+    # The portrait comes off the shared `person` row, as the minutes' speaker
+    # list already takes it: the roster is a list of people, and a page that
+    # shows them as faces reads like the rest of the site's people lists rather
+    # than like a registry dump. A seat that resolved to nobody (SCR-5) simply
+    # has none.
     out["members"] = [_member(m) for m in db.execute(f"""
-        SELECT * FROM committee_member m WHERE m.committee_id = ?
+        SELECT m.*, p.photo_uri FROM committee_member m
+        LEFT JOIN person p ON p.person_id = m.person_id
+        WHERE m.committee_id = ?
         ORDER BY {_ROLE_ORDER_SQL}, m.ord, m.name COLLATE NOCASE
     """, (committee_id,))]
     out["subcommittees"] = [{
@@ -648,7 +707,8 @@ def get_committee(
     # winning, which is also the order the block reads in.
     former: dict = {}
     for t in db.execute("""
-        SELECT t.* FROM committee_term t
+        SELECT t.*, p.photo_uri FROM committee_term t
+        LEFT JOIN person p ON p.person_id = t.person_id
         WHERE t.committee_id = ? AND t.date_end IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM committee_member m
                            WHERE m.committee_id = t.committee_id
@@ -659,6 +719,7 @@ def get_committee(
     """, (committee_id,)):
         former[t["person_id"] or t["name"]] = {
             "personId": t["person_id"], "name": t["name"],
+            "photoUri": t["photo_uri"],
             "faction": t["faction_name"], "role": t["role"],
             "roleLabel": t["role_label"], "dateStart": t["date_start"],
             "dateEnd": t["date_end"], "reason": _reason(t["reason"]),
@@ -706,6 +767,7 @@ def _member(m: sqlite3.Row) -> dict:
         "personId": m["person_id"], "name": m["name"], "role": m["role"],
         "roleLabel": m["role_label"], "faction": m["faction_name"],
         "factionId": m["faction_id"], "governing": bool(m["governing"]),
+        "photoUri": m["photo_uri"],
     }
 
 

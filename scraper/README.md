@@ -32,21 +32,36 @@ to the representative registry — no name matching needed (requirements EXT-2).
 Everything goes through the modern, **token-free Felicitas JSON API**
 (`parlamonitor/felicitas.py`), verified against browser captures (2026-06):
 
-**Proceedings** — `plenaris-ules-adatok-query-provider`:
+**Proceedings** — `plenaris-ules-adatok-query-provider` (parlament.hu rebuilt
+these in 2026-09; the previous names all 404 now):
 
 1. `ulesnapok-query` (cycle + date range) → session days + UUIDs.
-2. `ulesnapok-aktusok-query` (day UUID) → every speech grouped by agenda act,
-   with its join number, speaker, `felszolaloId`, type, committee and duration.
-3. `ulesnap-felszolalasai` (day UUID, `pUlesnapId`) → the day's **complete** flat
-   speech listing. Query 2 reports a speech only through the agenda act it is
-   linked to, so speeches linked to none — chiefly those with no "Felszólalás
-   oka" (type) — are missing from it (≥8 200 speeches, 5.8%, over the archive);
-   the two are merged so no speech is lost, each recovered one inheriting the act
+2. `ulesnap-adatlap-aktusolatlan-query` (day UUID, `pUlesnapId`) → the day's
+   **complete** flat speech listing, with each speech's join number, speaker,
+   `felszolaloId`, type, irományok and duration. Authoritative for all of them:
+   the act listing below both omits speeches and reports a speech merged with its
+   continuations as one row (a join-number range `"28 - 30"` and their summed
+   duration).
+3. `ulesnap-adatlap-aktusolt-query` (day UUID) → the day's agenda-act UUIDs, then
+   `aktus-query` (day + act UUID, one request per act) → the speeches under each,
+   with the act's name and the committee/government capacity. This path is what
+   knows the agenda act, but it reports a speech only through an act it is linked
+   to, so speeches linked to none — chiefly those with no "Felszólalás oka"
+   (type) — are missing from it (≥8 200 speeches, 5.8%, over the archive); the two
+   listings are merged so no speech is lost, each recovered one inheriting the act
    of the speech it follows.
-4. `ulesnap-felszolalas-adata-query` (speech UUID) → the full speech text.
-5. `ulesnapok-video-query` (day UUID) → the whole-day HLS playlist on
-   `sgis.parlament.hu`. Per-speech offsets are also resolved and recorded for
-   provenance (used by a future precise-timing stage, not by v1).
+4. `felszolalas-adatlap-query` (speech UUID) → the full speech text.
+5. `ulesnap-video-query` (day UUID) → the whole-day HLS playlist on
+   `sgis.parlament.hu`; `felszolalas-video-query` (speech UUID) → per-speech
+   offsets, resolved and recorded for provenance (used by a future precise-timing
+   stage, not by v1).
+
+The act listing now names an act by its type alone (`"Általános vita"`) where it
+used to name it in full (`"Általános vita (T/667) <the bill's title>"`), which is
+neither descriptive nor unique within a day — and the site groups a sitting into
+sections by that label. `proceedings.scrape.label_acts` rebuilds it from the act's
+own bill reference plus the title from the cycle's bills registry; checked against
+the archive it reproduces all 10 090 cycle-41-43 act labels that name a bill.
 
 **Representatives** — `kepviselo-query-provider`: a paged roster query plus a
 family of per-MP detail queries and a photo resource endpoint. The same provider

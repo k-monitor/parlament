@@ -67,8 +67,9 @@ from .config import documents_retention, whisper_language, whisper_model
 from .documents.scrape import fetch_documents, load_registry
 from .felicitas import FelicitasClient
 from .officeholders.scrape import fetch_office_holders, save_office_holders
-from .proceedings.scrape import (_write_json, cycle_days, prune_cancelled,
-                                 renumbered, scrape_day, sitting_number)
+from .proceedings.scrape import (_write_json, bill_titles, cycle_days,
+                                 prune_cancelled, renumbered, scrape_day,
+                                 sitting_number)
 from .proceedings.transform import transform_day
 from .representatives.scrape import (fetch_missing_photos, fetch_representatives,
                                      save_representatives)
@@ -309,6 +310,11 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
     pruned = prune_cancelled(paths, cycle, days, start, end)
     for session in pruned:
         proc.pop(session, None)
+    # Names the agenda acts in full (scrape.label_acts). Read once per run from the
+    # registry the bills stage wrote LAST run — this stage goes first, so a bill
+    # tabled and debated the same day is labelled by number until the day is
+    # re-listed (a sitting in progress is, on every sync).
+    titles = bill_titles(paths, cycle)
     changed: list[tuple[str, dict]] = []      # (session, bundle) to (re)build
 
     for day in days:
@@ -351,7 +357,8 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
                  or prev.get("debate_s") != sig["debate_s"])
 
         is_latest = (day.get("date") == latest_date)
-        # A day is re-listed (one cheap request) when it is the still-live latest
+        # A day is re-listed (one cheap request — see below) when it is the
+        # still-live latest
         # sitting OR when what we hold of it is unfinished. parlament.hu completes a
         # sitting in instalments and in no fixed order, so BOTH halves have to be
         # chased or a day freezes half-done the moment it stops being the newest:
@@ -370,7 +377,12 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
         incomplete_media = (bool(prev) and not prev.get("has_media")
                             and (day.get("date") or "") >= media_cutoff)
         if is_latest or incomplete_text or incomplete_media:
-            listing = felicitas.day_speeches(day["uuid"])
+            # The flat roster, not the full day listing: the fingerprint is built
+            # from uuid/duration/join number, which the roster carries, and it is
+            # ONE request where the full listing now costs one per agenda act (~33
+            # on a sitting day) — a probe run on every poll, for every unfinished
+            # day, must not pay that (SCR-4 politeness).
+            listing = felicitas.day_speech_roster(day["uuid"])
             fp = _listing_fingerprint(listing)
             sig["aktus_fp"] = fp
             if not needs and prev.get("aktus_fp") != fp:
@@ -385,7 +397,8 @@ def _sync_proceedings(felicitas: FelicitasClient, paths: Paths, cycle: int,
             sig["aktus_fp"] = prev["aktus_fp"]      # carry the last known value
 
         if needs:
-            bundle = scrape_day(felicitas, cycle, day, resolve_offsets=resolve_offsets)
+            bundle = scrape_day(felicitas, cycle, day,
+                                resolve_offsets=resolve_offsets, titles=titles)
             _write_json(paths.raw_day(session), bundle)
             changed.append((session, bundle))
             sig["has_text"] = _bundle_has_text(bundle)

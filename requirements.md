@@ -150,7 +150,7 @@ Primary use cases:
   only — bringing the database up to date is the loader's incremental step (ING-5),
   so the two halves stay independently runnable (ING-1).
   > **✅ realized.** `parlamonitor sync` auto-detects the latest cycle, probes it
-  > (one `ulesnapok-query` + per-live-day `ulesnapok-aktusok-query` fingerprint,
+  > (one `ulesnapok-query` + a per-live-day speech-listing fingerprint,
   > plus a cheap text probe for any day whose transcript is still pending — SCR-8),
   > re-scrapes only changed items, persists signatures in `sync-state.json`, and
   > emits an ingestion log (SCR-3). Representatives refresh on a slow cadence.
@@ -3920,7 +3920,7 @@ what was said.
 - **Precise sentence ↔ video sync — ✅ realized (§3.4).** The originally-planned
   progression of the swappable timing stage (TIM-4) is now shipped:
   1. **Real per-speech offsets** via the Felicitas per-speech video query
-     (`ulesnapok-aktusok-query` → per-speech `offset1`/`offset2`) give
+     (`felszolalas-video-query` → per-speech `offset1`/`offset2`) give
      second-precise speech boundaries (`felicitas-speech-offset`); they are now
      the positional-timing fallback.
   2. **Forced alignment** with whisper-large-v3-turbo is now the **default**

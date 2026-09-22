@@ -9,10 +9,12 @@ be run and tested independently (requirements ING-1).
 Per day it collects, for every speech:
 
 * the agenda act it belongs to, its join number, type, committee and any bill
-  references (from ``ulesnapok-aktusok-query``);
+  references (from ``aktus-query`` over the day's acts, completed from
+  ``ulesnap-adatlap-aktusolatlan-query``), the act named in full again by
+  :func:`label_acts`;
 * the speaker, the linking ``person_id`` (``kepviseloId``), and the full speech
-  text as HTML (from ``ulesnap-felszolalas-adata-query``);
-* the whole-day HLS recording URL + duration (from ``ulesnapok-video-query``);
+  text as HTML (from ``felszolalas-adatlap-query``);
+* the whole-day HLS recording URL + duration (from ``ulesnap-video-query``);
 * best-effort real per-speech day-stream offsets — recorded for provenance and
   the future precise-timing stage, **not** used by v1 timing (TIM-1 / §10).
 
@@ -30,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from ..config import Paths, session_cycle, session_id
@@ -253,9 +256,77 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+_ACT_CODE_RE = re.compile(r"\b[A-ZÁÉÍÓÖŐÚÜŰ]/\d+")
+
+
+def bill_titles(paths: Paths, cycle: int) -> dict[str, str]:
+    """``billNumber`` → title from the cycle's bills registry, for :func:`label_acts`.
+
+    Empty when the registry has not been scraped yet — the label then keeps the
+    bill's number without its title, and the next re-scrape of the day (a sitting
+    in progress is re-listed on every sync) fills it in."""
+    try:
+        data = json.loads(paths.bills_file(cycle).read_text())
+    except (OSError, ValueError):
+        logger.info("No bills registry for cycle %s yet: agenda acts will be "
+                    "labelled by bill number only", cycle)
+        return {}
+    return {b.get("billNumber"): b.get("title")
+            for b in (data.get("data") or [])
+            if b.get("billNumber") and b.get("title")}
+
+
+def label_acts(speeches: list[dict], titles: dict[str, str] | None) -> list[dict]:
+    """Name each speech's agenda act in full, the way the source used to.
+
+    Until the 2026-09 restructuring the day listing named an act completely —
+    ``"Általános vita (T/667) Az egyes adótörvények … módosításáról"`` — and that
+    one string is what everything downstream reads: ``transform._agenda_item``
+    splits it into the agenda item's topic and bill references, and the loader
+    groups a sitting's speeches into sections by (title, officialTitle). The new
+    API gives only the act's TYPE (``"Általános vita"``), which is neither
+    descriptive nor unique within a day: three bills' general debates would collapse
+    into one section, in one another's speech order.
+
+    So the label is rebuilt from the act's own bill reference — its speeches carry
+    it in the nested type table — plus that bill's title from the cycle registry.
+    The spelling is the archive's own: every one of the 16 930 archived act labels
+    of cycles 40-43 that names a bill is ``"<act type> (<code>) <title>"``, and all
+    10 090 distinct ones of cycles 41-43 carry exactly the title the registry holds
+    for that number. What the rebuild cannot restore is upstream's own rewording of
+    the act TYPE (2026-09 shortened e.g. "Összevont vita folytatása és lezárása" to
+    "Összevont vita"), which cost one distinction: on 1 archived day in 456 two acts
+    of the same bill would now share a label and merge into one section. An act with
+    no bill reference (``"Ülésnap megnyitása"``, ``"Napirend előtti felszólalások"``)
+    keeps its bare name, as it always had — and collided with its like just the same
+    before. Acts are labelled by ``aktus_id``, so the speeches that inherited an act
+    from a neighbour (``felicitas._merge_roster``) are labelled with it.
+    """
+    codes: dict[str, Counter] = {}
+    for sp in speeches:
+        aktus_id = sp.get("aktus_id")
+        if aktus_id:
+            codes.setdefault(aktus_id, Counter()).update(sp.get("bills") or [])
+    for sp in speeches:
+        aktus_id, name = sp.get("aktus_id"), (sp.get("aktus") or "").strip()
+        # A label that already names a bill is a full one (an archived bundle
+        # re-read, or a source that went back to serving them).
+        if not aktus_id or not name or _ACT_CODE_RE.search(name):
+            continue
+        seen = codes.get(aktus_id)
+        if not seen:
+            continue
+        # The act's own bill: the one its speeches refer to most (an act names
+        # exactly one — no archived label carries two).
+        code = min(seen, key=lambda c: (-seen[c], c))
+        title = (titles or {}).get(code)
+        sp["aktus"] = f"{name} ({code}) {title}" if title else f"{name} ({code})"
+    return speeches
+
+
 # When a sitting's per-speech video is not yet segmented — a recently-held day
 # whose whole-day recording is published but not yet cut into per-speech clips —
-# ``ulesnapok-video-query`` echoes the WHOLE-DAY recording window ``[day_off1,
+# ``felszolalas-video-query`` echoes the WHOLE-DAY recording window ``[day_off1,
 # day_off2]`` as EVERY speech's offsets instead of that speech's real span. Left
 # unfiltered, each speech would be stamped ``videoEnd - videoStart == day
 # duration`` (≈15 h), and the loader (which derives a video-only speech's
@@ -311,7 +382,8 @@ def _prior_speeches(raw_path) -> dict:
 
 
 def scrape_day(felicitas: FelicitasClient, cycle: int, day: dict, *,
-               resolve_offsets: bool = True, prior: dict | None = None) -> dict:
+               resolve_offsets: bool = True, prior: dict | None = None,
+               titles: dict[str, str] | None = None) -> dict:
     """Build the raw bundle for one session day.
 
     Always returns a bundle. A day parlament.hu already lists but for which no
@@ -322,9 +394,11 @@ def scrape_day(felicitas: FelicitasClient, cycle: int, day: dict, *,
     the old behaviour of returning ``None`` and losing the day).
 
     ``prior`` is an optional uuid → already-downloaded-speech map whose text and
-    offsets are reused instead of re-requested (:func:`_reuse_detail`)."""
+    offsets are reused instead of re-requested (:func:`_reuse_detail`); ``titles``
+    an optional bill-number → title map used to name the agenda acts in full
+    (:func:`label_acts`, :func:`bill_titles`)."""
     day_uuid = day["uuid"]
-    speeches = felicitas.day_speeches(day_uuid)
+    speeches = label_acts(felicitas.day_speeches(day_uuid), titles)
     video = felicitas.day_video(day_uuid)
     day_off1 = (video or {}).get("day_off1")
     day_off2 = (video or {}).get("day_off2")
@@ -473,6 +547,7 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
     if not days:
         logger.info("No session days for cycle %s in [%s, %s]", cycle, start, end)
         return []
+    titles = bill_titles(paths, cycle)
     if prune:
         prune_cancelled(paths, cycle, days, start, end)
 
@@ -505,7 +580,7 @@ def download_period(felicitas: FelicitasClient, paths: Paths, cycle: int,
 
         prior = _prior_speeches(raw_path) if reuse_text else None
         bundle = scrape_day(felicitas, cycle, day, resolve_offsets=resolve_offsets,
-                            prior=prior)
+                            prior=prior, titles=titles)
         _write_json(raw_path, bundle)
         n_text = sum(1 for s in bundle["speeches"] if s.get("text_html"))
         if not bundle["speeches"]:

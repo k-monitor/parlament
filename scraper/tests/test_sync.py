@@ -56,6 +56,13 @@ class FakeFelicitas:
         self.calls["day_speeches"] += 1
         return list(self.speeches.get(uuid, []))
 
+    def day_speech_roster(self, uuid):
+        # What the change probe asks for: the flat listing, one request, without
+        # the per-act fan-out a full day listing now costs.
+        self.calls["day_speech_roster"] += 1
+        return [{k: v for k, v in s.items() if k not in ("aktus", "aktus_id")}
+                for s in self.speeches.get(uuid, [])]
+
     def speech_text(self, uuid):
         self.calls["speech_text"] += 1
         return {"html": self.texts.get(uuid, "")}
@@ -80,7 +87,8 @@ def patched(tmp_path, monkeypatch):
     records the session ids scraped on each pass."""
     scraped = []
 
-    def fake_scrape_day(felicitas, cycle, day, *, resolve_offsets=True):
+    def fake_scrape_day(felicitas, cycle, day, *, resolve_offsets=True,
+                        titles=None):
         # Mirror the real scrape_day: attach each speech's text (empty until the
         # transcript is published) so the sync's has-text bookkeeping is exercised,
         # and carry the day's identity (date + upstream uuid) the raw file is keyed
@@ -97,9 +105,11 @@ def patched(tmp_path, monkeypatch):
 
     real_sitting = sync.sitting_number
 
-    def fake_scrape_recording(felicitas, cycle, day, *, resolve_offsets=True):
+    def fake_scrape_recording(felicitas, cycle, day, *, resolve_offsets=True,
+                              titles=None):
         scraped.append(sync.session_id(cycle, real_sitting(day)))
-        return fake_scrape_day(felicitas, cycle, day, resolve_offsets=resolve_offsets)
+        return fake_scrape_day(felicitas, cycle, day,
+                               resolve_offsets=resolve_offsets, titles=titles)
 
     monkeypatch.setattr(sync, "scrape_day", fake_scrape_recording)
     monkeypatch.setattr(sync, "transform_day", fake_transform_day)
@@ -174,7 +184,8 @@ def test_idle_poll_only_makes_cheap_requests(patched):
     # An idle poll over fully-published days: one list query + one speech-listing
     # fingerprint for the single live day — nothing per-speech, no text probe.
     assert fel.calls["session_days"] == 1
-    assert fel.calls["day_speeches"] == 1
+    assert fel.calls["day_speech_roster"] == 1
+    assert fel.calls["day_speeches"] == 0
     assert fel.calls["speech_text"] == 0
 
 
@@ -196,7 +207,7 @@ def test_text_published_later_rescrapes_past_video_only_day(patched):
     s_idle = _run(fel, paths)
     assert scraped == []
     assert s_idle["sessions"] == []
-    assert fel.calls["day_speeches"] == 2        # u1 (incomplete) + u2 (latest)
+    assert fel.calls["day_speech_roster"] == 2   # u1 (incomplete) + u2 (latest)
     # u1 has 2 speeches; the probe samples distinct positions (first, last) and,
     # finding no text, gives up — a couple of cheap requests, not the whole day.
     assert fel.calls["speech_text"] == 2
@@ -404,7 +415,7 @@ def test_partly_timed_day_is_chased_until_the_rest_is_timed(patched):
     scraped.clear()
     assert _run(fel, paths)["sessions"] == []
     assert scraped == []
-    assert fel.calls["day_speeches"] == 2        # u1 (untimed tail) + u2 (latest)
+    assert fel.calls["day_speech_roster"] == 2   # u1 (untimed tail) + u2 (latest)
     assert fel.calls["speech_text"] == 0
 
     # Upstream finishes segmenting u1's recording → exactly u1 is re-scraped.
@@ -418,7 +429,7 @@ def test_partly_timed_day_is_chased_until_the_rest_is_timed(patched):
     scraped.clear()
     _run(fel, paths)
     assert scraped == []
-    assert fel.calls["day_speeches"] == 1        # only u2, the latest day
+    assert fel.calls["day_speech_roster"] == 1   # only u2, the latest day
 
 
 def test_fully_timed_day_is_not_re_listed(patched):
@@ -430,7 +441,7 @@ def test_fully_timed_day_is_not_re_listed(patched):
 
     fel.calls.clear()
     _run(fel, paths)
-    assert fel.calls["day_speeches"] == 1        # only u2, the latest day
+    assert fel.calls["day_speech_roster"] == 1   # only u2, the latest day
 
 
 def test_long_unfinished_day_stops_being_chased(patched):
@@ -442,7 +453,7 @@ def test_long_unfinished_day_stops_being_chased(patched):
 
     fel.calls.clear()
     _run(fel, paths)
-    assert fel.calls["day_speeches"] == 1        # only u2; u1 aged out of the chase
+    assert fel.calls["day_speech_roster"] == 1   # only u2; u1 aged out of the chase
 
 
 # --- office holders (tisztségviselők) --------------------------------------

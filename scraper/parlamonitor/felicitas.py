@@ -4,23 +4,25 @@ The modern parlament.hu site is backed by a public JSON query API under
 ``/felicitas/api/query/...`` (POST bodies, no authentication). This one client
 covers both data domains the scraper needs:
 
-**Plenary proceedings** (``plenaris-ules-adatok-query-provider``) — verified
-2026-06:
+**Plenary proceedings** (``plenaris-ules-adatok-query-provider``) — restructured
+upstream 2026-09 (see :data:`DAY_SPEECH_ROSTER_QUERY`), verified 2026-09-22:
 
   1. ``ulesnapok-query``            (cycle + date range) → session days + UUIDs
-  2. ``ulesnapok-aktusok-query``    (day UUID) → every speech of the day grouped
-     by agenda act, each with its join number (``sorszam``), UUID, speaker,
-     ``felszolaloId`` (the representative id — a cross-module link, EXT-2),
-     type, committee, start time and duration.
-  3. ``ulesnap-felszolalasai``      (day UUID, paged) → the day's **complete**
-     flat speech listing (the portal's own "ülésnap felszólalásai" table): join
-     number, UUID, speaker, representative id, type, start time and duration —
-     but no agenda act. Query (2) is *not* complete on its own (see
-     :data:`DAY_SPEECH_ROSTER_QUERY`), so the two are merged.
-  4. ``ulesnap-felszolalas-adata-query`` (speech UUID) → that speech's full text
+  2. ``ulesnap-adatlap-aktusolatlan-query`` (day UUID, paged) → the day's
+     **complete** flat speech listing (the portal's own "ülésnap felszólalásai"
+     table): join number (``sorszam``), UUID, speaker, ``felszolaloId`` (the
+     representative id — a cross-module link, EXT-2), type, the irományok the
+     speech touches, start time and duration — but no agenda act.
+  3. ``ulesnap-adatlap-aktusolt-query`` (day UUID) → the day's agenda-act UUIDs,
+     and ``aktus-query`` (day + act UUID) → the speeches under one act, with the
+     act's name and the government/committee capacity the speech was made in.
+     One request per act; neither is complete or per-speech on its own, so (2) is
+     the source of every number and (3) only adds the act.
+  4. ``felszolalas-adatlap-query`` (speech UUID) → that speech's full text
      (HTML), speaker, type and duration.
-  5. ``ulesnapok-video-query``      (day UUID, ``pTeljes=true``) → a ``playseq.php``
-     URL that resolves to the whole-day HLS playlist on ``sgis.parlament.hu``.
+  5. ``ulesnap-video-query``        (day UUID) → a ``playseq.php`` URL that
+     resolves to the whole-day HLS playlist on ``sgis.parlament.hu``;
+     ``felszolalas-video-query`` (speech UUID) → one speech's window in it.
 
 This token-free JSON path replaces the reference pipeline's fragile PAIR-proxy
 HTML scraping; the CGI/PAIR backends remain documented fallbacks (SRC-2) but are
@@ -81,18 +83,41 @@ BASE = "https://www.parlament.hu"
 PLENARY_PROVIDER = (f"{BASE}/felicitas/api/query/select/"
                     "plenarisulesadatok-plenarisules-registry/"
                     "plenaris-ules-adatok-query-provider")
+# parlament.hu rebuilt the sitting-day API in 2026-09: ``ulesnapok-aktusok-query``,
+# ``ulesnap-felszolalasai``, ``ulesnap-felszolalas-adata-query`` and
+# ``ulesnapok-video-query`` all 404 now, and the one nested response that used to
+# carry a whole day became a flat roster plus a per-act fan-out. The names below are
+# the ones the portal's own sitting-day page requests (page-info page-items
+# ``ulesnap-felszolalasai-with-contract`` / ``ulesnap-aktusok-with-contract``).
+#
 # The day's flat speech listing (paged, ``{"pUlesnapId": <day uuid>}``), behind the
-# portal's own "ülésnap felszólalásai" table. Unlike ``ulesnapok-aktusok-query`` it
-# is COMPLETE: that query reports a speech only through the agenda act it is linked
-# to, and speeches linked to no act are silently absent from it — chiefly the ones
-# with no "Felszólalás oka" (type): a speaker's continuation after being
-# interrupted, an unclassified remark. Sitting 43015 listed 287 of its 303 speeches
-# that way, the 16 gaps being exactly the type-less rows (e.g. #300, Dr. Árvay
-# Nikolett's continued rapporteur reply); across the 713 archived days ≥8 200
-# speeches (5.8%) were missing, and on legacy days the act links are sparse enough
-# that whole sittings nearly vanished (day 40039: 11 of 139 listed). Note the query
-# name carries no ``-query`` suffix — that spelling 404s.
-DAY_SPEECH_ROSTER_QUERY = "ulesnap-felszolalasai"
+# portal's own "ülésnap felszólalásai" table. It is the authoritative one, twice
+# over. It is COMPLETE, where the act listing is not: that one reports a speech only
+# through the agenda act it is linked to, and speeches linked to no act are silently
+# absent from it — chiefly the ones with no "Felszólalás oka" (type): a speaker's
+# continuation after being interrupted, an unclassified remark. Sitting 43015 listed
+# 287 of its 303 speeches that way, the 16 gaps being exactly the type-less rows
+# (e.g. #300, Dr. Árvay Nikolett's continued rapporteur reply); across the 713
+# archived days ≥8 200 speeches (5.8%) were missing, and on legacy days the act
+# links are sparse enough that whole sittings nearly vanished (day 40039: 11 of 139
+# listed). And it is PER-SPEECH, where the act listing now folds a speech together
+# with its continuations into one row carrying a join-number RANGE ("28 - 30") and
+# their summed duration — 439 s against the speech's own 129 s on sitting 43029.
+DAY_SPEECH_ROSTER_QUERY = "ulesnap-adatlap-aktusolatlan-query"
+# The day's agenda acts (``{"pId": <day uuid>}``) — ids and nothing else — then one
+# request per act (``{"pUlesnap": <day uuid>, "pAktusEsemeny": <act uuid>}``) for
+# the speeches under it. Only this path knows which act a speech belongs to, so a
+# day now costs 2 + one-per-act requests where it used to cost 2 (31 acts on a
+# typical sitting day).
+DAY_ACT_LIST_QUERY = "ulesnap-adatlap-aktusolt-query"
+ACT_SPEECHES_QUERY = "aktus-query"
+# One speech's full text and metadata (``{"pId": <speech uuid>}``).
+SPEECH_DETAIL_QUERY = "felszolalas-adatlap-query"
+# The whole-day recording (``{"pId": <day uuid>}``) and one speech's window within
+# it (``{"pId": <speech uuid>}``) — a query each since the restructuring split the
+# old single query's ``pTeljes`` switch in two.
+DAY_VIDEO_QUERY = "ulesnap-video-query"
+SPEECH_VIDEO_QUERY = "felszolalas-video-query"
 # One request per day instead of ~13: the longest sitting on record has 522
 # speeches, and select_all still pages if a day ever exceeds this.
 _DAY_ROSTER_PAGE_SIZE = 1000
@@ -300,6 +325,45 @@ def playseq_offsets(playseq: str | None) -> tuple[float, float] | None:
     return (_parse_off(m.group(1)), _parse_off(m.group(2))) if m else None
 
 
+_SORSZAM_RE = re.compile(r"\d+")
+
+
+def _sorszam(value) -> int | None:
+    """A speech's join number as an int.
+
+    The act listing reports a speech merged with its continuations as a RANGE
+    ("28 - 30"); its first number is the speech's own join number — the one the
+    flat roster gives, and the one every downstream stage orders, links and builds
+    origin ids from."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    m = _SORSZAM_RE.search(str(value))
+    return int(m.group()) if m else None
+
+
+def _local_naive(ts):
+    """A Felicitas timestamp as the naive House-local wall time the archive stores.
+
+    The restructured plenary queries answer in UTC (``2026-09-15T07:12:00Z``) where
+    the old ones answered in local time (``2026-09-15T09:12:00``) — the same
+    instant, spelled differently. Every one of the 700+ archived sitting days (and
+    the session boundaries, speech clocks and day pages derived from them) carries
+    local wall time, so the conversion happens here rather than leaving two
+    conventions in the data. Anything already naive, or unparseable, passes
+    through."""
+    if not isinstance(ts, str) or not ts:
+        return ts
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return ts
+    if dt.tzinfo is None:
+        return ts
+    return dt.astimezone(_HU_TZ).replace(tzinfo=None).isoformat()
+
+
 class FelicitasClient:
     def __init__(self, http: HttpClient):
         self.http = http
@@ -378,90 +442,163 @@ class FelicitasClient:
     def day_speech_roster(self, day_uuid: str) -> list[dict]:
         """The day's COMPLETE flat speech listing (:data:`DAY_SPEECH_ROSTER_QUERY`).
 
-        One row per speech in join-number order — UUID, ``sorszam``, speaker (bare
-        name, no faction suffix), representative id, type, start time, duration —
-        with no agenda act, committee or bill references. Used to complete the
-        agenda-grouped listing in :meth:`day_speeches`."""
+        One row per speech in join-number order — UUID, ``sorszam``, speaker,
+        representative id, type, the irományok it touches, start time, duration —
+        with no agenda act or committee. This is where :meth:`day_speeches` takes
+        every per-speech number from; the act listing only adds the act."""
         rows = self.select_all(PLENARY_PROVIDER, DAY_SPEECH_ROSTER_QUERY,
                                {"pUlesnapId": day_uuid},
                                size=_DAY_ROSTER_PAGE_SIZE)
-        return [{
-            "sorszam": r.get("sorszam"),
-            "speech_uuid": r.get("felszolalas"),
-            "speaker": r.get("felszolalo"),
-            "person_id": r.get("felszolaloId"),
-            "type": r.get("felszolasOka"),
-            "kezdete": r.get("felszolalasKezdete"),
-            "duration": r.get("videoIdoMasodperc"),
-        } for r in rows]
+        out = []
+        for r in rows:
+            # "Felszólalás oka" is a nested table since the restructuring — the
+            # same type/iromány shape the act listing carries.
+            stype, bills = _parse_type_table(r.get("felszolasOka"))
+            out.append({
+                "sorszam": _sorszam(r.get("sorszam")),
+                "speech_uuid": r.get("felszolalas"),
+                "speaker": r.get("felszolalo"),
+                "person_id": r.get("felszolaloId"),
+                "type": stype,
+                "kezdete": _local_naive(r.get("felszolalasKezdete")),
+                "duration": r.get("videoIdoMasodperc"),
+                "bills": bills,
+            })
+        return out
+
+    def day_acts(self, day_uuid: str) -> list[str]:
+        """The day's agenda-act UUIDs in the portal's own order
+        (:data:`DAY_ACT_LIST_QUERY`). The act's name comes with its speeches."""
+        rows = self.select_all(PLENARY_PROVIDER, DAY_ACT_LIST_QUERY,
+                               {"pId": day_uuid}, size=_DAY_ROSTER_PAGE_SIZE)
+        seen: set[str] = set()
+        out: list[str] = []
+        for r in rows:
+            aktus_id = r.get("aktusId")
+            if aktus_id and aktus_id not in seen:
+                seen.add(aktus_id)
+                out.append(aktus_id)
+        return out
+
+    def act_speeches(self, day_uuid: str, aktus_id: str) -> list[dict]:
+        """The speeches filed under one agenda act (:data:`ACT_SPEECHES_QUERY`).
+
+        Carries what only this path knows — the act's UUID and name, the committee
+        id and the capacity the speech was made in ("miniszterelnök",
+        "Törvényalkotási Bizottság") — plus the speech fields the roster also has.
+        Its ``sorszam`` and ``duration`` cover a merged run of speeches, not one
+        speech, so :meth:`day_speeches` overrides both from the roster."""
+        rows = self.select_all(PLENARY_PROVIDER, ACT_SPEECHES_QUERY,
+                               {"pUlesnap": day_uuid, "pAktusEsemeny": aktus_id},
+                               size=_DAY_ROSTER_PAGE_SIZE)
+        out = []
+        for r in rows:
+            # The "felszolalasTipusa" column is itself a nested sub-table (one row
+            # per bill the speech touches), each carrying the real type string, the
+            # bill UUID and the bill reference text.
+            stype, bills = _parse_type_table(r.get("felszolalasTipusa"))
+            out.append({
+                "sorszam": _sorszam(r.get("sorszam")),
+                "speech_uuid": r.get("felszolalasId"),
+                "speaker": r.get("felszolalo"),
+                "person_id": r.get("felszolaloId"),
+                "type": stype,
+                "committee_id": r.get("bizottsagId"),
+                "is_committee": bool(r.get("bizottsagId")),
+                "capacity": r.get("kormanyBizottsag"),
+                "kezdete": _local_naive(r.get("felszolalasKezdete")),
+                "duration": r.get("videoIdoMasodperc"),
+                "aktus_id": aktus_id,
+                "aktus": r.get("aktusMegnevezes") or "",
+                "bills": bills,
+            })
+        return out
 
     def day_speeches(self, day_uuid: str) -> list[dict]:
-        """Per-speech listing of a day from ``ulesnapok-aktusok-query``, completed
-        from the flat day roster.
+        """A day's speeches, act by act, completed from the flat day roster.
 
-        Returns one dict per speech across all agenda acts, in join-number order,
-        each carrying the agenda-act name, join number, speaker, representative
-        id, type, committee, start time, duration and any bill references. Speeches
-        the agenda-grouped query omits are folded in from
-        :meth:`day_speech_roster` (see :func:`_merge_roster`)."""
-        payload = self._select(PLENARY_PROVIDER, "ulesnapok-aktusok-query",
-                               {"pId": day_uuid})
-        out: list[dict] = []
-        for arow in payload.get("rows", []):
-            # arow == [aktusId, esemenyfajtaNev, {rows, metadata}]
-            if len(arow) < 3 or not isinstance(arow[2], dict):
-                continue
-            aktus_id, aktus_name, fels = arow[0], arow[1] or "", arow[2]
-            for r in rows_as_dicts(fels):
-                # The "felszolalasTipusa" column is itself a nested sub-table
-                # (one row per bill the speech touches), each carrying the real
-                # type string, the bill UUID and the bill reference text.
-                stype, bills = _parse_type_table(r.get("felszolalasTipusa"))
-                out.append({
-                    "sorszam": r.get("sorszam"),
-                    "speech_uuid": r.get("felszolalasId"),
-                    "speaker": r.get("felszolalo"),
-                    "person_id": r.get("felszolaloId"),
-                    "type": stype,
-                    "committee_id": r.get("bizottsagId"),
-                    "is_committee": r.get("bizottsagBool"),
-                    "kezdete": r.get("felszolalasKezdete"),
-                    "duration": r.get("videoIdoMasodperc"),
-                    "aktus_id": aktus_id,
-                    "aktus": aktus_name,
-                    "bills": bills,
-                })
+        Returns one dict per speech *per agenda act it is filed under* (the source
+        lists a speech once for each; ``proceedings.transform._dedup_speeches``
+        collapses them), each carrying the agenda-act id and name, join number,
+        speaker, representative id, type, committee, start time, duration and any
+        bill references — then every speech linked to no act at all, folded in from
+        :meth:`day_speech_roster` (see :func:`_merge_roster`).
+
+        Costs one request per agenda act since the 2026-09 restructuring, on top of
+        the roster and the act list. One act that fails is logged and skipped rather
+        than failing the day (SCR-5): its speeches still arrive from the roster,
+        act-less, and inherit their neighbour's act."""
+        roster: list[dict] = []
         try:
             roster = self.day_speech_roster(day_uuid)
         except HttpError as e:
-            # The roster only ADDS speeches; losing it degrades the day to the
-            # (incomplete) agenda-grouped listing rather than failing the scrape.
+            # The roster is what makes the day complete and per-speech; without it
+            # the act listing alone is a degraded day, not a failed scrape.
             logger.warning("speech roster for day %s unavailable: %s", day_uuid, e)
+        by_uuid = {r["speech_uuid"]: r for r in roster if r.get("speech_uuid")}
+
+        try:
+            acts = self.day_acts(day_uuid)
+        except HttpError as e:
+            # Same bargain as a single failing act, one level up: the day survives
+            # as its (complete) flat listing, with no agenda sections.
+            logger.warning("agenda acts for day %s unavailable: %s", day_uuid, e)
+            acts = []
+
+        out: list[dict] = []
+        for aktus_id in acts:
+            try:
+                rows = self.act_speeches(day_uuid, aktus_id)
+            except HttpError as e:
+                logger.warning("day %s: agenda act %s unavailable: %s",
+                               day_uuid, aktus_id, e)
+                continue
+            for sp in rows:
+                own = by_uuid.get(sp.get("speech_uuid"))
+                if own:
+                    # The act row may cover a merged run of speeches (join-number
+                    # range, summed duration); the roster keeps them apart, so its
+                    # numbers win wherever it has the speech. So does its type: the
+                    # roster states the speech's own reason ("ülésvezetés") while
+                    # the act row names what happened in THAT act ("módosító
+                    # javaslat fenntartása elutasítva"), which is not the same
+                    # thing for a chair turn spanning several acts. The bill
+                    # references stay act-scoped, so a speech filed under two acts
+                    # does not carry the other's bills into this one.
+                    sp.update(sorszam=own.get("sorszam"),
+                              kezdete=own.get("kezdete"),
+                              duration=own.get("duration"))
+                    sp["type"] = own.get("type") or sp.get("type")
+                    sp["speaker"] = sp.get("speaker") or own.get("speaker")
+                    sp["person_id"] = sp.get("person_id") or own.get("person_id")
+                out.append(sp)
+        if not roster:
             return out
         return _merge_roster(out, roster, day_uuid)
 
     def speech_text(self, speech_uuid: str) -> dict | None:
-        """Full text + metadata for one speech (``ulesnap-felszolalas-adata-query``).
+        """Full text + metadata for one speech (:data:`SPEECH_DETAIL_QUERY`).
 
         Returns the speech's HTML body, speaker, representative id, type,
         duration, agenda caption and next/previous speech UUIDs, or ``None``."""
-        payload = self._select(PLENARY_PROVIDER, "ulesnap-felszolalas-adata-query",
+        payload = self._select(PLENARY_PROVIDER, SPEECH_DETAIL_QUERY,
                                {"pId": speech_uuid})
         rows = rows_as_dicts(payload)
         if not rows:
             return None
         r = rows[0]
+        stype, _bills = _parse_type_table(r.get("felszolalasTipusa"))
         return {
             "speech_uuid": r.get("felszolalasId"),
-            "next_uuid": r.get("kovetkezoId"),
-            "prev_uuid": r.get("elozoId"),
+            "next_uuid": r.get("kovetkezoFelszolalasId"),
+            "prev_uuid": r.get("elozoFelszolalasId"),
             "caption": r.get("tableCaption"),
             "speaker": r.get("felszolalo"),
             "person_id": r.get("felszolaloId"),
             "role": r.get("tisztseg"),
             "committee_id": r.get("bizottsagId"),
             "committee": r.get("bizottsagNev"),
-            "type": r.get("felszolalasTipusa"),
+            "type": stype,
             "duration": r.get("videoIdoMasodperc"),
             "html": r.get("felszolalasSzovege") or "",
         }
@@ -476,13 +613,12 @@ class FelicitasClient:
         segmented speech's offsets get spuriously echoed as (see
         :func:`parlamonitor.proceedings.scrape.scrape_day`). ``None`` if no
         recording."""
-        payload = self._select(PLENARY_PROVIDER, "ulesnapok-video-query",
-                               {"pId": day_uuid, "pTeljes": True})
+        payload = self._select(PLENARY_PROVIDER, DAY_VIDEO_QUERY, {"pId": day_uuid})
         rows = rows_as_dicts(payload)
         if not rows:
             return None
-        szerver = (rows[0].get("szerverpath") or "").rstrip("/")
-        vsrc = rows[0].get("videoSource") or ""
+        szerver = (rows[0].get("szerverPath") or "").rstrip("/")
+        vsrc = rows[0].get("videoUrl") or ""
         if not szerver or not vsrc:
             return None
         playseq = f"{szerver}/{vsrc}"
@@ -502,12 +638,12 @@ class FelicitasClient:
         (TIM-1), but the scraper still records them onto each speech for
         provenance and so the future per-speech timing stage (§10) can swap in
         without re-fetching."""
-        payload = self._select(PLENARY_PROVIDER, "ulesnapok-video-query",
-                               {"pId": speech_uuid, "pTeljes": False})
+        payload = self._select(PLENARY_PROVIDER, SPEECH_VIDEO_QUERY,
+                               {"pId": speech_uuid})
         rows = rows_as_dicts(payload)
         if not rows:
             return None
-        return playseq_offsets(rows[0].get("videoSource") or "")
+        return playseq_offsets(rows[0].get("videoUrl") or "")
 
     def _playseq_to_m3u8(self, playseq_url: str) -> str | None:
         try:
@@ -1417,19 +1553,25 @@ def _parse_vote_subjects(nested) -> list[dict]:
 
 
 def _parse_type_table(nested) -> tuple[str | None, list[str]]:
-    """Parse the aktusok nested type/iromany sub-table → ``(type, bills)``.
+    """Parse a speech's nested type/iromány sub-table → ``(type, bills)``.
 
-    Each nested row is ``{iromanyId, felszolalasTipusa, felszolalasIromany}``.
-    The first non-empty ``felszolalasTipusa`` is the speech type; bill
-    references are collected from the iromany columns (kept for the future
-    Bills module, EXT-2)."""
+    Each nested row names the speech's type and the irományok it touches. The
+    restructured API (2026-09) spells the type ``esemenyNeve`` and nests the
+    references one level deeper, as a ``kapcsolodoIromanyok`` table of
+    ``{onalloIromanyId, modositoIromanyId, iromanySzama}``; the older flat spelling
+    (``felszolalasTipusa`` / ``felszolalasIromany`` strings) is still read so an
+    archived raw bundle parses the same way. The first non-empty type wins; bill
+    references are collected as their base code ("T/438/4" → ``T/438``, the form
+    the archive and the agenda labels use) and kept for the Bills module (EXT-2)."""
     if not isinstance(nested, dict):
         return (nested if isinstance(nested, str) else None), []
     stype = None
     bills: list[str] = []
     for r in rows_as_dicts(nested):
-        if stype is None and r.get("felszolalasTipusa"):
-            stype = r["felszolalasTipusa"]
+        if stype is None:
+            stype = r.get("esemenyNeve") or r.get("felszolalasTipusa") or None
+        for ref in _subrows(r.get("kapcsolodoIromanyok")):
+            bills.extend(_BILL_CODE_RE.findall(ref.get("iromanySzama") or ""))
         iromany = r.get("felszolalasIromany")
         if iromany and iromany.strip() not in ("", "-"):
             bills.extend(_BILL_CODE_RE.findall(iromany))
@@ -1455,7 +1597,7 @@ def _merge_roster(listing: list[dict], roster: list[dict],
     """
     known = {s.get("speech_uuid") for s in listing if s.get("speech_uuid")}
     extra = [dict(r, committee_id=None, is_committee=False, aktus_id=None,
-                  aktus=None, bills=[], from_roster=True)
+                  aktus=None, bills=r.get("bills") or [], from_roster=True)
              for r in roster
              if r.get("speech_uuid") and r["speech_uuid"] not in known]
     if not extra:

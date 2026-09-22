@@ -1020,7 +1020,7 @@ def _roster(sorszam, uuid, stype=None):
 
 
 def test_merge_roster_fills_speeches_missing_from_agenda_listing():
-    """Regression (sitting 43015, speech #300): ``ulesnapok-aktusok-query`` reports
+    """Regression (sitting 43015, speech #300): the agenda-act listing reports
     a speech only through the agenda act it is linked to, so speeches linked to
     none — chiefly those with no "Felszólalás oka" — were absent from the day
     entirely (16 of 303 that day). The flat day roster fills them in, each under
@@ -1150,7 +1150,7 @@ def test_transform_files_recovered_speech_under_neighbours_agenda_item():
 
 def test_transform_files_actless_day_under_one_unnamed_agenda_item():
     """Regression (sitting 43022, 2026-08-10): a freshly-held day is listed before
-    its agenda acts are, so ``ulesnapok-aktusok-query`` returns nothing and every
+    its agenda acts are, so the agenda-act listing returns nothing and every
     speech comes from the flat roster with no act. The per-speech type must not
     stand in for the missing act — keying the loader's sections on it put all 147
     ``ülésvezetés`` turns of that day in one section at the top of the page (ahead
@@ -1322,3 +1322,178 @@ def test_pending_builds_skips_up_to_date_sittings_unless_forced(tmp_path):
 
     assert _pending_builds(paths, force=False, cycle=43) == ["43002"]
     assert _pending_builds(paths, force=True, cycle=43) == ["43001", "43002"]
+
+
+# --- the restructured plenary sitting-day API (2026-09) --------------------
+
+def _nested(rows, fieldnames):
+    return {"metadata": {"fieldnames": fieldnames}, "rows": rows}
+
+
+def _type_table(name, *iromany):
+    """The nested "felszólalás oka" table: a type and the irományok it touches."""
+    return _nested([[name, _nested([[None, None, n] for n in iromany],
+                                   {"onalloIromanyId": 0, "modositoIromanyId": 1,
+                                    "iromanySzama": 2})]],
+                   {"esemenyNeve": 0, "kapcsolodoIromanyok": 1})
+
+
+_ROSTER_FIELDS = {"felszolalas": 0, "sorszam": 1, "szovegMegjelenhet": 2,
+                  "felszolaloId": 3, "felszolalo": 4, "felszolasOka": 5,
+                  "felszolalasKezdete": 6, "videoIdoMasodperc": 7}
+_ACT_FIELDS = {"sorszam": 0, "felszolalasId": 1, "felszolalasTipusa": 2,
+               "felszolaloId": 3, "felszolalo": 4, "bizottsagId": 5,
+               "kormanyBizottsag": 6, "felszolalasKezdete": 7,
+               "videoIdoMasodperc": 8, "aktusMegnevezes": 9}
+
+
+class _FakePlenaryHttp:
+    """Answers the day queries by name, in the shapes parlament.hu serves now."""
+
+    def __init__(self, *, roster, acts, fail_acts=()):
+        self.roster, self.acts, self.fail_acts = roster, acts, set(fail_acts)
+        self.calls = []
+
+    def polite_sleep(self):
+        pass
+
+    def post_json(self, url, body, headers=None):
+        query = url.split("/")[-1].split("?")[0]
+        self.calls.append(query)
+        if query == "ulesnap-adatlap-aktusolatlan-query":
+            return self._page(self.roster, _ROSTER_FIELDS)
+        if query == "ulesnap-adatlap-aktusolt-query":
+            return self._page([[body["pId"], a] for a in self.acts],
+                              {"ulesnapId": 0, "aktusId": 1})
+        if query == "aktus-query":
+            act = body["pAktusEsemeny"]
+            if act in self.fail_acts:
+                raise HttpError(f"{act} unavailable")
+            return self._page(self.acts[act], _ACT_FIELDS)
+        raise AssertionError(f"unexpected query {query}")
+
+    @staticmethod
+    def _page(rows, fieldnames):
+        return {"metadata": {"fieldnames": fieldnames}, "rows": rows,
+                "response": {"totalSize": len(rows), "pageSize": 1000}}
+
+
+def _plenary_client(*, roster, acts, fail_acts=()):
+    from parlamonitor.felicitas import FelicitasClient
+    return FelicitasClient(_FakePlenaryHttp(roster=roster, acts=acts,
+                                            fail_acts=fail_acts))
+
+
+def test_day_speeches_numbers_come_from_the_roster_not_the_merged_act_row():
+    """Regression (sitting 43029, speech #28): the act listing folds a speech
+    together with its continuations into ONE row — join number "28 - 30" and the
+    run's summed 439 s — while the flat roster keeps the speech's own 28 / 129 s.
+    Taking the act row's numbers would inflate every interrupted speaker's time and
+    break the ordering (`transform_day` sorts on an int join number)."""
+    client = _plenary_client(
+        roster=[["u28", 28, True, "n001", "Németh Balázs Lajos (Fidesz)",
+                 _type_table("felszólalás", "T/667"), "2026-09-15T07:12:00Z", 129]],
+        acts={"a1": [["28 - 30", "u28", _type_table("felszólalás", "T/667/2"),
+                      "n001", "Németh Balázs Lajos (Fidesz)", None, None,
+                      "2026-09-15T07:12:00Z", 439, "Általános vita"]]})
+    (speech,) = client.day_speeches("d1")
+    assert speech["sorszam"] == 28
+    assert speech["duration"] == 129
+    assert speech["aktus"] == "Általános vita"
+    assert speech["aktus_id"] == "a1"
+
+
+def test_day_speeches_records_house_local_start_times():
+    """The restructured queries answer in UTC where the old ones answered in local
+    time; the 700+ archived days all carry local wall time, so the client converts
+    rather than leaving two conventions in the archive."""
+    client = _plenary_client(
+        roster=[["u1", 1, True, "n001", "Nagy Anna (Fidesz)",
+                 _type_table("felszólalás"), "2026-09-15T07:12:00Z", 60]],
+        acts={"a1": [["1", "u1", _type_table("felszólalás"), "n001",
+                      "Nagy Anna (Fidesz)", None, None, "2026-09-15T07:12:00Z",
+                      60, "Általános vita"]]})
+    (speech,) = client.day_speeches("d1")
+    assert speech["kezdete"] == "2026-09-15T09:12:00"
+
+
+def test_day_speeches_folds_in_the_speeches_no_act_lists():
+    """The act path still reports a speech only through the act it is linked to;
+    the roster is the complete listing, so its extras are folded in and inherit the
+    preceding act (unchanged behaviour, new queries)."""
+    client = _plenary_client(
+        roster=[["u1", 1, True, "n001", "A (Fidesz)", _type_table("felszólalás"),
+                 None, 10],
+                ["u2", 2, True, "n002", "B (TISZA)", _type_table(None), None, 20]],
+        acts={"a1": [["1", "u1", _type_table("felszólalás"), "n001", "A (Fidesz)",
+                      None, None, None, 10, "Általános vita"]]})
+    speeches = client.day_speeches("d1")
+    assert [s["speech_uuid"] for s in speeches] == ["u1", "u2"]
+    assert speeches[1]["from_roster"] is True
+    assert speeches[1]["aktus"] == "Általános vita"
+
+
+def test_day_speeches_survives_one_unavailable_act():
+    """One act that fails must not lose the whole day: its speeches still arrive
+    from the roster, act-less (SCR-5)."""
+    client = _plenary_client(
+        roster=[["u1", 1, True, "n001", "A (Fidesz)", _type_table("felszólalás"),
+                 None, 10]],
+        acts={"a1": [["1", "u1", _type_table("felszólalás"), "n001", "A (Fidesz)",
+                      None, None, None, 10, "Általános vita"]]},
+        fail_acts=["a1"])
+    (speech,) = client.day_speeches("d1")
+    assert speech["speech_uuid"] == "u1"
+    assert speech["aktus"] is None
+
+
+def test_parse_type_table_reads_the_nested_iromany_table():
+    """The type moved to ``esemenyNeve`` and the bill references one level deeper;
+    a modosító number is recorded as its base code, the form the archive uses."""
+    from parlamonitor.felicitas import _parse_type_table
+    assert _parse_type_table(_type_table("módosító javaslat fenntartása", "T/438/4")) \
+        == ("módosító javaslat fenntartása", ["T/438"])
+
+
+def test_parse_type_table_still_reads_the_old_flat_shape():
+    """Archived raw bundles and any query still serving the old spelling."""
+    from parlamonitor.felicitas import _parse_type_table
+    old = _nested([["T/438 sz. javaslat", "általános vita"]],
+                  {"felszolalasIromany": 0, "felszolalasTipusa": 1})
+    assert _parse_type_table(old) == ("általános vita", ["T/438"])
+
+
+def test_label_acts_rebuilds_the_full_agenda_label():
+    """The new API names an act by TYPE only ("Általános vita"), which is neither
+    descriptive nor unique within a day — the loader groups sections by that label,
+    so two bills' general debates would merge. The act's own bill reference and the
+    bills registry restore the label the source used to serve."""
+    from parlamonitor.proceedings.scrape import label_acts
+    speeches = [{"aktus_id": "a1", "aktus": "Általános vita", "bills": ["T/667"]},
+                {"aktus_id": "a2", "aktus": "Általános vita", "bills": ["T/669"]},
+                {"aktus_id": "a3", "aktus": "Ülésnap megnyitása", "bills": []}]
+    label_acts(speeches, {"T/667": "Az egyes adótörvények módosításáról",
+                          "T/669": "Az üzemanyag-áremelkedésről"})
+    assert [s["aktus"] for s in speeches] == [
+        "Általános vita (T/667) Az egyes adótörvények módosításáról",
+        "Általános vita (T/669) Az üzemanyag-áremelkedésről",
+        "Ülésnap megnyitása"]
+
+
+def test_label_acts_keeps_the_bill_number_when_the_title_is_not_known_yet():
+    """A bill tabled and debated the same day is not in the registry the
+    proceedings stage reads; the number alone still keeps the acts apart."""
+    from parlamonitor.proceedings.scrape import label_acts
+    speeches = [{"aktus_id": "a1", "aktus": "Általános vita", "bills": ["T/999"]}]
+    label_acts(speeches, {})
+    assert speeches[0]["aktus"] == "Általános vita (T/999)"
+
+
+def test_label_acts_leaves_an_already_complete_label_alone():
+    """Re-reading an archived bundle (or a source that goes back to serving full
+    labels) must not append the code twice."""
+    from parlamonitor.proceedings.scrape import label_acts
+    full = "Általános vita (T/667) Az egyes adótörvények módosításáról"
+    speeches = [{"aktus_id": "a1", "aktus": full, "bills": ["T/667"]}]
+    label_acts(speeches, {"T/667": "Az egyes adótörvények módosításáról"})
+    assert speeches[0]["aktus"] == full

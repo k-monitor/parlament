@@ -389,3 +389,36 @@ class Paths:
 
     def document_pdf_dir(self, cycle: int) -> Path:
         return self.documents_dir(cycle) / "pdf"
+
+    # --- committee minutes (jegyzőkönyvek, BIZ-15) --------------------------
+    # The parsed record goes under ``processed/`` with every other registry the
+    # loader reads; the extracted text goes in a tree of its own beside the
+    # iromány mirror, for the same reason (DOC-1): it is derived from upstream
+    # binaries, it is an order of magnitude larger than the registries, and it
+    # can be deleted without losing anything that cannot be fetched again.
+
+    def committee_minutes_file(self, cycle: int) -> Path:
+        return self.processed / f"committee-minutes-{int(cycle)}.json"
+
+    def committee_minutes_dir(self, cycle: int) -> Path:
+        return self.data / "committees" / "minutes" / str(int(cycle))
+
+    def committee_minutes_index(self, cycle: int) -> Path:
+        """Per-meeting manifest and incremental cache: a jegyzőkönyv already
+        recorded here, whose stored text is still on disk, is not fetched again
+        (SCR-2). Minutes are static once published, so a repeat pass is free."""
+        return self.committee_minutes_dir(cycle) / "index.json"
+
+    def committee_minutes_text_dir(self, cycle: int) -> Path:
+        return self.committee_minutes_dir(cycle) / "text"
+
+    def committee_minutes_pdf_dir(self, cycle: int) -> Path:
+        return self.committee_minutes_dir(cycle) / "pdf"
+
+    # --- committee recordings (YouTube, BIZ-16) -----------------------------
+    # One cycle-less file: the channel is a single stream of videos covering
+    # every cycle it has existed for, and which committee (and so which cycle) a
+    # video belongs to is decided when it is matched, not when it is fetched.
+
+    def committee_videos_file(self) -> Path:
+        return self.processed / "committee-videos.json"

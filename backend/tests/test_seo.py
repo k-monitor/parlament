@@ -74,7 +74,8 @@ def test_sitemap_index_lists_a_child_per_section(seo_client):
     locs = _locs(r.text)
     names = {re.search(r"/sitemap-(.+)-\d+\.xml$", loc).group(1) for loc in locs}
     assert names == {"core", "sessions", "speeches", "representatives",
-                     "bills", "documents", "portfolios", "committees", "votes"}
+                     "bills", "documents", "portfolios", "committees",
+                     "committee-minutes", "votes"}
     assert all(loc.startswith("https://parlamonitor.k-monitor.hu/") for loc in locs)
 
 
@@ -298,3 +299,13 @@ def test_llms_txt_follows_the_served_cycle_window(seo_client, conn, monkeypatch)
     body = seo_client.get("/llms.txt").text
     assert "43. ciklus" in body
     assert "42–43" not in body  # the cycle it does not serve is gone
+
+
+def test_committee_minutes_are_in_the_sitemap_but_only_the_readable_ones(seo_client):
+    """A sitting whose PDF could not be read keeps its row in the API — the page
+    says so — but has nothing on it worth crawling."""
+    locs = _locs(seo_client.get("/sitemap-committee-minutes-1.xml").text)
+    assert [l for l in locs if l.endswith(
+        "/representatives/committees/meetings/ules-1")]
+    # `ules-2` published no minutes at all, so it is not advertised.
+    assert not [l for l in locs if l.endswith("/meetings/ules-2")]

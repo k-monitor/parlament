@@ -611,3 +611,133 @@ def test_a_failing_mirror_never_sinks_the_sync(patched, monkeypatch):
                             skip_reps=True, documents="text")
     assert summary["sessions"] == ["43001"]
     assert any("documents:" in e for e in summary["errors"])
+
+
+# --- the committee minutes / recordings stages in a sync pass (BIZ-15/16) ---
+
+class _FakeSyncHttp:
+    """The HTTP half of a Felicitas client: serves the YouTube feed and the
+    minutes PDFs, and counts what was asked for."""
+
+    def __init__(self, feed="<feed/>", pdfs=None):
+        self.feed = feed
+        self.pdfs = pdfs or {}
+        self.calls = collections.Counter()
+
+    def get_text(self, url, **kw):
+        self.calls["feed"] += 1
+        return self.feed
+
+    def get_capped(self, url, **kw):
+        self.calls["pdf"] += 1
+        body = self.pdfs.get(url)
+
+        class F:
+            over_cap = False
+            data = body
+            status = 200 if body else 404
+            content_type = "application/pdf"
+        return F()
+
+    def polite_sleep(self):
+        pass
+
+
+def _committees_file(paths, meetings):
+    import json
+    paths.processed.mkdir(parents=True, exist_ok=True)
+    paths.committees_file(43).write_text(json.dumps(
+        {"meta": {"cycle": 43}, "data": [], "meetings": meetings}),
+        encoding="utf-8")
+
+
+def test_minutes_sync_skips_a_cycle_with_no_registry(tmp_path):
+    """The minutes hang off the committee registry; without one there is
+    nothing to fetch and the stage must not invent work."""
+    paths = Paths(tmp_path)
+    http = _FakeSyncHttp()
+    assert sync._sync_committee_minutes(http, paths, 43, {}, force=False,
+                                        limit=10) is False
+    assert http.calls["pdf"] == 0
+
+
+def test_minutes_sync_repairs_the_url_and_reuses_the_stored_text(tmp_path,
+                                                                 monkeypatch):
+    """Two things at once: the missing-slash URL from an older registry is
+    fetched correctly, and a second pass re-parses from disk without asking
+    upstream for anything (SCR-2)."""
+    paths = Paths(tmp_path)
+    paths.ensure()
+    _committees_file(paths, [
+        {"meetingId": "m1", "committeeId": "c1", "committeeName": "X Bizottság",
+         "datetime": "2026-06-10T09:00:00Z",
+         # As cycle 40 and part of 41 come back: no slash after the host.
+         "minutesUrl": "https://www.parlament.hubiz40/bizjkv40/VFB/1.pdf"},
+        {"meetingId": "m2", "committeeId": "c1", "committeeName": "X Bizottság",
+         "datetime": "2026-06-11T09:00:00Z", "minutesUrl": None}])
+    fixed = "https://www.parlament.hu/biz40/bizjkv40/VFB/1.pdf"
+    http = _FakeSyncHttp(pdfs={fixed: b"%PDF-1.7 ..."})
+    monkeypatch.setattr(sync, "fetch_minutes", sync.fetch_minutes)
+    from parlamonitor.committees import minutes_scrape
+    monkeypatch.setattr(minutes_scrape, "pdftotext_available", lambda: True)
+    monkeypatch.setattr(minutes_scrape, "extract_layout_text",
+                        lambda pdf, **kw: "       ELNÖK: Megnyitom az ülést.\n")
+
+    state = {}
+    first = sync._sync_committee_minutes(http, paths, 43, state, force=False,
+                                         limit=10)
+    assert first["fetched"] == 1 and first["speeches"] == 1
+    # The meeting with no published minutes is not fetched at all (BIZ-9).
+    assert http.calls["pdf"] == 1
+    assert paths.committee_minutes_file(43).exists()
+
+    # Second pass: nothing new upstream, nothing re-fetched, nothing rewritten.
+    assert sync._sync_committee_minutes(http, paths, 43, state, force=False,
+                                        limit=10) is False
+    assert http.calls["pdf"] == 1
+
+
+def test_minutes_sync_caps_how_much_one_pass_fetches(tmp_path, monkeypatch):
+    """SCR-4: the first pass after a cycle is added must not become a
+    thousand-request scrape. What is left over is counted, not forgotten."""
+    paths = Paths(tmp_path)
+    paths.ensure()
+    urls = {}
+    meetings = []
+    for i in range(5):
+        u = f"https://www.parlament.hu/biz43/x/{i}.pdf"
+        urls[u] = b"%PDF-1.7 ..."
+        meetings.append({"meetingId": f"m{i}", "committeeId": "c1",
+                         "committeeName": "X", "datetime": "2026-06-10T09:00:00Z",
+                         "minutesUrl": u})
+    _committees_file(paths, meetings)
+    http = _FakeSyncHttp(pdfs=urls)
+    from parlamonitor.committees import minutes_scrape
+    monkeypatch.setattr(minutes_scrape, "pdftotext_available", lambda: True)
+    monkeypatch.setattr(minutes_scrape, "extract_layout_text",
+                        lambda pdf, **kw: "       ELNÖK: Megnyitom.\n")
+    out = sync._sync_committee_minutes(http, paths, 43, {}, force=False, limit=2)
+    assert (out["fetched"], out["pending"]) == (2, 3)
+    assert http.calls["pdf"] == 2
+
+
+def test_video_sync_is_one_request_and_rewrites_only_on_a_change(tmp_path):
+    paths = Paths(tmp_path)
+    paths.ensure()
+    feed = ("<?xml version='1.0' encoding='UTF-8'?>"
+            "<feed xmlns='http://www.w3.org/2005/Atom' "
+            "xmlns:yt='http://www.youtube.com/xml/schemas/2015'>"
+            "<entry><yt:videoId>aaa</yt:videoId>"
+            "<title>2026. június 10. - A Költségvetési Bizottság ülése</title>"
+            "<published>2026-06-10T09:00:00+00:00</published></entry></feed>")
+    http = _FakeSyncHttp(feed=feed)
+    state = {}
+    out = sync._sync_committee_videos(http, paths, state, force=False)
+    assert out["committee"] == 1
+    assert paths.committee_videos_file().exists()
+    assert http.calls["feed"] == 1
+    # Unchanged channel: read again (it is one request), rewritten never.
+    mtime = paths.committee_videos_file().stat().st_mtime_ns
+    assert sync._sync_committee_videos(http, paths, state, force=False) is False
+    assert paths.committee_videos_file().stat().st_mtime_ns == mtime
+    assert http.calls["feed"] == 2

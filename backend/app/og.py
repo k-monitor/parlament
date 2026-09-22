@@ -641,6 +641,47 @@ def _committee_body(c, members: list, counts: dict) -> str:
     return _wrap(body)
 
 
+def _minutes_body(m, agenda: list, speakers: list, videos: list = ()) -> str:
+    """The sitting's agenda and who spoke, for a crawler and a reader with JS
+    off (§8.6 / BIZ-13).
+
+    Deliberately not the transcript itself: a sitting runs to 250 kB of text and
+    the fallback body is meant to describe the page, not serve it. What it does
+    carry is the two things that make the page findable at all — the agenda,
+    which names the bills the committee took, and the speakers, which is the
+    only list of who spoke in committee that exists anywhere.
+    """
+    facts = [x for x in (m["committee_name"], m["number_in_year"],
+                         _hu_date(m["held_on"] or (m["held_at"] or "")[:10])) if x]
+    if m["speeches"]:
+        facts.append(f"{m['speeches']} felszólalás")
+    body = f"<h1>{_esc(m['committee_name'] or '')} – jegyzőkönyv</h1>"
+    if facts:
+        body += "<p>" + " · ".join(_esc(x) for x in facts) + "</p>"
+    if agenda:
+        body += "<h2>Napirend</h2><ul>" + "".join(
+            "<li>"
+            + (_link(f"/bills/{a['bill_id']}", a["title"]) if a["held"]
+               else _esc(a["title"] or ""))
+            + "</li>" for a in agenda) + "</ul>"
+    if speakers:
+        body += "<h2>Felszólalók</h2><ul>" + "".join(
+            "<li>"
+            + (_link(f"/representatives/{s['person_id']}", s["name"])
+               if s["person_id"] else _esc(s["name"] or ""))
+            + "</li>" for s in speakers) + "</ul>"
+    if m["url"]:
+        body += ("<p>" + _link(m["url"], "Az eredeti jegyzőkönyv (PDF)")
+                 + "</p>")
+    # The recording, which on a sitting whose minutes are not out yet is the
+    # only thing the page has (BIZ-27). Linked, never embedded (LEGAL-1).
+    if videos:
+        body += "<h2>Felvétel</h2><ul>" + "".join(
+            "<li>" + _link(v["url"], v["title"] or "Az ülés felvétele")
+            + "</li>" for v in videos) + "</ul>"
+    return _wrap(body)
+
+
 def _vote_body(v, subjects: list, title: str) -> str:
     """The vote's result and tally, with the irományok it decided linked."""
     counts = " · ".join(
@@ -663,6 +704,33 @@ def _vote_body(v, subjects: list, title: str) -> str:
 
 
 # --- route registration -----------------------------------------------------
+
+def _recorded_meeting(db: sqlite3.Connection, meeting_id: str):
+    """A sitting we hold no minutes of, and the recordings of it (BIZ-27).
+
+    Returns the same columns the minutes lookup selects, so the card and the
+    crawlable body are built once for both states, and `(None, [])` where there
+    is nothing to serve — no such meeting, or one that left neither a record nor
+    a recording. A DB without the video table answers that too (EXT-6).
+    """
+    try:
+        videos = [dict(v) for v in db.execute(
+            """SELECT url, title FROM committee_video
+                WHERE meeting_id = ? ORDER BY continued, published_at""",
+            (meeting_id,))]
+        if not videos:
+            return None, []
+        m = db.execute("""
+            SELECT mt.id AS meeting_id, mt.committee_id, mt.held_at,
+                   mt.number_in_year, mt.minutes_url AS url, mt.period_number,
+                   NULL AS held_on, NULL AS speeches, c.name AS committee_name
+              FROM committee_meeting mt
+              JOIN committee c ON c.id = mt.committee_id
+             WHERE mt.id = ?""", (meeting_id,)).fetchone()
+    except sqlite3.Error:
+        return None, []
+    return (m, videos) if m else (None, [])
+
 
 def _missing(request: Request) -> HTMLResponse:
     """A deep link whose id resolves to nothing.
@@ -908,6 +976,94 @@ def register(app) -> None:
                 ("Parlamonitor", "/"), ("Tárcák", "/representatives/portfolios"),
                 (_truncate(p["name"], 60), f"/representatives/portfolios/{slug}")])],
             body=_portfolio_body(p["name"], kind_hu, counts, holders))
+
+    @app.get("/representatives/committees/meetings/{meeting_id}",
+             response_class=HTMLResponse, include_in_schema=False)
+    def share_committee_minutes(meeting_id: str, request: Request,
+                                db: sqlite3.Connection = Depends(get_db)):
+        """Metadata for one sitting's jegyzőkönyv (BIZ-15).
+
+        Registered **before** the committee sheet below so the static `meetings`
+        segment is never read as a committee id, exactly as the API orders the
+        same two paths. A DB with no minutes tables answers the generic card
+        rather than a 500 (EXT-6)."""
+        try:
+            m = db.execute("""
+                SELECT cm.meeting_id, cm.committee_id, cm.held_on, cm.url,
+                       cm.speeches, cm.period_number, mt.held_at,
+                       mt.number_in_year, c.name AS committee_name
+                  FROM committee_minutes cm
+                  JOIN committee_meeting mt ON mt.id = cm.meeting_id
+                  JOIN committee c ON c.id = cm.committee_id
+                 WHERE cm.meeting_id = ?""", (meeting_id,)).fetchone()
+        except sqlite3.Error:
+            return plain(request)
+        videos: list = []
+        if not m:
+            # No record — but the sitting may still have been streamed, and the
+            # page is served for the recording alone (BIZ-27). Answering 404
+            # here would have the crawler, and every share preview, call a page
+            # that exists missing.
+            m, videos = _recorded_meeting(db, meeting_id)
+        if not m or not period_in_scope(m["period_number"]):
+            return _missing(request)
+        try:
+            agenda = [{"title": r["title"], "bill_id": r["bill_id"],
+                       "held": r["held"] is not None} for r in db.execute("""
+                SELECT i.title, i.bill_id, b.id AS held
+                  FROM committee_minutes_item i
+                  LEFT JOIN bill b ON b.id = i.bill_id
+                 WHERE i.meeting_id = ? ORDER BY i.ord LIMIT 20""",
+                (meeting_id,))]
+            # One row per speaker, in the order they first spoke — the page's
+            # own order, not an alphabetical list nobody produced.
+            speakers = [dict(r) for r in db.execute("""
+                SELECT name, person_id, MIN(ord) AS first
+                  FROM committee_speech WHERE meeting_id = ? AND name IS NOT NULL
+                 GROUP BY name, person_id ORDER BY first LIMIT 40""",
+                (meeting_id,))]
+        except sqlite3.Error:
+            return plain(request)
+
+        date_hu = _hu_date(m["held_on"] or (m["held_at"] or "")[:10])
+        # What the page IS: the sitting's record, or — where we hold none — its
+        # recording. The card says which rather than promising a jegyzőkönyv
+        # that is still weeks from being published.
+        kind = "jegyzőkönyv" if not videos else "ülés"
+        title = f"{m['committee_name']} – {kind}"
+        if date_hu:
+            title += f", {date_hu}"
+        bits = []
+        if m["speeches"]:
+            bits.append(f"{m['speeches']} felszólalás")
+        if speakers:
+            bits.append(f"{len(speakers)} felszólaló")
+        if agenda:
+            bits.append(f"{len(agenda)} napirendi pont")
+        if videos:
+            bits.append(f"{len(videos)} felvétel")
+        description = (f"A(z) {m['committee_name']} "
+                       + (f"{date_hu} tartott " if date_hu else "")
+                       + ("ülésének felvétele" if videos
+                          else "ülésének jegyzőkönyve")
+                       + (": " + ", ".join(bits) if bits else "")
+                       + " a Parlamonitoron.")
+        return render(
+            request, title=_truncate(title, 120),
+            description=_truncate(description),
+            url_path=f"/representatives/committees/meetings/{meeting_id}",
+            og_type="article",
+            # A sitting IS a dated document, unlike the standing body above, so
+            # the date it was held is a publication date for this page.
+            extra=_published_time(m["held_on"] or (m["held_at"] or "")[:10]),
+            jsonld=[_breadcrumbs(request, [
+                ("Parlamonitor", "/"),
+                ("Bizottságok", "/representatives/committees"),
+                (_truncate(m["committee_name"], 60),
+                 f"/representatives/committees/{m['committee_id']}"),
+                ("Felvétel" if videos else "Jegyzőkönyv",
+                 f"/representatives/committees/meetings/{meeting_id}")])],
+            body=_minutes_body(m, agenda, speakers, videos))
 
     @app.get("/representatives/committees/{committee_id}",
              response_class=HTMLResponse, include_in_schema=False)

@@ -14,9 +14,11 @@ import sqlite3
 from app import loader
 
 try:
-    from tests.conftest import _session_record
+    from tests.conftest import (_committee_minutes_registry, _committees_registry,
+                                _session_record)
 except ImportError:  # when pytest imports conftest as a top-level module
-    from conftest import _session_record
+    from conftest import (_committee_minutes_registry, _committees_registry,
+                          _session_record)
 
 
 def _count(db, sql, *args):
@@ -39,7 +41,8 @@ def test_full_build_seeds_load_state(db_path):
     """A full build records every processed file so a later --update has a baseline."""
     assert _load_state_names(db_path) == {
         "representatives-43.json", "bills-43.json", "votes-43.json",
-        "committees-43.json", "43001-session.json", "officeholders.json",
+        "committees-43.json", "committee-minutes-43.json",
+        "committee-videos.json", "43001-session.json", "officeholders.json",
         "aktualis.json"}
 
 
@@ -261,3 +264,47 @@ def test_update_rebuilds_portfolios_when_the_mapping_changed(data_dir, db_path,
         monkeypatch.delenv("PARLAMONITOR_PORTFOLIO_MAP", raising=False)
         loader.portfolios._index.cache_clear()
         loader.portfolios.table_fingerprint.cache_clear()
+
+
+def test_update_reloading_committees_also_reloads_their_minutes(data_dir, db_path):
+    """Reloading a cycle's committees deletes its meetings and everything keyed
+    by them — so the jegyzőkönyvek have to come back with them, even though the
+    minutes file itself has not changed.
+
+    Without this, a routine committee refresh (which a sync pass does whenever a
+    seat changes hands) silently empties every transcript on the site until the
+    next minutes scrape happens to rewrite its file."""
+    registry = _committees_registry()
+    # A seat changes hands: the smallest thing that rewrites the registry.
+    registry["members"][1]["name"] = "Külső Elekné"
+    registry["meta"]["counts"]["members"] = 3
+    (data_dir / "processed" / "committees-43.json").write_text(
+        json.dumps(registry, ensure_ascii=False))
+
+    assert loader.update_database(data_dir, db_path) is True
+
+    assert _count(db_path, "SELECT COUNT(*) FROM committee_minutes") == 1
+    assert _count(db_path, "SELECT COUNT(*) FROM committee_speech") == 3
+    # And the recordings, which point at both a body and a meeting.
+    assert _count(db_path,
+                  "SELECT COUNT(*) FROM committee_video "
+                  "WHERE meeting_id IS NOT NULL") == 1
+
+
+def test_update_reloads_changed_minutes_only(data_dir, db_path):
+    registry = _committee_minutes_registry()
+    registry["data"][0]["speeches"][2]["text"] = \
+        "Köszönöm a szót, elnök úr. Egy teljesen új mondattal folytatom."
+    (data_dir / "processed" / "committee-minutes-43.json").write_text(
+        json.dumps(registry, ensure_ascii=False))
+
+    assert loader.update_database(data_dir, db_path) is True
+    c = sqlite3.connect(db_path)
+    try:
+        texts = [r[0] for r in c.execute(
+            "SELECT text FROM committee_speech ORDER BY ord")]
+    finally:
+        c.close()
+    assert "teljesen új mondattal" in texts[2]
+    # A reload replaces, never duplicates (ING-4).
+    assert _count(db_path, "SELECT COUNT(*) FROM committee_speech") == 3

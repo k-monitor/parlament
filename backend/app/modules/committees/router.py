@@ -258,6 +258,352 @@ def upcoming_meetings(
     } for r in rows]}
 
 
+@router.get("/meetings")
+def list_meetings(
+    db: sqlite3.Connection = Depends(get_db),
+    period: Optional[List[int]] = Query(None),
+    q: Optional[str] = Query(None, max_length=200),
+    committee: Optional[str] = Query(None),
+    readable: bool = Query(False),
+    limit: int = Query(60, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """**Every committee sitting in the cycle scope**, newest first — the
+    committee-side counterpart of `/proceedings/sessions` (§6F / BIZ-24).
+
+    The plenary's sitting days have had a list of their own since v1; committee
+    sittings only ever existed *inside* one committee's page, which answers
+    "when did this body meet" and never "what met this week". They are the same
+    kind of object — a dated sitting with a record — and the sittings page now
+    carries both.
+
+    Rows are shaped like the plenary list's so one page can render either:
+    a date, a number, and what is available for it. Subcommittee sittings are
+    included (they are sittings), but each row names its body, so a reader can
+    tell a subcommittee of three from the committee it hangs off.
+
+    `readable` narrows to the sittings whose minutes this deployment has
+    actually read — the ones with something to open.
+    """
+    if not _tables_present(db):
+        return {"total": 0, "limit": limit, "offset": offset, "meetings": [],
+                "tablesReady": False}
+    where = ["1=1"]
+    params: dict = {}
+    scope = period_sql(period, "m.period_number")
+    if scope:
+        where.append(scope)
+    if committee:
+        where.append("m.committee_id = :committee")
+        params["committee"] = committee
+    if q and q.strip():
+        where.append("c.name LIKE :q ESCAPE '\\'")
+        params["q"] = like_contains(q.strip())
+    has_minutes = _table_exists(db, "committee_minutes")
+    if readable and has_minutes:
+        where.append("cm.speeches > 0")
+    cond = " AND ".join(where)
+    join = (" LEFT JOIN committee_minutes cm ON cm.meeting_id = m.id"
+            if has_minutes else "")
+    cols = ", cm.speeches AS n_speeches" if has_minutes else ""
+
+    total = db.execute(
+        f"""SELECT COUNT(*) AS n FROM committee_meeting m
+              JOIN committee c ON c.id = m.committee_id{join}
+             WHERE {cond}""", params).fetchone()["n"]
+
+    search_analytics.record(source="committee-meetings", query=q, period=period,
+                            readable=readable, results=total, offset=offset)
+
+    rows = db.execute(f"""
+        SELECT m.*, c.name AS committee_name, c.parent_id{cols}
+          FROM committee_meeting m
+          JOIN committee c ON c.id = m.committee_id{join}
+         WHERE {cond}
+         -- `id` closes the ordering, as everywhere in this module: two bodies
+         -- routinely sit on the same day and paging over an unstable order
+         -- repeats or skips rows.
+         ORDER BY m.held_at DESC, c.name COLLATE NOCASE, m.id
+         LIMIT :limit OFFSET :offset
+    """, {**params, "limit": limit, "offset": offset}).fetchall()
+
+    videos: dict[str, list] = {}
+    if _table_exists(db, "committee_video") and rows:
+        marks = ",".join("?" * len(rows))
+        for v in db.execute(
+                f"""SELECT meeting_id, video_id, url, title, thumbnail,
+                           duration_s, continued
+                      FROM committee_video
+                     WHERE meeting_id IN ({marks})
+                     ORDER BY continued, published_at""",
+                tuple(r["id"] for r in rows)):
+            videos.setdefault(v["meeting_id"], []).append(_video_row(v))
+
+    return {
+        "total": total, "limit": limit, "offset": offset, "tablesReady": True,
+        "meetings": [{
+            "id": r["id"], "committeeId": r["committee_id"],
+            "committeeName": r["committee_name"],
+            "isSubcommittee": r["parent_id"] is not None,
+            "number": r["number"], "numberInYear": r["number_in_year"],
+            "heldAt": r["held_at"], "kind": r["kind"], "quorum": r["quorum"],
+            "durationS": r["duration_s"], "minutesUrl": r["minutes_url"],
+            "speeches": (r["n_speeches"] if has_minutes else None),
+            "videos": videos.get(r["id"], []),
+        } for r in rows],
+    }
+
+
+@router.get("/meetings/{meeting_id}/minutes")
+def meeting_minutes(
+    meeting_id: str,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """One sitting's jegyzőkönyv as the site reads it (§6F / BIZ-15).
+
+    The whole document in one response — cover, agenda, attendance, and every
+    speech under the heading it was made under. It is served whole rather than
+    paged because it *is* one document: a sitting averages 43 kB of text and the
+    longest in the corpus is under 250 kB, the reader arrives wanting to read it
+    end to end, and paging a transcript breaks both in-page search and the
+    ability to link a speech.
+
+    Declared before `/{committee_id}` and its sub-paths, as `/upcoming` is, so
+    the static `meetings` segment can never be read as a committee id.
+
+    A sitting we hold **no record of but a recording of** is served too, from
+    the meeting row alone (BIZ-27): same shape, every collection empty,
+    `hasMinutes` false. The recording is up the same day and the jegyzőkönyv
+    follows weeks later (BIZ-22), so on the sittings a reader is most likely to
+    open it is the only thing there is — and there is no second page to put it
+    on, the sitting being one object with two records.
+    """
+    _require_tables(db)
+    has_minutes = _table_exists(db, "committee_minutes")
+    row = db.execute("""
+        SELECT cm.*, m.number, m.number_in_year, m.held_at, m.kind, m.quorum,
+               m.duration_s, c.name AS committee_name, c.parent_id
+        FROM committee_minutes cm
+        JOIN committee_meeting m ON m.id = cm.meeting_id
+        JOIN committee c ON c.id = cm.committee_id
+        WHERE cm.meeting_id = ?
+    """, (meeting_id,)).fetchone() if has_minutes else None
+    if row is None:
+        recorded = _recording_only_sitting(db, meeting_id)
+        if recorded is not None:
+            return recorded
+        if not has_minutes:
+            raise HTTPException(
+                status_code=503,
+                detail="Committee minutes are not built yet; run the scraper's "
+                       "`committee-minutes` command and reload the database.")
+    if not row or not period_in_scope(row["period_number"]):
+        raise HTTPException(404, "Minutes not found")
+
+    out = {
+        "meetingId": row["meeting_id"],
+        "committeeId": row["committee_id"],
+        "committeeName": row["committee_name"],
+        "period": row["period_number"],
+        "number": row["number"], "numberInYear": row["number_in_year"],
+        "heldAt": row["held_at"], "heldOn": row["held_on"],
+        "weekday": row["weekday"], "meetingKind": row["kind"],
+        "quorum": row["quorum"], "durationS": row["duration_s"],
+        "venue": row["venue"], "openedAt": row["opened_at"],
+        "closedAt": row["closed_at"], "closedSession": bool(row["closed_session"]),
+        "registryNumber": row["registry_number"],
+        "meetingLabel": row["meeting_label"], "termLabel": row["term_label"],
+        "url": row["url"],
+        "speeches": row["speeches"], "speakers": row["speakers"],
+        "chars": row["chars"],
+        # Whether this is the sitting's record or only its recording (BIZ-27).
+        # The page is the same page either way, so it has to be told which.
+        "hasMinutes": True,
+        # Why the document could not be read, where it could not. The row exists
+        # either way (BIZ-9): "we could not read this" and "there is nothing to
+        # read" are different findings and the page says which.
+        "error": row["error"],
+    }
+    out["agenda"] = [{
+        "ordinal": a["ordinal"], "title": a["title"],
+        "billNumber": a["bill_number"], "billId": a["bill_id"],
+        # Linked only where this deployment holds the document, like every other
+        # iromány reference in the module (BIZ-11 / SCR-5).
+        "held": a["held"] is not None,
+        "notes": json.loads(a["notes"]) if a["notes"] else [],
+    } for a in db.execute("""
+        SELECT i.*, b.id AS held FROM committee_minutes_item i
+        LEFT JOIN bill b ON b.id = i.bill_id
+        WHERE i.meeting_id = ? ORDER BY i.ord""", (meeting_id,))]
+
+    people: dict[str, list] = {"chair": [], "present": [], "proxy": [],
+                               "staff": [], "guest": []}
+    for r in db.execute(
+            "SELECT * FROM committee_minutes_person WHERE meeting_id = ? "
+            "ORDER BY role, ord", (meeting_id,)):
+        people.setdefault(r["role"], []).append({
+            "personId": r["person_id"], "name": r["name"],
+            "faction": r["faction_name"], "title": r["title"], "org": r["org"],
+            "proxyPersonId": r["proxy_person_id"], "proxyName": r["proxy_name"],
+        })
+    out["participants"] = people
+
+    out["sections"] = [{
+        "ord": s["ord"], "title": s["title"], "level": s["level"],
+        "preamble": s["preamble"], "speeches": s["speeches"],
+    } for s in db.execute(
+        "SELECT * FROM committee_minutes_section WHERE meeting_id = ? "
+        "ORDER BY ord", (meeting_id,))]
+
+    out["transcript"] = [{
+        "ord": s["ord"], "section": s["section_ord"],
+        "personId": s["person_id"], "name": s["name"],
+        "faction": s["faction_name"], "role": s["role"], "org": s["org"],
+        "chair": bool(s["chair"]),
+        # The same speaker carrying on past an agenda heading without their name
+        # being printed again. Flagged so the page can run the two together
+        # rather than repeating the name as if someone had taken the floor.
+        "continued": bool(s["continued"]),
+        "text": s["text"],
+    } for s in db.execute(
+        "SELECT * FROM committee_speech WHERE meeting_id = ? ORDER BY ord",
+        (meeting_id,))]
+
+    out["videos"] = []
+    if _table_exists(db, "committee_video"):
+        out["videos"] = [_video_row(v) for v in db.execute(
+            "SELECT * FROM committee_video WHERE meeting_id = ? "
+            "ORDER BY continued, published_at", (meeting_id,))]
+
+    # Who did the talking, so the page can open on the same question a sitting
+    # day's does. Ranked by **characters spoken**, not by number of
+    # contributions: the chair takes the floor between every speaker and would
+    # otherwise top every sitting on a count of two-word interjections. There
+    # are no durations to rank by — committee minutes carry no timings at all,
+    # which is exactly why the plenary's "speaking time" toplist cannot be
+    # reused here.
+    out["topSpeakers"] = [{
+        "personId": r["person_id"], "name": r["name"], "faction": r["faction"],
+        # The portrait the shared `person` row already carries, so the block
+        # reads like a sitting day's toplist rather than a bare list of names.
+        "photoUri": r["photo_uri"],
+        "chair": bool(r["chair"]), "speeches": r["n"], "chars": r["chars"],
+        "words": r["words"],
+    } for r in db.execute("""
+        SELECT cs.person_id, cs.name, MAX(cs.faction_name) AS faction,
+               MAX(cs.chair) AS chair, COUNT(*) AS n,
+               SUM(LENGTH(COALESCE(cs.text, ''))) AS chars,
+               -- Words, so the figure beside the bar is one a reader can weigh.
+               -- Counted as separators + 1 per speech, which is exact for this
+               -- text: the parser rejoins every speech on single spaces and
+               -- separates its paragraphs with one blank line, so there are no
+               -- runs to collapse.
+               SUM(LENGTH(COALESCE(cs.text, '')) -
+                   LENGTH(REPLACE(REPLACE(COALESCE(cs.text, ''), ' ', ''),
+                                  char(10), '')) + 1) AS words,
+               MAX(p.photo_uri) AS photo_uri
+          FROM committee_speech cs
+          LEFT JOIN person p ON p.person_id = cs.person_id
+         WHERE cs.meeting_id = ? AND cs.name IS NOT NULL
+         GROUP BY cs.person_id, cs.name
+         -- Ranked by the same measure the page prints and sizes its bars by.
+         -- Ordering on characters instead put a speaker with longer words above
+         -- one who had said more, and the list then read as mis-sorted.
+         ORDER BY words DESC, n DESC, cs.name COLLATE NOCASE
+         LIMIT 15""", (meeting_id,))]
+
+    # The same body's previous and next sitting, so a reader can walk a
+    # committee's record the way they walk the plenary's sitting days. Scoped to
+    # the committee rather than to the date: "the next committee sitting" across
+    # all bodies is a different question, and the list page answers it.
+    out["neighbours"] = {
+        "prev": _adjacent(db, row["committee_id"], row["held_at"], "<", "DESC"),
+        "next": _adjacent(db, row["committee_id"], row["held_at"], ">", "ASC"),
+    }
+    return out
+
+
+def _recording_only_sitting(db: sqlite3.Connection,
+                            meeting_id: str) -> dict | None:
+    """One sitting served for its **recording** alone (BIZ-27), or None.
+
+    A meeting whose jegyzőkönyv we have not read — usually because the House has
+    not published it yet — but which was streamed. The payload is the minutes
+    payload with every record-derived collection empty, so the viewer renders it
+    without a second code path: what it has is the cover the meeting row already
+    carries (which body, when, how long, and the PDF link if one is published)
+    and the videos.
+
+    None means there is nothing to open: no such meeting, out of the cycle
+    scope, or a sitting with neither a record nor a recording. The caller then
+    404s exactly as before — this widens what the endpoint serves, never what it
+    claims to have.
+    """
+    if not _table_exists(db, "committee_video"):
+        return None
+    m = db.execute("""
+        SELECT m.*, c.name AS committee_name
+          FROM committee_meeting m
+          JOIN committee c ON c.id = m.committee_id
+         WHERE m.id = ?""", (meeting_id,)).fetchone()
+    if not m or not period_in_scope(m["period_number"]):
+        return None
+    videos = [_video_row(v) for v in db.execute(
+        "SELECT * FROM committee_video WHERE meeting_id = ? "
+        "ORDER BY continued, published_at", (meeting_id,))]
+    if not videos:
+        return None
+    return {
+        "meetingId": m["id"],
+        "committeeId": m["committee_id"],
+        "committeeName": m["committee_name"],
+        "period": m["period_number"],
+        "number": m["number"], "numberInYear": m["number_in_year"],
+        "heldAt": m["held_at"], "heldOn": (m["held_at"] or "")[:10] or None,
+        "weekday": None, "meetingKind": m["kind"],
+        "quorum": m["quorum"], "durationS": m["duration_s"],
+        "venue": None, "openedAt": None, "closedAt": None,
+        # Not "we know it was open": we know nothing, the cover being in the
+        # document we have not read. `kind` says zárt where the registry does.
+        "closedSession": False,
+        "registryNumber": None, "meetingLabel": None, "termLabel": None,
+        # The published PDF if the House has one up, so a page reached this way
+        # still offers the record where it exists (BIZ-12: linked, not mirrored).
+        "url": m["minutes_url"],
+        "speeches": None, "speakers": None, "chars": None, "error": None,
+        "hasMinutes": False,
+        "agenda": [], "sections": [], "transcript": [], "topSpeakers": [],
+        "participants": {"chair": [], "present": [], "proxy": [],
+                         "staff": [], "guest": []},
+        "videos": videos,
+        "neighbours": {
+            "prev": _adjacent(db, m["committee_id"], m["held_at"], "<", "DESC"),
+            "next": _adjacent(db, m["committee_id"], m["held_at"], ">", "ASC"),
+        },
+    }
+
+
+def _adjacent(db: sqlite3.Connection, committee_id: str, held_at: str | None,
+              op: str, direction: str) -> dict | None:
+    """The committee's sitting immediately before or after this one.
+
+    Only a sitting whose minutes we have **read** is offered: the link goes to
+    the minutes viewer, and pointing it at a sitting that has none would walk
+    the reader into a 404. A meeting with no record is still on the committee's
+    own meeting list, which is where it belongs."""
+    if not held_at or not _table_exists(db, "committee_minutes"):
+        return None
+    r = db.execute(f"""
+        SELECT m.id, m.held_at, m.number_in_year
+          FROM committee_meeting m
+          JOIN committee_minutes cm ON cm.meeting_id = m.id
+         WHERE m.committee_id = ? AND m.held_at {op} ? AND cm.speeches > 0
+         ORDER BY m.held_at {direction} LIMIT 1
+    """, (committee_id, held_at)).fetchone()
+    return {"meetingId": r["id"], "heldAt": r["held_at"],
+            "numberInYear": r["number_in_year"]} if r else None
+
+
 @router.get("/{committee_id}")
 def get_committee(
     committee_id: str,
@@ -374,23 +720,69 @@ def committee_meetings(
 
     A meeting with no published minutes keeps its row and `minutesUrl` is null:
     that a committee met and left no record is itself worth seeing, and hiding
-    such rows would make the published minutes look like the full history."""
+    such rows would make the published minutes look like the full history.
+
+    Each row also says whether this deployment holds a **parsed** record of the
+    sitting (`speeches`, BIZ-15) and whether a **recording** of it exists
+    (`videos`, BIZ-16). Those are three independent states — the PDF can be
+    published without us having read it, and a video can exist for a sitting
+    whose minutes are still weeks away — so the row carries all three rather
+    than one "do we have it" flag that would conflate them."""
     _require_tables(db)
     _check_committee(db, committee_id)
     total = db.execute("SELECT COUNT(*) AS n FROM committee_meeting "
                        "WHERE committee_id = ?", (committee_id,)).fetchone()["n"]
-    rows = db.execute("""
-        SELECT * FROM committee_meeting WHERE committee_id = ?
+    has_minutes = _table_exists(db, "committee_minutes")
+    has_videos = _table_exists(db, "committee_video")
+    # A left join rather than a correlated sub-select, and only for a table this
+    # DB actually has: the module has to answer on a deployment loaded before
+    # the minutes stage existed (EXT-6).
+    cols = ", cm.speeches AS n_speeches, cm.error AS minutes_error" \
+        if has_minutes else ""
+    join = " LEFT JOIN committee_minutes cm ON cm.meeting_id = m.id" \
+        if has_minutes else ""
+    rows = db.execute(f"""
+        SELECT m.*{cols}
+        FROM committee_meeting m{join}
+        WHERE m.committee_id = ?
         -- `id` closes every ordering here, as it does in `_SORTS`: two meetings
         -- can share a date (a committee sitting twice in a morning) and paging
         -- over an unstable order repeats or skips rows.
-        ORDER BY held_at DESC, number DESC, id LIMIT ? OFFSET ?
-    """, (committee_id, limit, offset))
+        ORDER BY m.held_at DESC, m.number DESC, m.id LIMIT ? OFFSET ?
+    """, (committee_id, limit, offset)).fetchall()
+
+    videos: dict[str, list] = {}
+    if has_videos and rows:
+        marks = ",".join("?" * len(rows))
+        for v in db.execute(
+                f"""SELECT meeting_id, video_id, url, title, thumbnail,
+                           duration_s, continued
+                      FROM committee_video
+                     WHERE meeting_id IN ({marks})
+                     ORDER BY continued, published_at""",
+                tuple(r["id"] for r in rows)):
+            videos.setdefault(v["meeting_id"], []).append(_video_row(v))
+
     return {"total": total, "items": [{
         "id": r["id"], "number": r["number"], "numberInYear": r["number_in_year"],
         "heldAt": r["held_at"], "kind": r["kind"], "quorum": r["quorum"],
         "durationS": r["duration_s"], "minutesUrl": r["minutes_url"],
+        "speeches": (r["n_speeches"] if has_minutes else None),
+        "minutesError": (r["minutes_error"] if has_minutes else None),
+        "videos": videos.get(r["id"], []),
     } for r in rows]}
+
+
+def _video_row(v: sqlite3.Row) -> dict:
+    keys = v.keys()
+    return {
+        "videoId": v["video_id"], "url": v["url"], "title": v["title"],
+        "thumbnail": v["thumbnail"], "durationS": v["duration_s"],
+        "continued": bool(v["continued"]),
+        **({"heldOn": v["held_on"]} if "held_on" in keys else {}),
+        **({"views": v["views"]} if "views" in keys else {}),
+        **({"meetingId": v["meeting_id"]} if "meeting_id" in keys else {}),
+    }
 
 
 @router.get("/{committee_id}/documents")
@@ -429,6 +821,69 @@ def committee_documents(
         "held": r["held"] is not None,
         "sponsors": json.loads(r["sponsors"]) if r["sponsors"] else [],
     } for r in rows]}
+
+
+@router.get("/{committee_id}/videos")
+def committee_videos(
+    committee_id: str,
+    db: sqlite3.Connection = Depends(get_db),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """The committee's recordings on the House's YouTube channel (BIZ-16).
+
+    Newest sitting first. A video whose meeting this deployment holds carries
+    `meetingId`, and one whose meeting is not (yet) in the registry does not —
+    the recording is up the same day and the meeting listing follows weeks
+    later, so on the day of a sitting the second is the normal case.
+
+    `coverage` is what the page needs to explain an empty list honestly. The
+    channel's first upload is in February 2024, so cycles 40 and 41 have no
+    recordings *to* find; a committee of 2016 showing "no videos" with no
+    further word would read as a gap in the site rather than a fact about the
+    House's own channel.
+    """
+    _require_tables(db)
+    _check_committee(db, committee_id)
+    if not _table_exists(db, "committee_video"):
+        return {"total": 0, "items": [], "coverage": None}
+    total = db.execute("SELECT COUNT(*) AS n FROM committee_video "
+                       "WHERE committee_id = ?", (committee_id,)).fetchone()["n"]
+    # Whether the sitting a video belongs to also has a *readable* record, which
+    # is a third state again: a recording is up the same day and the minutes PDF
+    # follows weeks later, so for every recent sitting there is a meeting and a
+    # video and no transcript. Offering the link anyway would send the reader to
+    # a 404 on exactly the sittings they are most likely to be looking at.
+    joined = _table_exists(db, "committee_minutes")
+    cols = ", cm.meeting_id AS has_minutes" if joined else ""
+    join = (" LEFT JOIN committee_minutes cm ON cm.meeting_id = v.meeting_id"
+            if joined else "")
+    rows = db.execute(f"""
+        SELECT v.*{cols}
+        FROM committee_video v{join}
+        WHERE v.committee_id = ?
+        ORDER BY v.held_on DESC, v.continued, v.published_at DESC, v.video_id
+        LIMIT ? OFFSET ?""", (committee_id, limit, offset))
+    return {"total": total,
+            "items": [dict(_video_row(v),
+                           hasMinutes=bool(joined and v["has_minutes"]))
+                      for v in rows],
+            "coverage": _video_coverage(db)}
+
+
+def _video_coverage(db: sqlite3.Connection) -> dict | None:
+    """The window the recordings registry can speak for at all — the channel's
+    own first and last upload."""
+    if not _table_exists(db, "committee_video"):
+        return None
+    def _build():
+        r = db.execute("SELECT MIN(held_on) AS lo, MAX(held_on) AS hi, "
+                       "COUNT(*) AS n FROM committee_video "
+                       "WHERE held_on IS NOT NULL").fetchone()
+        if not r or not r["lo"]:
+            return None
+        return {"from": r["lo"], "to": r["hi"], "videos": r["n"]}
+    return cached_aggregate("committee-video-coverage", (), _build)
 
 
 def _check_committee(db: sqlite3.Connection, committee_id: str) -> None:

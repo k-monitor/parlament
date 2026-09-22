@@ -1045,6 +1045,8 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_DOCUMENTS_COMPRESSION` | `xz` | codec for the stored text: `xz` / `gzip` / `none` |
 | `PARLAMONITOR_DOCUMENTS_MAX_MB` | `0` | skip any single document above this size (`0` = no limit) |
 | `PARLAMONITOR_DOCUMENTS_PER_SYNC` | `25` | how many NEW documents one **sync pass** may fetch (`0` = no cap). Paces the backlog a freshly enabled mirror faces; a hand-run `documents` command is never capped by it |
+| **Committee minutes & recordings** (§6F BIZ-15/BIZ-16) | | |
+| `PARLAMONITOR_YOUTUBE_API_KEY` | _(none)_ | optional YouTube Data API v3 key, used **only** by `committee-videos --backfill` and only when `yt-dlp` is not on PATH. The default path needs no key and spends no quota; the RSS feed a sync pass reads needs neither. Leave unset unless the sync container has no `yt-dlp` |
 | **Word-cloud NLP** | | (used by `init` + `sync`) |
 | `PARLAMONITOR_WORDCLOUD_BACKEND` | `auto` | `auto`/`huspacy`/`regex`/`modal` term extraction (WCLOUD-6) |
 | `PARLAMONITOR_HUSPACY_MODEL` | `hu_core_news_trf` | model for the newest cycle — must match the primary Modal image |

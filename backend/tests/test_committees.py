@@ -374,3 +374,267 @@ def test_committees_are_in_the_sitemap(client):
     sec = client.get("/sitemap-committees-1.xml").text
     assert "/representatives/committees/biz-1<" in sec
     assert "biz-1a" not in sec
+
+
+# --- Minutes (BIZ-15) -------------------------------------------------------
+
+def test_minutes_loaded_with_cover_and_counts(conn):
+    r = conn.execute("SELECT * FROM committee_minutes").fetchall()
+    assert [x["meeting_id"] for x in r] == ["ules-1"]
+    row = r[0]
+    assert row["committee_id"] == "biz-1"
+    assert (row["held_on"], row["opened_at"], row["closed_at"]) == (
+        "2026-06-10", "11:00", "12:05")
+    assert row["venue"].startswith("az Országház Nagy Imre")
+    assert row["closed_session"] == 0
+    assert (row["speeches"], row["speakers"]) == (3, 2)
+    assert row["error"] is None
+    # `ules-2` published no minutes, so it has no row here at all — its meeting
+    # row still stands (BIZ-9).
+    assert conn.execute("SELECT COUNT(*) FROM committee_meeting").fetchone()[0] == 2
+
+
+def test_minutes_speeches_link_only_known_people(conn):
+    rows = conn.execute(
+        "SELECT * FROM committee_speech ORDER BY ord").fetchall()
+    assert [s["name"] for s in rows] == [
+        "Kovács Béla", "Kovács Béla", "Vendég Viktor"]
+    assert rows[0]["person_id"] == "k001"
+    assert rows[0]["chair"] == 1
+    # The chair carrying on past an agenda heading: a second speech, flagged,
+    # rather than text silently appended to the first.
+    assert (rows[1]["continued"], rows[1]["section_ord"]) == (1, 1)
+    # Not in the roster: the speech keeps its label and links nowhere (SCR-5).
+    assert rows[2]["person_id"] is None
+    assert rows[2]["org"] == "Pénzügyminisztérium"
+
+
+def test_minutes_agenda_resolves_a_held_bill(conn):
+    rows = conn.execute(
+        "SELECT * FROM committee_minutes_item ORDER BY ord").fetchall()
+    assert [i["bill_number"] for i in rows] == ["T/100", None]
+    assert rows[0]["bill_id"] == "bill-uuid-1"      # late-bound, like BIZ-11
+    assert rows[1]["bill_id"] is None
+
+
+def test_minutes_attendance_records_the_proxy_direction(conn):
+    rows = {(r["role"], r["name"]): r for r in conn.execute(
+        "SELECT * FROM committee_minutes_person")}
+    # The chair is one row, not two: the parser lists them as present as well.
+    assert ("chair", "Kovács Béla") in rows
+    assert ("present", "Kovács Béla") not in rows
+    assert ("present", "Külső Elek") in rows
+    proxy = rows[("proxy", "Nagy Anna")]
+    assert proxy["proxy_name"] == "Kovács Béla"
+    assert proxy["proxy_person_id"] == "k001"
+    # A guest who is a known person still links; one who is not keeps the label.
+    assert rows[("guest", "Vendég Viktor")]["org"] == "Pénzügyminisztérium"
+
+
+def test_minutes_endpoint_serves_the_whole_sitting(client):
+    r = client.get("/api/v1/committees/meetings/ules-1/minutes")
+    assert r.status_code == 200
+    m = r.json()
+    assert m["committeeName"] == "Költségvetési Bizottság"
+    assert m["numberInYear"] == "2/2026"
+    assert m["venue"].startswith("az Országház")
+    assert [a["billNumber"] for a in m["agenda"]] == ["T/100", None]
+    assert m["agenda"][0]["held"] is True
+    assert [s["title"] for s in m["sections"]] == [
+        "Az ülés megnyitása",
+        "A költségvetésről szóló T/100. számú törvényjavaslat"]
+    assert [t["name"] for t in m["transcript"]] == [
+        "Kovács Béla", "Kovács Béla", "Vendég Viktor"]
+    assert m["transcript"][0]["personId"] == "k001"
+    assert m["transcript"][1]["continued"] is True
+    assert m["participants"]["proxy"][0]["proxyName"] == "Kovács Béla"
+    # The recording of this sitting rides along on the sheet.
+    assert [v["videoId"] for v in m["videos"]] == ["vid-1"]
+
+
+def test_minutes_endpoint_404s_for_a_meeting_with_none(client):
+    # `ules-2` published no minutes and was never streamed either: there is
+    # nothing to open, and the recording-only fallback (BIZ-27) does not invent
+    # a page for it.
+    assert client.get(
+        "/api/v1/committees/meetings/ules-2/minutes").status_code == 404
+    assert client.get(
+        "/api/v1/committees/meetings/nope/minutes").status_code == 404
+
+
+def _record_a_video(conn, meeting_id="ules-2", video_id="vid-4"):
+    """A recording of a sitting we hold no minutes of (BIZ-22/BIZ-27) — the
+    normal state on the day of a sitting, the stream being up weeks before the
+    jegyzőkönyv. Inserted here rather than in the fixture so the videos registry
+    keeps saying exactly what it says about the other three."""
+    conn.execute(
+        """INSERT INTO committee_video
+               (video_id, committee_id, meeting_id, period_number, kind, title,
+                committee_label, url, thumbnail, held_on, published_at,
+                duration_s, views, continued, description)
+           VALUES (?, 'biz-1', ?, 43, 'committee',
+                   '2026. május 20. - A Költségvetési Bizottság ülése',
+                   'A Költségvetési Bizottság', ?, NULL, '2026-05-20',
+                   '2026-05-20T09:05:00+00:00', 1800, 12, 0, NULL)""",
+        (video_id, meeting_id, f"https://www.youtube.com/watch?v={video_id}"))
+    conn.commit()
+
+
+def test_minutes_endpoint_serves_a_sitting_we_only_have_a_recording_of(
+        client, conn):
+    """BIZ-27: the record is weeks away, the stream is up, so the sitting's page
+    is served for the video alone rather than 404ing on exactly the sittings a
+    reader is most likely to open."""
+    _record_a_video(conn)
+    r = client.get("/api/v1/committees/meetings/ules-2/minutes")
+    assert r.status_code == 200
+    m = r.json()
+    assert m["hasMinutes"] is False
+    assert [v["videoId"] for v in m["videos"]] == ["vid-4"]
+    # The cover the meeting row itself carries — which body, when, how long.
+    assert (m["committeeName"], m["numberInYear"], m["durationS"]) == (
+        "Költségvetési Bizottság", "1/2026", 600)
+    # And nothing claimed about a document nobody has read.
+    assert (m["agenda"], m["transcript"], m["sections"], m["topSpeakers"]) == (
+        [], [], [], [])
+    assert m["speeches"] is None and m["error"] is None
+    assert all(v == [] for v in m["participants"].values())
+    # The body's other sitting, which we did read, is still offered (BIZ-26).
+    assert m["neighbours"]["next"]["meetingId"] == "ules-1"
+
+
+def test_minutes_endpoint_says_a_read_sitting_is_one(client):
+    """The flag is on both payloads, not just the thin one: the viewer is a
+    single page and has to be told which of the two it is rendering."""
+    m = client.get("/api/v1/committees/meetings/ules-1/minutes").json()
+    assert m["hasMinutes"] is True
+
+
+def test_meetings_list_reports_minutes_and_video_state(client):
+    items = client.get("/api/v1/committees/biz-1/meetings").json()["items"]
+    by_id = {m["id"]: m for m in items}
+    assert by_id["ules-1"]["speeches"] == 3
+    assert [v["videoId"] for v in by_id["ules-1"]["videos"]] == ["vid-1"]
+    # Published nothing and was never streamed: the row stands, saying so.
+    assert by_id["ules-2"]["minutesUrl"] is None
+    assert by_id["ules-2"]["speeches"] is None
+    assert by_id["ules-2"]["videos"] == []
+
+
+# --- Recordings (BIZ-16) ----------------------------------------------------
+
+def test_videos_match_a_body_and_a_meeting_independently(conn):
+    rows = {r["video_id"]: r for r in conn.execute("SELECT * FROM committee_video")}
+    assert set(rows) == {"vid-1", "vid-2", "vid-3"}
+    # Same day as a meeting: both links resolve.
+    assert (rows["vid-1"]["committee_id"], rows["vid-1"]["meeting_id"]) == (
+        "biz-1", "ules-1")
+    assert rows["vid-1"]["period_number"] == 43
+    # The body sat on no such day: the video keeps its row and its committee
+    # link, with no meeting. This is the normal state on the day of a sitting.
+    assert (rows["vid-2"]["committee_id"], rows["vid-2"]["meeting_id"]) == (
+        "biz-1", None)
+    # A plenary broadcast matches nothing and is still kept.
+    assert (rows["vid-3"]["kind"], rows["vid-3"]["committee_id"]) == (
+        "plenary", None)
+
+
+def test_video_matching_is_blind_to_article_case_and_accents():
+    from app import loader
+    fold = loader._fold_committee
+    assert fold("A Művelődési Bizottság") == fold("Művelődési bizottság")
+    assert fold("a Médiatanács elnökét jelölő eseti bizottság") == \
+        fold("Médiatanács elnökét jelölő eseti bizottság")
+    # But never blind to the name itself: two subcommittees of the same name
+    # under different parents must not collapse into one key by trimming.
+    assert fold("Ellenőrző Albizottság") != fold("Turisztikai Albizottság")
+
+
+def test_committee_videos_endpoint(client):
+    r = client.get("/api/v1/committees/biz-1/videos")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 2
+    assert [v["videoId"] for v in body["items"]] == ["vid-2", "vid-1"]
+    assert body["items"][1]["meetingId"] == "ules-1"
+    assert body["items"][1]["durationS"] == 3900
+    # The window the channel itself can speak for, so a cycle with no uploads
+    # can be explained rather than just shown empty.
+    assert body["coverage"]["from"] == "2026-06-10"
+    assert body["coverage"]["videos"] == 3
+
+
+def test_videos_link_minutes_only_where_a_record_was_read(client):
+    items = {v["videoId"]: v for v in
+             client.get("/api/v1/committees/biz-1/videos").json()["items"]}
+    # `ules-1` was read, so its recording links into the transcript.
+    assert items["vid-1"]["hasMinutes"] is True
+    # `vid-2` matched no meeting at all — the normal state on the day of a
+    # sitting, before the registry catches up.
+    assert (items["vid-2"]["hasMinutes"], items["vid-2"].get("meetingId")) == (
+        False, None)
+
+
+# --- the sittings list and the sitting-day furniture (BIZ-24) --------------
+
+def test_meetings_list_spans_every_committee(client):
+    r = client.get("/api/v1/committees/meetings", params={"period": 43})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 2
+    # Newest first, each naming its own body — the shape the sittings page needs.
+    assert [m["id"] for m in body["meetings"]] == ["ules-1", "ules-2"]
+    first = body["meetings"][0]
+    assert first["committeeName"] == "Költségvetési Bizottság"
+    assert first["isSubcommittee"] is False
+    assert first["speeches"] == 3
+    assert [v["videoId"] for v in first["videos"]] == ["vid-1"]
+    # The sitting with no record has no speech count and no recording.
+    assert body["meetings"][1]["speeches"] is None
+
+
+def test_meetings_list_filters(client):
+    base = "/api/v1/committees/meetings"
+    # Only the sittings we can actually open.
+    assert client.get(base, params={"readable": True}).json()["total"] == 1
+    assert client.get(base, params={"committee": "biz-1"}).json()["total"] == 2
+    assert client.get(base, params={"committee": "nope"}).json()["total"] == 0
+    assert client.get(base, params={"q": "költség"}).json()["total"] == 2
+    assert client.get(base, params={"q": "nincs ilyen"}).json()["total"] == 0
+
+
+def test_meetings_list_is_not_shadowed_by_the_committee_sheet(client):
+    """`/committees/meetings` and `/committees/{id}` are both two segments, so
+    only the registration order keeps "meetings" from being read as an id."""
+    assert "meetings" in client.get("/api/v1/committees/meetings").json()
+
+
+def test_minutes_top_speakers_rank_by_what_was_said(client):
+    m = client.get("/api/v1/committees/meetings/ules-1/minutes").json()
+    top = m["topSpeakers"]
+    # One row per person, not per contribution: the chair spoke twice.
+    assert [t["name"] for t in top] == ["Kovács Béla", "Vendég Viktor"]
+    assert top[0]["speeches"] == 2
+    assert top[0]["personId"] == "k001"
+    assert top[0]["chair"] is True
+    # Ranked by how much was said — a count of contributions would put the chair
+    # on top of every sitting on the strength of two-word interjections.
+    assert top[0]["words"] > top[1]["words"]
+
+
+def test_minutes_neighbours_only_point_at_readable_sittings(client):
+    m = client.get("/api/v1/committees/meetings/ules-1/minutes").json()
+    # `ules-2` is the committee's other meeting but published no minutes, so
+    # linking to it would walk the reader into a 404.
+    assert m["neighbours"] == {"prev": None, "next": None}
+
+
+def test_top_speaker_words_count_the_text_not_the_separators(client):
+    top = client.get(
+        "/api/v1/committees/meetings/ules-1/minutes").json()["topSpeakers"]
+    by_name = {t["name"]: t for t in top}
+    # The chair's two speeches in the fixture: "Köszöntöm a bizottság tagjait."
+    # (4) + "Soron következik az 1. napirendi pont." (6).
+    assert by_name["Kovács Béla"]["words"] == 10
+    # "Köszönöm a szót, elnök úr." (5)
+    assert by_name["Vendég Viktor"]["words"] == 5

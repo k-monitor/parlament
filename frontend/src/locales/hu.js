@@ -390,6 +390,15 @@ export default {
     timeMarker: 'Időpont a jegyzőkönyvben',
   },
   sessions: {
+    tabPlenary: 'Plenáris ülésnapok',
+    tabCommittees: 'Bizottsági ülések',
+    noCommitteeMeetings: 'Ebben a ciklusban nincs rögzített bizottsági ülés.',
+    speechesCount: '{count} felszólalás',
+    minutesNotRead: 'Jegyzőkönyv (PDF)',
+    committeeSitting: 'bizottsági ülés',
+    prevSitting: 'Előző ülés',
+    nextSitting: 'Következő ülés',
+    sittingNav: 'Váltás a bizottság másik ülésére',
     title: 'Ülésnapok',
     date: 'Dátum',
     sitting: 'Ülésnap',
@@ -545,6 +554,14 @@ export default {
   // Tárcák (§6C): a kormányzati oldal – melyik minisztériumhoz milyen kérdés
   // érkezett, és melyik tárca mit nyújtott be.
   committees: {
+    noSpeakersNamed: 'Ez a jegyzőkönyv nem nevezi meg a felszólalókat: a szöveg a napirendi pontok alatt, hozzárendelés nélkül szerepel benne.',
+    words: '{count} szó',
+    topSpeakers: 'Ki beszélt a legtöbbet ezen az ülésen?',
+    topSpeakersCaption: 'A felszólalók az ülésen elmondott szöveg hossza szerint. '
+      + 'A bizottsági jegyzőkönyvek nem tartalmaznak időadatot, ezért – a plenáris '
+      + 'ülésnapokkal ellentétben – itt nem beszédidő, hanem a leírt szöveg '
+      + 'terjedelme a sorrend alapja. Az elnöki felszólalások is szerepelnek: a '
+      + 'bizottsági ülésen az elnök érdemben is hozzászól, nem csak levezet.',
     title: 'Bizottságok',
     intro: 'Az Országgyűlés bizottságai: kik ülnek bennük, mikor üléseztek, és '
       + 'milyen irományokkal foglalkoztak.',
@@ -631,7 +648,56 @@ export default {
       + 'az addigi változásokat tartalmazza, ezért a kettőt együtt mutatjuk. Az '
       + 'ülések számát és időtartamát a forrás összesítése adja, ami több ülést '
       + 'számol, mint amennyit tételesen közöl; a kettőt külön írjuk ki. A '
-      + 'jegyzőkönyveket nem másoljuk, csak hivatkozzuk.',
+      + 'jegyzőkönyvek PDF-jét nem másoljuk, csak hivatkozzuk; a belőlük '
+      + 'kiolvasott szöveget viszont megjelenítjük, mert a bizottsági vita '
+      + 'máshol nem érhető el. A felolvasott szöveg a PDF gépi feldolgozásából '
+      + 'származik, a hiteles változat mindig a hivatkozott eredeti. A '
+      + 'felvételek az Országgyűlés saját YouTube-csatornájáról származnak, és '
+      + 'a videó címében szereplő dátum és bizottságnév alapján kapcsoljuk őket '
+      + 'az ülésekhez; a csatorna 2024 februárja előtt nem közölt felvételt.',
+    // A jegyzőkönyv-nézet (BIZ-15).
+    openMinutes: 'Jegyzőkönyv megnyitása',
+    minutesTitle: 'Jegyzőkönyv',
+    minutesOf: '{committee} – {number}. ülés',
+    minutesSource: 'Eredeti PDF',
+    minutesUnavailable: 'Ennek az ülésnek a jegyzőkönyvét nem sikerült feldolgozni.',
+    minutesNotParsed: 'A jegyzőkönyv PDF-je elérhető, de a szövegét még nem dolgoztuk fel.',
+    // Csak felvétel van (BIZ-27): a közvetítés még aznap felkerül, a
+    // jegyzőkönyv hetekkel később.
+    recordingOnly: 'Ehhez az üléshez még nincs közzétett jegyzőkönyv – egyelőre '
+      + 'csak a felvétel érhető el.',
+    backToCommittee: 'Vissza a bizottsághoz',
+    agenda: 'Napirendi javaslat',
+    participants: 'Az ülés résztvevői',
+    transcript: 'Az ülés jegyzőkönyve',
+    present: 'Megjelent',
+    chairs: 'Elnököl',
+    proxies: 'Helyettesítési megbízást adott',
+    proxyHeldBy: 'helyettesíti: {name}',
+    staff: 'A bizottság titkársága részéről',
+    guests: 'Meghívottak',
+    venue: 'Helyszín',
+    opened: 'Kezdés',
+    ended2: 'Befejezés',
+    closedSession: 'Részben zárt ülés – csak a nyílt napirendi pontok',
+    speechCount: '{count} felszólalás',
+    speakerCount: '{count} felszólaló',
+    chairLabel: 'elnök',
+    filterSpeaker: 'Szűrés felszólalóra',
+    allSpeakers: 'Minden felszólaló',
+    jumpToAgenda: 'Ugrás a napirendi pontra',
+    searchInMinutes: 'Keresés a jegyzőkönyvben…',
+    noMatch: 'Nincs találat a jegyzőkönyvben.',
+    matches: '{count} találat',
+    // Felvételek (BIZ-16).
+    videos: 'Felvételek',
+    video: 'Felvétel',
+    watch: 'Megtekintés',
+    videoPart: 'folytatás',
+    noVideos: 'Ehhez a bizottsághoz nincs felvétel.',
+    videoCoverage: 'Az Országgyűlés YouTube-csatornáján {from} óta vannak '
+      + 'felvételek; a korábbi ülésekről nem készült közzétett közvetítés.',
+    videoUnmatched: 'Ehhez a felvételhez nem találtunk ülést a nyilvántartásban.',
   },
   portfolios: {
     title: 'Tárcák',

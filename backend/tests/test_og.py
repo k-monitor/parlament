@@ -575,3 +575,51 @@ def test_committee_card_carries_a_breadcrumb_to_the_list(og_client):
 def test_unknown_committee_share_card_is_not_indexed(og_client):
     r = og_client.get("/representatives/committees/nope")
     assert "noindex" in r.text
+
+
+def test_committee_minutes_share_card_and_jsfree_body(og_client):
+    r = og_client.get("/representatives/committees/meetings/ules-1")
+    assert r.status_code == 200
+    html = r.text
+    assert "Költségvetési Bizottság – jegyzőkönyv" in html
+    assert "3 felszólalás" in html
+    # The agenda and the speakers — the two things that make the page findable.
+    # NOT the transcript: a sitting runs to 250 kB and this body describes the
+    # page rather than serving it.
+    assert "Napirend" in html and "Felszólalók" in html
+    assert "Vendég Viktor" in html
+    assert "/representatives/k001" in html          # a speaker who is a known MP
+    assert "Köszöntöm a bizottság tagjait" not in html
+    # A sitting is a dated document, unlike the standing body it belongs to.
+    assert 'article:published_time' in html
+
+
+def test_committee_minutes_share_card_is_missing_for_a_sitting_with_none(og_client):
+    """`ules-2` published no minutes, so there is no page to describe."""
+    r = og_client.get("/representatives/committees/meetings/ules-2")
+    title = r.text.split("<title>")[1].split("</title>")[0]
+    assert "jegyzőkönyv" not in title.lower()
+
+
+def test_committee_share_card_describes_a_recording_only_sitting(og_client, conn):
+    """BIZ-27: the page exists once the sitting was streamed, so the card
+    describes the recording rather than calling the page missing — and it does
+    not promise a jegyzőkönyv nobody has published."""
+    conn.execute(
+        """INSERT INTO committee_video
+               (video_id, committee_id, meeting_id, period_number, kind, title,
+                committee_label, url, held_on, published_at, continued)
+           VALUES ('vid-4', 'biz-1', 'ules-2', 43, 'committee',
+                   '2026. május 20. - A Költségvetési Bizottság ülése',
+                   'A Költségvetési Bizottság',
+                   'https://www.youtube.com/watch?v=vid-4', '2026-05-20',
+                   '2026-05-20T09:05:00+00:00', 0)""")
+    conn.commit()
+    r = og_client.get("/representatives/committees/meetings/ules-2")
+    assert r.status_code == 200
+    html = r.text
+    assert "noindex" not in html
+    assert "Költségvetési Bizottság – ülés" in html
+    assert "jegyzőkönyve" not in html
+    # The recording is linked, never embedded (LEGAL-1).
+    assert "https://www.youtube.com/watch?v=vid-4" in html

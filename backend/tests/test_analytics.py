@@ -134,7 +134,7 @@ def test_source_defaults_match_the_endpoints():
     an endpoint's default ever changes, this catches the drift — otherwise clicks
     would quietly stop landing on their search."""
     from app.modules.bills.router import list_bills
-    from app.modules.committees.router import list_committees
+    from app.modules.committees.router import list_committees, list_meetings
     from app.modules.portfolios.router import list_portfolios
     from app.modules.proceedings.router import search
     from app.modules.representatives.router import (list_officials,
@@ -144,7 +144,8 @@ def test_source_defaults_match_the_endpoints():
     endpoints = {"proceedings": search, "bills": list_bills,
                  "representatives": list_representatives,
                  "officials": list_officials, "votes": list_votes,
-                 "portfolios": list_portfolios, "committees": list_committees}
+                 "portfolios": list_portfolios, "committees": list_committees,
+                 "committee-meetings": list_meetings}
     assert set(endpoints) == set(SOURCES)   # every source is a real search box
     for source, fn in endpoints.items():
         params = inspect.signature(fn).parameters

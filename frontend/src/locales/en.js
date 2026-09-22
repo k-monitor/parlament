@@ -316,6 +316,15 @@ export default {
     timeMarker: 'Time in the proceedings',
   },
   sessions: {
+    tabPlenary: 'Plenary sitting days',
+    tabCommittees: 'Committee sittings',
+    noCommitteeMeetings: 'No committee sitting recorded for this cycle.',
+    speechesCount: '{count} contributions',
+    minutesNotRead: 'Minutes (PDF)',
+    committeeSitting: 'committee sitting',
+    prevSitting: 'Previous sitting',
+    nextSitting: 'Next sitting',
+    sittingNav: 'Move to another sitting of this committee',
     title: 'Sittings', date: 'Date', sitting: 'Sitting', speeches: 'speeches', agendaItems: 'agenda items',
     open: 'Open', agenda: 'Agenda', duration: 'Duration',
     dayNav: 'Go to another sitting day', prevDay: 'Previous sitting', nextDay: 'Next sitting',
@@ -461,6 +470,14 @@ export default {
   // "Find your MP" — settlement → single-member constituency → MP (REP-10).
   // Portfolios (§6C): the government side of the record.
   committees: {
+    noSpeakersNamed: 'These minutes name no speakers: the text is printed under each agenda point with nothing attributed.',
+    words: '{count} words',
+    topSpeakers: 'Who did most of the talking?',
+    topSpeakersCaption: 'Speakers ranked by how much they said, measured as the '
+      + 'length of the transcribed text. Committee minutes carry no timings at '
+      + 'all, so — unlike a plenary sitting day — this cannot be speaking time. '
+      + 'The chair is included: in committee they take part in the debate rather '
+      + 'than only presiding.',
     title: 'Committees',
     intro: 'The committees of the National Assembly: who sits on them, when they '
       + 'met, and which documents they handled.',
@@ -539,7 +556,56 @@ export default {
       + 'cycle it holds only the changes so far, which is why both are shown. '
       + 'Meeting counts and durations are the source\'s own totals, which count '
       + 'more sittings than it lists individually; both figures are reported. '
-      + 'Minutes are linked, not copied.',
+      + 'The minutes PDF is linked, never copied; the text read out of it is '
+      + 'shown, because committee debate is published nowhere else. That text '
+      + 'comes from machine-reading the PDF — the linked original is always the '
+      + 'authoritative version. Recordings come from the National Assembly\'s '
+      + 'own YouTube channel and are matched to sittings by the date and '
+      + 'committee name in the video title; the channel published nothing '
+      + 'before February 2024.',
+    // The minutes viewer (BIZ-15).
+    openMinutes: 'Open the minutes',
+    minutesTitle: 'Minutes',
+    minutesOf: '{committee} — meeting {number}',
+    minutesSource: 'Original PDF',
+    minutesUnavailable: 'The minutes of this sitting could not be read.',
+    minutesNotParsed: 'The minutes PDF is published, but its text has not been read yet.',
+    // A recording and nothing else (BIZ-27): the stream is up the same day,
+    // the minutes follow weeks later.
+    recordingOnly: 'No minutes have been published for this sitting yet — for '
+      + 'now there is only the recording.',
+    backToCommittee: 'Back to the committee',
+    agenda: 'Proposed agenda',
+    participants: 'Who was present',
+    transcript: 'The record of the sitting',
+    present: 'Members present',
+    chairs: 'In the chair',
+    proxies: 'Gave a proxy',
+    proxyHeldBy: 'held by {name}',
+    staff: 'Committee secretariat',
+    guests: 'Invited guests',
+    venue: 'Venue',
+    opened: 'Started',
+    ended2: 'Ended',
+    closedSession: 'Partly closed sitting — only the open agenda points',
+    speechCount: '{count} contributions',
+    speakerCount: '{count} speakers',
+    chairLabel: 'chair',
+    filterSpeaker: 'Filter by speaker',
+    allSpeakers: 'All speakers',
+    jumpToAgenda: 'Jump to agenda point',
+    searchInMinutes: 'Search these minutes…',
+    noMatch: 'Nothing in these minutes matches.',
+    matches: '{count} matches',
+    // Recordings (BIZ-16).
+    videos: 'Recordings',
+    video: 'Recording',
+    watch: 'Watch',
+    videoPart: 'continued',
+    noVideos: 'No recording of this committee.',
+    videoCoverage: 'The National Assembly\'s YouTube channel has recordings '
+      + 'from {from} onwards; nothing was broadcast publicly before that.',
+    videoUnmatched: 'No meeting in the registry matches this recording.',
   },
   portfolios: {
     title: 'Portfolios',

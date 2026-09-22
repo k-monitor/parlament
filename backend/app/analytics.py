@@ -146,6 +146,11 @@ SOURCES: dict[str, dict[str, str]] = {
     # produce the same key.
     "committees": {"sort": "official", "kind": "",
                    "include_subcommittees": "False"},
+    # The committee-sittings list (BIZ-24) — the committee half of the sittings
+    # page. A separate box from "committees" above: that one searches for a
+    # *body*, this one for a *sitting*, and folding them together would make
+    # both unreadable. `readable` follows the boolean convention above.
+    "committee-meetings": {"committee": "", "readable": "False"},
 }
 
 # Parameter names a caller may pass that are NOT filters — they are either the

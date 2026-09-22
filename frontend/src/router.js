@@ -120,6 +120,16 @@ const routes = [
     component: () => import('./modules/committees/CommitteeListView.vue'),
   },
   {
+    // One sitting's minutes (BIZ-15). Addressed by the MEETING id, not nested
+    // under the committee's: a jegyzőkönyv belongs to one sitting, the meeting
+    // id is what every other reference to it already uses, and a path carrying
+    // both ids would let the two disagree.
+    path: '/representatives/committees/meetings/:meetingId', name: 'committee-minutes',
+    meta: { module: 'committees' },
+    component: () => import('./modules/committees/CommitteeMinutesView.vue'),
+    props: true,
+  },
+  {
     path: '/representatives/committees/:id', name: 'committee',
     meta: { module: 'committees' },
     component: () => import('./modules/committees/CommitteeView.vue'), props: true,

@@ -171,6 +171,23 @@ COMMITTEE_SITE_BASE = f"{BASE}/web/guest"
 # Committee minutes (jegyzőkönyv) and iromány PDFs come back as site-absolute
 # paths ("/biz42/bizjkv42/GAB/2603091.pdf"); they are linked, never mirrored.
 COMMITTEE_FILE_BASE = BASE
+
+
+def _committee_file_url(path: str | None) -> str | None:
+    """A committee file path from the API as a URL.
+
+    ``jegyzokonyvPath`` is *documented* as site-absolute and for most of the
+    corpus it is — but every one of cycle 40's 1 199 published minutes and 223
+    of cycle 41's come back without the leading slash, and concatenating those
+    onto the host gave ``https://www.parlament.hubiz40/…``: not a 404 but a
+    hostname that does not exist, which made the oldest two cycles' minutes
+    unfetchable. The separator is put in here, where the base and the path are
+    still two strings — once they are joined, where the host ends is no longer
+    recoverable from the URL.
+    """
+    if not path:
+        return None
+    return f"{COMMITTEE_FILE_BASE}/{path.lstrip('/')}"
 # A cycle has at most a few hundred committee rows and ~3 600 meetings, so every
 # listing is one or two requests at this width instead of dozens.
 _COMMITTEE_PAGE_SIZE = 1000
@@ -1170,7 +1187,7 @@ class FelicitasClient:
                 "kind": r.get("ulesTipusa"),
                 "quorum": r.get("hatarozatkepesseg"),
                 "durationS": r.get("ulesHosszaMasodPercben"),
-                "minutesUrl": f"{COMMITTEE_FILE_BASE}{path}" if path else None,
+                "minutesUrl": _committee_file_url(path),
             })
         return out
 

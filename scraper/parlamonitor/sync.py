@@ -74,6 +74,10 @@ from .representatives.scrape import (fetch_missing_photos, fetch_representatives
                                      save_representatives)
 from .committees.scrape import (fetch_committees, save_committees,
                                 load_previous as load_committees_file)
+from .committees.minutes_scrape import (fetch_minutes, meetings_with_minutes,
+                                        save_minutes)
+from .committees.videos import (fetch_videos, save_videos,
+                                load_previous as load_videos_file)
 from .votes.scrape import fetch_votes, save_votes
 
 logger = logging.getLogger(__name__)
@@ -493,6 +497,89 @@ def _sync_committees(felicitas: FelicitasClient, paths: Paths, cycle: int,
     return True
 
 
+# How many NEW jegyzőkönyv PDFs one sync pass will fetch. A committee publishes
+# its minutes weeks after the sitting and in ones and twos, so in steady state
+# this never binds; it is what stops the first pass after a cycle is added from
+# turning a sync into a thousand-request scrape (SCR-4).
+DEFAULT_MINUTES_LIMIT = 40
+
+
+def _sync_committee_minutes(http, paths: Paths, cycle: int, state: dict, *,
+                            force: bool, limit: int) -> object:
+    """Read any newly published jegyzőkönyv into the parsed record (BIZ-15).
+
+    Run straight after the committee registry, because that is where the list of
+    minutes to fetch comes from. A pass over a cycle already read costs nothing
+    at all — the stored text is the cache and re-parsing is local — so the stage
+    is left on rather than gated behind a fingerprint: what it re-reads is
+    disk, and what it fetches is only what is new.
+
+    ``limit`` caps how many *new* documents one pass takes. A committee
+    publishes its minutes weeks after the sitting and in ones and twos, so the
+    cap almost never binds in steady state; it is there so the first pass after
+    a cycle is added does not turn a sync into a thousand-request scrape.
+    """
+    registry = load_committees_file(paths, cycle)
+    if not registry:
+        return False
+    meetings = meetings_with_minutes(registry)
+    if not meetings:
+        return False
+    parsed = fetch_minutes(http, paths, cycle, meetings, limit=limit,
+                           force=force)
+    counts = parsed["meta"]["counts"]
+    # Written whenever anything was fetched OR the parse changed what it holds:
+    # a parser fix has to reach the site without waiting for a new sitting.
+    previous = paths.committee_minutes_file(cycle)
+    if not counts["fetched"] and previous.exists() and \
+            _minutes_fingerprint(parsed) == (state.get("committeeMinutes")
+                                             or {}).get("fp"):
+        return False
+    save_minutes(paths, cycle, parsed)
+    state["committeeMinutes"] = {"fp": _minutes_fingerprint(parsed),
+                                 "count": parsed["meta"]["count"], "at": _now()}
+    return {k: counts[k] for k in ("fetched", "reused", "errors", "pending",
+                                   "speeches")}
+
+
+def _minutes_fingerprint(parsed: dict) -> str:
+    """Signature of a parsed minutes registry.
+
+    Counts alone would do for "did a new sitting arrive", but not for "did the
+    parser start reading them differently", which is the other reason this file
+    changes — so the speech and character totals are in it too.
+    """
+    counts = parsed["meta"]["counts"]
+    payload = [parsed["meta"]["count"]] + [
+        counts[k] for k in ("meetings", "errors", "speeches", "chars")]
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def _sync_committee_videos(http, paths: Paths, state: dict, *,
+                           force: bool) -> object:
+    """Re-read the House's YouTube channel (BIZ-16).
+
+    One request in the normal case: the RSS feed carries the newest 15, which is
+    weeks of a channel that posts a handful a week. The backfill is **not** run
+    here — it walks the whole upload history and belongs in the explicit
+    `committee-videos --backfill` command, which is a one-off. If the feed's
+    window is ever overrun (more than 15 posted since the last pass), the gap is
+    closed by running that command, not by making every sync pass expensive.
+    """
+    registry = fetch_videos(http, previous=load_videos_file(paths))
+    fp = hashlib.sha256(json.dumps(
+        [v["videoId"] for v in registry["data"]],
+        sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    if not force and (state.get("committeeVideos") or {}).get("fp") == fp:
+        return False
+    save_videos(paths, registry)
+    state["committeeVideos"] = {"fp": fp, "count": registry["meta"]["count"],
+                                "at": _now()}
+    return {k: registry["meta"]["counts"].get(k)
+            for k in ("videos", "committee", "plenary")}
+
+
 def _sync_representatives(felicitas: FelicitasClient, paths: Paths, cycle: int,
                           state: dict, *, force: bool, with_detail: bool,
                           reps_max_age: float) -> bool:
@@ -608,7 +695,8 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
              documents: str | None = None,
              documents_compression: str | None = None,
              documents_max_mb: float | None = None,
-             documents_limit: int | None = None) -> dict:
+             documents_limit: int | None = None,
+             minutes_limit: int = DEFAULT_MINUTES_LIMIT) -> dict:
     """One cheap sync pass over ``cycle``. Each domain is isolated so one failing
     query never aborts the others (SCR-5). Returns a summary of what changed."""
     paths.ensure()
@@ -617,6 +705,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
     summary = {"cycle": cycle, "checkedAt": _now(),
                "sessions": [], "removedSessions": [], "bills": False,
                "votes": False, "committees": False,
+               "committeeMinutes": False, "committeeVideos": False,
                "representatives": False, "advocates": False,
                "officeHolders": False, "documents": False, "aktualis": False,
                "errors": []}
@@ -673,6 +762,27 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
             logger.exception("Committees sync failed")
             summary["errors"].append(f"committees: {e}")
 
+        # The jegyzőkönyvek hang off the registry above, so they follow it —
+        # and they fail on their own (SCR-5): a committee refresh that worked
+        # must not be lost because parlament.hu 404'd one PDF.
+        try:
+            summary["committeeMinutes"] = _sync_committee_minutes(
+                felicitas.http, paths, cycle, state, force=force,
+                limit=minutes_limit)
+        except Exception as e:
+            logger.exception("Committee minutes sync failed")
+            summary["errors"].append(f"committee-minutes: {e}")
+
+        # The recordings are not scoped to a cycle and cost one request, so
+        # they ride along with the committee stage rather than having a
+        # cadence of their own.
+        try:
+            summary["committeeVideos"] = _sync_committee_videos(
+                felicitas.http, paths, state, force=force)
+        except Exception as e:
+            logger.exception("Committee video sync failed")
+            summary["errors"].append(f"committee-videos: {e}")
+
     if not skip_reps:
         try:
             summary["representatives"] = _sync_representatives(
@@ -715,6 +825,8 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
     summary["changed"] = bool(summary["sessions"] or summary["removedSessions"]
                               or summary["bills"] or summary["votes"]
                               or summary["committees"]
+                              or summary["committeeMinutes"]
+                              or summary["committeeVideos"]
                               or summary["representatives"]
                               or summary["advocates"]
                               or summary["aktualis"])

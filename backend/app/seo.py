@@ -278,6 +278,30 @@ def _sections() -> tuple[_Section, ...]:
         "Egy bizottság (committee): tagjai és tisztségviselői, ülései a "
         "jegyzőkönyvekkel, és az általa tárgyalt és benyújtott irományok.",
       ),
+      # The committee minutes (BIZ-15) — by some distance the most substantial
+      # pages the site has. Each is a full sitting: the agenda, who was in the
+      # room, and every word said. Committee debate is published nowhere else in
+      # a readable form, so these are pages a search for what a committee
+      # actually said about a bill has nothing else to land on.
+      #
+      # Only sittings we could actually read are listed. A meeting whose PDF
+      # 404'd or came back as a scan keeps its row in the API (the page says so)
+      # but has nothing on it worth crawling, and advertising it would be
+      # offering a search engine an empty page.
+      _Section(
+        "committee-minutes", "committees",
+        f"""SELECT COUNT(*) FROM committee_minutes
+             WHERE error IS NULL AND speeches > 0{committees_and}""",
+        f"""SELECT '/representatives/committees/meetings/' || meeting_id AS path,
+                   held_on AS lastmod
+             FROM committee_minutes
+            WHERE error IS NULL AND speeches > 0{committees_and}
+            ORDER BY held_on DESC, meeting_id
+            LIMIT :limit OFFSET :offset""",
+        "/representatives/committees/meetings/{ules_id}",
+        "Egy bizottsági ülés jegyzőkönyve: a napirend, a résztvevők és az "
+        "ülésen elhangzott összes felszólalás.",
+      ),
       _Section(
         "votes", "votes",
         f"SELECT COUNT(*) FROM vote{votes_where}",

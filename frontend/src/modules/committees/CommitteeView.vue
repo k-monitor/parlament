@@ -22,7 +22,7 @@ const router = useRouter()
 const { t } = useI18n()
 
 const PAGE = 25
-const TABS = ['meetings', 'discussed', 'tabled']
+const TABS = ['meetings', 'discussed', 'tabled', 'videos']
 
 const data = ref(null)
 const list = ref(null)
@@ -106,7 +106,9 @@ async function loadList() {
   try {
     const res = tab.value === 'meetings'
       ? await api.committeeMeetings(props.id, params)
-      : await api.committeeDocuments(props.id, { ...params, role: tab.value })
+      : tab.value === 'videos'
+        ? await api.committeeVideos(props.id, params)
+        : await api.committeeDocuments(props.id, { ...params, role: tab.value })
     if (seq === listSeq) list.value = res
   } catch {
     if (seq === listSeq) listError.value = true
@@ -250,7 +252,8 @@ watch(() => [route.query.tab, route.query.offset].join('|'), loadList)
         :loading="listLoading" :error="listError"
         :empty="!!list && list.items.length === 0"
         :empty-text="tab === 'meetings' ? $t('committees.noMeetings')
-                                        : $t('committees.noDocuments')"
+          : tab === 'videos' ? $t('committees.noVideos')
+          : $t('committees.noDocuments')"
         @retry="loadList"
       >
         <div v-if="list">
@@ -273,17 +276,72 @@ watch(() => [route.query.tab, route.query.offset].join('|'), loadList)
                 <td>{{ m.quorum }}</td>
                 <td class="num">{{ m.durationS ? formatSpeakingTime(m.durationS) : '' }}</td>
                 <td>
-                  <a v-if="m.minutesUrl" :href="m.minutesUrl" target="_blank" rel="noopener">
-                    PDF ↗
-                  </a>
+                  <!-- Three independent states, so three separate things on the
+                       row: the House published a PDF, we have read it, someone
+                       filmed it. A sitting can be any combination of them. -->
+                  <RouterLink
+                    v-if="m.speeches"
+                    :to="{ name: 'committee-minutes', params: { meetingId: m.id } }"
+                  >{{ $t('committees.minutesTitle') }}</RouterLink>
+                  <a v-else-if="m.minutesUrl" :href="m.minutesUrl"
+                     target="_blank" rel="noopener">PDF ↗</a>
                   <!-- A meeting that published nothing keeps its row and says
                        so: hiding it would make the published minutes look like
                        the whole record. -->
                   <span v-else class="muted small">{{ $t('committees.noMinutes') }}</span>
+                  <a v-for="v in m.videos" :key="v.videoId" class="vlink small"
+                     :href="v.url" target="_blank" rel="noopener">
+                    ▶ {{ $t('committees.video') }}<template v-if="v.continued"
+                      > ({{ $t('committees.videoPart') }})</template> ↗
+                  </a>
                 </td>
               </tr>
             </tbody>
           </table>
+
+          <div v-else-if="tab === 'videos'">
+            <!-- Why a committee of 2016 has none: the House's channel simply did
+                 not exist. Said in the page rather than left as an empty list,
+                 which would read as a gap in the site. -->
+            <p v-if="list.coverage" class="small muted note">
+              {{ $t('committees.videoCoverage', { from: formatDate(list.coverage.from) }) }}
+            </p>
+            <ul class="vlist">
+              <li v-for="v in list.items" :key="v.videoId" class="card pad vrow">
+                <a :href="v.url" target="_blank" rel="noopener" class="vthumb">
+                  <img v-if="v.thumbnail" :src="v.thumbnail" alt="" loading="lazy" />
+                  <span v-else class="vfallback" aria-hidden="true">▶</span>
+                </a>
+                <div class="vmain">
+                  <a :href="v.url" target="_blank" rel="noopener" class="vtitle">
+                    {{ v.title }} ↗
+                  </a>
+                  <p class="small muted">
+                    {{ formatDate(v.heldOn) }}
+                    <template v-if="v.durationS">
+                      <span aria-hidden="true"> · </span>{{ formatSpeakingTime(v.durationS) }}
+                    </template>
+                    <template v-if="v.continued">
+                      <span aria-hidden="true"> · </span>{{ $t('committees.videoPart') }}
+                    </template>
+                  </p>
+                  <!-- Three states again, and only the first is a link. The
+                       recording is up the same day and the minutes follow weeks
+                       later, so a recent sitting normally has a meeting and no
+                       readable record — linking anyway would 404 on exactly the
+                       sittings a reader is most likely to open. -->
+                  <RouterLink
+                    v-if="v.hasMinutes"
+                    class="small"
+                    :to="{ name: 'committee-minutes', params: { meetingId: v.meetingId } }"
+                  >{{ $t('committees.minutesTitle') }} →</RouterLink>
+                  <span v-else-if="!v.meetingId" class="small muted">
+                    {{ $t('committees.videoUnmatched') }}
+                  </span>
+                </div>
+              </li>
+            </ul>
+          </div>
 
           <ul v-else class="dlist">
             <li v-for="(d, i) in list.items" :key="d.billId + '-' + i" class="card pad drow">
@@ -363,6 +421,18 @@ watch(() => [route.query.tab, route.query.offset].join('|'), loadList)
 }
 .ctable th { color: var(--ink-soft); font-weight: 600; font-size: .8rem; }
 .ctable .num { text-align: right; font-variant-numeric: tabular-nums; }
+.vlink { margin-left: .6rem; white-space: nowrap; }
+.vlist { list-style: none; padding: 0; margin: 0; display: grid; gap: .5rem; }
+.vrow { display: grid; gap: .3rem .8rem; grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+.vthumb { display: block; width: 8rem; }
+.vthumb img { width: 100%; height: auto; border-radius: .3rem; display: block; }
+.vfallback {
+  display: flex; align-items: center; justify-content: center; width: 8rem;
+  aspect-ratio: 16 / 9; border: 1px solid var(--line); border-radius: .3rem;
+  color: var(--ink-soft);
+}
+.vmain { min-width: 0; display: grid; gap: .1rem; }
+.vtitle { font-weight: 600; overflow-wrap: anywhere; }
 .dlist { list-style: none; padding: 0; margin: 0; display: grid; gap: .5rem; }
 .drow {
   display: grid; gap: .3rem .9rem; align-items: start;
@@ -375,6 +445,8 @@ watch(() => [route.query.tab, route.query.offset].join('|'), loadList)
 .dtitle { margin: .1rem 0; overflow-wrap: anywhere; }
 .dmeta { display: flex; flex-direction: column; align-items: flex-end; gap: .1rem; text-align: right; }
 @media (max-width: 720px) {
+  .vrow { grid-template-columns: 1fr; }
+  .vthumb, .vfallback { width: 100%; max-width: 16rem; }
   .drow { grid-template-columns: 1fr; }
   .dmeta { align-items: flex-start; text-align: left; }
   .ctable, .ctable tbody, .ctable tr, .ctable td { display: block; }

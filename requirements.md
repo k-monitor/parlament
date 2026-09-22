@@ -3309,7 +3309,121 @@ transcripts — needs no processing to be useful. It was simply not being read.
 - **BIZ-13.** Committee pages are crawlable: the list and each **main** committee
   are in the sitemap with their own share card and a JS-free body carrying the
   roster (§8.6). Subcommittees are reachable from their parent but not advertised
-  as entry points — three names and a handful of meetings is not one.
+  as entry points — three names and a handful of meetings is not one. **Each
+  readable jegyzőkönyv is in the sitemap too** (BIZ-15), with a share card and a
+  JS-free body carrying the agenda and the speaker list — not the transcript
+  itself, which runs to 250 kB and would be serving the page rather than
+  describing it. A sitting we could not read is not advertised: the site keeps
+  its row and says so, but offering a crawler an empty page helps nobody.
+
+### The minutes themselves (BIZ-15)
+
+The registry gives a *link* to each jegyzőkönyv and nothing more. That is enough
+to cite a sitting and not enough to read one — and committee debate is published
+nowhere else. The plenary has a transcript API behind it; the committees have
+these PDFs, and until they are read, "what the committee actually said about
+this bill" is a question the corpus cannot answer at all.
+
+- **BIZ-15 (MUST).** The minutes PDFs are **parsed into structured sittings**:
+  the cover (when, where, who presided, whether the sitting was closed), the
+  proposed agenda with each point's iromány, the attendance in the categories
+  the document itself uses, and the debate as **speeches under the agenda
+  heading they were made under**. The PDF stays linked and un-mirrored (BIZ-12);
+  what is stored is the text read out of it and the structure found in it.
+- **BIZ-17 (MUST).** Committee speeches live in **their own table**, never in
+  the plenary `speech` table. They have no upstream uid, no media offsets, no
+  sentence segmentation and no agenda-item FK, and folding them in would
+  silently change the denominator of every statistic the site already publishes
+  (STAT-1). A committee speech is a different object with a different
+  provenance, and it lives where nothing that counts plenary speeches has to
+  learn about it.
+- **BIZ-18.** A speaker is resolved to a `person` through the **same index the
+  interjections pass uses** (INT-3) — accent- and case-folded, honorific
+  dropped, refusing to guess when a name matches two sitting members. The
+  minutes print "DR. SASI-NAGY EDIT" where the register has "Sasi-Nagy Edit", so
+  some folding is unavoidable; sharing the index means a name linked in a
+  transcript and the same name linked in a jegyzőkönyv reach the same profile.
+  96.4% of cycle 43's 4 434 committee speeches resolve.
+- **BIZ-19.** A sitting whose minutes could **not** be read keeps its row,
+  carrying the reason — the same rule BIZ-9 applies to a meeting that published
+  nothing. "We could not read this" and "there is nothing to read" are different
+  findings and the page says which. Three states are therefore tracked
+  separately on every meeting row and none is derived from another: the House
+  published a PDF, we have read it, someone filmed it.
+- **BIZ-20.** The **stored text is the cache** (SCR-2). A sitting already read is
+  re-parsed from disk and never re-fetched — minutes are static once published —
+  so a parser change costs CPU and no requests at all. A first pass over a cycle
+  is paced by a cap on how many *new* documents one run will fetch (SCR-4).
+- **BIZ-21.** The viewer shows the sitting **as it ran**: agenda heading, then
+  what was said under it. It is served whole rather than paged — it is one
+  document, a reader arrives wanting to read it end to end, and paging a
+  transcript breaks both in-page search and the ability to link a speech.
+  Filtering by speaker and searching within the sitting narrow it in place.
+  Where the chair carries straight on past a heading without being named again,
+  the page does not reprint their name, which would read as someone taking the
+  floor.
+
+- **BIZ-24.** Committee sittings are listed **on the sittings page**, in a tab
+  beside the plenary sitting days. They are the same kind of object — a dated
+  sitting with a record — and until now they existed only inside one committee's
+  own page, which answers "when did this body meet" and never "what met this
+  week". Each card names its body and says which of the three states it is in
+  (a record published, a record read, a recording), exactly as the committee's
+  own meeting list does.
+- **BIZ-25.** The minutes viewer is built to **read like a sitting day**
+  (§5.2): the same back link, share control, speaker toplist, agenda outline
+  pinned on wide screens, transcript cut into agenda sections, and prev/next
+  navigation at the foot. It differs only where the records genuinely do —
+  committee minutes carry **no timings at all**, so nothing is playable and the
+  toplist ranks by **how much was said** rather than for how long. The figure
+  beside each bar is therefore a word count, not a speech count: the chair takes
+  the floor oftenest and says least, so a count there would contradict the bar
+  on almost every row.
+- **BIZ-26.** Prev/next only offers a sitting whose minutes have been **read**.
+  The link opens the viewer, and pointing it at a sitting that has none would
+  walk the reader into a 404; a meeting with no record is still on the
+  committee's own meeting list, which is where it belongs.
+- **BIZ-27.** A sitting is opened for **whichever of its two records exists**.
+  The recording goes up the same day and the jegyzőkönyv follows weeks later
+  (BIZ-22), so on the sittings a reader is most likely to open, the video is all
+  there is. That sitting's page is then served from the **meeting row alone**:
+  its cover, the recording (linked, never embedded — LEGAL-1) and the prev/next
+  navigation, with every record-derived block empty and the page saying plainly
+  that no jegyzőkönyv has been published yet. There is no second page for it, a
+  sitting being one object with two records. A sitting that left **neither** a
+  record nor a recording has nothing to open, so its card on the sittings list
+  is **not a link**: it keeps its row (BIZ-9) and states what it is, but a card
+  that lands on an empty page is worse than one that plainly does not offer to
+  go anywhere. A PDF the House published and we have not read yet still leads to
+  the committee's own meeting list, where the row offers the PDF itself.
+
+### Recordings (BIZ-16)
+
+- **BIZ-16 (MUST).** Committee meetings are **streamed to the House's own
+  YouTube channel**, and those recordings are shown against the sitting they
+  belong to. There is no id shared with the committee registry and nothing in a
+  video's metadata names the meeting, so **the title is the whole of the join**:
+  it carries the date and the body, and both are parsed out of it and matched.
+  Videos are linked, never embedded or mirrored (LEGAL-1).
+- **BIZ-22.** Matching is **by name and date, and fails in two independent ways,
+  neither of which drops the row**. A video naming a body we do not hold keeps
+  its row unlinked (the House streams an eseti bizottság before the registry
+  publishes it); a video matching a body but no meeting keeps `meeting_id`
+  empty, which on the day of a sitting is the *normal* state, not an error — the
+  stream is up the same day and the meeting listing follows weeks later. The
+  name is matched folded for case, accents and a leading article and **for
+  nothing else**: "Ellenőrző Albizottság" sits under five different parents in
+  one cycle, and a rule that trimmed to a head word would match a video to
+  whichever of them sorted first.
+- **BIZ-23.** The RSS feed carries only the **15 newest** videos, which is ample
+  for a daily poll and useless as an archive, so the history is fetched by a
+  separate **backfill** that walks the whole channel. **Its ceiling is the
+  channel, not the method**: measured on 2026-09-21 the channel holds 166 videos
+  in total, back to 2024-02-26, and that is genuinely all of it (the uploads
+  playlist is exactly the union of the *videos* and *streams* tabs). So cycles 40
+  and 41 have no recordings to find and cycle 42 only its last two years. The
+  site **says so** rather than showing an empty list, because an unexplained gap
+  reads as a fault in the site rather than a fact about the House.
 
 > **Shipped 2026-09-21** for cycles 40–43 (the cycles the rest of the corpus is
 > richest for; the API serves 34–43 and the stage takes a `--cycle` like every
@@ -3328,6 +3442,61 @@ transcripts — needs no processing to be useful. It was simply not being read.
 > routes, two views and a profile block — no schema change to any other module.
 > The one thing it changed elsewhere is the profile's existing committee list,
 > which now prefers the linked version and keeps the old one as its fallback.
+>
+> **The minutes and the recordings (BIZ-15/BIZ-16) shipped on top of it the same
+> day.** Two more scraper stages (`committee-minutes`, `committee-videos`), six
+> more tables, a minutes viewer and a recordings tab — and, again, no change to
+> any other module's schema.
+>
+> Three things are worth recording, because none is visible until the numbers
+> are read:
+>
+> - **The minutes URL was broken for the older half of the corpus and nobody
+>   could tell.** `jegyzokonyvPath` is documented as site-absolute, and is — for
+>   1 798 of the 3 220 published minutes. The other 1 422 (every one of cycle
+>   40's and a fifth of cycle 41's) come back with no leading slash, so joining
+>   them to the host produced `https://www.parlament.hubiz40/…`: not a 404 but a
+>   hostname that does not exist. The link had been on the site, unclicked, since
+>   the module shipped. The separator is now added where the base and the path
+>   are still two strings — once concatenated, where the host ended is no longer
+>   recoverable from the URL, which is why the repair for already-saved
+>   registries is written against the known base rather than a host pattern.
+> - **The documents are far more uniform than a decade of different clerks
+>   suggests.** Over a spread of sixteen sittings from cycles 40–43 every
+>   structural marker appeared in 16 of 16, and the five-part shape has not
+>   changed since 2016. What varies is small and local: whether the weekday is
+>   printed at all (9 of cycle 43's 130 omit it), whether it is bracketed,
+>   whether the time reads "14 óra 07 perckor" or "10.00 órakor" or — for a
+>   sitting only *called* for a time — "11 óra 30 percre", and whether the single
+>   agenda point of a one-item sitting is numbered (34 of 130 are not). Each was
+>   a silent data loss rather than a crash, which is why the pass is measured by
+>   field coverage and not by whether it threw.
+> - **A subcommittee's cover names its parent first.** "az Országgyűlés Gazdasági
+>   Bizottsága / Fogyasztóvédelmi Albizottságának" — and only the second line is
+>   in the genitive. Reading the first labels every subcommittee's minutes with
+>   its parent's name, which is the same trap BIZ-1 records for the registry's
+>   two-level listing, in a different document.
+>
+> The sittings page grew its committee tab (BIZ-24) and the viewer its
+> sitting-day furniture (BIZ-25) in the same pass, which is what turned the
+> minutes from a page reachable only through a committee into the second half of
+> "when did the House sit". The one thing that needed re-deciding on the way:
+> the toplist cannot rank by speaking time, because committee minutes record
+> none — so it ranks by words, and prints words, because a bar measuring one
+> thing beside a number stating another reads as a sorting bug.
+>
+> Measured over the **whole** of cycles 40–43 — every one of the 3 220 sittings
+> that published minutes, 133 548 speeches, 173 MB of text — with **zero**
+> documents that failed to fetch and zero that failed to parse. 3 218 of 3 220
+> covers state their date (the two that do not have no cover page in the PDF at
+> all), 99.3% state a venue, and speaker attribution to a `person` runs 89.5%
+> (cycle 40) to 96.4% (cycle 43), the gradient being the growing share of
+> ministry officials and invited experts in the later Houses rather than a
+> matching problem.
+>
+> On the recordings side all 30 of the channel's committee videos matched both a
+> body and a meeting, on the exact date, with three sittings correctly carrying
+> two videos apiece (a meeting that overran into a second stream).
 
 ---
 

@@ -18,6 +18,8 @@ kept only as reference material; nothing here imports it at runtime.
 | `processed/advocates-<cycle>.json` | `parlamonitor.advocates` | the **nationality-advocate** registry (*nemzetiségi szószólók*) for a cycle: same record shape as an MP plus the `nationality` they speak for. They are not in the MP roster, but share its id space — so the file is additive and needs no re-run of the MP stage. |
 | `processed/officeholders.json` | `parlamonitor.officeholders` | the **office-holder** registry (*tisztségviselők*): every recorded term of government / House office with its **real** start and end date (open while still held) and the portal's own office **category**, grouped by person. Cycle-less, and the only source that dates the office of a **non-MP** minister or state secretary — who is in no roster at all. The category is not in the data: it is *which* per-category listing returned the row, so the stage asks for each category in turn (six paged listings) and tags what comes back. |
 | `processed/committees-<cycle>.json` | `parlamonitor.committees` | the **committee** registry (*bizottságok*) for a cycle: every body — main committees and subcommittees in one flat list keyed by its own id — with its type, dates and contact, plus who sits on it (`members`, the roster on one date), every **dated** membership and office term (`terms`), every `meeting` with its minutes PDF, and the irományok it dealt with (`documents`) and tabled (`submissions`), plus the meetings it has scheduled but not yet held (`upcoming` — state, not history). Membership needs both listings: see [Committees](#committees-6f). |
+| `processed/committee-minutes-<cycle>.json` | `parlamonitor.committees.minutes_scrape` | the **jegyzőkönyvek** of that cycle's committee meetings, read out of the PDFs (BIZ-15): per sitting its cover (when, where, who presided, whether it was closed), the proposed agenda with each point's iromány, the attendance in the document's own categories, and the debate as speeches under the agenda heading they were made under. A sitting we could not read keeps its row carrying `error`. The extracted text is cached under `committees/minutes/<cycle>/` so a re-parse fetches nothing. See [Committee minutes](#committee-minutes-biz-15). |
+| `processed/committee-videos.json` | `parlamonitor.committees.videos` | every video on the Országgyűlés YouTube channel (BIZ-16), with the date and committee **parsed out of its title** — the only thing that links a recording to a sitting. Cycle-less and additive: each pass merges into the last, so a cheap RSS poll never discards a backfilled history. Matching to a body and a meeting happens in the loader, not here. |
 | `documents/<cycle>/` | `parlamonitor.documents` | **optional** mirror of the iromány document *files* themselves — the extracted text (`text/<docid>.txt.xz`), the source PDF (`pdf/<docid>.pdf`), or both, plus an `index.json` manifest. **Off by default**; see [Document files](#document-files-doc-1). |
 | `processed/aktualis.json` | `parlamonitor.aktualis` | the **Aktuális** page: the documents it links (napirend, ülésterv, submission deadlines, legislative programme) and the **order paper for the sitting that is coming**, parsed out of the napirend PDF into days, timetables and agenda items — plus the House Committee's next meeting. The one source on the site for what the House is *about to* do; see [The Aktuális page](#the-aktuális-page-nr-1). |
 | `logs/ingest-<ts>.json` | both | per-run ingestion log (run time, sittings added, errors, backend). |
@@ -144,6 +146,19 @@ python -m parlamonitor representatives --cycle 43 --photos ./data
 
 # Committees (bizottságok): bodies, membership, meetings and irományok
 python -m parlamonitor committees --cycle 43 ./data
+
+# The jegyzőkönyvek behind those meetings: download each minutes PDF once,
+# extract its text and parse it into a sitting. Run AFTER `committees` — the
+# list of documents to fetch comes out of its registry. Re-runs are free (the
+# stored text is the cache), and --limit paces a first pass over a full cycle.
+python -m parlamonitor committee-minutes --cycle 43 ./data
+python -m parlamonitor committee-minutes --cycle 40 --limit 200 ./data
+
+# Committee recordings from the House's YouTube channel. Cycle-less and one
+# request; --backfill additionally walks the channel's whole upload history,
+# which the 15-video RSS window cannot reach.
+python -m parlamonitor committee-videos ./data
+python -m parlamonitor committee-videos --backfill ./data
 
 # Nationality advocates (szószólók) — one cycle, or backfill every cycle that
 # has them (40 on). Portraits are downloaded by default (~13 people per cycle).
@@ -435,7 +450,101 @@ the five actually ahead. `committee_upcoming(..., from_date=…)` overrides it
 for a backfill.
 
 Everything the registry links — the jegyzőkönyv PDFs, the iromány texts — is
-**linked, not mirrored** (LEGAL-1); only the URL is stored.
+**linked, not mirrored** (LEGAL-1); only the URL is stored. What is *read out
+of* those PDFs is a separate stage — see below.
+
+### Committee minutes (BIZ-15)
+
+`committee-minutes` walks a saved committee registry, downloads each published
+jegyzőkönyv once, extracts its text with `pdftotext -layout` and parses it.
+Committee debate is published nowhere else: the plenary has a transcript API
+behind it, the committees have these PDFs.
+
+**The minutes URL is not always usable as given.** `jegyzokonyvPath` is
+documented as site-absolute, and is for 1 798 of the 3 220 published minutes —
+but every one of cycle 40's and a fifth of cycle 41's comes back **without the
+leading slash**, so concatenating it onto the host yielded
+`https://www.parlament.hubiz40/…`: not a 404 but a hostname that does not
+resolve. The separator is added in `felicitas._committee_file_url`, where the
+base and the path are still two strings; `minutes_scrape.normalise_url` repairs
+registries scraped before that, against the known base rather than a host
+pattern (once the two are concatenated, where the host ended is unrecoverable —
+a regex over the URL would as happily cut `www.parlament.h/u`).
+
+**The documents are uniform; the variation is small and local.** Every sitting
+from 2016 on has the same five parts in the same order — cover, Tartalomjegyzék,
+Napirendi javaslat, Az ülés résztvevői, then the debate — and each structural
+marker appeared in 16 of 16 sampled sittings. What differs between clerks:
+
+- the weekday may be absent (9 of cycle 43's 130), or bracketed (`13-án (hétfőn)`);
+- the time reads `14 óra 07 perckor`, `10.00 órakor`, or — for a sitting only
+  *called* for that time, held away from the House — `11 óra 30 percre`, paired
+  with `összehívott üléséről` instead of `megtartott üléséről`;
+- the first of the month takes `-jén`, not `-én`;
+- a sitting with a **single** agenda point does not number it (34 of 130);
+- a long speaker line wraps, leaving its colon on the next line (25 in 16
+  sittings — every long office with an organisation after it);
+- a **subcommittee's cover names its parent first** (`az Országgyűlés Gazdasági
+  Bizottsága` / `Fogyasztóvédelmi Albizottságának`) and only the second line is
+  in the genitive. Reading the first labels every subcommittee's minutes with
+  its parent's name — the same trap the registry's two-level listing sets.
+
+— and, at the bottom of the barrel, the clerks' own typos: an en dash for the
+hyphen (`27–én`), a stray full stop before the weekday (`.szerdán`) or inside
+the time (`13 óra 08.perckor`). Those four were the last thing standing between
+six of cycle 40's sittings and a date.
+
+Every one of these is a **silent data loss**, not a crash, which is why the
+stage is judged by field coverage rather than by whether it raised. Over the
+whole of cycles 40–43 (3 220 sittings, 133 548 speeches, 173 MB of text, zero
+fetch or parse failures) 3 218 covers state their date — the two that do not
+have no cover page in the PDF at all — and 99.3% state a venue.
+
+Two shapes are worth knowing about because they look like bugs and are not.
+A handful of sittings **name no speakers whatsoever**: the clerk ran the chair's
+words straight under each heading, so there is nothing to attribute and the text
+is kept as the section's own rather than credited to a guess. And a few PDFs are
+**truncated to their cover and contents** — no body was ever published — which
+parses to a sitting with no sections at all.
+
+**Re-runs are free** (SCR-2): the extracted text is stored under
+`<data>/committees/minutes/<cycle>/text/` and a sitting already read is
+re-parsed from disk, so a parser change costs CPU and no requests. The PDFs
+themselves are kept only with `--keep-pdf` — they are ~20x the size of the text
+in them and the original stays linked either way (LEGAL-1). `--limit` caps how
+many *new* documents a pass fetches; what is left over is reported as `pending`
+rather than looking like a finished run.
+
+### Committee recordings (BIZ-16)
+
+The House streams plenary sittings and committee meetings to one YouTube
+channel. **Nothing in a video's metadata names the meeting**, so the title is
+the whole of the join — it carries the date and the body:
+
+```
+2026. szeptember 21. - A Művelődési Bizottság ülése
+2026. szeptember 21. - Folytatás - A Médiatanács …jelölő eseti bizottság ülése
+2026. szeptember 21. - Az Országgyűlés ülésének élő közvetítése      (plenary)
+```
+
+The stage parses those out and writes them; matching a label to a committee and
+a date to a meeting is the **loader's** job, because that is the side holding
+both. A video that matches no body, or a body but no meeting, keeps its row —
+the recording is up the same day and the meeting listing follows weeks later.
+
+**Two sources, because the cheap one is a window, not an archive.** The RSS feed
+(`/feeds/videos.xml?channel_id=…`) is one unauthenticated request and carries
+only the **15 newest** videos; `--backfill` walks the whole upload history,
+preferring `yt-dlp` (no key, no quota) and falling back to the YouTube Data API
+v3 when `PARLAMONITOR_YOUTUBE_API_KEY` is set. With neither available the
+backfill says so rather than quietly doing nothing (SCR-6).
+
+**The ceiling is the channel, not the method.** Measured 2026-09-21 it holds
+**166 videos in total, back to 2024-02-26** — and that is all of it: the uploads
+playlist is exactly the union of the channel's *videos* (7) and *streams* (159)
+tabs. 30 of them are committee meetings. So cycles 40 and 41 have no recordings
+to find at all, and the site says so rather than showing an unexplained empty
+list.
 
 ### The Aktuális page (NR-1)
 
@@ -606,6 +715,18 @@ python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
   file or the newest meeting moved. `--skip-committees` drops the stage;
   `--no-detail` keeps the bodies and the membership but skips the per-body
   iromány listings, which are most of its ~130 requests.
+- **Committee minutes:** run straight after the committee registry, since that
+  is where the list of documents comes from. A pass over a cycle already read
+  costs nothing (the stored text is the cache), so the stage is not gated behind
+  a fingerprint — what it re-reads is disk and what it fetches is only what is
+  new, capped at 40 documents per pass. A committee publishes its minutes weeks
+  after the sitting and in ones and twos, so the cap only ever binds on the
+  first pass after a cycle is added.
+- **Committee recordings:** one request (the RSS feed), rewritten only when the
+  channel's video list changed. The **backfill is not run here** — it walks the
+  whole upload history and belongs in the explicit `committee-videos --backfill`
+  command. If the 15-video feed window is ever overrun, that command closes the
+  gap rather than every sync pass paying for it.
 - **Bills / votes:** the cheap list query runs, but per-item detail reuses the
   detail cache above, and the registry JSON is rewritten only when it differs.
 - **Representatives:** refreshed on a slow cadence (`--reps-max-age`, default 12h,

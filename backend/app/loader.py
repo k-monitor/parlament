@@ -33,7 +33,9 @@ import json
 import logging
 import lzma
 import os
+import re
 import sqlite3
+import unicodedata
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1106,6 +1108,13 @@ def load_committees(conn: sqlite3.Connection, registry: dict) -> int:
         conn.execute("INSERT INTO electoral_period(number) VALUES (?) "
                      "ON CONFLICT(number) DO NOTHING", (period,))
 
+    # The minutes and the recordings reference this cycle's *meetings* and
+    # *bodies*, so they have to go before either can be deleted — otherwise a
+    # routine committee refresh dies on a foreign key on any deployment that has
+    # read a jegyzőkönyv. Both are rebuilt by the stages that run straight after
+    # this one, which is why clearing them here is safe as well as necessary.
+    _clear_committee_dependents(conn, period)
+
     # Replace this cycle's committees, children first for the FKs. The children
     # are keyed by their committee, so they are deleted through it.
     held = ("SELECT id FROM committee WHERE period_number IS ?")
@@ -1282,6 +1291,433 @@ _BILL_PORTAL_FALLBACK = "https://www.parlament.hu/web/guest/iromanyok-lekerdezes
 # ---------------------------------------------------------------------------
 # Session record
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Committee minutes (BIZ-15) and recordings (BIZ-16)
+# ---------------------------------------------------------------------------
+
+def _ensure_committee_minutes_tables(conn: sqlite3.Connection) -> None:
+    """Create the BIZ-15/BIZ-16 tables on a pre-existing DB, so the minutes and
+    the recordings land on an already-built deployment through the incremental
+    update alone. Mirrors schema.sql — a no-op on a freshly built DB."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS committee_minutes (
+            meeting_id TEXT PRIMARY KEY REFERENCES committee_meeting(id),
+            committee_id TEXT REFERENCES committee(id),
+            period_number INTEGER REFERENCES electoral_period(number),
+            url TEXT, registry_number TEXT, meeting_label TEXT, term_label TEXT,
+            committee_label TEXT, venue TEXT, held_on TEXT, weekday TEXT,
+            opened_at TEXT, closed_at TEXT, closed_session INTEGER,
+            speeches INTEGER, speakers INTEGER, chars INTEGER, error TEXT);
+        CREATE INDEX IF NOT EXISTS idx_committee_minutes_committee
+            ON committee_minutes(committee_id);
+        CREATE INDEX IF NOT EXISTS idx_committee_minutes_period
+            ON committee_minutes(period_number);
+        CREATE TABLE IF NOT EXISTS committee_minutes_item (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_id TEXT NOT NULL REFERENCES committee_minutes(meeting_id),
+            ord INTEGER, ordinal INTEGER, title TEXT, bill_number TEXT,
+            bill_id TEXT, notes TEXT);
+        CREATE INDEX IF NOT EXISTS idx_committee_minutes_item_meeting
+            ON committee_minutes_item(meeting_id);
+        CREATE TABLE IF NOT EXISTS committee_minutes_person (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_id TEXT NOT NULL REFERENCES committee_minutes(meeting_id),
+            role TEXT, person_id TEXT REFERENCES person(person_id), name TEXT,
+            faction_name TEXT, title TEXT, org TEXT,
+            proxy_person_id TEXT REFERENCES person(person_id), proxy_name TEXT,
+            ord INTEGER);
+        CREATE INDEX IF NOT EXISTS idx_committee_minutes_person_meeting
+            ON committee_minutes_person(meeting_id);
+        CREATE INDEX IF NOT EXISTS idx_committee_minutes_person_person
+            ON committee_minutes_person(person_id);
+        CREATE TABLE IF NOT EXISTS committee_minutes_section (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_id TEXT NOT NULL REFERENCES committee_minutes(meeting_id),
+            ord INTEGER, title TEXT, level INTEGER, page INTEGER,
+            preamble TEXT, speeches INTEGER);
+        CREATE INDEX IF NOT EXISTS idx_committee_minutes_section_meeting
+            ON committee_minutes_section(meeting_id);
+        CREATE TABLE IF NOT EXISTS committee_speech (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_id TEXT NOT NULL REFERENCES committee_minutes(meeting_id),
+            committee_id TEXT REFERENCES committee(id),
+            period_number INTEGER REFERENCES electoral_period(number),
+            ord INTEGER, section_ord INTEGER,
+            person_id TEXT REFERENCES person(person_id), name TEXT,
+            faction_name TEXT, role TEXT, org TEXT, chair INTEGER,
+            continued INTEGER, text TEXT);
+        CREATE INDEX IF NOT EXISTS idx_committee_speech_meeting
+            ON committee_speech(meeting_id);
+        CREATE INDEX IF NOT EXISTS idx_committee_speech_person
+            ON committee_speech(person_id);
+        CREATE INDEX IF NOT EXISTS idx_committee_speech_committee
+            ON committee_speech(committee_id);
+        CREATE TABLE IF NOT EXISTS committee_video (
+            video_id TEXT PRIMARY KEY,
+            committee_id TEXT REFERENCES committee(id),
+            meeting_id TEXT REFERENCES committee_meeting(id),
+            period_number INTEGER REFERENCES electoral_period(number),
+            kind TEXT, title TEXT, committee_label TEXT, url TEXT,
+            thumbnail TEXT, held_on TEXT, published_at TEXT, duration_s INTEGER,
+            views INTEGER, continued INTEGER, description TEXT);
+        CREATE INDEX IF NOT EXISTS idx_committee_video_committee
+            ON committee_video(committee_id);
+        CREATE INDEX IF NOT EXISTS idx_committee_video_meeting
+            ON committee_video(meeting_id);
+        CREATE INDEX IF NOT EXISTS idx_committee_video_date
+            ON committee_video(held_on);
+    """)
+
+
+def _minutes_person_index(conn: sqlite3.Connection):
+    """The person index committee names are resolved through, plus the set of
+    people who sat in each cycle.
+
+    The same index the interjections pass uses (INT-3): folded on accents and
+    case, honorific dropped, and refusing to guess when a name matches more than
+    one member of the same House. Committee minutes need exactly that — they
+    print "DR. SASI-NAGY EDIT" where the register has "Sasi-Nagy Edit" — and
+    reusing it means a name linked in a transcript and the same name linked in a
+    jegyzőkönyv reach the same profile.
+    """
+    index = interjections.build_name_index(
+        (r["person_id"], (r["label"], r["label_full"]))
+        for r in conn.execute(
+            "SELECT person_id, label, label_full FROM person").fetchall())
+    return index, _seated_by_period(conn)
+
+
+def load_committee_minutes(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load one cycle's parsed committee jegyzőkönyvek (§6F / BIZ-15).
+
+    Re-ingesting a cycle replaces its minutes and everything hanging off them
+    (idempotent, ING-4). Runs after `load_committees` — every row is keyed by a
+    meeting that stage loaded — and after representatives and bills, so a
+    speaker resolves to a `person` and an agenda point to a held `bill` (EXT-2).
+
+    A meeting the committee registry does not hold is **skipped, not stubbed**:
+    the minutes file is built from that registry, so the only way to see one is
+    to reload the cycle's committees with a narrower date range than the minutes
+    were fetched for, and inventing a meeting row to hang it off would put a
+    sitting on the site that its own committee does not list.
+    """
+    _ensure_committee_tables(conn)
+    _ensure_committee_minutes_tables(conn)
+    meta = registry.get("meta", {})
+    period = meta.get("cycle")
+    records = registry.get("data") or []
+
+    held_meetings = {
+        r[0]: r[1] for r in conn.execute(
+            "SELECT id, committee_id FROM committee_meeting "
+            "WHERE period_number IS ?", (period,))}
+    # Replace this cycle's minutes, children before the parent for the FKs.
+    scope = ("SELECT meeting_id FROM committee_minutes WHERE period_number IS ?")
+    for tbl in ("committee_minutes_item", "committee_minutes_person",
+                "committee_minutes_section", "committee_speech"):
+        conn.execute(f"DELETE FROM {tbl} WHERE meeting_id IN ({scope})", (period,))
+    conn.execute("DELETE FROM committee_minutes WHERE period_number IS ?", (period,))
+
+    index, seated = _minutes_person_index(conn)
+    in_house = seated.get(period)
+    bills = {r[0]: r[1] for r in conn.execute(
+        "SELECT bill_number, id FROM bill WHERE period_number IS ?", (period,))
+        if r[0]}
+
+    def _person(name: str | None) -> str | None:
+        if not name:
+            return None
+        return interjections.resolve_name(name, index, in_house)
+
+    loaded = skipped = speeches = attributed = 0
+    for rec in records:
+        mid = str(rec.get("meetingId") or "")
+        if mid not in held_meetings:
+            skipped += 1
+            continue
+        cover = rec.get("cover") or {}
+        stats = rec.get("stats") or {}
+        conn.execute("""
+            INSERT INTO committee_minutes(meeting_id, committee_id, period_number,
+                url, registry_number, meeting_label, term_label, committee_label,
+                venue, held_on, weekday, opened_at, closed_at, closed_session,
+                speeches, speakers, chars, error)
+            VALUES (:mid, :cid, :period, :url, :reg, :label, :term, :clabel,
+                    :venue, :held, :weekday, :opened, :closed, :closed_session,
+                    :speeches, :speakers, :chars, :error)
+        """, {
+            "mid": mid, "cid": held_meetings[mid], "period": period,
+            "url": rec.get("minutesUrl"),
+            "reg": cover.get("registryNumber"),
+            "label": cover.get("meetingLabel"), "term": cover.get("termLabel"),
+            "clabel": cover.get("committeeLabel"), "venue": cover.get("venue"),
+            "held": cover.get("date"), "weekday": cover.get("weekday"),
+            "opened": cover.get("openedAt") or cover.get("startsAt"),
+            "closed": cover.get("closedAt"),
+            "closed_session": 1 if cover.get("closed") else 0,
+            "speeches": stats.get("speeches"), "speakers": stats.get("speakers"),
+            "chars": stats.get("chars"), "error": rec.get("error"),
+        })
+        loaded += 1
+
+        for i, item in enumerate(rec.get("agenda") or []):
+            number = item.get("billNumber")
+            conn.execute("""
+                INSERT INTO committee_minutes_item(meeting_id, ord, ordinal,
+                    title, bill_number, bill_id, notes)
+                VALUES (?,?,?,?,?,?,?)
+            """, (mid, i, item.get("ordinal"), item.get("title"), number,
+                  bills.get(number), _json_or_none(item.get("notes") or None)))
+
+        for i, sec in enumerate(rec.get("sections") or []):
+            conn.execute("""
+                INSERT INTO committee_minutes_section(meeting_id, ord, title,
+                    level, page, preamble, speeches)
+                VALUES (?,?,?,?,?,?,?)
+            """, (mid, i, sec.get("title"), sec.get("level"), sec.get("page"),
+                  sec.get("preamble"), sec.get("speechCount")))
+
+        _load_minutes_people(conn, mid, rec.get("participants") or {}, _person)
+
+        rows = []
+        for sp in rec.get("speeches") or []:
+            pid = _person(sp.get("name"))
+            speeches += 1
+            attributed += 1 if pid else 0
+            rows.append((mid, held_meetings[mid], period, sp.get("ord"),
+                         sp.get("section"), pid, sp.get("name"),
+                         sp.get("faction"), sp.get("role"), sp.get("org"),
+                         1 if sp.get("chair") else 0,
+                         1 if sp.get("continued") else 0, sp.get("text")))
+        if rows:
+            conn.executemany("""
+                INSERT INTO committee_speech(meeting_id, committee_id,
+                    period_number, ord, section_ord, person_id, name,
+                    faction_name, role, org, chair, continued, text)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
+
+    conn.commit()
+    logger.info("Loaded %d committee minutes (cycle %s): %d speeches, %d "
+                "attributed to a person (%.1f%%)%s", loaded, period, speeches,
+                attributed, 100.0 * attributed / speeches if speeches else 0.0,
+                f", {skipped} skipped (meeting not in the registry)"
+                if skipped else "")
+    return loaded
+
+
+def _clear_committee_dependents(conn: sqlite3.Connection, period) -> None:
+    """Drop the minutes and recordings that hang off one cycle's committees.
+
+    Called by ``load_committees`` before it replaces the cycle, because
+    ``committee_minutes`` and ``committee_video`` hold real foreign keys into
+    ``committee_meeting`` and ``committee``. A no-op on a DB built before those
+    tables existed, which is why each is tested for rather than assumed (EXT-6).
+
+    Scoped to the cycle, not the whole table: the recordings registry is
+    cycle-less and reloading one cycle's committees must not throw away another
+    cycle's matched videos. A video that matched nothing has no committee and no
+    meeting, so it is untouched here and only ever replaced by its own loader.
+    """
+    if not _table_exists(conn, "committee_minutes"):
+        return
+    mine = ("SELECT meeting_id FROM committee_minutes WHERE period_number IS ?")
+    for tbl in ("committee_minutes_item", "committee_minutes_person",
+                "committee_minutes_section", "committee_speech"):
+        conn.execute(f"DELETE FROM {tbl} WHERE meeting_id IN ({mine})", (period,))
+    conn.execute("DELETE FROM committee_minutes WHERE period_number IS ?",
+                 (period,))
+    if _table_exists(conn, "committee_video"):
+        conn.execute(
+            "DELETE FROM committee_video WHERE period_number IS ? "
+            "OR meeting_id IN (SELECT id FROM committee_meeting "
+            "                   WHERE period_number IS ?) "
+            "OR committee_id IN (SELECT id FROM committee "
+            "                     WHERE period_number IS ?)",
+            (period, period, period))
+
+
+def _load_minutes_people(conn: sqlite3.Connection, meeting_id: str,
+                         participants: dict, resolve) -> None:
+    """One sitting's attendance rows, in the categories the document uses.
+
+    A proxy is stored as **one row for the absent member** carrying who held
+    their vote, rather than two rows or a row on the holder: the fact is that a
+    named member was away and a named member voted for them, and splitting it
+    across two rows loses which way round it went.
+    """
+    rows = []
+    for i, p in enumerate(participants.get("chairs") or []):
+        rows.append(("chair", resolve(p.get("name")), p.get("name"),
+                     p.get("faction"), p.get("role"), None, None, None, i))
+    chairs = {(p.get("name") or "").casefold()
+              for p in participants.get("chairs") or []}
+    for i, p in enumerate(participants.get("present") or []):
+        # The chair is already in as `chair`; the parser puts them in `present`
+        # too so the roster is complete, and both rows would double-count them.
+        if (p.get("name") or "").casefold() in chairs:
+            continue
+        rows.append(("present", resolve(p.get("name")), p.get("name"),
+                     p.get("faction"), p.get("role"), None, None, None, i))
+    for i, p in enumerate(participants.get("proxies") or []):
+        away = p.get("absent") or {}
+        held_by = p.get("heldBy") or {}
+        rows.append(("proxy", resolve(away.get("name")), away.get("name"),
+                     away.get("faction"), None, None,
+                     resolve(held_by.get("name")), held_by.get("name"), i))
+    for i, p in enumerate(participants.get("staff") or []):
+        rows.append(("staff", None, p.get("name"), p.get("faction"),
+                     p.get("title"), p.get("org"), None, None, i))
+    for i, p in enumerate(participants.get("guests") or []):
+        # A guest is resolved too, and carries a faction where the document gave
+        # one: an MP invited to a committee they do not sit on is listed here,
+        # not in the roster, and where we hold them the page links them exactly
+        # as it links a member.
+        rows.append(("guest", resolve(p.get("name")), p.get("name"),
+                     p.get("faction"), p.get("title"), p.get("org"), None,
+                     None, i))
+    if rows:
+        conn.executemany("""
+            INSERT INTO committee_minutes_person(meeting_id, role, person_id,
+                name, faction_name, title, org, proxy_person_id, proxy_name, ord)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+        """, [(meeting_id, *r) for r in rows])
+
+
+# The video title is the whole of the join to a committee (BIZ-16), so the
+# normalisation it is matched by has to be forgiving of everything that differs
+# between how the House titles a stream and how the registry names a body — and
+# of nothing else. Three things differ, and all three are cosmetic:
+#
+#   the leading article   "A Művelődési Bizottság" vs "Művelődési Bizottság"
+#                         (and the registry itself keeps one on an eseti
+#                         bizottság: "a Médiatanács elnökét … eseti bizottság")
+#   case                  "Vállalkozásfejlesztési bizottság" in cycle 40,
+#                         "…Bizottság" in cycle 42 — upstream changed its own
+#   accents               folded for the same reason transcript names are: it
+#                         costs nothing here, because no two committees differ
+#                         only by an accent
+#
+# What is NOT dropped is any part of the name itself: "Ellenőrző Albizottság"
+# appears under five different parents in one cycle, and a rule that trimmed to
+# a head word would match a video to whichever of them sorted first.
+_VIDEO_ARTICLE_RE = re.compile(r"^(?:a|az)\s+")
+
+
+def _fold_committee(name: str | None) -> str:
+    """The key a committee name and a video's title are matched on."""
+    flat = re.sub(r"\s+", " ", name or "").strip()
+    decomposed = unicodedata.normalize("NFKD", flat)
+    folded = "".join(c for c in decomposed
+                     if not unicodedata.combining(c)).casefold()
+    return _VIDEO_ARTICLE_RE.sub("", folded).strip()
+
+
+def load_committee_videos(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load the committee recordings registry (§6F / BIZ-16).
+
+    Cycle-less and replaced whole: the channel is one stream of videos and the
+    scraper already merges each pass into the last, so the file is the answer
+    rather than an increment on it.
+
+    **Matching is by name and date, because there is nothing else.** No id is
+    shared with the committee registry and nothing in a video's metadata names
+    the meeting, so a video is matched to the body whose name its title carries
+    *and whose cycle covers the date in that title*, then to that body's meeting
+    on the day. Both steps can fail independently and neither failure drops the
+    row:
+
+    * a video naming a body we do not hold keeps its row unlinked — the House
+      streams an eseti bizottság before the registry publishes it;
+    * a video matching a body but no meeting keeps `meeting_id` NULL — the
+      recording is up the same day and the meeting listing follows weeks later,
+      so on the day of a sitting this is the *normal* state, not an error.
+
+    The meeting is matched over a **± one day** window rather than on the date
+    alone. `committee_meeting.held_at` is UTC and the title's date is the
+    Budapest date the sitting was held on, so a late-evening sitting is stored
+    under the next UTC day; an exact match is always preferred where there is
+    one.
+    """
+    _ensure_committee_tables(conn)
+    _ensure_committee_minutes_tables(conn)
+    videos = registry.get("data") or []
+    conn.execute("DELETE FROM committee_video")
+
+    # Every body, folded, with the window its cycle ran over. A committee's name
+    # repeats across cycles ("Mentelmi Bizottság" exists in all four), so the
+    # name alone is ambiguous and the date is what picks the right one.
+    bodies: dict[str, list[tuple]] = {}
+    for r in conn.execute("""
+            SELECT c.id, c.name, c.period_number, c.date_start, c.date_end,
+                   p.date_start AS p_start, p.date_end AS p_end
+            FROM committee c
+            LEFT JOIN electoral_period p ON p.number = c.period_number"""):
+        bodies.setdefault(_fold_committee(r["name"]), []).append(
+            (r["id"], r["period_number"],
+             r["date_start"] or r["p_start"], r["date_end"] or r["p_end"]))
+
+    matched = linked = 0
+    rows = []
+    for v in videos:
+        committee_id = period = meeting_id = None
+        if v.get("kind") == "committee" and v.get("date"):
+            committee_id, period = _match_committee(
+                bodies, v.get("committeeLabel"), v["date"])
+            if committee_id:
+                matched += 1
+                meeting_id = _match_meeting(conn, committee_id, v["date"])
+                if meeting_id:
+                    linked += 1
+        rows.append((v.get("videoId"), committee_id, meeting_id, period,
+                     v.get("kind"), v.get("title"), v.get("committeeLabel"),
+                     v.get("url"), v.get("thumbnail"), v.get("date"),
+                     v.get("publishedAt"), v.get("durationS"), v.get("views"),
+                     1 if v.get("continued") else 0, v.get("description")))
+    if rows:
+        conn.executemany("""
+            INSERT INTO committee_video(video_id, committee_id, meeting_id,
+                period_number, kind, title, committee_label, url, thumbnail,
+                held_on, published_at, duration_s, views, continued, description)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
+    conn.commit()
+    committee_videos = sum(1 for v in videos if v.get("kind") == "committee")
+    logger.info("Loaded %d videos: %d committee recordings, %d matched to a "
+                "body, %d to a meeting", len(rows), committee_videos, matched,
+                linked)
+    return len(rows)
+
+
+def _match_committee(bodies: dict, label: str | None,
+                     date: str) -> tuple[str | None, int | None]:
+    """The body a video's title names, in the cycle the date falls in."""
+    candidates = bodies.get(_fold_committee(label))
+    if not candidates:
+        return None, None
+    if len(candidates) == 1:
+        return candidates[0][0], candidates[0][1]
+    for cid, period, start, end in candidates:
+        if (start or "") <= date and (not end or date <= end):
+            return cid, period
+    # A name held by several bodies and a date outside all of their windows:
+    # never guess which one (the same rule `resolve_name` follows for people).
+    return None, None
+
+
+def _match_meeting(conn: sqlite3.Connection, committee_id: str,
+                   date: str) -> str | None:
+    """That committee's meeting on the day the video's title gives, if it has
+    one. Exact date first, then the day either side — see the UTC note on
+    :func:`load_committee_videos`."""
+    rows = conn.execute("""
+        SELECT id, date(held_at) AS d FROM committee_meeting
+        WHERE committee_id = ? AND date(held_at)
+              BETWEEN date(?, '-1 day') AND date(?, '+1 day')
+        ORDER BY held_at""", (committee_id, date, date)).fetchall()
+    if not rows:
+        return None
+    return next((r["id"] for r in rows if r["d"] == date), rows[0]["id"])
+
 
 def _ensure_session_status(conn: sqlite3.Connection) -> None:
     """Add ``session.status`` to a pre-existing DB, so the upcoming/scheduled-day
@@ -4701,6 +5137,18 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         for cp in sorted((data_dir / "processed").glob("committees-*.json")):
             load_committees(conn, json.loads(cp.read_text()))
 
+        # The minutes hang off the meetings the stage above loaded, and resolve
+        # their speakers against the roster and their agenda against the bills
+        # (EXT-2), so they come after all three (BIZ-15).
+        for mp in sorted((data_dir / "processed").glob("committee-minutes-*.json")):
+            load_committee_minutes(conn, json.loads(mp.read_text()))
+
+        # Recordings last of the committee stages: a video is matched to a body
+        # and then to that body's meeting, so both have to be in first (BIZ-16).
+        vp = data_dir / "processed" / "committee-videos.json"
+        if vp.exists():
+            load_committee_videos(conn, json.loads(vp.read_text()))
+
         sessions = sorted((data_dir / "processed").glob("*-session.json"))
         loaded = 0
         for sp in sessions:
@@ -4788,8 +5236,9 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
 # load_state yet), which is exactly how a new domain lands on an already-built
 # deployment through the incremental path alone.
 _PROCESSED_GLOBS = ("representatives-*.json", "advocates-*.json", "bills-*.json",
-                    "votes-*.json", "committees-*.json", "*-session.json",
-                    "officeholders.json", "aktualis.json")
+                    "votes-*.json", "committees-*.json",
+                    "committee-minutes-*.json", "committee-videos.json",
+                    "*-session.json", "officeholders.json", "aktualis.json")
 
 
 def _file_sig(path: Path) -> tuple[float, int]:
@@ -4995,8 +5444,35 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
                 reloaded_bill_periods.add(int(cycle))
         for p in changed["votes-*.json"]:
             load_votes(conn, json.loads(p.read_text()))
+        reloaded_committee_periods: set[int] = set()
         for p in changed["committees-*.json"]:
-            load_committees(conn, json.loads(p.read_text()))
+            registry = json.loads(p.read_text())
+            load_committees(conn, registry)
+            cycle = (registry.get("meta") or {}).get("cycle")
+            if cycle is not None:
+                reloaded_committee_periods.add(int(cycle))
+        # Reloading a cycle's committees deletes its meetings and everything
+        # keyed by them — so the minutes of a cycle whose registry just moved
+        # have to be reloaded too, even when the minutes file itself has not
+        # changed. Without this a routine committee refresh silently empties the
+        # jegyzőkönyvek until the next minutes scrape happens to rewrite them.
+        minutes_files = set(changed["committee-minutes-*.json"])
+        for cycle in sorted(reloaded_committee_periods):
+            stale = processed / f"committee-minutes-{cycle}.json"
+            if stale.exists():
+                minutes_files.add(stale)
+        for p in sorted(minutes_files):
+            load_committee_minutes(conn, json.loads(p.read_text()))
+        # A video points at a committee and a meeting, so the same reload
+        # invalidates the matching. It is one small file and the whole of it is
+        # rewritten each pass, so it is simply re-run whenever anything it links
+        # to moved.
+        videos = changed["committee-videos.json"]
+        if not videos and reloaded_committee_periods:
+            candidate = processed / "committee-videos.json"
+            videos = [candidate] if candidate.exists() else []
+        for p in videos:
+            load_committee_videos(conn, json.loads(p.read_text()))
 
         for p in changed["*-session.json"]:
             record = json.loads(p.read_text())

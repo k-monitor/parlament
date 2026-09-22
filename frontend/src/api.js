@@ -134,6 +134,16 @@ export const api = {
   committee: (id) => get(`/committees/${id}`),
   committeeMeetings: (id, params) => get(`/committees/${id}/meetings`, params),
   committeeDocuments: (id, params) => get(`/committees/${id}/documents`, params),
+  // One sitting's jegyzőkönyv, whole (BIZ-15). Not paged: it *is* one document,
+  // the reader arrives wanting to read it end to end, and paging a transcript
+  // breaks both in-page search and linking to a speech.
+  // Every committee sitting in the cycle scope, newest first (BIZ-24) — the
+  // committee-side counterpart of `sessions` above, and what the sittings
+  // page's second tab lists.
+  committeeMeetingsAll: (params) => get('/committees/meetings', params),
+  committeeMinutes: (meetingId) => get(`/committees/meetings/${meetingId}/minutes`),
+  // The committee's recordings on the House's own YouTube channel (BIZ-16).
+  committeeVideos: (id, params) => get(`/committees/${id}/videos`, params),
   // One person's seats, for the block on their profile (BIZ-7).
   repCommittees: (id, period) => get(`/committees/representative/${id}`, { period }),
   // "Who represents me?" (REP-10). Not period-scoped: constituency boundaries are

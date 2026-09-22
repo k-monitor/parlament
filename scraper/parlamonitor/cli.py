@@ -72,6 +72,10 @@ from .bills.legacy import faction_ids_from_registries, fetch_legacy_bills
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
 from .committees.scrape import (fetch_committees, save_committees,
                                 load_previous as load_committees_file)
+from .committees.minutes_scrape import (fetch_minutes, meetings_with_minutes,
+                                        save_minutes)
+from .committees.videos import (fetch_videos, save_videos,
+                                load_previous as load_videos_file)
 from .documents.scrape import fetch_documents, load_registry
 from .officeholders.scrape import fetch_office_holders, save_office_holders
 from .votes.scrape import fetch_votes, save_votes
@@ -583,6 +587,74 @@ def cmd_committees(args) -> None:
     })
 
 
+def cmd_committee_minutes(args) -> None:
+    """Read the cycle's committee jegyzőkönyv PDFs into a parsed record (BIZ-15).
+
+    Reads the meeting list out of the saved ``committees-<cycle>.json``, so it
+    is always run *after* ``committees``. The stored text is the cache: a
+    re-run re-parses from disk and fetches only what is new (SCR-2), and
+    ``--limit`` paces a first pass over a full cycle across several runs."""
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    registry = load_committees_file(paths, args.cycle)
+    if not registry:
+        raise SystemExit(
+            f"No committees-{args.cycle}.json under {paths.processed}; run "
+            f"`committees --cycle {args.cycle}` first")
+    meetings = meetings_with_minutes(registry)
+    if not meetings:
+        logger.info("Cycle %s: no meeting in the registry published minutes",
+                    args.cycle)
+        return
+
+    http = HttpClient(RuntimeConfig.from_env(
+        sleep=args.sleep, retry_count=args.retry_count, proxy=args.proxy,
+        captcha_retries=args.captcha_retries, ssh_host=args.ssh_host,
+        ssh_port=args.ssh_port, ssh_user=args.ssh_user, ssh_key=args.ssh_key,
+        ssh_known_hosts=args.ssh_known_hosts))
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            parsed = fetch_minutes(http, paths, args.cycle, meetings,
+                                   limit=args.limit, force=args.force,
+                                   keep_pdf=args.keep_pdf)
+            save_minutes(paths, args.cycle, parsed)
+    finally:
+        http.close()
+
+    _write_log(paths, {"command": "committee-minutes", "cycle": args.cycle,
+                       "ranAt": datetime.now(timezone.utc).isoformat(
+                           timespec="seconds"),
+                       **parsed["meta"]["counts"]})
+
+
+def cmd_committee_videos(args) -> None:
+    """Read the Országgyűlés YouTube channel into a video registry (BIZ-16).
+
+    Cycle-less: the channel is one stream of recordings covering every cycle it
+    has existed for, and which committee a video belongs to is decided when the
+    loader matches it, not here."""
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    http = HttpClient(RuntimeConfig.from_env(
+        sleep=args.sleep, retry_count=args.retry_count, proxy=args.proxy,
+        captcha_retries=args.captcha_retries, ssh_host=args.ssh_host,
+        ssh_port=args.ssh_port, ssh_user=args.ssh_user, ssh_key=args.ssh_key,
+        ssh_known_hosts=args.ssh_known_hosts))
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            registry = fetch_videos(http, channel=args.channel,
+                                    backfill=args.backfill,
+                                    previous=load_videos_file(paths))
+            save_videos(paths, registry)
+    finally:
+        http.close()
+
+    _write_log(paths, {"command": "committee-videos",
+                       "ranAt": datetime.now(timezone.utc).isoformat(
+                           timespec="seconds"),
+                       **registry["meta"]["counts"]})
+
+
 def _documents_summary(documents) -> object:
     """The document stage's line in a sync summary: ``False`` when it is off (the
     default), else just the counts that say whether the pass did any work — the
@@ -894,6 +966,32 @@ def build_parser() -> argparse.ArgumentParser:
                          "iromány listings) for a fast bodies+members refresh; "
                          "whatever the previous run fetched is carried forward")
     sp.set_defaults(func=cmd_committees)
+
+    sp = sub.add_parser("committee-minutes",
+                        help="download and parse the cycle's committee "
+                             "jegyzőkönyv PDFs (who spoke in committee)")
+    _common(sp)
+    sp.add_argument("--limit", type=int, default=None,
+                    help="stop after fetching this many NEW documents, leaving "
+                         "the rest for the next pass (default: no cap)")
+    sp.add_argument("--force", action="store_true",
+                    help="re-fetch and re-parse everything, ignoring the stored "
+                         "text (default: only new minutes are downloaded)")
+    sp.add_argument("--keep-pdf", action="store_true",
+                    help="also keep the source PDFs on disk; they are ~20x the "
+                         "size of the text in them and stay linked either way")
+    sp.set_defaults(func=cmd_committee_minutes)
+
+    sp = sub.add_parser("committee-videos",
+                        help="read the Országgyűlés YouTube channel for "
+                             "committee recordings (BIZ-16)")
+    _common(sp, cycle_required=False)
+    sp.add_argument("--channel", default=None,
+                    help="YouTube channel id (default: the Országgyűlés one)")
+    sp.add_argument("--backfill", action="store_true",
+                    help="also walk the channel's whole upload history rather "
+                         "than only the 15 videos the RSS feed carries")
+    sp.set_defaults(func=cmd_committee_videos)
 
     sp = sub.add_parser("sync", help="one low-load sync pass over the latest cycle "
                                      "(re-scrape only what changed)")

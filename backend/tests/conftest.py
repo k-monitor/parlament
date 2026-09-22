@@ -545,6 +545,139 @@ def _committees_registry():
     }
 
 
+def _committee_minutes_registry():
+    """The parsed jegyzőkönyv of one of the two meetings above (BIZ-15).
+
+    `ules-1` published minutes and this is them; `ules-2` published none and so
+    has no row here at all. The document exercises the three things that are
+    easy to get wrong downstream: a speaker who is a known MP (so the person
+    link resolves), one who is not (so the speech keeps its label — SCR-5), and
+    a speech marked `continued`, which is the chair carrying on past an agenda
+    heading without their name being printed again. The agenda names a held
+    bill (T/100) so the late-bound link is exercised too.
+    """
+    return {
+        "meta": {"cycle": 43, "source": "parlament-hu-bizottsagi-jegyzokonyv",
+                 "scrapedAt": "2026-06-19T00:00:00+00:00", "pdftotext": True,
+                 "count": 1,
+                 "counts": {"meetings": 1, "fetched": 1, "reused": 0,
+                            "errors": 0, "pending": 0, "speeches": 3,
+                            "chars": 60, "textBytesStored": 0,
+                            "pdfBytesStored": 0}},
+        "data": [{
+            "meetingId": "ules-1", "committeeId": "biz-1",
+            "committeeName": "Költségvetési Bizottság",
+            "datetime": "2026-06-10T09:00:00Z",
+            "minutesUrl": "https://www.parlament.hu/biz43/x/1.pdf",
+            "cover": {
+                "registryNumber": "KTB/2-1/2026.", "meetingLabel": "KTB-2/2026",
+                "termLabel": "KTB-2/2026-2030",
+                "committeeLabel": "Költségvetési Bizottságának",
+                "date": "2026-06-10", "weekday": "szerda", "startsAt": "11:00",
+                "venue": "az Országház Nagy Imre termében (főemelet 61.)",
+                "heldLabel": "üléséről", "closed": False,
+                "openedAt": "11:00", "closedAt": "12:05"},
+            "contents": [
+                {"title": "Az ülés megnyitása", "page": 3, "level": 0},
+                {"title": "A költségvetésről szóló T/100. számú törvényjavaslat",
+                 "page": 3, "level": 0}],
+            "agenda": [
+                {"ordinal": 1,
+                 "title": "A költségvetésről szóló törvényjavaslat (T/100. szám)",
+                 "notes": ["Kormány - pénzügyminiszter", "Részletes vita"],
+                 "billNumber": "T/100"},
+                {"ordinal": 2, "title": "Egyebek", "notes": [],
+                 "billNumber": None}],
+            "participants": {
+                "chairs": [{"name": "Kovács Béla", "faction": "Fidesz",
+                            "role": "a bizottság elnöke"}],
+                "present": [
+                    {"name": "Kovács Béla", "faction": "Fidesz",
+                     "role": "a bizottság elnöke"},
+                    {"name": "Külső Elek", "faction": "független", "role": None}],
+                "proxies": [{"absent": {"name": "Nagy Anna", "faction": "TISZA",
+                                        "role": None},
+                             "heldBy": {"name": "Kovács Béla",
+                                        "faction": "Fidesz", "role": None}}],
+                "staff": [{"name": "Titkár Tamás", "title": "tanácsadó",
+                           "org": None}],
+                "guests": [{"name": "Vendég Viktor", "title": "államtitkár",
+                            "org": "Pénzügyminisztérium"}]},
+            "sections": [
+                {"title": "Az ülés megnyitása", "level": 0, "page": 3,
+                 "preamble": "(Az ülés kezdetének időpontja: 11 óra)",
+                 "speechCount": 1},
+                {"title": "A költségvetésről szóló T/100. számú törvényjavaslat",
+                 "level": 0, "page": 3, "preamble": None, "speechCount": 2}],
+            "speeches": [
+                {"ord": 0, "section": 0, "chair": True, "continued": False,
+                 "name": "Kovács Béla", "faction": "Fidesz",
+                 "role": "a bizottság elnöke", "org": None,
+                 "text": "Köszöntöm a bizottság tagjait."},
+                {"ord": 1, "section": 1, "chair": True, "continued": True,
+                 "name": "Kovács Béla", "faction": "Fidesz",
+                 "role": "a bizottság elnöke", "org": None,
+                 "text": "Soron következik az 1. napirendi pont."},
+                {"ord": 2, "section": 1, "chair": False, "continued": False,
+                 "name": "Vendég Viktor", "faction": None,
+                 "role": "államtitkár", "org": "Pénzügyminisztérium",
+                 "text": "Köszönöm a szót, elnök úr."}],
+            "stats": {"agendaItems": 2, "sections": 2, "speeches": 3,
+                      "speakers": 2, "chars": 60, "present": 2, "guests": 1,
+                      "proxies": 1},
+        }],
+    }
+
+
+def _committee_videos_registry():
+    """Three recordings (BIZ-16), one per matching outcome.
+
+    The first names the body we hold and falls on the day of `ules-1`, so it
+    matches a committee *and* a meeting. The second names the same body on a day
+    it did not sit, so it matches the body only — which is the normal state on
+    the day of a sitting, before the meeting listing catches up. The third is a
+    plenary broadcast and matches nothing, which is how the channel's other
+    two-thirds are expected to land.
+    """
+    return {
+        "meta": {"source": "youtube-orszaggyules-elo",
+                 "channelId": "UCz4RJ6wkXoc3iG3cTxl5sOQ",
+                 "channelUrl": "https://www.youtube.com/channel/UCz4RJ6wkXoc3iG3cTxl5sOQ",
+                 "scrapedAt": "2026-06-19T00:00:00+00:00",
+                 "method": ["rss", "yt-dlp"], "backfilled": True, "errors": [],
+                 "earliestVideo": "2026-06-10", "latestVideo": "2026-06-17",
+                 "count": 3,
+                 "counts": {"videos": 3, "feed": 3, "seen": 3,
+                            "committee": 2, "plenary": 1}},
+        "data": [
+            {"videoId": "vid-1",
+             "url": "https://www.youtube.com/watch?v=vid-1",
+             "title": "2026. június 10. - A Költségvetési Bizottság ülése",
+             "date": "2026-06-10", "kind": "committee",
+             "committeeLabel": "A Költségvetési Bizottság", "continued": False,
+             "publishedAt": "2026-06-10T09:05:00+00:00",
+             "thumbnail": "https://i.ytimg.com/vi/vid-1/hqdefault.jpg",
+             "durationS": 3900, "views": 1200, "description": None},
+            {"videoId": "vid-2",
+             "url": "https://www.youtube.com/watch?v=vid-2",
+             "title": "2026. június 17. - A Költségvetési Bizottság ülése",
+             "date": "2026-06-17", "kind": "committee",
+             "committeeLabel": "A Költségvetési Bizottság", "continued": False,
+             "publishedAt": "2026-06-17T09:05:00+00:00",
+             "thumbnail": None, "durationS": 1800, "views": 40,
+             "description": None},
+            {"videoId": "vid-3",
+             "url": "https://www.youtube.com/watch?v=vid-3",
+             "title": "2026. június 15. - Az Országgyűlés ülésének élő közvetítése",
+             "date": "2026-06-15", "kind": "plenary", "committeeLabel": None,
+             "continued": False,
+             "publishedAt": "2026-06-15T08:00:00+00:00",
+             "thumbnail": None, "durationS": None, "views": None,
+             "description": None},
+        ],
+    }
+
+
 def _soon(days: int) -> str:
     from datetime import date, timedelta
     return (date.today() + timedelta(days=days)).isoformat()
@@ -565,6 +698,10 @@ def data_dir(tmp_path):
         json.dumps(_votes_registry(), ensure_ascii=False))
     (data / "processed" / "committees-43.json").write_text(
         json.dumps(_committees_registry(), ensure_ascii=False))
+    (data / "processed" / "committee-minutes-43.json").write_text(
+        json.dumps(_committee_minutes_registry(), ensure_ascii=False))
+    (data / "processed" / "committee-videos.json").write_text(
+        json.dumps(_committee_videos_registry(), ensure_ascii=False))
     (data / "processed" / "43001-session.json").write_text(
         json.dumps(_session_record(), ensure_ascii=False))
     (data / "processed" / "officeholders.json").write_text(

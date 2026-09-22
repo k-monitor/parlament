@@ -27,5 +27,14 @@ paramiko>=3,<4
 # modal>=0.64
 faster-whisper>=1.1,<2
 
+# Optional: backfilling the committee recordings registry (BIZ-16).
+# `committee-videos` reads the RSS feed with `requests` alone and needs nothing
+# here; only `--backfill`, which walks the channel's whole upload history, uses
+# yt-dlp. Unpinned on purpose — it tracks YouTube's own changes and a pin goes
+# stale in weeks. Without it the backfill falls back to the YouTube Data API
+# (PARLAMONITOR_YOUTUBE_API_KEY) and, failing that, says so rather than quietly
+# returning nothing (SCR-6).
+yt-dlp
+
 # Test-only:
 #   pytest>=8

@@ -667,6 +667,151 @@ CREATE TABLE committee_upcoming (
 CREATE INDEX idx_committee_upcoming_date ON committee_upcoming(starts_on);
 CREATE INDEX idx_committee_upcoming_period ON committee_upcoming(period_number);
 
+-- --- The minutes themselves (BIZ-15) ---------------------------------------
+-- `committee_meeting.minutes_url` links the jegyzőkönyv PDF; these tables hold
+-- what is *inside* it. Committee debate exists nowhere else — the plenary has a
+-- transcript API behind it, committee work has only these documents — so this
+-- is the one part of the corpus that is parsed out of PDFs rather than read
+-- from a feed, and every row carries the sitting it came from so a re-ingest
+-- replaces a meeting's minutes wholesale (ING-4).
+--
+-- A meeting whose minutes could not be read keeps a row here carrying `error`,
+-- for the same reason a meeting that published none keeps its row in
+-- `committee_meeting` (BIZ-9): "we could not read this" and "there is nothing
+-- to read" are different findings and the page says which.
+CREATE TABLE committee_minutes (
+    meeting_id      TEXT PRIMARY KEY REFERENCES committee_meeting(id),
+    committee_id    TEXT REFERENCES committee(id),
+    period_number   INTEGER REFERENCES electoral_period(number),
+    url             TEXT,                -- the source PDF, linked never mirrored
+    registry_number TEXT,                -- "Ikt. sz.: TAB-43/34-2/2026."
+    meeting_label   TEXT,                -- the year's numbering, "TAB-16/2026"
+    term_label      TEXT,                -- the term's, "TAB-16/2026-2030"
+    committee_label TEXT,                -- the committee as the cover names it
+    venue           TEXT,
+    held_on         TEXT,                -- the date the COVER states (local)
+    weekday         TEXT,
+    opened_at       TEXT,                -- "14:07"
+    closed_at       TEXT,
+    closed_session  INTEGER,             -- a wholly or partly closed sitting
+    speeches        INTEGER,
+    speakers        INTEGER,
+    chars           INTEGER,
+    error           TEXT                 -- why it could not be read, if it could not
+);
+CREATE INDEX idx_committee_minutes_committee ON committee_minutes(committee_id);
+CREATE INDEX idx_committee_minutes_period ON committee_minutes(period_number);
+
+-- The sitting's proposed agenda, as the document prints it. `bill_id` is the
+-- upstream iromány id resolved from the printed number at load time, so a point
+-- about a bill this deployment holds links to it and the rest stay labels
+-- (SCR-5) — the same late binding `committee_document` uses (BIZ-11).
+CREATE TABLE committee_minutes_item (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id  TEXT NOT NULL REFERENCES committee_minutes(meeting_id),
+    ord         INTEGER,
+    ordinal     INTEGER,                 -- the number the document gives it
+    title       TEXT,
+    bill_number TEXT,                    -- "T/405"
+    bill_id     TEXT,                    -- joins to bill.id when held
+    notes       TEXT                     -- JSON [str] — submitters, procedural basis
+);
+CREATE INDEX idx_committee_minutes_item_meeting ON committee_minutes_item(meeting_id);
+
+-- Who was in the room, in the categories the document itself uses. A committee
+-- attendance record exists nowhere else in the corpus: `committee_member` says
+-- who holds a seat, this says who turned up — and who sent a proxy to whom,
+-- which is how a committee of twenty votes with eleven people in it.
+CREATE TABLE committee_minutes_person (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id     TEXT NOT NULL REFERENCES committee_minutes(meeting_id),
+    role           TEXT,                 -- chair | present | proxy | staff | guest
+    person_id      TEXT REFERENCES person(person_id),
+    name           TEXT,
+    faction_name   TEXT,
+    title          TEXT,                 -- the office a guest holds
+    org            TEXT,                 -- and the body they hold it in
+    proxy_person_id TEXT REFERENCES person(person_id),
+    proxy_name     TEXT,                 -- who holds the absent member's vote
+    ord            INTEGER
+);
+CREATE INDEX idx_committee_minutes_person_meeting
+    ON committee_minutes_person(meeting_id);
+CREATE INDEX idx_committee_minutes_person_person
+    ON committee_minutes_person(person_id);
+
+-- The headings the debate runs under, in document order. They are the table of
+-- contents' entries found again in the body, so a speech can say which agenda
+-- point it was made under without the document ever stating it.
+CREATE TABLE committee_minutes_section (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id TEXT NOT NULL REFERENCES committee_minutes(meeting_id),
+    ord        INTEGER,
+    title      TEXT,
+    level      INTEGER,                  -- 0 an agenda point, 1 a stage within one
+    page       INTEGER,
+    preamble   TEXT,                     -- text under the heading before anyone spoke
+    speeches   INTEGER
+);
+CREATE INDEX idx_committee_minutes_section_meeting
+    ON committee_minutes_section(meeting_id);
+
+-- One row per contribution. Deliberately NOT the plenary `speech` table: these
+-- have no upstream uid, no media offsets, no sentence segmentation and no
+-- agenda-item FK, and putting them in `speech` would silently change the
+-- denominator of every statistic the site already publishes (STAT-1). A
+-- committee speech is a different object with a different provenance, and it
+-- lives in a table of its own so nothing that counts plenary speeches has to
+-- learn about it.
+CREATE TABLE committee_speech (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id    TEXT NOT NULL REFERENCES committee_minutes(meeting_id),
+    committee_id  TEXT REFERENCES committee(id),
+    period_number INTEGER REFERENCES electoral_period(number),
+    ord           INTEGER,               -- position in the sitting
+    section_ord   INTEGER,               -- the heading it falls under
+    person_id     TEXT REFERENCES person(person_id),
+    name          TEXT,
+    faction_name  TEXT,
+    role          TEXT,                  -- the office the document gives them
+    org           TEXT,
+    chair         INTEGER,               -- spoken from the chair
+    continued     INTEGER,               -- the same speaker carrying on past a heading
+    text          TEXT
+);
+CREATE INDEX idx_committee_speech_meeting ON committee_speech(meeting_id);
+CREATE INDEX idx_committee_speech_person ON committee_speech(person_id);
+CREATE INDEX idx_committee_speech_committee ON committee_speech(committee_id);
+
+-- --- Recordings (BIZ-16) ---------------------------------------------------
+-- The House streams committee meetings to its own YouTube channel. There is no
+-- id shared with the committee registry and nothing in a video's metadata names
+-- the meeting, so the **title** is the whole of the join: it carries the date
+-- and the body, and the loader matches on those. A video that matches a body
+-- but no meeting keeps its row with `meeting_id` NULL — the recording exists
+-- whether or not the registry has caught up, and an eseti bizottság is streamed
+-- before its meetings are published.
+CREATE TABLE committee_video (
+    video_id        TEXT PRIMARY KEY,    -- the YouTube id
+    committee_id    TEXT REFERENCES committee(id),
+    meeting_id      TEXT REFERENCES committee_meeting(id),
+    period_number   INTEGER REFERENCES electoral_period(number),
+    kind            TEXT,                -- committee | plenary | other
+    title           TEXT,                -- as the channel titles it
+    committee_label TEXT,                -- the body the title names
+    url             TEXT,
+    thumbnail       TEXT,
+    held_on         TEXT,                -- the date IN THE TITLE (the sitting's)
+    published_at    TEXT,                -- when the video went up
+    duration_s      INTEGER,
+    views           INTEGER,
+    continued       INTEGER,             -- the second stream of one long sitting
+    description     TEXT
+);
+CREATE INDEX idx_committee_video_committee ON committee_video(committee_id);
+CREATE INDEX idx_committee_video_meeting ON committee_video(meeting_id);
+CREATE INDEX idx_committee_video_date ON committee_video(held_on);
+
 -- ---------------------------------------------------------------------------
 -- NER/NEL stage (§10): named entities recognized in transcript sentences, and the
 -- subset of them linked out. `entity` is one row per mention (its char span in the

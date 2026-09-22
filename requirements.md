@@ -1144,10 +1144,24 @@ section — **Elemzések** — with its own entry in the top bar.
   napirend with no days *at all* is a different case — an unreadable PDF, or one
   published before anything was scheduled — and keeps its card, because the link
   to the document is then the useful thing on it.
+  Each item SHOULD also carry the **policy topic** of the iromány it schedules
+  (TOPIC-8), where we hold one: an order paper is the surface where a title says
+  least — it is printed as a citation of the law being amended — so the topic is
+  what tells a reader what the House will actually be arguing about. It is the
+  same chip, resolved the same way, and an item naming a number we do not hold
+  carries none rather than a guess.
+  A day longer than the card shows SHOULD be truncated **per day**, with the
+  control that opens it sitting under *that* day: the card shows a whole sitting
+  week, and one button under the last day speaks for a day the reader is not
+  looking at.
   > **✅ realized.** `GET /proceedings/upcoming` + `features.upcoming_agenda` in
   > `/meta`; `frontend/src/components/UpcomingSitting.vue` on `HomeView`, which
   > drops past days (and hides itself once none remain) in home mode only — the
   > endpoint keeps serving the whole document, since NR-6 asks it for held days.
+  > Items carry `topic` (the shared `parlacap.topics_for`, `kind="bill"`), shown
+  > by the same `TopicBadge.vue` as the bills list. Each day shows its first four
+  > items and carries its own *"További N napirendi pont"* toggle; a day that fits
+  > carries none.
 
 - **NR-6 (SHOULD).** A **sitting-day page with nothing in it yet** — an announced
   day, or one parlament.hu has not populated — SHOULD show that day's entry from
@@ -1342,7 +1356,8 @@ section — **Elemzések** — with its own entry in the top bar.
   > and topic classification of **irományok** is TOPIC-8.
 - **TOPIC-8 (SHOULD).** The same labels are carried by **irományok**, wherever one
   appears as an item the reader can act on: the bills list, the *Kérdések* list
-  (BILL-13), the *Minden iromány* list (BILL-9) and the iromány detail view. It answers the same question the
+  (BILL-13), the *Minden iromány* list (BILL-9), the iromány detail view and the
+  order paper of the coming sitting (NR-5). It answers the same question the
   speech topic does — *what is this about?* — which for a document the title
   answers only when the title is plain, and an iromány's title is routinely a
   citation ("Az általános forgalmi adóról szóló 2007. évi CXXVII. törvény
@@ -1378,8 +1393,11 @@ section — **Elemzések** — with its own entry in the top bar.
     deployment cannot honour MUST return **nothing**, never the unfiltered list —
     silently dropping it would show the reader every iromány under one label.
   > **✅ realized.** `bill_topic` rows written by `loader.rebuild_bill_topics`
-  > from `parlacap.build_text_blocks`; served as `topic` on the bills list and
-  > detail, rendered by the shared `TopicBadge.vue` (`kind="bill"`).
+  > from `parlacap.build_text_blocks`; served as `topic` on the bills list, the
+  > detail and the order paper's items, rendered by the shared `TopicBadge.vue`
+  > (`kind="bill"`). Both read paths — and the speech one — aggregate through the
+  > one `parlacap.topics_for(db, ids, kind)`, so the tie-break cannot drift
+  > between the surfaces that show it.
   > `PARLAMONITOR_BILL_TOPICS` switches the pass; `PARLAMONITOR_DOCUMENTS_DIR`
   > points at the mirror. Filtering is `?topic=` (repeatable) on the list, with
   > `/bills/facets` returning the topics in scope and their counts; both resolve

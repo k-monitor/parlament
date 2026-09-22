@@ -69,15 +69,13 @@ def _has_bill_topics(db: sqlite3.Connection) -> bool:
     """Whether the (regenerable) DB carries the iromány topic table — false on one
     built before this feature, or whose build had neither a document mirror nor a
     shipped cache to replay."""
-    return bool(db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='bill_topic'"
-    ).fetchone())
+    return parlacap.has_topics(db, "bill")
 
 
 def _topics_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, dict]:
     """Document-level topics for a batch of irományok, ``{bill_id: topic}``.
 
-    Aggregated **on read**, through the very same :func:`parlacap.aggregate` the
+    Aggregated **on read**, through the very same :func:`parlacap.topics_for` the
     speech list uses, for the very same reason: the confidence threshold that
     decides which blocks count is an operator setting that must be retunable with
     a restart rather than a reclassification (TOPIC-6). The payload shape is
@@ -87,27 +85,7 @@ def _topics_for(db: sqlite3.Connection, bill_ids: list[str]) -> dict[str, dict]:
     up with ``topic: null`` — which is the honest answer for the ~10 % of cycle-43
     documents whose text is too short, too procedural or too scanned to place.
     """
-    if not bill_ids or not _has_bill_topics(db):
-        return {}
-    out: dict[str, dict] = {}
-    # Chunked to stay under SQLite's variable limit on a full page of results.
-    for start in range(0, len(bill_ids), 400):
-        chunk = bill_ids[start:start + 400]
-        rows = db.execute(
-            "SELECT bill_id, block, label, score, runner_up, runner_score, "
-            "words FROM bill_topic WHERE bill_id IN ("
-            + ",".join("?" * len(chunk)) + ") ORDER BY bill_id, block",
-            chunk).fetchall()
-        by_bill: dict[str, list] = {}
-        for r in rows:
-            by_bill.setdefault(r["bill_id"], []).append(
-                (r["block"], r["label"], r["score"], r["runner_up"],
-                 r["runner_score"], r["words"]))
-        for bid, block_rows in by_bill.items():
-            agg = parlacap.aggregate(block_rows)
-            if agg:
-                out[bid] = agg
-    return out
+    return parlacap.topics_for(db, bill_ids, "bill")
 
 
 def _any_of(where: list, params: dict, column: str, values: list[str], prefix: str) -> None:

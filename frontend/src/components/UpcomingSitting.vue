@@ -8,11 +8,13 @@
 // between issuing it and holding the sitting. So every rendering of it carries
 // the document it came from and the moment that document was issued — the
 // "…órai állapot szerint" stamp the napirend prints on itself (TRUST-1).
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../api.js'
+import { store } from '../store.js'
 import { formatDateLocal } from '../format.js'
 import StateBlock from './StateBlock.vue'
+import TopicBadge from './TopicBadge.vue'
 
 const props = defineProps({
   // Single-day mode (NR-6). Set to an ISO date, the card shows the order paper's
@@ -29,7 +31,14 @@ const { locale } = useI18n()
 const data = ref(null)
 const loading = ref(true)
 const failed = ref(false)
-const expanded = ref(false)
+
+// Which days the reader has opened out, keyed by date. Truncation is per day and
+// so is the control that undoes it: the card shows the whole coming sitting week,
+// and one button under the last day spoke for all of them — under a Monday with
+// two items it offered "5 more agenda items" that belonged to the Tuesday above.
+// A day short enough to be shown whole now carries no button at all, and opening
+// one day leaves the others as they were.
+const expandedDays = reactive({})
 
 // How many items of each day are shown before the reader asks for the rest.
 // A sitting runs to two or three dozen items; the home page is an invitation,
@@ -59,13 +68,29 @@ const days = computed(() => (props.date
 // PDF, or one published before anything was scheduled — and keeps its card,
 // because the link to the document is then the useful thing on it.
 const stale = computed(() => !props.date && allDays.value.length > 0 && !days.value.length)
-const hiddenCount = computed(() => (props.date ? 0
-  : days.value.reduce((n, d) => n + Math.max(0, d.items.length - PREVIEW_ITEMS), 0)))
+
+// A day is identified by its date; the napirend can date a day by weekday alone,
+// which is then all there is to key it by.
+const dayKey = (day) => day.date || day.weekday || ''
+const hiddenCount = (day) => (props.date ? 0
+  : Math.max(0, day.items.length - PREVIEW_ITEMS))
 
 // One day asked for by date is not a preview of anything — show it whole.
 function shownItems(day) {
-  return props.date || expanded.value ? day.items : day.items.slice(0, PREVIEW_ITEMS)
+  return props.date || expandedDays[dayKey(day)]
+    ? day.items
+    : day.items.slice(0, PREVIEW_ITEMS)
 }
+
+function toggleDay(day) {
+  const key = dayKey(day)
+  expandedDays[key] = !expandedDays[key]
+}
+
+// The topic chip is the one thing on an item that can be absent for a reason
+// other than "this item has none" — a deployment that never ran the pass — and
+// the tag row must not be laid out for a chip that will not render.
+const topicsOn = computed(() => store.featureEnabled('bill_topics'))
 
 // The listing prints the weekday in Hungarian capitals ("HÉTFŐ"), which is the
 // source's voice, not ours — so the heading is built from the ISO date in the
@@ -183,7 +208,18 @@ onMounted(load)
                 <span v-if="item.timeWindow">{{ item.timeWindow }}</span>
                 <span v-if="item.submitter" class="uitem__who">{{ item.submitter }}</span>
               </p>
-              <p v-if="item.flags && item.flags.length" class="uitem__flags">
+              <p
+                v-if="(topicsOn && item.topic) || (item.flags && item.flags.length)"
+                class="uitem__flags"
+              >
+                <!-- What the model read the iromány itself as being about
+                     (TOPIC-8). An order paper's titles are the least readable
+                     on the site — usually a citation of the law being amended —
+                     so this is the one word that says what the House will
+                     actually be arguing about. Same chip, same threshold as the
+                     bills list; an item that resolves to no iromány we hold
+                     carries none. -->
+                <TopicBadge v-if="item.topic" :topic="item.topic" kind="bill" />
                 <span v-for="f in item.flags" :key="f" class="badge">
                   {{ $t('upcoming.flags.' + f) }}
                 </span>
@@ -191,15 +227,16 @@ onMounted(load)
             </div>
           </li>
         </ol>
-      </div>
 
-      <button
-        v-if="hiddenCount" class="btn secondary upcoming__more"
-        :aria-expanded="expanded" @click="expanded = !expanded"
-      >
-        {{ expanded ? $t('upcoming.showLess')
-                    : $t('upcoming.showAll', { n: hiddenCount }) }}
-      </button>
+        <button
+          v-if="hiddenCount(day)" class="btn secondary uday__more"
+          :aria-expanded="!!expandedDays[dayKey(day)]" @click="toggleDay(day)"
+        >
+          {{ expandedDays[dayKey(day)]
+              ? $t('upcoming.showLess')
+              : $t('upcoming.showAll', { n: hiddenCount(day) }) }}
+        </button>
+      </div>
 
       <p v-if="houseCommittee && !date" class="upcoming__hc soft">
         <strong>{{ $t('upcoming.houseCommittee') }}:</strong>
@@ -252,9 +289,14 @@ onMounted(load)
   font-size: .78rem;
 }
 .uitem__who { font-style: italic; }
-.uitem__flags { display: flex; flex-wrap: wrap; gap: .3rem; margin: .3rem 0 0; }
+.uitem__flags {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .3rem;
+  margin: .3rem 0 0;
+}
 
-.upcoming__more { margin-top: .9rem; }
+/* Sits under its own day's list, indented to the items it belongs to rather than
+   to the card, so it reads as part of that day and not as a footer of the card. */
+.uday__more { margin: .6rem 0 0 2.45rem; }
 .upcoming__hc { margin: 1rem 0 0; font-size: .83rem; }
 .upcoming__hc strong { margin-right: .3rem; }
 .upcoming__docs-label { margin-right: -.4rem; }

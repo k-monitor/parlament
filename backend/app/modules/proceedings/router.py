@@ -809,6 +809,7 @@ def upcoming_agenda(db: sqlite3.Connection = Depends(get_db)):
         days = []
         if agenda:
             items_by_day: dict[int, list] = {}
+            bill_ids: list[str] = []
             for r in db.execute(
                     """SELECT i.day_ord, i.ordinal, i.ref, i.bill_code, i.bill_id,
                               i.section, i.title, i.submitter, i.stage,
@@ -829,6 +830,21 @@ def upcoming_agenda(db: sqlite3.Connection = Depends(get_db)):
                     "notes": (r["notes"] or "").split("\n") if r["notes"] else [],
                     "detail": _json_or_none(r["detail"]),
                 })
+                if r["bill_id"]:
+                    bill_ids.append(r["bill_id"])
+            # What the model read the iromány's own text as being about (TOPIC-8).
+            # An order paper's titles are the least readable on the site — routinely
+            # a citation of the law being amended ("Az egészségügyről szóló 1997.
+            # évi CLIV. törvény … módosításáról") — so the topic is doing more work
+            # here than on the bills list. It is the *same* chip: the same label,
+            # the same read-time threshold, resolved from the iromány we link to,
+            # so an item whose number resolves to no bill (or whose document was
+            # never mirrored) simply carries no topic rather than a guess from its
+            # title.
+            topics = parlacap.topics_for(db, bill_ids, "bill")
+            for day_items in items_by_day.values():
+                for it in day_items:
+                    it["topic"] = topics.get(it["billId"])
             for r in db.execute(
                     """SELECT ord, date, weekday, starts_at, decisions_from,
                               ends_note, break_note
@@ -973,46 +989,24 @@ def _speech_metrics(db: sqlite3.Connection, uid: str) -> dict | None:
 def _has_speech_topics(db: sqlite3.Connection) -> bool:
     """Whether the (regenerable) DB carries the topic table — false on a DB built
     before this feature, or on one whose build had neither the cache nor a model."""
-    return bool(db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='speech_topic'"
-    ).fetchone())
+    return parlacap.has_topics(db, "speech")
 
 
 def _topics_for(db: sqlite3.Connection, uids: list[str]) -> dict[str, dict]:
     """Speech-level topics for a batch of speeches, ``{uid: topic}``.
 
-    Aggregated **on read** rather than looked up: nothing about a speech's topic is
-    stored, because the confidence threshold that decides which paragraphs count is
-    an operator setting (``PARLAMONITOR_PARLACAP_THRESHOLD``) that must be
-    retunable without reclassifying — or even rebuilding — the corpus. The cost is
-    one indexed query over the day's block rows (a sitting day of 200 speeches
-    is roughly a thousand of them) and a fold in Python, which is cheaper than the
-    join it replaces.
+    Aggregated **on read** rather than looked up, by the shared
+    :func:`parlacap.topics_for`: nothing about a speech's topic is stored, because
+    the confidence threshold that decides which paragraphs count is an operator
+    setting (``PARLAMONITOR_PARLACAP_THRESHOLD``) that must be retunable without
+    reclassifying — or even rebuilding — the corpus. The cost is one indexed query
+    over the day's block rows (a sitting day of 200 speeches is roughly a thousand
+    of them) and a fold in Python, which is cheaper than the join it replaces.
 
     Speeches with no confident block are simply absent from the result, which
     is how they end up with ``topic: null`` and no badge.
     """
-    if not uids or not _has_speech_topics(db):
-        return {}
-    out: dict[str, dict] = {}
-    # Chunked to stay under SQLite's variable limit on a long sitting day.
-    for start in range(0, len(uids), 400):
-        chunk = uids[start:start + 400]
-        rows = db.execute(
-            "SELECT speech_id, block, label, score, runner_up, runner_score, "
-            "words FROM speech_topic WHERE speech_id IN ("
-            + ",".join("?" * len(chunk)) + ") ORDER BY speech_id, block",
-            chunk).fetchall()
-        by_speech: dict[str, list] = {}
-        for r in rows:
-            by_speech.setdefault(r["speech_id"], []).append(
-                (r["block"], r["label"], r["score"], r["runner_up"],
-                 r["runner_score"], r["words"]))
-        for uid, para_rows in by_speech.items():
-            agg = parlacap.aggregate(para_rows)
-            if agg:
-                out[uid] = agg
-    return out
+    return parlacap.topics_for(db, uids, "speech")
 
 
 # ---------------------------------------------------------------------------

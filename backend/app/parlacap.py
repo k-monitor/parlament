@@ -597,6 +597,62 @@ def topic_params(threshold: float | None = None) -> dict:
             "topic_non_policy": NON_POLICY}
 
 
+def has_topics(db, kind: str = "bill") -> bool:
+    """Whether the (regenerable) DB carries one of the block tables — false on a
+    DB built before the pass existed, or on one whose build had neither a model
+    nor a cache to replay. Every read path checks it, because the feature has to
+    degrade to silence rather than to a 500."""
+    table, _key = DOMINANT_TOPIC_TABLES[kind]
+    return bool(db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
+        (table,)).fetchone())
+
+
+def topics_for(db, ids, kind: str = "bill") -> dict[str, dict]:
+    """Topics for a batch of speeches or irományok, ``{id: topic}``.
+
+    Aggregated **on read** rather than looked up: nothing about an item's topic is
+    stored, because the confidence threshold that decides which blocks count is an
+    operator setting that must be retunable with a restart rather than a
+    reclassification (TOPIC-6). The cost is one indexed query over the batch's
+    block rows and a fold in Python.
+
+    One function for both tables because it is one claim, and the two callers that
+    used to carry a copy each differed in nothing but the table name — a topic
+    must mean the same thing whichever text it was read off (TOPIC-8), down to the
+    tie-break. Items with no confident block are simply absent from the result and
+    end up with ``topic: null`` and no chip, which is the honest answer for about a
+    third of speeches and a tenth of irományok.
+
+    Duplicates in ``ids`` are collapsed: the order paper names the same iromány on
+    several days, and its topic is a property of the document, not of the slot.
+    """
+    ids = list(dict.fromkeys(i for i in ids if i))
+    if not ids or not has_topics(db, kind):
+        return {}
+    table, key = DOMINANT_TOPIC_TABLES[kind]
+    out: dict[str, dict] = {}
+    # Chunked to stay under SQLite's variable limit on a long sitting day or a
+    # full page of irományok.
+    for start in range(0, len(ids), 400):
+        chunk = ids[start:start + 400]
+        rows = db.execute(
+            f"SELECT {key} AS item_id, block, label, score, runner_up, "
+            f"runner_score, words FROM {table} WHERE {key} IN ("
+            + ",".join("?" * len(chunk)) + f") ORDER BY {key}, block",
+            chunk).fetchall()
+        by_item: dict[str, list] = {}
+        for r in rows:
+            by_item.setdefault(r["item_id"], []).append(
+                (r["block"], r["label"], r["score"], r["runner_up"],
+                 r["runner_score"], r["words"]))
+        for item_id, block_rows in by_item.items():
+            agg = aggregate(block_rows)
+            if agg:
+                out[item_id] = agg
+    return out
+
+
 # ---------------------------------------------------------------------------
 # inference (needs torch + transformers; never imported on the web server)
 # ---------------------------------------------------------------------------

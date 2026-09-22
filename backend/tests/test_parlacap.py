@@ -726,6 +726,25 @@ def test_bill_carries_its_topic(client, conn, tmp_path, data_dir, bill_topics_on
     assert topics["T/101"] is None
 
 
+def test_the_order_paper_carries_the_topic_of_what_it_schedules(
+        client, conn, tmp_path, data_dir, bill_topics_on):
+    """The coming sitting's items say what they are *about* (NR-5 + TOPIC-8).
+
+    An order paper is where an iromány's title is least useful — it is printed as
+    a citation of the law being amended — so this is the surface the chip was
+    needed on most. It is resolved from the iromány the item links to, which means
+    an item naming a number we do not hold carries no topic rather than a guess.
+    """
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(conn, tmp_path, data_dir=data_dir)
+    conn.commit()
+
+    days = client.get("/api/v1/proceedings/upcoming").json()["agenda"]["days"]
+    topics = {i["billCode"]: i["topic"] for d in days for i in d["items"]}
+    assert topics["T/100"]["label"] == "Health"
+    assert topics["T/999"] is None
+
+
 def test_meta_publishes_the_iromány_methodology(client, conn, tmp_path, data_dir,
                                                 bill_topics_on):
     _mirror(data_dir, {_T100: _DOC_TEXT})

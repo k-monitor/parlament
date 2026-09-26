@@ -136,6 +136,7 @@ const HEIGHT = ref(620)
 const placed = shallowRef([])
 const view = ref(zoomIdentity)      // current pan/zoom, applied to the whole scene
 const active = ref(-1)              // hovered/focused node index
+const hot = ref(-1)                 // hovered arrow key (see the hit layer)
 let fitted = zoomIdentity           // the transform that framed the fresh layout
 let zoomBehaviour = null
 // Height ÷ width of the room the figure is being drawn into, while it is full
@@ -819,6 +820,11 @@ function chosen(a) {
   return a.key === props.selected
     || (props.selectedNode !== -1 && ofSelectedNode(a))
 }
+
+// The pointer leaving one arrow and entering the next fire in that order, but an
+// arrow is entered through two elements (its hit band and its visible stroke), so
+// only the arrow that is still the hovered one may clear it.
+function unhot(key) { if (hot.value === key) hot.value = -1 }
 </script>
 
 <template>
@@ -836,19 +842,34 @@ function chosen(a) {
         >
           <desc>{{ summary }}</desc>
           <g :transform="`translate(${view.x} ${view.y}) scale(${view.k})`">
+            <!-- A wide, invisible copy of every curve, so a hairline arrow is still
+                 something a mouse and a finger can hit. They are a layer of their
+                 own, UNDER all the arrows, rather than part of each arrow: the links
+                 come biggest first, so the thinnest arrows are drawn last, and a band
+                 inside its own arrow's group lay on top of every thicker arrow drawn
+                 before it — hovering squarely on a thick arrow lit up whichever
+                 hairline passed nearby. Down here a band only catches the pointer
+                 where no visible arrow does. Aria-hidden: the arrow above it is the
+                 control, and carries the name. -->
+            <g class="hits" aria-hidden="true">
+              <path
+                v-for="a in arrows" :key="'h' + a.key" :d="a.d" class="hit"
+                @mouseenter="hot = a.key" @mouseleave="unhot(a.key)"
+                @mousedown.stop @click="pick(a.key)"
+              ><title>{{ a.source.label }} → {{ a.target.label }}: {{ a.count }}</title></path>
+            </g>
+
             <!-- arrows: one per ordered pair, thickness = how many interjections -->
             <g
               v-for="a in arrows" :key="'a' + a.key"
-              class="arrow" :class="{ dim: dimmed(a), sel: chosen(a) }"
+              class="arrow" :class="{ hot: a.key === hot, dim: dimmed(a), sel: chosen(a) }"
               role="button" tabindex="0"
               :aria-label="`${a.source.label} → ${a.target.label}: ${a.count}`"
+              @mouseenter="hot = a.key" @mouseleave="unhot(a.key)"
               @mousedown.stop @click="pick(a.key)"
               @keydown.enter.prevent="pick(a.key)" @keydown.space.prevent="pick(a.key)"
             >
               <title>{{ a.source.label }} → {{ a.target.label }}: {{ a.count }}</title>
-              <!-- a wide, invisible copy of the curve, so a hairline arrow is still
-                   something a mouse and a finger can hit -->
-              <path :d="a.d" class="hit" />
               <path :d="a.d" class="line" :stroke="a.color" :stroke-width="a.width" />
               <path :d="a.head" class="head" :fill="a.color" />
             </g>
@@ -975,8 +996,16 @@ function chosen(a) {
    crossings between *different* arrows still darken. */
 .arrow { cursor: pointer; opacity: var(--arrow-rest, .46); transition: opacity .12s ease; }
 .arrow .line { fill: none; stroke-linecap: butt; }
-.hit { fill: none; stroke: transparent; stroke-width: 12; }
-.arrow:hover { opacity: .92; }
+/* A fixed width on screen, not in the layout: scaled with the zoom, the band of a
+   hairline arrow grew to 150px at full zoom and swallowed its neighbours. */
+.hit {
+  fill: none; stroke: transparent; stroke-width: 10px;
+  vector-effect: non-scaling-stroke; cursor: pointer;
+}
+@media (pointer: coarse) { .hit { stroke-width: 20px; } }
+/* A class rather than `:hover`: the hit band that is being hovered sits in
+   another layer, outside the arrow it belongs to. */
+.arrow.hot { opacity: .92; }
 .arrow.dim { opacity: .05; }
 .arrow.sel { opacity: 1; }
 .arrow:focus { outline: none; }

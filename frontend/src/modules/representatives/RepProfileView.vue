@@ -18,6 +18,7 @@ import EmbedButton from '../../components/EmbedButton.vue'
 import { compareRoute } from '../../lib/compareUrl.js'
 import { signsOf } from '../../lib/zodiac.js'
 import { REMUNERATION_ENABLED } from '../../features.js'
+import { usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ id: String })
 const { t, locale } = useI18n()
@@ -33,6 +34,13 @@ const cycleStart = computed(() => {
 })
 
 const profile = ref(null)
+// Tab title: the name and faction, as the server's card has it (og.py).
+usePageTitle(() => {
+  const p = profile.value
+  if (!p) return ''
+  const faction = p.current_faction?.label
+  return faction ? `${p.label} (${faction})` : p.label
+})
 const stats = ref(null)
 const activity = ref(null)
 // Speeches are grouped by sitting day: `speechDays` holds the day rows (count

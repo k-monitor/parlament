@@ -20,6 +20,7 @@ import StateBlock from '../../components/StateBlock.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import HelpTip from '../../components/HelpTip.vue'
+import { clipTitle, titleDate, usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ meetingId: { type: String, required: true } })
 const { t } = useI18n()
@@ -33,6 +34,16 @@ const query = ref('')
 const shareTitle = computed(() => {
   const d = data.value
   return d ? `${d.committeeName} · ${formatDate(d.heldOn || d.heldAt)}` : ''
+})
+
+// Tab title: the record — or, where it has a recording, the sitting — and its
+// date, as the server's card has it (og.py `share_committee_minutes`).
+usePageTitle(() => {
+  const d = data.value
+  if (!d?.committeeName) return ''
+  const title = t(d.videos?.length ? 'pageTitle.meeting' : 'pageTitle.minutes', { committee: d.committeeName })
+  const date = titleDate(d.heldOn || d.heldAt)
+  return clipTitle(date ? `${title}, ${date}` : title)
 })
 
 // A sitting served for its **recording alone** (BIZ-27): the House had not

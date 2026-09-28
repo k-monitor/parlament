@@ -16,6 +16,7 @@ import HelpTip from '../../components/HelpTip.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import UpcomingSitting from '../../components/UpcomingSitting.vue'
 import SpeechRow from './SpeechRow.vue'
+import { titleDate, usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ id: String })
 const router = useRouter()
@@ -73,6 +74,13 @@ const showPlanned = computed(() =>
 const shareTitle = computed(() => {
   const s = data.value?.session
   return s ? `${formatDate(s.date)} · ${s.sitting}. ${t('sessions.sitting').toLowerCase()}` : ''
+})
+
+// Tab title, as the server's card has it (og.py).
+usePageTitle(() => {
+  const s = data.value?.session
+  if (!s) return ''
+  return s.date ? t('pageTitle.session', { date: titleDate(s.date) }) : t('pageTitle.sessionUndated')
 })
 
 // Monotonic load id: navigating session A → B with A's requests still in

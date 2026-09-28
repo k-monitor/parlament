@@ -1496,6 +1496,55 @@ export default {
     profileOwnTag: 'saját körzet',
     profileEmpty: 'A kiválasztott ciklusban nem említett települést.',
   },
+  // A böngészőfül címe (<title>) oldalváltáskor (lib/pageTitle.js). A szerver
+  // teljes betöltéskor maga írja be a címet (backend app/og.py): a magyar szövegek
+  // onnan vannak átmásolva, hogy a kliens ugyanazt írja, amit a szerver már
+  // elküldött — az egyiket módosítva a másikat is kövesd. A „· Parlamonitor”
+  // utótagot a kód teszi hozzá.
+  pageTitle: {
+    // Böngészőoldalak, útvonalnév szerint (og.py `_ROUTE_CARDS`). Ami nincs itt,
+    // az a puszta „Parlamonitor” — a főoldal is.
+    routes: {
+      about: 'A projektről',
+      search: 'Keresés a parlamenti jegyzőkönyvekben',
+      sessions: 'Ülésnapok',
+      representatives: 'Képviselők',
+      factions: 'Frakciók',
+      advocates: 'Nemzetiségi szószólók',
+      speakers: 'Egyéb felszólalók',
+      allSpeakers: 'Felszólalók',
+      officials: 'Tisztségviselők',
+      portfolios: 'Tárcák',
+      committees: 'Bizottságok',
+      compare: 'Képviselők összehasonlítása',
+      lookup: 'Ki a képviselőm?',
+      bills: 'Törvényjavaslatok',
+      questionList: 'Kérdések és interpellációk',
+      documents: 'Minden iromány',
+      votes: 'Szavazások',
+      analyses: 'Elemzések',
+      cohesion: 'Frakcióelemzés',
+      questions: 'Kérdések elemzése',
+      topics: 'Miről szól a Parlament?',
+      interjections: 'Közbeszólások',
+      // A két településoldalnak nincs kártyája az og.py-ban (nincsenek az
+      // indexben), így ezek csak itt élnek.
+      settlements: 'Települések',
+      settlementReps: 'Saját körzet',
+      notfound: 'Az oldal nem található',
+    },
+    // Részletoldalak: a szöveg az oldal saját adatai körül (az og.py megfelelő
+    // `share_*` függvénye szerint).
+    session: 'Országgyűlési ülésnap – {date}',
+    sessionUndated: 'Országgyűlési ülésnap',
+    portfolio: '{name} – kérdések és irományok',
+    committee: '{name} – tagok és ülések',
+    minutes: '{committee} – jegyzőkönyv',
+    meeting: '{committee} – ülés',
+    vote: 'Szavazás – {subject}',
+    voteUntitled: 'Szavazás',
+    document: 'Iromány',
+  },
   about: {
     title: 'A projektről',
     body1: 'A <strong>Parlamonitor</strong> a K-Monitor alkalmazása, amely egyszerűen mutatja be az Országgyűlés működését az <a href="https://www.parlament.hu/" target="_blank" rel="noopener">Országgyűlés honlapján</a> közölt adatokon keresztül. Az oldal könnyen áttekinthető és kereshető formában teszi elérhetővé a képviselőkkel, a szavazásokkal és a benyújtott indítványokkal kapcsolatos legfontosabb információkat, illetve ezekből származtatott adatokat, kimutatásokat közöl.',

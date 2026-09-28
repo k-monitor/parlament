@@ -22,6 +22,7 @@ import StateBlock from '../../components/StateBlock.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import CommitteeAgendaPreview from '../../components/CommitteeAgendaPreview.vue'
 import Pagination from '../../components/Pagination.vue'
+import { clipTitle, usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ id: { type: String, required: true } })
 const route = useRoute()
@@ -54,6 +55,8 @@ const QUORATE = 'Határozatképes'
 
 const data = ref(null)
 const list = ref(null)
+// Tab title, as the server's card has it (og.py).
+usePageTitle(() => (data.value?.name ? clipTitle(t('pageTitle.committee', { name: data.value.name })) : ''))
 const loading = ref(false)
 const error = ref(false)
 const listLoading = ref(false)

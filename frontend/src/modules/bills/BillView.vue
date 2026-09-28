@@ -5,6 +5,7 @@
 // negotiating committees, deadlines, justification/background documents and the
 // non-self-standing motion summary. Links to the official text (LEGAL-1).
 import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store } from '../../store.js'
 import { formatDate, formatDateTime } from '../../format.js'
@@ -14,10 +15,24 @@ import SpeakerLink from '../../components/SpeakerLink.vue'
 import HlsPlayer from '../../components/HlsPlayer.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import TopicBadge from '../../components/TopicBadge.vue'
+import { usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ id: String })
 
 const bill = ref(null)
+const { t } = useI18n()
+// Tab title: the number (the canonical citation) and the subject, falling back
+// to type + number — as the server's card has it (og.py `_share_iromany`).
+usePageTitle(() => {
+  const b = bill.value
+  if (!b) return ''
+  const number = b.bill_number
+  const subject = (b.title || '').trim()
+  const type = (b.type || '').trim()
+  if (subject) return number ? `${number} – ${subject}` : subject
+  if (number) return type ? `${type.charAt(0).toUpperCase()}${type.slice(1)} ${number}` : number
+  return t('pageTitle.document')
+})
 const loading = ref(false)
 const error = ref(false)
 // The embedded PDF is heavy, so it isn't loaded until the user asks: the <iframe>

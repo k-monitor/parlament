@@ -4,14 +4,30 @@
 // the full per-MP roll call grouped by vote value — each MP linked to their
 // profile through the shared person entity (EXT-2).
 import { ref, computed, watch, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { formatDateTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import ShareButton from '../../components/ShareButton.vue'
+import { clipTitle, titleDate, usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ id: String })
 
 const vote = ref(null)
+const { t } = useI18n()
+// Tab title: the first iromány decided (else the subject) and the date, as the
+// server's card has it (og.py `share_vote`).
+usePageTitle(() => {
+  const v = vote.value
+  if (!v) return ''
+  const first = v.subjects?.[0]
+  const lead = first
+    ? [first.bill_number, first.title].filter(Boolean).join(' – ') || t('pageTitle.document')
+    : (v.subject || '').trim()
+  const date = titleDate(v.vote_datetime)
+  const title = lead ? t('pageTitle.vote', { subject: lead }) : t('pageTitle.voteUntitled')
+  return clipTitle(date ? `${title} · ${date}` : title)
+})
 const loading = ref(false)
 const error = ref(false)
 

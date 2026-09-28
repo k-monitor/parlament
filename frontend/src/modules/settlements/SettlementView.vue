@@ -19,6 +19,7 @@ import FactionBadge from '../../components/FactionBadge.vue'
 import Pagination from '../../components/Pagination.vue'
 import StateBlock from '../../components/StateBlock.vue'
 import TrendChart from '../../components/TrendChart.vue'
+import { usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ maz: String, taz: String })
 const route = useRoute()
@@ -29,6 +30,7 @@ const PER_PAGE = 20
 const data = ref(null)
 const trend = ref(null)
 const mentions = ref(null)
+usePageTitle(() => data.value?.settlement?.name || '')
 const loading = ref(false)
 const error = ref(false)
 const page = ref(0)

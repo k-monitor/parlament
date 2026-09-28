@@ -15,6 +15,7 @@ import StateBlock from '../../components/StateBlock.vue'
 import Pagination from '../../components/Pagination.vue'
 import TrendChart from '../../components/TrendChart.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
+import { clipTitle, usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ slug: { type: String, required: true } })
 const route = useRoute()
@@ -29,6 +30,8 @@ const TABS = ['answered', 'submitted', 'speeches']
 const data = ref(null)
 const trend = ref(null)
 const list = ref(null)
+// Tab title, as the server's card has it (og.py).
+usePageTitle(() => (data.value?.name ? clipTitle(t('pageTitle.portfolio', { name: data.value.name })) : ''))
 const loading = ref(false)
 const error = ref(false)
 const listLoading = ref(false)

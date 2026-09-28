@@ -29,6 +29,7 @@ import SpeechMetricsBadge from '../../components/SpeechMetricsBadge.vue'
 import TopicBadge from '../../components/TopicBadge.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import ExportDialog from '../../components/ExportDialog.vue'
+import { titleDate, usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ uid: String })
 const route = useRoute()
@@ -93,6 +94,14 @@ const segmentedSentences = computed(() =>
 // Whole-speech share link (the canonical viewer URL, no sentence anchor).
 const speechShareUrl = computed(() => location.origin + router.resolve({ name: 'viewer', params: { uid: props.uid } }).href)
 const speechShareTitle = computed(() => speech.value?.speaker?.label || '')
+// Tab title: speaker (faction) · date, as the server's card has it (og.py).
+usePageTitle(() => {
+  const name = speech.value?.speaker?.label
+  if (!name) return ''
+  const faction = speech.value.faction?.label
+  const date = titleDate(session.value?.date)
+  return [faction ? `${name} (${faction})` : name, date].filter(Boolean).join(' · ')
+})
 
 // Attribute named heckles ("Vitályos Eszter: …") to representatives so they get
 // a face + profile link. Best-effort: failure just leaves them as plain text.

@@ -225,6 +225,12 @@ def _jsonld(data: dict) -> str:
 # The browse/index routes. Each gets its own title + description: a site whose
 # every page is titled "Parlamonitor" gives Google nothing to tell them apart
 # and nothing to rank ("Duplicate, Google chose a different canonical").
+#
+# These titles, and the ones the `share_*` routes below build, only reach a full
+# page load: the SPA retitles the tab itself on in-app navigation, from copies in
+# the frontend (`pageTitle` in its locales, and a `usePageTitle` call in each
+# detail view — see frontend/src/lib/pageTitle.js). Change one, change both, or
+# a crawler rendering the page reads a different title from the one sent here.
 _ROUTE_CARDS: dict[str, tuple[str, str]] = {
     "/about": (
         "A projektről",

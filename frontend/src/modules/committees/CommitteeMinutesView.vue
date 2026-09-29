@@ -5,18 +5,24 @@
 // furniture, and differ only where the underlying records genuinely differ:
 //
 //   same   back link + titlebar + share, a top-speaker block, the transcript cut
-//          into agenda sections, a sticky agenda outline on wide screens, and
-//          prev/next navigation at the foot
+//          into agenda sections of one row per speech (face, faction chip,
+//          share), a sticky agenda outline on wide screens, and prev/next
+//          navigation at the foot
 //   differ committee minutes carry **no timings** — no per-speech clip, no
 //          speaking time — so the toplist ranks by what was said rather than for
-//          how long, and no speech is playable. And the whole document arrives
-//          in one response, so the filters narrow it in place instead of paging.
+//          how long, and no speech is playable. With no viewer page to link, a
+//          speech's address is an anchor on this one (`#sp-<ord>`, BIZ-29), and
+//          its text is shown rather than folded away: it is the whole record.
+//          And the whole document arrives in one response, so the filters
+//          narrow it in place instead of paging.
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { loadMeta } from '../../store.js'
 import { formatDate, formatSpeakingTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
+import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import HelpTip from '../../components/HelpTip.vue'
@@ -24,6 +30,8 @@ import { clipTitle, titleDate, usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ meetingId: { type: String, required: true } })
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 
 const data = ref(null)
 const loading = ref(false)
@@ -69,7 +77,8 @@ const topMax = computed(
   () => Math.max(1, ...(data.value?.topSpeakers || []).map((s) => s.words || 0)))
 
 // SpeakerLink speaks the proceedings module's snake_case shape; this module is
-// camelCase throughout. Mapped here rather than bending either convention.
+// camelCase throughout. Mapped here rather than bending either convention. Takes
+// a toplist row or a transcript speech alike: both carry the same three fields.
 function asSpeaker(s) {
   return { person_id: s.personId, label: s.name, photo_uri: s.photoUri }
 }
@@ -149,13 +158,54 @@ function paragraphs(text) {
   return (text || '').split(/\n{2,}/).filter((p) => p.trim())
 }
 
+// The line beside a speaker's name. A faction the shared table knows is drawn as
+// its chip instead (`factionColor` set); anything else in that column — a
+// guest's ministry, mostly — stays words here.
 function speakerLabel(s) {
   const bits = []
-  if (s.faction) bits.push(s.faction)
+  if (s.faction && !s.factionColor) bits.push(s.faction)
   if (s.role) bits.push(s.role)
   if (s.org) bits.push(s.org)
   return bits.join(' · ')
 }
+
+// --- a speech's own address (BIZ-29) ---------------------------------------
+// A plenary speech is linked by its viewer page; a committee speech has none (no
+// clip to play), so it is an anchor on this page — `#sp-<ord>`, the speech's
+// place in the document. The router leaves a hash target's scrolling to the page
+// (router.js scrollBehavior), so the page brings the speech into view itself,
+// once the record has arrived, and marks it for as long as the address names it.
+const targetOrd = computed(() => {
+  const m = /^#sp-(\d+)$/.exec(route.hash || '')
+  return m ? Number(m[1]) : null
+})
+
+function speechLocation(s) {
+  return { name: 'committee-minutes', params: { meetingId: props.meetingId },
+           query: route.query, hash: '#sp-' + s.ord }
+}
+// Resolved once rather than per speech: a long sitting runs to 200 of them.
+const pageUrl = computed(() => location.origin + router.resolve(
+  { name: 'committee-minutes', params: { meetingId: props.meetingId }, query: route.query }).href)
+function speechUrl(s) { return pageUrl.value + '#sp-' + s.ord }
+function speechShareTitle(s) { return `${s.name} · ${shareTitle.value}` }
+
+function revealTarget(smooth) {
+  const ord = targetOrd.value
+  const d = data.value
+  if (ord == null || !d || d.meetingId !== props.meetingId) return
+  if (!d.transcript.some((s) => s.ord === ord)) return
+  // A filter that hides the linked speech gives way to it: the reader followed a
+  // link to that speech, not to what they had typed before.
+  if (!shown.value.some((s) => s.ord === ord)) { speaker.value = ''; query.value = '' }
+  nextTick(() => {
+    const el = document.getElementById('sp-' + ord)
+    if (!el) return
+    const motion = smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ behavior: motion ? 'smooth' : 'auto', block: 'start' })
+  })
+}
+watch(targetOrd, () => revealTarget(true))
 
 // --- the sticky agenda outline (TOC-1, as on a sitting day) ----------------
 // Only the level-0 headings: the sub-entries ("Határozathozatalok") are stages
@@ -207,7 +257,7 @@ async function load() {
   } finally {
     if (mine === seq) loading.value = false
   }
-  if (mine === seq) nextTick(updateActive)
+  if (mine === seq) nextTick(() => { revealTarget(false); updateActive() })
 }
 
 onMounted(async () => {
@@ -419,29 +469,55 @@ watch(() => props.meetingId, () => {
             <h2 v-if="sec.title" class="pad agenda-title" :class="{ sub: sec.level > 0 }">
               {{ sec.title }}
             </h2>
-            <div class="speeches">
-              <p v-if="sec.preamble" class="stage small muted">{{ sec.preamble }}</p>
-              <article v-for="s in sec.speeches" :key="s.ord" class="speech">
-                <!-- A `continued` speech is the same person carrying on past the
-                     heading without their name being printed again; repeating
-                     the name would read as someone taking the floor. Under a
-                     filter the name is always shown, because the speech it
-                     continues may not be on screen. -->
-                <p v-if="!s.continued || filtered" class="who">
-                  <RouterLink
-                    v-if="s.personId"
-                    :to="{ name: 'profile', params: { id: s.personId } }"
-                  >{{ s.name }}</RouterLink>
-                  <span v-else>{{ s.name }}</span>
-                  <span v-if="speakerLabel(s)" class="small muted">
-                    · {{ speakerLabel(s) }}
-                  </span>
-                </p>
-                <p v-for="(para, i) in paragraphs(s.text)" :key="i" class="para">
-                  {{ para }}
-                </p>
-              </article>
-            </div>
+            <p v-if="sec.preamble" class="stage small muted">{{ sec.preamble }}</p>
+            <!-- One bubble per speech, headed as a sitting day's speech row is:
+                 face, name, faction chip, then the speech's own link and share
+                 (BIZ-29). -->
+            <ul v-if="sec.speeches.length" class="speeches">
+              <li
+                v-for="s in sec.speeches" :key="s.ord" :id="'sp-' + s.ord"
+                class="speech" :class="{ targeted: targetOrd === s.ord }"
+              >
+                <div class="speech-row">
+                  <div class="speech-main">
+                    <SpeakerLink :speaker="asSpeaker(s)" />
+                    <FactionBadge v-if="s.factionColor"
+                                  :faction="{ label: s.faction, color: s.factionColor }" />
+                    <span v-if="speakerLabel(s)" class="small muted role">{{ speakerLabel(s) }}</span>
+                    <!-- The same person carrying on past a heading without the
+                         clerk printing the name again. Said, so the bubble does
+                         not read as them taking the floor a second time. -->
+                    <span v-if="s.continued" class="badge subtle"
+                          :title="$t('committees.speechContinuedNote')">
+                      {{ $t('committees.speechContinued') }}
+                    </span>
+                  </div>
+                  <div class="speech-actions">
+                    <!-- `replace`: marking one speech after another should not
+                         turn Back into a walk through them. -->
+                    <RouterLink
+                      :to="speechLocation(s)" replace class="permalink"
+                      :title="$t('committees.speechLink')"
+                      :aria-label="$t('committees.speechLink')"
+                    >
+                      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"
+                           fill="none" stroke="currentColor" stroke-width="2"
+                           stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                        <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                      </svg>
+                    </RouterLink>
+                    <ShareButton :title="speechShareTitle(s)" :url="speechUrl(s)"
+                                 align="right" compact />
+                  </div>
+                </div>
+                <div class="speech-body">
+                  <p v-for="(para, i) in paragraphs(s.text)" :key="i" class="para">
+                    {{ para }}
+                  </p>
+                </div>
+              </li>
+            </ul>
           </section>
 
           <!-- Move to the committee's adjacent sitting, as a sitting day moves
@@ -597,7 +673,11 @@ watch(() => props.meetingId, () => {
 .agenda-list { margin: 0; padding-left: 1.2rem; display: grid; gap: .5rem; }
 .agenda-list .atitle { overflow-wrap: anywhere; }
 .agenda-list .notes { display: block; }
-.chip {
+/* Scoped to the agenda on purpose: an unqualified `.chip` also matches the root
+   of the FactionBadge child component (scoped CSS reaches a child's root), which
+   squashed every speech's faction chip into this bordered pill — the same trap
+   SessionView's `.chips .chip` notes. */
+.agenda-list .chip {
   display: inline-block; margin-left: .4rem; font-size: .75rem;
   border: 1px solid var(--line); border-radius: .6rem; padding: 0 .4rem;
 }
@@ -628,11 +708,44 @@ watch(() => props.meetingId, () => {
 /* A stage within an agenda point ("Határozathozatalok"), not a point of its
    own — quieter, and absent from the outline. */
 .agenda-title.sub { font-size: .92rem; color: var(--ink-soft); }
-.speeches { padding: .3rem 1rem 1rem; }
-.stage { margin: .6rem 0; font-style: italic; }
-.speech { margin: 0 0 1rem; }
-.who { margin: .6rem 0 .2rem; font-weight: 600; }
-.para { margin: 0 0 .5rem; overflow-wrap: anywhere; }
+.stage { margin: .8rem 1rem; font-style: italic; }
+/* Each speech a bubble of its own, its head laid out as SpeechRow's row is so
+   the two chambers' transcripts read alike. */
+.speeches { list-style: none; margin: 0; padding: .6rem; display: grid; gap: .5rem; }
+.speech {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  scroll-margin-top: 72px;
+  transition: border-color .12s, box-shadow .12s;
+}
+.speech-row { display: flex; align-items: center; gap: .8rem; padding: .5rem .7rem; border-radius: var(--radius) var(--radius) 0 0; }
+.speech-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: .4rem .8rem; }
+.speech-main .role { overflow-wrap: anywhere; }
+/* The face and the name stay one unit: a long name wraps beside the avatar
+   rather than dropping below it (SpeakerLink's `.row` wraps by default). */
+.speech-main .row { flex-wrap: nowrap; min-width: 0; }
+.speech-actions { flex: 0 0 auto; display: flex; align-items: center; gap: .15rem; }
+.permalink {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.9rem; height: 1.9rem; border-radius: 6px; color: var(--ink-faint);
+}
+.permalink:hover, .permalink:focus-visible { background: var(--line); color: var(--accent); text-decoration: none; }
+.badge.subtle { background: var(--line); color: var(--ink-faint); font-weight: 400; cursor: help; }
+/* The text sits under the speaker's name, past the avatar, as a sitting day's
+   opened transcript does. */
+.speech-body { padding: 0 1rem .75rem calc(.7rem + 48px + .6rem); }
+.para { margin: 0 0 .6rem; line-height: 1.6; overflow-wrap: anywhere; }
+.para:last-child { margin-bottom: 0; }
+/* The speech the address names (BIZ-29). */
+.speech.targeted { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.speech.targeted .speech-row { background: var(--accent-soft); }
+/* On a phone the avatar indent would cost a fifth of the line; the text takes
+   the bubble's full width instead, and the actions stay pinned top-right beside
+   a name that wraps. */
+@media (max-width: 560px) {
+  .speeches { padding: .4rem; }
+  .speech-row { align-items: flex-start; gap: .5rem; padding: .5rem .6rem; }
+  .speech-body { padding: .1rem .75rem .7rem; }
+}
 .day-nav { display: flex; justify-content: space-between; gap: 1rem; margin-top: 1.5rem; }
 .day-nav-btn {
   display: flex; flex-direction: column; gap: .12rem; max-width: 47%;

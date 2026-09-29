@@ -502,6 +502,27 @@ def test_minutes_endpoint_serves_the_whole_sitting(client):
     assert [v["videoId"] for v in m["videos"]] == ["vid-1"]
 
 
+def test_each_minutes_speech_carries_its_speakers_face_and_faction(conn, client):
+    """Every speech is drawn as a sitting day's speech row is: the speaker's
+    portrait, and a faction chip only where the label is a faction. A guest's
+    ministry sits in the same column and must not come back coloured as one."""
+    conn.execute("UPDATE person SET photo_uri = '/media/photos/k001.jpg' "
+                 "WHERE person_id = 'k001'")
+    # A clerk's capitals still name the faction.
+    conn.execute("UPDATE committee_speech SET faction_name = 'FIDESZ' "
+                 "WHERE meeting_id = 'ules-1' AND ord = 1")
+    conn.execute("UPDATE committee_speech SET faction_name = 'Pénzügyminisztérium' "
+                 "WHERE meeting_id = 'ules-1' AND name = 'Vendég Viktor'")
+    conn.commit()
+    fidesz = conn.execute(
+        "SELECT color FROM faction WHERE label = 'Fidesz'").fetchone()["color"]
+    t = client.get("/api/v1/committees/meetings/ules-1/minutes").json()["transcript"]
+    assert [(s["photoUri"], s["factionColor"]) for s in t] == [
+        ("/media/photos/k001.jpg", fidesz),
+        ("/media/photos/k001.jpg", fidesz),
+        (None, None)]
+
+
 def test_minutes_endpoint_404s_for_a_meeting_with_none(client):
     # `ules-2` published no minutes and was never streamed either: there is
     # nothing to open, and the recording-only fallback (BIZ-27) does not invent

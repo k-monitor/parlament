@@ -666,6 +666,11 @@ export default {
     searchInMinutes: 'Search these minutes…',
     noMatch: 'Nothing in these minutes matches.',
     matches: '{count} matches',
+    // One speech's bubble (BIZ-15): its own address, and the mark for the same
+    // speaker carrying on past an agenda heading.
+    speechLink: 'Link to this speech',
+    speechContinued: 'continued',
+    speechContinuedNote: 'The same speaker carrying on under the new agenda point; the minutes do not print the name again here.',
     // Recordings (BIZ-16).
     videos: 'Recordings',
     video: 'Recording',

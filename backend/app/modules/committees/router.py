@@ -458,16 +458,28 @@ def meeting_minutes(
     out["transcript"] = [{
         "ord": s["ord"], "section": s["section_ord"],
         "personId": s["person_id"], "name": s["name"],
+        # Each speech is drawn as a sitting day's speech row is — a face and a
+        # faction chip — so it carries the portrait the `person` row holds and
+        # the colour of the faction its label names.
+        "photoUri": s["photo_uri"],
         "faction": s["faction_name"], "role": s["role"], "org": s["org"],
+        # Only where the label *is* a faction of the shared table. The minutes'
+        # faction column also holds a guest's ministry ("Pénzügyminisztérium"),
+        # which has no colour and must not be drawn as a party chip.
+        "factionColor": s["faction_color"],
         "chair": bool(s["chair"]),
         # The same speaker carrying on past an agenda heading without their name
-        # being printed again. Flagged so the page can run the two together
-        # rather than repeating the name as if someone had taken the floor.
+        # being printed again. Flagged so the page can say so rather than
+        # presenting it as someone taking the floor.
         "continued": bool(s["continued"]),
         "text": s["text"],
-    } for s in db.execute(
-        "SELECT * FROM committee_speech WHERE meeting_id = ? ORDER BY ord",
-        (meeting_id,))]
+    } for s in db.execute("""
+        SELECT cs.*, p.photo_uri, f.color AS faction_color
+          FROM committee_speech cs
+          LEFT JOIN person p ON p.person_id = cs.person_id
+          -- NOCASE: the clerks type "FIDESZ" as often as "Fidesz" (21 rows).
+          LEFT JOIN faction f ON f.label = cs.faction_name COLLATE NOCASE
+         WHERE cs.meeting_id = ? ORDER BY cs.ord""", (meeting_id,))]
 
     out["videos"] = []
     if _table_exists(db, "committee_video"):

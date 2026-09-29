@@ -7,7 +7,7 @@ representatives. It is built to grow: new data domains (bills, votes,
 committees, …) can be added as self-contained modules.
 
 This document specifies **what** the system must do and the constraints it must
-respect. Concrete technology choices are recommended where useful but are not
+respect. Concr  ete technology choices are recommended where useful but are not
 binding unless marked **MUST**.
 
 ---
@@ -3520,6 +3520,19 @@ this bill" is a question the corpus cannot answer at all.
   that lands on an empty page is worse than one that plainly does not offer to
   go anywhere. A PDF the House published and we have not read yet still leads to
   the committee's own meeting list, where the row offers the PDF itself.
+- **BIZ-29.** Every speech in the minutes viewer is **its own bubble, headed as
+  a sitting day's speech row is** (§5.2): the speaker's portrait and name, a
+  faction chip where the label *is* a faction (a guest's ministry sits in the
+  same column and stays plain text), the role, and a link and share control of
+  its own. A plenary speech's address is its viewer page; a committee speech has
+  no clip and so no viewer, so its address is an anchor on the sitting's page,
+  `#sp-<ord>`. Opening that address brings the speech into view and marks it,
+  clearing any filter that would hide it — the reader followed a link to that
+  speech. The text stays open rather than folded behind a spoiler: here it is
+  the whole record, and the in-page search has to show what it found. A speech
+  the clerk continued past an agenda heading without reprinting the name is
+  marked *folytatás*, so its bubble does not read as the speaker taking the
+  floor again.
 
 ### Recordings (BIZ-16)
 

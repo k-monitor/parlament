@@ -758,6 +758,11 @@ export default {
     searchInMinutes: 'Keresés a jegyzőkönyvben…',
     noMatch: 'Nincs találat a jegyzőkönyvben.',
     matches: '{count} találat',
+    // Egy felszólalás buboréka (BIZ-15): a saját címe, és a jelzés, ha ugyanaz
+    // a felszólaló folytatja egy napirendi pont fejléce után.
+    speechLink: 'Hivatkozás erre a felszólalásra',
+    speechContinued: 'folytatás',
+    speechContinuedNote: 'Ugyanaz a felszólaló folytatja az új napirendi pont alatt; a jegyzőkönyv itt nem írja ki újra a nevét.',
     // Felvételek (BIZ-16).
     videos: 'Felvételek',
     video: 'Felvétel',

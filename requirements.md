@@ -734,6 +734,66 @@ section — **Elemzések** — with its own entry in the top bar.
 
 ---
 
+## 4F. Cross-cutting: The Home Page
+
+The home page draws on every module and owns none, so it is specified here rather
+than under any one of them. It answers three questions in order: *where do I
+start* (the search), *what is in here* (a number and a figure about the cycles in
+scope), and *what is the House doing* (last week, then the coming sitting).
+
+- **HOME-1 (SHOULD).** The **search** leads the page but stays **compact**: one
+  row of label, box and button under a one-line welcome, with the corpus size
+  (sentences since the first year held, speeches, sitting days, members) in one
+  line beneath. Beside it, **one example search at a time** shows its popularity
+  histogram (SEA-8) and opens that search; the topics take turns rather than
+  filling a grid.
+- **HOME-2 (SHOULD).** Two panels sit side by side and **take turns** through
+  their items: a **number from Parliament** stated in a sentence (who spoke the
+  longest, who interjected the most, how many settlements were never named, the
+  most discussed topic, the largest faction's share of speaking time, the most
+  questioned ministry), and one of the site's **interactive figures** (the
+  settlement map, the interjection network, the topic mix). Both follow the
+  global cycle scope (§4A) and state it. Every number is the one the linked page
+  shows — read off that page's own endpoint — and every item is **gated on its
+  module or feature** (EXT-6); an item with nothing to say in scope is left out
+  rather than shown as a zero. The facts are neutral superlatives, never scores
+  (§1.2). A click inside a figure opens the full page for exactly what was
+  clicked (the town, the pair, the topic).
+- **HOME-3 (MUST).** Rotation MUST be **stoppable** (WCAG 2.2.2): a pause/play
+  control and a dot per item on every rotating panel. It **holds** while the
+  pointer is over the panel or focus is inside it, and while the tab is hidden;
+  touching an interactive figure **stops** it for good, since nobody wants the map
+  they are panning to turn into another figure. Under `prefers-reduced-motion` it
+  does not start by itself. A rotating figure keeps **one height** whatever it
+  draws, so a turn never moves the page.
+- **HOME-4 (SHOULD).** **"A múlt héten"** summarises the sitting week just gone:
+  its days, their speeches and length, the week's vote count, who spoke the most,
+  and the week's distinctive words. It is read off the calendar, not the cycle.
+  Because a held sitting is published in instalments (SIT-2), **every day of the
+  week is listed whatever its state**, and a day with nothing published yet is
+  marked *"Még nincs feldolgozva"* rather than counted as a quiet day; the totals
+  say when they cover only part of the week. When the House did not sit last week,
+  the panel shows the latest week it did sit in and **retitles itself** ("A
+  legutóbbi ülésnapok"), so a recess never reads as an empty week. It stands
+  above the coming sitting (NR-5): first what the House has done, then what it
+  is about to do.
+
+> **✅ realized.** `views/HomeView.vue` composes `HomeTrendCard`, `HomeFactsCard`,
+> `HomeFigureCard`, `LastWeekPanel` and `UpcomingSitting`; the three feature cards
+> and the example-search grid are gone. Rotation is `lib/rotation.js` (hold vs.
+> stop, resume-where-it-paused so the progress bar and the timer agree) with
+> `RotationControls.vue`. The figures reuse the site's components as they are,
+> plus two opt-in props: `InterjectionGraph`'s `aspect` (a pinned frame) and
+> `SettlementMentionMap`'s `height`/`compact` (the bands stay, the scale sentence
+> goes). HOME-4 is `GET /proceedings/week` (optional `date`), which resolves
+> last week on the Budapest calendar with the recess fallback, reports each day's
+> `status`/`processing` exactly as the sittings list does, ranks speakers on
+> non-procedural speech (STAT-1), and scores the week's pooled word counts by the
+> day cloud's TF·IDF; the vote count comes from `/votes` (adopted + rejected, so
+> quorum calls are not counted as decisions) and only with that module on.
+
+---
+
 ## 5. Functional Requirements — Module: Proceedings Search & Viewer
 
 ### 5.1 Search

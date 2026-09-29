@@ -76,6 +76,10 @@ export const api = {
   // The order paper for the sitting that is coming (NR-5). Cycle-less:
   // there is only ever one next sitting.
   upcomingAgenda: () => get('/proceedings/upcoming'),
+  // The sitting week that has just gone, for the home page's "A múlt héten"
+  // panel. Cycle-less like the order paper: without `date` it is last week, or
+  // the latest earlier week the House sat in.
+  sittingWeek: (date) => get('/proceedings/week', { date }),
   session: (id) => get(`/proceedings/sessions/${id}`),
   sessionWordcloud: (id, limit) => get(`/proceedings/sessions/${id}/wordcloud`, { limit }),
   sessionTopSpeakers: (id) => get(`/proceedings/sessions/${id}/top-speakers`),

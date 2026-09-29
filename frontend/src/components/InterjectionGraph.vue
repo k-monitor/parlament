@@ -63,6 +63,16 @@ const props = defineProps({
   // Labels for the view controls (zoom, reset, full screen), so the component
   // needs no i18n of its own.
   labels: { type: Object, default: () => ({}) },
+  // Pins the frame's height to this share of its width instead of letting it
+  // follow the layout (BOX_ASPECT below). For a card that has to keep one height
+  // whatever the data drew — the home page's rotating figure, where a frame that
+  // grew with each cut would move the page under the reader. 0 = follow the layout.
+  aspect: { type: Number, default: 0 },
+  // Whether a plain wheel zooms the view. Off for a figure the reader scrolls past
+  // (the home page's card): there the wheel scrolls the page, as a one-finger swipe
+  // already does. A trackpad pinch still zooms, and full screen — where there is
+  // no page underneath left to scroll — gives the wheel back.
+  wheelZoom: { type: Boolean, default: true },
 })
 const emit = defineEmits(['select', 'select-node'])
 
@@ -254,9 +264,14 @@ function frameLayout(points) {
   // what left a small cloud floating in a tall empty box.
   const w = WIDTH
   const lineRoom = 2 * LABEL_TARGET_PX * (WIDTH / Math.max(stageWidth.value, 1))
-  let k = Math.min(usableW / spanX, (w * BOX_ASPECT[1]) / spanY, 2.2)
+  // A pinned frame cannot grow to make room, so its vertical fit has to leave the
+  // padding and the name lines free as well; a free one is allowed its usual slack.
+  const pinned = props.aspect > 0
+  const [lo, hi] = pinned ? [props.aspect, props.aspect] : BOX_ASPECT
+  const roomY = pinned ? w * hi - 2 * FRAME_PAD - lineRoom : w * hi
+  let k = Math.min(usableW / spanX, Math.max(roomY, 1) / spanY, 2.2)
   const wanted = k * spanY + 2 * FRAME_PAD + lineRoom
-  let h = Math.round(Math.min(Math.max(wanted, w * BOX_ASPECT[0]), w * BOX_ASPECT[1]))
+  let h = Math.round(Math.min(Math.max(wanted, w * lo), w * hi))
 
   // Full screen reads the other way round: the frame is the shape of the ROOM,
   // and the layout is scaled up until it fills it. A fit leaves the screen half
@@ -678,8 +693,10 @@ onMounted(() => {
     .scaleExtent(ZOOM_RANGE)
     // d3's own default filter, spelled out: a trackpad pinch arrives as a
     // ctrl+wheel and must still zoom, and only the primary button pans. A press
-    // that began on a member never reaches here — that handler stops it.
-    .filter((event) => (!event.ctrlKey || event.type === 'wheel') && !event.button)
+    // that began on a member never reaches here — that handler stops it. A plain
+    // wheel that is not ours to take (`wheelZoom`) is let through to the page.
+    .filter((event) => (!event.ctrlKey || event.type === 'wheel') && !event.button
+      && (event.type !== 'wheel' || event.ctrlKey || props.wheelZoom || expanded.value))
     // `sourceEvent` is what tells a wheel, a pinch or a drag from our own
     // programmatic framing: only the former is the reader taking the view over.
     .on('zoom', (event) => {
@@ -711,6 +728,9 @@ onBeforeUnmount(() => {
 // The metric is laid out, not just printed — it sets the marker sizes the
 // collision force spaces the members by — so switching it re-runs the layout.
 watch(() => [props.nodes, props.metric], computeLayout)
+// A pinned frame that changes shape (its card was resized) is a new frame, not a
+// new layout: the members stay where they settled and are re-fitted into it.
+watch(() => props.aspect, () => { if (untouched) refit() })
 
 // Dragging a member pins them where they are dropped: the settled layout is a
 // good starting point, not an argument, and untangling one name by hand is the

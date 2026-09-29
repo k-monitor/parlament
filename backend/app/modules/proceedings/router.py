@@ -9,8 +9,9 @@ from __future__ import annotations
 import html
 import json
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -756,6 +757,170 @@ def list_sessions(period: Optional[List[int]] = Query(
                               r["status"], r["date"], r["speeches"],
                               r["speeches_with_text"], r["speeches_with_video"])}
                          for r in rows]}
+
+
+# ---------------------------------------------------------------------------
+# The week that has just gone: the home page's "A múlt héten" digest
+# ---------------------------------------------------------------------------
+
+# How much of the week the digest names. It is a summary on the home page, not a
+# sitting-day page: each day links to its own page, which has the full lists.
+_WEEK_TOP_SPEAKERS = 5
+_WEEK_WORDS = 10
+
+
+def _hu_today() -> date:
+    """Today on the Hungarian calendar. The House sits in Budapest, and a server
+    running on UTC would otherwise move "last week" an hour or two late on every
+    Monday morning — exactly when the digest is most read."""
+    try:
+        return datetime.now(ZoneInfo("Europe/Budapest")).date()
+    except Exception:                     # no tzdata on this platform
+        return date.today()
+
+
+def _week_start(db: sqlite3.Connection, day: Optional[str], today: date) -> Optional[date]:
+    """The Monday of the week the digest reports on, or None when there is none.
+
+    Given a ``day``, the Monday–Sunday week containing it. Otherwise last week —
+    and when the House did not sit last week (a recess, or simply an off week
+    between two sitting weeks), the latest earlier week it *did* sit in, so the
+    home page reports the last sitting week rather than an empty one. The current
+    week is never picked on its own: its days are still being held, and the order
+    paper on the same page already speaks for them."""
+    window = period_and(None, "period_number")
+    if day:
+        d = date.fromisoformat(day)
+        return d - timedelta(days=d.weekday())
+    start = today - timedelta(days=today.weekday() + 7)
+    end = start + timedelta(days=6)
+    if db.execute(
+            "SELECT 1 FROM session WHERE substr(date, 1, 10) BETWEEN ? AND ?"
+            + window + " LIMIT 1",
+            (start.isoformat(), end.isoformat())).fetchone():
+        return start
+    row = db.execute(
+        "SELECT MAX(substr(date, 1, 10)) AS d FROM session WHERE substr(date, 1, 10) < ?"
+        + window, (start.isoformat(),)).fetchone()
+    if not row or not row["d"]:
+        return None
+    latest = date.fromisoformat(row["d"])
+    return latest - timedelta(days=latest.weekday())
+
+
+@router.get("/week")
+def sitting_week(day: Optional[str] = Query(
+                     None, alias="date", pattern=r"^\d{4}-\d{2}-\d{2}$",
+                     description="Any day of the week to report (ISO date). Omitted: "
+                                 "last week, or the latest earlier week with a sitting"),
+                 db: sqlite3.Connection = Depends(get_db)):
+    """One sitting week at a glance: its days, what they add up to, who spoke the
+    most and what the week was distinctively about.
+
+    Built for the home page's "A múlt héten" panel, which is the reason every day
+    of the week is listed **whatever its publication state**: parlament.hu
+    publishes a held sitting in instalments (SIT-2), so a sitting from last
+    Thursday can still be an announced `scheduled` day, an `awaiting_media` one or
+    a half-published `pending` one, and the digest has to say so rather than
+    quietly add up the days that happen to be in. Each day carries the same
+    `status` / `processing` pair as the sittings list, so the two cannot disagree.
+
+    Cycle-less, like the order paper: "last week" is a date, not a cycle. The
+    speakers and the words count statistics-eligible speech only (STAT-1), exactly
+    like a sitting day's own toplist and word cloud; the words are scored by TF·IDF
+    against the cycle's other sitting days, the day cloud's own measure applied to
+    the week's pooled counts."""
+    today = _hu_today()
+    try:
+        start = _week_start(db, day, today)
+    except ValueError:
+        raise HTTPException(422, "Invalid date")
+    empty = {"week": None, "days": [], "top_speakers": [], "words": [],
+             "totals": {"days": 0, "speeches": 0, "seconds": 0, "agenda_items": 0}}
+    if start is None:
+        return empty
+    end = start + timedelta(days=6)
+    last_monday = today - timedelta(days=today.weekday() + 7)
+
+    def compute():
+        status_col = ("COALESCE(s.status, 'published')" if _has_session_status(db)
+                      else "'published'")
+        rows = db.execute(
+            f"""SELECT s.id, s.period_number, s.sitting, s.date, {status_col} AS status,
+                       (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id) AS speeches,
+                       (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id
+                         AND sp.has_text=1) AS speeches_with_text,
+                       (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id
+                         AND sp.video_start IS NOT NULL) AS speeches_with_video,
+                       (SELECT COALESCE(SUM(sp.duration), 0) FROM speech sp
+                         WHERE sp.session_id=s.id) AS seconds,
+                       (SELECT COUNT(*) FROM agenda_item ai
+                         WHERE ai.session_id=s.id) AS agenda_items
+                FROM session s
+                WHERE substr(s.date, 1, 10) BETWEEN :start AND :end
+                      {period_and(None, "s.period_number")}
+                ORDER BY s.date, s.sitting""",
+            {"start": start.isoformat(), "end": end.isoformat()}).fetchall()
+        days = [{**dict(r),
+                 "processing": processing_state(
+                     r["status"], r["date"], r["speeches"], r["speeches_with_text"],
+                     r["speeches_with_video"], today=today)}
+                for r in rows]
+        ids = [d["id"] for d in days if d["speeches"]]
+        ph = ",".join("?" * len(ids))
+        speakers = db.execute(
+            f"""SELECT sp.person_id, p.label, p.photo_uri,
+                       f.label AS faction_label, f.color AS faction_color,
+                       COUNT(*) AS speeches, COALESCE(SUM(sp.duration), 0) AS seconds
+                FROM speech sp
+                LEFT JOIN person p ON p.person_id = sp.person_id
+                LEFT JOIN faction f ON f.id = sp.faction_id
+                WHERE sp.session_id IN ({ph}) AND sp.procedural = 0
+                      AND sp.person_id IS NOT NULL
+                GROUP BY sp.person_id
+                ORDER BY seconds DESC, speeches DESC, p.label, sp.person_id
+                LIMIT ?""", (*ids, _WEEK_TOP_SPEAKERS)).fetchall() if ids else []
+
+        # The week's words: the days' term counts pooled, then scored like one
+        # long sitting day against the rest of the cycle.
+        tf: dict = {}
+        kinds: dict = {}
+        for sid in (d["id"] for d in days if d["speeches_with_text"]):
+            day_tf, day_kinds = _session_term_freqs(db, sid)
+            for w, c in day_tf.items():
+                tf[w] = tf.get(w, 0) + c
+            kinds.update(day_kinds)
+        candidates = [w for w, c in tf.items() if c >= _WORDCLOUD_MIN_TF] or list(tf)
+        period = max((d["period_number"] for d in days
+                      if d["period_number"] is not None), default=None)
+        df, n_docs = _doc_freqs(db, period, candidates)
+        scores = (tfidf_scores({w: tf[w] for w in candidates}, df, n_docs)
+                  if n_docs and df else {w: float(tf[w]) for w in candidates})
+        top = sorted(candidates, key=lambda w: (-scores[w], w))[:_WEEK_WORDS]
+
+        return {
+            "week": {"start": start.isoformat(), "end": end.isoformat(),
+                     "last_week": start == last_monday},
+            "days": days,
+            "totals": {"days": len(days),
+                       "speeches": sum(d["speeches"] for d in days),
+                       "seconds": sum(d["seconds"] for d in days),
+                       "agenda_items": sum(d["agenda_items"] for d in days)},
+            "top_speakers": [
+                {"person_id": r["person_id"], "label": r["label"],
+                 "photo_uri": r["photo_uri"],
+                 "faction": ({"label": r["faction_label"], "color": r["faction_color"]}
+                             if r["faction_label"] else None),
+                 "speeches": r["speeches"], "seconds": r["seconds"]}
+                for r in speakers],
+            "words": [{"text": w, "count": tf[w], "kind": kinds.get(w, "term")}
+                      for w in top],
+        }
+
+    # Keyed by today as well as the week: the `processing` badge ages out of its
+    # window (SIT-2), and "last week" is itself a statement about today.
+    return cached_aggregate("proceedings_week", (start.isoformat(), today.isoformat()),
+                            compute)
 
 
 # ---------------------------------------------------------------------------

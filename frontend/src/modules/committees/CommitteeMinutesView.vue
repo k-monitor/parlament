@@ -29,7 +29,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { loadMeta } from '../../store.js'
-import { formatDate, formatDuration } from '../../format.js'
+import { formatDate, formatDuration, segmentSentences } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import YouTubePlayer from '../../components/YouTubePlayer.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -168,6 +168,53 @@ function paragraphs(text) {
   return (text || '').split(/\n{2,}/).filter((p) => p.trim())
 }
 
+// A speech's text as the lines it is read in, as a sitting day's transcript
+// reads (SpeechRow): its paragraphs, with the parentheticals the clerk wrote
+// into them — "(Szavazás.)", "(Jelzésre:)", "(Derültség.)", "(Gőgös Zoltán: Ez
+// nem igaz!)" — lifted out onto italic lines of their own, and a heckle's
+// "Name:" split off so it can carry the heckler's face. References and tags stay
+// in the sentence ("a 46. § (2a) bekezdése", "Szabó Timea (Párbeszéd)"): the
+// segmenter in format.js tells them apart. Each line is either an aside
+// `{ aside: true, text, speaker }` or spoken text `{ pieces: [{ text, sep, row }] }`.
+//
+// A speech's label is never stripped here, as a plenary one is: the parser has
+// already taken the speaker off, and a label still at the start is a speaker it
+// missed — the one sign on the page of who was really talking.
+function plainLines(text) {
+  const paras = paragraphs(text).map((t, i) => ({ text: t, paragraph: i }))
+  return segmentSentences(paras, { stripLabel: false }).flatMap((p) => p.segments.map((g) =>
+    (g.interjection ? { aside: true, text: g.text, speaker: g.speaker } : { pieces: [{ text: g.text }] })))
+}
+
+// The same for a timed speech (BIZ-30), whose lines are built from its
+// sentences so each piece of spoken text stays a seek into the recording. A
+// sentence can hold an aside ("Ki nem? (Szavazás. - Nincs ilyen.)") and an aside
+// can run over several, so the parenthesis state is threaded sentence to
+// sentence and a line breaks wherever an aside is lifted out or a paragraph
+// ends. `anchor` marks the first thing each sentence puts on the page — the
+// element the karaoke follows down it.
+function timedLines(paras) {
+  const rows = paras.flatMap((p) => p.rows)
+  const lines = []
+  let line = null
+  segmentSentences(rows.map((r) => ({ ...r, paragraph: r.para })), { stripLabel: false })
+    .forEach((r, i) => {
+      if (i && r.para !== rows[i - 1].para) line = null
+      r.segments.forEach((g, j) => {
+        const anchor = j === 0
+        if (g.interjection) {
+          lines.push({ aside: true, text: g.text, speaker: g.speaker, row: rows[i], anchor })
+          line = null
+          return
+        }
+        const sep = line ? (anchor ? r.sep : ' ') : ''
+        if (!line) { line = { pieces: [] }; lines.push(line) }
+        line.pieces.push({ text: g.text, sep, row: rows[i], anchor })
+      })
+    })
+  return lines
+}
+
 // --- the recording and its karaoke (BIZ-30) --------------------------------
 const hasVideos = computed(() => !!data.value?.videos?.length)
 const playerRef = ref(null)
@@ -213,6 +260,30 @@ const timedList = computed(() => {
   }
   return out
 })
+// Every speech's lines, built once per sitting for the same reason.
+const bodies = computed(() => {
+  const out = new Map()
+  for (const s of data.value?.transcript || []) {
+    const paras = sentenceParas.value.get(s.ord)
+    out.set(s.ord, paras ? timedLines(paras) : plainLines(s.text))
+  }
+  return out
+})
+
+// name -> { person_id, label, photo_uri } for the heckles whose "Name:" is a
+// representative's: those get a face and a link, the rest stay text.
+// Best-effort, as on a sitting day: a failure leaves every heckle as text.
+const hecklers = ref({})
+async function resolveHecklers(mine) {
+  hecklers.value = {}
+  const names = [...bodies.value.values()].flat().filter((l) => l.speaker).map((l) => l.speaker)
+  if (!names.length) return
+  try {
+    const resolved = await api.resolveSpeakers(names)
+    if (mine === seq) hecklers.value = resolved
+  } catch { /* keep plain */ }
+}
+
 function firstTimed(s) {
   return timedList.value.find((x) => x.ord === s.ord) || null
 }
@@ -399,7 +470,7 @@ async function load() {
   loading.value = true; error.value = false
   try {
     const res = await api.committeeMinutes(props.meetingId)
-    if (mine === seq) data.value = res
+    if (mine === seq) { data.value = res; resolveHecklers(mine) }
   } catch {
     if (mine === seq) error.value = true
   } finally {
@@ -661,26 +732,35 @@ watch(() => props.meetingId, () => {
                                  align="right" compact />
                   </div>
                 </div>
-                <!-- A timed speech is its sentences, each one a seek into the
-                     recording (VIE-3) and lit while it is spoken (VIE-4); an
-                     untimed one is the plain paragraphs it always was. -->
-                <div v-if="sentenceParas.has(s.ord)" class="speech-body">
-                  <p v-for="p in sentenceParas.get(s.ord)" :key="p.para" class="para">
-                    <template v-for="r in p.rows" :key="r.key">{{ r.sep }}<span
-                            v-if="r.timeStart != null" :id="'cs-' + r.key"
-                            class="sent" :class="{ active: activeKey === r.key }"
+                <!-- The speech's lines (see plainLines): spoken text, and the
+                     stage directions and heckles lifted out of it in italics — a
+                     heckle by a representative with their face. In a timed
+                     speech each sentence of the spoken text is a seek into the
+                     recording (VIE-3), lit while it is spoken (VIE-4). -->
+                <div class="speech-body">
+                  <template v-for="(ln, i) in bodies.get(s.ord)" :key="i">
+                    <p v-if="ln.aside && ln.speaker && hecklers[ln.speaker]"
+                       class="para aside heckle"
+                       :id="ln.anchor ? 'cs-' + ln.row.key : undefined">
+                      <SpeakerLink :speaker="hecklers[ln.speaker]" size="xs" class="heckle-who" />
+                      <span>{{ ln.text }}</span>
+                    </p>
+                    <p v-else-if="ln.aside" class="para aside"
+                       :id="ln.anchor ? 'cs-' + ln.row.key : undefined">
+                      {{ ln.speaker ? `${ln.speaker}: ${ln.text}` : ln.text }}
+                    </p>
+                    <p v-else class="para"><template v-for="(pc, j) in ln.pieces" :key="j">{{ pc.sep }}<span
+                            v-if="pc.row && pc.row.timeStart != null"
+                            :id="pc.anchor ? 'cs-' + pc.row.key : undefined"
+                            class="sent" :class="{ active: activeKey === pc.row.key }"
                             role="button" tabindex="0"
-                            :title="formatDuration(r.timeStart)"
-                            @click="playSentence(r)"
-                            @keydown.enter.prevent="playSentence(r)"
-                            @keydown.space.prevent="playSentence(r)">{{ r.text }}</span><span
-                            v-else class="sent untimed">{{ r.text }}</span></template>
-                  </p>
-                </div>
-                <div v-else class="speech-body">
-                  <p v-for="(para, i) in paragraphs(s.text)" :key="i" class="para">
-                    {{ para }}
-                  </p>
+                            :title="formatDuration(pc.row.timeStart)"
+                            @click="playSentence(pc.row)"
+                            @keydown.enter.prevent="playSentence(pc.row)"
+                            @keydown.space.prevent="playSentence(pc.row)">{{ pc.text }}</span><span
+                            v-else-if="pc.row" class="sent untimed">{{ pc.text }}</span><template
+                            v-else>{{ pc.text }}</template></template></p>
+                  </template>
                 </div>
               </li>
             </ul>
@@ -944,6 +1024,14 @@ watch(() => props.meetingId, () => {
 .speech-body { padding: 0 1rem .75rem calc(.7rem + 48px + .6rem); }
 .para { margin: 0 0 .6rem; line-height: 1.6; overflow-wrap: anywhere; }
 .para:last-child { margin-bottom: 0; }
+/* The stage directions and heckles lifted out of the record's parentheses:
+   italic, in the softer (still AA) tone, so they read as asides rather than as
+   what was said — as a sitting day's transcript sets them (SpeechRow). */
+.para.aside { font-style: italic; color: var(--ink-soft); }
+/* A heckle by a known representative: a small face and linked name before the
+   remark, kept smaller than the speech so it never reads as one. */
+.para.heckle { display: flex; align-items: center; gap: .45rem; font-size: .9em; }
+.heckle-who { flex: none; flex-wrap: nowrap; font-style: normal; font-weight: 600; gap: .35rem !important; }
 /* A timed sentence (BIZ-30): a seek into the recording, lit while it is spoken.
    Inline, so the paragraph still reads as prose. */
 .sent { border-radius: 4px; transition: background .12s; }

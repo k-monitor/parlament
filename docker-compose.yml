@@ -28,6 +28,13 @@
 #   podman-compose logs -f sync       # watch the continuous sync
 #   podman logs -f parlamonitor_app_blue   # watch the active color
 #   open http://localhost:8000        # app + /api/docs (via caddy)
+#
+# Host bind mounts carry `z` (shared SELinux relabel): on an SELinux-enforcing
+# host (Oracle Linux, RHEL, Fedora…) the containers are otherwise denied the
+# host's ./data outright — the loader's globs come back silently empty and the
+# first plain stat dies with EACCES. It is a no-op where SELinux is off. Lower
+# case on purpose: init, sync and the colors all share ./data at once, which a
+# private `Z` label would break.
 
 x-common-env: &common-env
   # Paths inside the container (match the volumes below).
@@ -156,7 +163,7 @@ services:
       # Behind Cloudflare / a host TLS proxy, bind to localhost: 127.0.0.1:8000:8000
       - "${PARLAMONITOR_PORT:-8000}:8000"
     volumes:
-      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro,z
       - caddy_data:/data
       - caddy_config:/config
     restart: unless-stopped
@@ -182,7 +189,7 @@ services:
       # Set to 1 to rebuild the DB from /data on the next run.
       REBUILD_DB: ${REBUILD_DB:-0}
     volumes:
-      - ./data:/data:ro
+      - ./data:/data:ro,z
       - dbdata:/db
     restart: "no"
 
@@ -253,7 +260,7 @@ services:
       PARLAMONITOR_DOCUMENTS_PER_SYNC: ${PARLAMONITOR_DOCUMENTS_PER_SYNC:-25}
     volumes:
       # Read-write here: the sync writes fresh scraper output + portraits.
-      - ./data:/data
+      - ./data:/data:z
       - dbdata:/db
       # SSH tunnel private key, read-only. Host path comes from .env; when SSH is
       # not configured this defaults to /dev/null so compose stays happy and the

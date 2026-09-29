@@ -627,7 +627,15 @@ export default {
       + 'authoritative version. Recordings come from the National Assembly\'s '
       + 'own YouTube channel and are matched to sittings by the date and '
       + 'committee name in the video title; the channel published nothing '
-      + 'before February 2024.',
+      + 'before February 2024. The recording plays here, beside the minutes; '
+      + 'the player loads from YouTube, in its privacy-enhanced mode, only '
+      + 'once it is started. Where the minutes are published too, the '
+      + 'recording\'s sound is transcribed by speech recognition (Whisper) and '
+      + 'that transcript is aligned to the text of the minutes: a click on a '
+      + 'sentence starts the video there, and during playback the sentence '
+      + 'being spoken is highlighted. The highlighted text is always the '
+      + 'minutes\', never the machine transcript; a sentence that could not be '
+      + 'placed in the recording can be read but not played.',
     // The minutes viewer (BIZ-15).
     openMinutes: 'Open the minutes',
     minutesTitle: 'Minutes',
@@ -683,6 +691,13 @@ export default {
     videoCoverage: 'The National Assembly\'s YouTube channel has recordings '
       + 'from {from} onwards; nothing was broadcast publicly before that.',
     videoUnmatched: 'No meeting in the registry matches this recording.',
+    // The embedded player and its sync with the minutes (BIZ-30).
+    part: 'Part {n}',
+    playRecording: 'Play the recording',
+    playFromHere: 'Play from this speech',
+    playerConsent: 'The player loads from YouTube only once you start it.',
+    playerError: 'This recording cannot be played here — it can be watched on YouTube.',
+    syncNote: 'Click a sentence to play the recording from there; while it plays, the sentence being spoken is highlighted and followed.',
   },
   portfolios: {
     title: 'Portfolios',

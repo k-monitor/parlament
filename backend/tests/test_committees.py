@@ -709,3 +709,61 @@ def test_top_speaker_words_count_the_text_not_the_separators(client):
     assert by_name["Kovács Béla"]["words"] == 10
     # "Köszönöm a szót, elnök úr." (5)
     assert by_name["Vendég Viktor"]["words"] == 5
+
+
+# --- Sentence timing against the recording (BIZ-30) -------------------------
+
+def test_timing_loaded_one_row_per_sentence(conn):
+    t = conn.execute("SELECT * FROM committee_timing").fetchall()
+    assert [(r["meeting_id"], r["coverage"]) for r in t] == [("ules-1", 0.91)]
+    rows = conn.execute(
+        "SELECT speech_ord, video_id, time_start FROM committee_sentence "
+        "ORDER BY speech_ord, ord").fetchall()
+    assert [tuple(r) for r in rows] == [
+        (0, "vid-1", 12.0), (1, "vid-1", 15.0), (2, None, None)]
+
+
+def test_minutes_endpoint_carries_each_speechs_timed_sentences(client):
+    m = client.get("/api/v1/committees/meetings/ules-1/minutes").json()
+    assert m["timing"]["timed"] == 2
+    assert m["timing"]["videos"] == [{"videoId": "vid-1", "durationS": 3900.0}]
+    first, _, guest = m["transcript"]
+    assert first["sentences"] == [{
+        "para": 0, "text": "Köszöntöm a bizottság tagjait.", "sep": "",
+        "videoId": "vid-1", "timeStart": 12.0, "timeEnd": 14.5}]
+    # Not placed in the recording: shown, not playable.
+    assert guest["sentences"][0]["timeStart"] is None
+    # The plain text stays alongside, for the in-page search.
+    assert first["text"] == "Köszöntöm a bizottság tagjait."
+
+
+def test_a_speech_whose_text_moved_is_served_untimed(conn, client):
+    """A jegyzőkönyv re-parsed since the alignment ran: that speech's offsets
+    no longer cut the text they were made on, so it reads as plain text
+    rather than being highlighted in the wrong places."""
+    conn.execute("UPDATE committee_speech SET text = 'Jó napot. ' || text "
+                 "WHERE meeting_id = 'ules-1' AND ord = 0")
+    conn.commit()
+    m = client.get("/api/v1/committees/meetings/ules-1/minutes").json()
+    assert "sentences" not in m["transcript"][0]
+    assert m["transcript"][1]["sentences"][0]["timeStart"] == 15.0
+    assert m["timing"]["timed"] == 1
+
+
+def test_timing_is_dropped_when_its_video_is_not_the_sittings(conn, client):
+    """The alignment was made on a video this sitting is not served with (the
+    scraper and the loader disagreed on the pairing): no karaoke at all rather
+    than a highlight running against a different recording."""
+    conn.execute("UPDATE committee_video SET meeting_id = NULL "
+                 "WHERE video_id = 'vid-1'")
+    conn.commit()
+    m = client.get("/api/v1/committees/meetings/ules-1/minutes").json()
+    assert m["timing"] is None
+    assert all("sentences" not in s for s in m["transcript"])
+
+
+def test_a_recording_only_sitting_has_no_timing(client, conn):
+    _record_a_video(conn)
+    m = client.get("/api/v1/committees/meetings/ules-2/minutes").json()
+    assert m["timing"] is None
+

@@ -678,6 +678,41 @@ def _committee_videos_registry():
     }
 
 
+def _committee_timing_registry():
+    """The sentence timings of `ules-1` against its recording `vid-1` (BIZ-30).
+
+    The guest's thank-you is left unplaced, as a sentence the alignment could
+    not find in the audio is: it is still served, just not playable. Offsets are
+    taken from the minutes fixture's own text, which is what they index into.
+    """
+    texts = ["Köszöntöm a bizottság tagjait.",
+             "Soron következik az 1. napirendi pont.",
+             "Köszönöm a szót, elnök úr."]
+    times = [(12.0, 14.5), (15.0, 18.2), (None, None)]
+    return {
+        "meta": {"source": "committee-timing",
+                 "method": "whisper-sitting-alignment",
+                 "model": "whisper:large-v3-turbo:v1", "alignVersion": 1,
+                 "scrapedAt": "2026-06-19T00:00:00+00:00", "count": 1,
+                 "counts": {"sittings": 1, "aligned": 1}, "failed": []},
+        "data": [{
+            "meetingId": "ules-1", "cycle": 43,
+            "committeeName": "Költségvetési Bizottság", "heldOn": "2026-06-10",
+            "method": "whisper-sitting-alignment",
+            "model": "whisper:large-v3-turbo:v1", "fingerprint": "abc",
+            "alignedAt": "2026-06-19T00:00:00+00:00", "coverage": 0.91,
+            "sentences": 3, "timed": 2,
+            "videos": [{"videoId": "vid-1", "durationS": 3900.0}],
+            "speeches": [
+                {"ord": i, "sentences": [{
+                    "para": 0, "chars": [0, len(text)], "text": text,
+                    "videoId": "vid-1" if t0 is not None else None,
+                    "timeStart": t0, "timeEnd": t1}]}
+                for i, (text, (t0, t1)) in enumerate(zip(texts, times))],
+        }],
+    }
+
+
 def _soon(days: int) -> str:
     from datetime import date, timedelta
     return (date.today() + timedelta(days=days)).isoformat()
@@ -702,6 +737,8 @@ def data_dir(tmp_path):
         json.dumps(_committee_minutes_registry(), ensure_ascii=False))
     (data / "processed" / "committee-videos.json").write_text(
         json.dumps(_committee_videos_registry(), ensure_ascii=False))
+    (data / "processed" / "committee-timing.json").write_text(
+        json.dumps(_committee_timing_registry(), ensure_ascii=False))
     (data / "processed" / "43001-session.json").write_text(
         json.dumps(_session_record(), ensure_ascii=False))
     (data / "processed" / "officeholders.json").write_text(

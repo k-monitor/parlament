@@ -3498,8 +3498,9 @@ this bill" is a question the corpus cannot answer at all.
   (§5.2): the same back link, share control, speaker toplist, agenda outline
   pinned on wide screens, transcript cut into agenda sections, and prev/next
   navigation at the foot. It differs only where the records genuinely do —
-  committee minutes carry **no timings at all**, so nothing is playable and the
-  toplist ranks by **how much was said** rather than for how long. The figure
+  committee minutes carry **no timings of their own**, so the toplist ranks by
+  **how much was said** rather than for how long (a recorded sitting is playable
+  all the same, from timings made off its recording — BIZ-30). The figure
   beside each bar is therefore a word count, not a speech count: the chair takes
   the floor oftenest and says least, so a count there would contradict the bar
   on almost every row.
@@ -3511,7 +3512,7 @@ this bill" is a question the corpus cannot answer at all.
   The recording goes up the same day and the jegyzőkönyv follows weeks later
   (BIZ-22), so on the sittings a reader is most likely to open, the video is all
   there is. That sitting's page is then served from the **meeting row alone**:
-  its cover, the recording (linked, never embedded — LEGAL-1) and the prev/next
+  its cover, the recording (played in place — BIZ-30) and the prev/next
   navigation, with every record-derived block empty and the page saying plainly
   that no jegyzőkönyv has been published yet. There is no second page for it, a
   sitting being one object with two records. A sitting that left **neither** a
@@ -3544,7 +3545,8 @@ this bill" is a question the corpus cannot answer at all.
   nothing in a video's metadata names the meeting, so **the title is the whole
   of the join**:
   it carries the date and the body, and both are parsed out of it and matched.
-  Videos are linked, never embedded or mirrored (LEGAL-1).
+  Videos are never mirrored; they are played in YouTube's own embedded player
+  and always linked to the original (LEGAL-1, BIZ-30).
 - **BIZ-22.** Matching is **by name and date, and fails in two independent ways,
   neither of which drops the row**. A video naming a body we do not hold keeps
   its row unlinked (the House streams an eseti bizottság before the registry
@@ -3565,6 +3567,41 @@ this bill" is a question the corpus cannot answer at all.
   site **says so**, in the committee's methodology note, rather than leaving the
   gap unexplained, because an unexplained gap reads as a fault in the site
   rather than a fact about the House.
+
+### Playing the recording against the record (BIZ-30)
+
+- **BIZ-30 (MUST).** A streamed sitting's recording **plays on the sitting's
+  page**, beside its jegyzőkönyv, and where the two have been aligned the page
+  behaves as the proceedings viewer does (§5.2): **clicking a sentence plays
+  the recording from it** (VIE-3), and during playback **the sentence being
+  spoken is highlighted and followed down the page** (VIE-4), with manual
+  scrolling pausing the follow for a few seconds. Each speech also gets a
+  "play from here" control. A sitting that overran into a second stream is one
+  recording to the reader: a part switch, the next part following on when one
+  ends, and a sentence in part 2 opening part 2.
+- **BIZ-31.** The player is **click-to-load** (PRIV-1): until the reader starts
+  it the page shows the video's thumbnail and makes **no request to YouTube**;
+  only then is the IFrame API loaded, in YouTube's privacy-enhanced mode
+  (`youtube-nocookie.com`). A link to the video on YouTube stays beside it
+  (LEGAL-1). On a wide screen the player is docked in the side column above the
+  agenda outline; on a narrow one it leads the page and, once started, is
+  pinned under the site header so it stays in view while the record scrolls.
+- **BIZ-32.** The timings are **made, not published**: the jegyzőkönyv carries
+  none, so the recording's audio is transcribed by Whisper and that transcript
+  is aligned to the minutes' text, as the plenary's are (TIM-1). The highlighted
+  text is always the **minutes'**, never the machine transcript. With no
+  per-speech windows the whole sitting is aligned at once, and so a sentence the
+  alignment cannot place with confidence — one whose text the recording never
+  caught, or that would have to be stretched across a recess — is **left
+  unplaced**: readable, not playable, rather than highlighted on the wrong
+  minute. A sitting whose record and recording do not align at all is served
+  with the player and no karaoke.
+- **BIZ-33.** A stored timing is served only while it **still describes what
+  is served**: every video it was made on must be one the sitting is shown
+  with, and each speech's sentences must still be the text at their stored
+  offsets. A jegyzőkönyv re-parsed since the alignment ran therefore reads as
+  plain text in the speeches that moved, instead of being cut and highlighted in
+  the wrong places.
 
 > **Shipped 2026-09-21** for cycles 40–43 (the cycles the rest of the corpus is
 > richest for; the API serves 34–43 and the stage takes a `--cycle` like every

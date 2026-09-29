@@ -1719,6 +1719,79 @@ def _match_meeting(conn: sqlite3.Connection, committee_id: str,
     return next((r["id"] for r in rows if r["d"] == date), rows[0]["id"])
 
 
+def _ensure_committee_timing_tables(conn: sqlite3.Connection) -> None:
+    """Create the BIZ-30 sentence-timing tables on a pre-existing DB, so the
+    karaoke lands on an already-built deployment through the incremental update
+    alone.
+
+    Deliberately **no foreign key** into the minutes: a cycle's minutes are
+    replaced wholesale on every reload (``load_committee_minutes``), and timing
+    that cascaded away with them would vanish until the timing file happened to
+    be rewritten. The rows are instead checked against the speech text when they
+    are *served* (each carries the text it was cut at), which is also what makes
+    a re-parsed jegyzőkönyv safe: a speech whose text moved simply stops being
+    timed, instead of being highlighted at stale offsets."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS committee_timing (
+            meeting_id TEXT PRIMARY KEY,
+            method TEXT, model TEXT, coverage REAL,
+            sentences INTEGER, timed INTEGER, aligned_at TEXT,
+            videos TEXT);
+        CREATE TABLE IF NOT EXISTS committee_sentence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_id TEXT NOT NULL,
+            speech_ord INTEGER, ord INTEGER, para INTEGER,
+            char_start INTEGER, char_end INTEGER, text TEXT,
+            video_id TEXT, time_start REAL, time_end REAL);
+        CREATE INDEX IF NOT EXISTS idx_committee_sentence_meeting
+            ON committee_sentence(meeting_id, speech_ord, ord);
+    """)
+
+
+def load_committee_timing(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load the committee sentence timings (§6F / BIZ-30).
+
+    Cycle-less and replaced whole, like the recordings it is made from: the
+    scraper rewrites the file from every sitting it can time, so the file is the
+    answer. Runs after the minutes and the videos only by convention — nothing
+    here resolves against them (see :func:`_ensure_committee_timing_tables`).
+    """
+    _ensure_committee_timing_tables(conn)
+    conn.execute("DELETE FROM committee_sentence")
+    conn.execute("DELETE FROM committee_timing")
+    sittings = sentences = timed = 0
+    for rec in registry.get("data") or []:
+        mid = rec.get("meetingId")
+        if not mid:
+            continue
+        conn.execute("""
+            INSERT OR REPLACE INTO committee_timing(meeting_id, method, model,
+                coverage, sentences, timed, aligned_at, videos)
+            VALUES (?,?,?,?,?,?,?,?)
+        """, (mid, rec.get("method"), rec.get("model"), rec.get("coverage"),
+              rec.get("sentences"), rec.get("timed"), rec.get("alignedAt"),
+              _json_or_none(rec.get("videos") or None)))
+        rows = []
+        for sp in rec.get("speeches") or []:
+            for i, s in enumerate(sp.get("sentences") or []):
+                chars = s.get("chars") or [None, None]
+                rows.append((mid, sp.get("ord"), i, s.get("para"), chars[0],
+                             chars[1], s.get("text"), s.get("videoId"),
+                             s.get("timeStart"), s.get("timeEnd")))
+                timed += 1 if s.get("timeStart") is not None else 0
+        if rows:
+            conn.executemany("""
+                INSERT INTO committee_sentence(meeting_id, speech_ord, ord, para,
+                    char_start, char_end, text, video_id, time_start, time_end)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""", rows)
+        sittings += 1
+        sentences += len(rows)
+    conn.commit()
+    logger.info("Loaded committee timing: %d sittings, %d of %d sentences timed",
+                sittings, timed, sentences)
+    return sittings
+
+
 def _ensure_session_status(conn: sqlite3.Connection) -> None:
     """Add ``session.status`` to a pre-existing DB, so the upcoming/scheduled-day
     feature also lands via the incremental ``--update`` path (which snapshots the
@@ -5148,6 +5221,10 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         vp = data_dir / "processed" / "committee-videos.json"
         if vp.exists():
             load_committee_videos(conn, json.loads(vp.read_text()))
+        # The sentence timings made from those recordings (BIZ-30).
+        tp = data_dir / "processed" / "committee-timing.json"
+        if tp.exists():
+            load_committee_timing(conn, json.loads(tp.read_text()))
 
         sessions = sorted((data_dir / "processed").glob("*-session.json"))
         loaded = 0
@@ -5238,7 +5315,7 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
 _PROCESSED_GLOBS = ("representatives-*.json", "advocates-*.json", "bills-*.json",
                     "votes-*.json", "committees-*.json",
                     "committee-minutes-*.json", "committee-videos.json",
-                    "*-session.json", "officeholders.json", "aktualis.json")
+                    "committee-timing.json", "*-session.json", "officeholders.json", "aktualis.json")
 
 
 def _file_sig(path: Path) -> tuple[float, int]:
@@ -5473,6 +5550,10 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             videos = [candidate] if candidate.exists() else []
         for p in videos:
             load_committee_videos(conn, json.loads(p.read_text()))
+        # Checked against the speech text when served rather than keyed to the
+        # minutes rows, so only a change to the file itself reloads it.
+        for p in changed["committee-timing.json"]:
+            load_committee_timing(conn, json.loads(p.read_text()))
 
         for p in changed["*-session.json"]:
             record = json.loads(p.read_text())

@@ -42,8 +42,8 @@ def test_full_build_seeds_load_state(db_path):
     assert _load_state_names(db_path) == {
         "representatives-43.json", "bills-43.json", "votes-43.json",
         "committees-43.json", "committee-minutes-43.json",
-        "committee-videos.json", "43001-session.json", "officeholders.json",
-        "aktualis.json"}
+        "committee-videos.json", "committee-timing.json", "43001-session.json",
+        "officeholders.json", "aktualis.json"}
 
 
 def test_update_is_noop_when_nothing_changed(data_dir, db_path):

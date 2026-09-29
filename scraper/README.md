@@ -20,6 +20,7 @@ kept only as reference material; nothing here imports it at runtime.
 | `processed/committees-<cycle>.json` | `parlamonitor.committees` | the **committee** registry (*bizottságok*) for a cycle: every body — main committees and subcommittees in one flat list keyed by its own id — with its type, dates and contact, plus who sits on it (`members`, the roster on one date), every **dated** membership and office term (`terms`), every `meeting` with its minutes PDF, and the irományok it dealt with (`documents`) and tabled (`submissions`), plus the meetings it has scheduled but not yet held (`upcoming` — state, not history). Membership needs both listings: see [Committees](#committees-6f). |
 | `processed/committee-minutes-<cycle>.json` | `parlamonitor.committees.minutes_scrape` | the **jegyzőkönyvek** of that cycle's committee meetings, read out of the PDFs (BIZ-15): per sitting its cover (when, where, who presided, whether it was closed), the proposed agenda with each point's iromány, the attendance in the document's own categories, and the debate as speeches under the agenda heading they were made under. A sitting we could not read keeps its row carrying `error`. The extracted text is cached under `committees/minutes/<cycle>/` so a re-parse fetches nothing. See [Committee minutes](#committee-minutes-biz-15). |
 | `processed/committee-videos.json` | `parlamonitor.committees.videos` | every video on the Országgyűlés YouTube channel (BIZ-16), with the date and committee **parsed out of its title** — the only thing that links a recording to a sitting. Cycle-less and additive: each pass merges into the last, so a cheap RSS poll never discards a backfilled history. Matching to a body and a meeting happens in the loader, not here. |
+| `processed/committee-timing.json` | `parlamonitor.committees.timing` | **sentence timings** for every committee sitting that has both a parsed jegyzőkönyv and a recording (BIZ-30): each speech cut into sentences (paragraph, character offsets, text) and each sentence's `videoId`/`timeStart`/`timeEnd` in that video's own seconds, from Whisper run on the recording and aligned to the minutes. Cycle-less and rewritten whole. The Whisper words are cached per video under `committees/whisper/<videoId>.json`, so a recording is transcribed once. See [Committee sentence timing](#committee-sentence-timing-biz-30). |
 | `documents/<cycle>/` | `parlamonitor.documents` | **optional** mirror of the iromány document *files* themselves — the extracted text (`text/<docid>.txt.xz`), the source PDF (`pdf/<docid>.pdf`), or both, plus an `index.json` manifest. **Off by default**; see [Document files](#document-files-doc-1). |
 | `processed/aktualis.json` | `parlamonitor.aktualis` | the **Aktuális** page: the documents it links (napirend, ülésterv, submission deadlines, legislative programme) and the **order paper for the sitting that is coming**, parsed out of the napirend PDF into days, timetables and agenda items — plus the House Committee's next meeting. The one source on the site for what the House is *about to* do; see [The Aktuális page](#the-aktuális-page-nr-1). |
 | `logs/ingest-<ts>.json` | both | per-run ingestion log (run time, sittings added, errors, backend). |
@@ -174,6 +175,13 @@ python -m parlamonitor committee-minutes --cycle 40 --limit 200 ./data
 # which the 15-video RSS window cannot reach.
 python -m parlamonitor committee-videos ./data
 python -m parlamonitor committee-videos --backfill ./data
+
+# Time committee sittings' sentences against their recordings (BIZ-30): Whisper
+# on each recording's audio, aligned to the minutes. Only sittings with BOTH a
+# parsed jegyzőkönyv and a video; run after the two stages above. Each video is
+# transcribed once (cached); --meeting narrows a run, --force redoes it.
+python -m parlamonitor committee-timing ./data
+python -m parlamonitor committee-timing --meeting <meetingId> --force ./data
 
 # Nationality advocates (szószólók) — one cycle, or backfill every cycle that
 # has them (40 on). Portraits are downloaded by default (~13 people per cycle).
@@ -561,6 +569,64 @@ tabs. 30 of them are committee meetings. So cycles 40 and 41 have no recordings
 to find at all, and the site says so rather than showing an unexplained empty
 list.
 
+### Committee sentence timing (BIZ-30)
+
+The minutes viewer plays a sitting's recording beside its jegyzőkönyv and, like
+the plenary viewer, highlights the sentence being spoken. The jegyzőkönyv
+carries **no timings at all**, so they are made here the way the plenary's are
+(TIM-1) — Whisper transcribes the recording and the transcript is aligned to the
+*authoritative* text — with two differences the source forces:
+
+- **The audio is fetched on the host.** YouTube's media URLs are signed for the
+  address that asked for them, so the Modal container cannot fetch one the way
+  it fetches a plenary HLS playlist. The host downloads the cheapest audio-only
+  track with `yt-dlp` (Opus at ~45 kbit/s, ~20 MB an hour) and sends the bytes to
+  the Whisper app's `transcribe_audio` method; the file is deleted as soon as its
+  words are cached. **That method is newer than the plenary one** — an app
+  deployed before it answers with "method not found" until it is redeployed
+  (`modal deploy whisper_modal_app.py`). A stream that is still live (or not yet
+  processed) is skipped by a `--match-filter`, not recorded.
+- **The whole sitting is aligned at once** (`whisper_align.align_sitting`):
+  there are no per-speech windows to cut the recording by. Two rules replace
+  what the window used to guarantee. Only solid matches (runs of ≥ 2 tokens)
+  anchor, since across a sitting a lone "hogy" could be any of thousands. And an
+  unmatched run of sentences is spread across the gap between its anchors only
+  when its spoken length plausibly **fits** that gap (between 0.8 and 5 tokens a
+  second, with a little slack); otherwise it is left **unplaced** — shown on the
+  page, not playable — because a run that "fits" a recess only because nothing
+  else does would be highlighted while nobody speaks. A run before the first
+  anchor or after the last is set against that anchor at a normal pace.
+
+A sitting that overran into a second stream ("Folytatás") is two videos: they
+are laid end to end with a gap between them, aligned as one, and every sentence
+is mapped back to the video it fell in, in **that video's own seconds**.
+
+**Pairing** uses the loader's rule (BIZ-22) — folded committee name, and the
+title's date (exact, else a day either side) — applied to the minutes records,
+which carry both. A body that met twice on one day gets each recording by
+content: it is aligned against each candidate sitting and goes to the one it
+matches best. The API only serves a sitting's timing while every video it was
+made on is one that sitting is served with, and only serves a speech's sentences
+while each is still the text at its stored offsets — so a re-parsed jegyzőkönyv
+falls back to plain text instead of being highlighted at stale positions.
+
+**Cost.** Words are cached per video (keyed by video id + model); each sitting's
+alignment is fingerprinted by its videos, its text and `ALIGN_VERSION`, so a
+repeat pass aligns nothing. On Modal the transcription obeys
+`PARLAMONITOR_MODAL_CYCLES` like the plenary's (default: the newest cycle only),
+so cycle 42's recordings need `PARLAMONITOR_MODAL_CYCLES=42,43` (or `all`) once.
+The channel starts in February 2024 (BIZ-23), so the whole backlog is a few
+dozen recordings.
+
+**Measured 2026-09-29** on the two sittings that then had both records (the
+Törvényalkotási Bizottság on 09-10 and 09-14, 24 and 31 minutes of video): 78–79%
+of the minutes' tokens landed in solid matches, 412 of 455 sentences were
+placed, and **every unplaced one was a parenthetical stage direction**
+("(Szavazás.)", "(Nincs jelentkező.)"). Spot checks against the Whisper words
+land on the exact phrase; the 09-14 stream's 11½ minutes of pre-roll are skipped
+correctly. Aligning a sitting takes about a second (21 s for the longest in the
+corpus); the transcription is the only real cost.
+
 ### The Aktuális page (NR-1)
 
 Everything the Felicitas API exposes is a record of what the House **has done**.
@@ -742,6 +808,12 @@ python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
   whole upload history and belongs in the explicit `committee-videos --backfill`
   command. If the 15-video feed window is ever overrun, that command closes the
   gap rather than every sync pass paying for it.
+- **Committee timing:** last of the committee stages, since it needs both of
+  their records. Skipped outright while the recordings registry and the minutes
+  files are unchanged (file stats, so an idle pass opens nothing). Transcribing
+  a recording happens once per video, ever; a pass in which a download or a
+  transcription failed does not record its signature, so the next pass tries
+  again.
 - **Bills / votes:** the cheap list query runs, but per-item detail reuses the
   detail cache above, and the registry JSON is rewritten only when it differs.
 - **Representatives:** refreshed on a slow cadence (`--reps-max-age`, default 12h,

@@ -76,6 +76,8 @@ from .committees.minutes_scrape import (fetch_minutes, meetings_with_minutes,
                                         save_minutes)
 from .committees.videos import (fetch_videos, save_videos,
                                 load_previous as load_videos_file)
+from .committees.timing import (build_timing, save_timing,
+                                load_previous as load_timing_file)
 from .documents.scrape import fetch_documents, load_registry
 from .officeholders.scrape import fetch_office_holders, save_office_holders
 from .votes.scrape import fetch_votes, save_votes
@@ -655,6 +657,27 @@ def cmd_committee_videos(args) -> None:
                        **registry["meta"]["counts"]})
 
 
+def cmd_committee_timing(args) -> None:
+    """Time committee sittings' sentences against their recordings (BIZ-30).
+
+    Works on the sittings that have both a parsed jegyzőkönyv and a YouTube
+    recording, so it runs after ``committee-minutes`` and ``committee-videos``.
+    It makes no parlament.hu request at all: the audio comes from YouTube and
+    the words are cached per video, so a repeat run transcribes nothing."""
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    with acquire(paths.lockfile, force=args.force_lock):
+        registry = build_timing(
+            paths, backend=args.timing_backend or timing_backend(),
+            force=args.force, meetings=set(args.meeting) if args.meeting else None,
+            previous=load_timing_file(paths))
+        save_timing(paths, registry)
+    _write_log(paths, {"command": "committee-timing",
+                       "ranAt": datetime.now(timezone.utc).isoformat(
+                           timespec="seconds"),
+                       **registry["meta"]["counts"]})
+
+
 def _documents_summary(documents) -> object:
     """The document stage's line in a sync summary: ``False`` when it is off (the
     default), else just the counts that say whether the pass did any work — the
@@ -992,6 +1015,24 @@ def build_parser() -> argparse.ArgumentParser:
                     help="also walk the channel's whole upload history rather "
                          "than only the 15 videos the RSS feed carries")
     sp.set_defaults(func=cmd_committee_videos)
+
+    sp = sub.add_parser("committee-timing",
+                        help="time committee sittings' sentences against their "
+                             "YouTube recordings with Whisper (BIZ-30)")
+    sp.add_argument("data_dir", type=Path, help="output data directory")
+    sp.add_argument("--timing-backend", default=None,
+                    choices=("auto", "whisper-modal", "whisper-local", "character"),
+                    help="where to transcribe (default: env "
+                         "PARLAMONITOR_TIMING_BACKEND, else auto); `character` "
+                         "transcribes nothing and only re-aligns cached words")
+    sp.add_argument("--meeting", action="append", default=None,
+                    help="only this meeting id (repeatable); the rest of the "
+                         "previous file is kept as it was")
+    sp.add_argument("--force", action="store_true",
+                    help="re-transcribe and re-align even what is cached")
+    sp.add_argument("--force-lock", action="store_true",
+                    help="run even while another run holds the lockfile")
+    sp.set_defaults(func=cmd_committee_timing)
 
     sp = sub.add_parser("sync", help="one low-load sync pass over the latest cycle "
                                      "(re-scrape only what changed)")

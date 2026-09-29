@@ -487,6 +487,11 @@ def meeting_minutes(
             "SELECT * FROM committee_video WHERE meeting_id = ? "
             "ORDER BY continued, published_at", (meeting_id,))]
 
+    # The karaoke (BIZ-30): each speech's sentences with where they fall in the
+    # recording, attached in place to the speeches they were cut from.
+    out["timing"] = _attach_timing(db, meeting_id, out["transcript"],
+                                   out["videos"])
+
     # Who did the talking, so the page can open on the same question a sitting
     # day's does. Ranked by **characters spoken**, not by number of
     # contributions: the chair takes the floor between every speaker and would
@@ -587,6 +592,79 @@ def meeting_agenda(
     }
 
 
+def _attach_timing(db: sqlite3.Connection, meeting_id: str,
+                   transcript: list[dict], videos: list[dict]) -> dict | None:
+    """Give each speech of a recorded sitting its timed sentences (BIZ-30).
+
+    Adds ``sentences`` to the speeches in ``transcript`` — ``para`` (which of
+    the speech's paragraphs), ``text``, and ``videoId``/``timeStart``/``timeEnd``
+    in that video's own seconds, null where the sentence could not be placed —
+    and returns the sitting-level summary, or None when nothing is playable.
+
+    Two checks stand between a stored timing and the page, because neither
+    table it comes from is keyed to what it describes (see the loader's
+    ``_ensure_committee_timing_tables``):
+
+    * every video the timing was made on must be one this sitting is **served
+      with** — the scraper and the loader pair recordings with sittings by the
+      same rule, and this is where a disagreement would show, as a highlight
+      running against a video the page does not have;
+    * a speech's sentences are served only while each one is **still the text
+      at its offsets**. A jegyzőkönyv re-parsed since the alignment ran may have
+      moved; that speech then reads as untimed plain text rather than being cut
+      and highlighted in the wrong places.
+    """
+    if not transcript or not videos or not _table_exists(db, "committee_timing"):
+        return None
+    t = db.execute("SELECT * FROM committee_timing WHERE meeting_id = ?",
+                   (meeting_id,)).fetchone()
+    if t is None:
+        return None
+    timed_on = json.loads(t["videos"]) if t["videos"] else []
+    served = {v["videoId"] for v in videos}
+    if not timed_on or any(v.get("videoId") not in served for v in timed_on):
+        return None
+
+    by_speech: dict[int, list] = {}
+    for r in db.execute("""
+            SELECT speech_ord, para, char_start, char_end, text, video_id,
+                   time_start, time_end
+              FROM committee_sentence WHERE meeting_id = ?
+             ORDER BY speech_ord, ord""", (meeting_id,)):
+        by_speech.setdefault(r["speech_ord"], []).append(r)
+
+    timed = 0
+    for sp in transcript:
+        rows = by_speech.get(sp["ord"])
+        if not rows:
+            continue
+        text = sp["text"] or ""
+        if any(r["char_start"] is None or r["char_end"] is None
+               or text[r["char_start"]:r["char_end"]] != r["text"] for r in rows):
+            continue
+        sp["sentences"] = [{
+            "para": r["para"], "text": r["text"],
+            # What separates it from the sentence before it in the same
+            # paragraph — a space, or nothing where the text runs straight on —
+            # so the page puts the paragraph back together as written.
+            "sep": (" " if i and rows[i - 1]["para"] == r["para"]
+                    and text[rows[i - 1]["char_end"]:r["char_start"]] else ""),
+            "videoId": r["video_id"],
+            "timeStart": r["time_start"], "timeEnd": r["time_end"],
+        } for i, r in enumerate(rows)]
+        timed += sum(1 for r in rows if r["time_start"] is not None)
+    if not timed:
+        for sp in transcript:
+            sp.pop("sentences", None)
+        return None
+    return {
+        "method": t["method"], "model": t["model"], "coverage": t["coverage"],
+        "sentences": t["sentences"], "timed": timed,
+        "videos": [{"videoId": v["videoId"], "durationS": v.get("durationS")}
+                   for v in timed_on],
+    }
+
+
 def _recording_only_sitting(db: sqlite3.Connection,
                             meeting_id: str) -> dict | None:
     """One sitting served for its **recording** alone (BIZ-27), or None.
@@ -637,6 +715,7 @@ def _recording_only_sitting(db: sqlite3.Connection,
         "speeches": None, "speakers": None, "chars": None, "error": None,
         "hasMinutes": False,
         "agenda": [], "sections": [], "transcript": [], "topSpeakers": [],
+        "timing": None,
         "participants": {"chair": [], "present": [], "proxy": [],
                          "staff": [], "guest": []},
         "videos": videos,

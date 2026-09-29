@@ -79,6 +79,9 @@ from .committees.minutes_scrape import (fetch_minutes, meetings_with_minutes,
                                         save_minutes)
 from .committees.videos import (fetch_videos, save_videos,
                                 load_previous as load_videos_file)
+from .committees.timing import (ALIGN_VERSION as TIMING_ALIGN_VERSION,
+                                build_timing, save_timing,
+                                load_previous as load_timing_file)
 from .votes.scrape import fetch_votes, save_votes
 
 logger = logging.getLogger(__name__)
@@ -593,6 +596,48 @@ def _sync_committee_videos(http, paths: Paths, state: dict, *,
             for k in ("videos", "committee", "plenary")}
 
 
+def _committee_timing_inputs(paths: Paths) -> str:
+    """Signature of everything the committee timing reads: the recordings
+    registry, every cycle's parsed minutes, the model and the alignment
+    version. Taken from file stats, so an idle pass decides "nothing to time"
+    without opening the (large) minutes files."""
+    files = [paths.committee_videos_file(),
+             *sorted(paths.processed.glob("committee-minutes-*.json"))]
+    sig = [[f.name, *(_stat(f) or [])] for f in files]
+    payload = [TIMING_ALIGN_VERSION, whisper_model(), sig]
+    return hashlib.sha256(json.dumps(payload).encode("utf-8")).hexdigest()[:16]
+
+
+def _stat(path: Path) -> list | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return [int(st.st_mtime), st.st_size]
+
+
+def _sync_committee_timing(paths: Paths, state: dict, *, force: bool,
+                           backend: str) -> object:
+    """Time any newly pairable committee sitting against its recording (BIZ-30).
+
+    Last of the committee stages, because it needs both of the records they
+    produce. Skipped outright while its inputs are unchanged. The signature is
+    only recorded after a pass that left nothing behind, so a recording whose
+    download or transcription failed is tried again next time rather than
+    waiting for some unrelated change to the inputs."""
+    fp = _committee_timing_inputs(paths)
+    if not force and (state.get("committeeTiming") or {}).get("fp") == fp:
+        return False
+    registry = build_timing(paths, backend=backend, force=force,
+                            previous=load_timing_file(paths))
+    counts = registry["meta"]["counts"]
+    save_timing(paths, registry)
+    if not counts["failed"]:
+        state["committeeTiming"] = {"fp": fp, "count": registry["meta"]["count"],
+                                    "at": _now()}
+    return {k: counts[k] for k in ("sittings", "aligned", "failed", "timed")}
+
+
 def _sync_representatives(felicitas: FelicitasClient, paths: Paths, cycle: int,
                           state: dict, *, force: bool, with_detail: bool,
                           reps_max_age: float) -> bool:
@@ -719,7 +764,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
                "sessions": [], "removedSessions": [], "bills": False,
                "votes": False, "committees": False,
                "committeeMinutes": False, "committeeVideos": False,
-               "representatives": False, "advocates": False,
+               "committeeTiming": False, "representatives": False, "advocates": False,
                "officeHolders": False, "documents": False, "aktualis": False,
                "errors": []}
 
@@ -796,6 +841,15 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
             logger.exception("Committee video sync failed")
             summary["errors"].append(f"committee-videos: {e}")
 
+        # Needs both records above, so it comes last. Transcribing a recording
+        # is the one costly step, and it happens once per video, ever.
+        try:
+            summary["committeeTiming"] = _sync_committee_timing(
+                paths, state, force=force, backend=backend)
+        except Exception as e:
+            logger.exception("Committee timing sync failed")
+            summary["errors"].append(f"committee-timing: {e}")
+
     if not skip_reps:
         try:
             summary["representatives"] = _sync_representatives(
@@ -840,6 +894,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
                               or summary["committees"]
                               or summary["committeeMinutes"]
                               or summary["committeeVideos"]
+                              or summary["committeeTiming"]
                               or summary["representatives"]
                               or summary["advocates"]
                               or summary["aktualis"])

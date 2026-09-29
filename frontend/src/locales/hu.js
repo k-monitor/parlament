@@ -719,7 +719,15 @@ export default {
       + 'származik, a hiteles változat mindig a hivatkozott eredeti. A '
       + 'felvételek az Országgyűlés saját YouTube-csatornájáról származnak, és '
       + 'a videó címében szereplő dátum és bizottságnév alapján kapcsoljuk őket '
-      + 'az ülésekhez; a csatorna 2024 februárja előtt nem közölt felvételt.',
+      + 'az ülésekhez; a csatorna 2024 februárja előtt nem közölt felvételt. '
+      + 'A felvétel itt, a jegyzőkönyv mellett játszható le; a lejátszó csak az '
+      + 'indításkor, a YouTube adatkímélő módjában töltődik be. Ahol a '
+      + 'jegyzőkönyv is megvan, a felvétel hangját gépi beszédfelismerés '
+      + '(Whisper) írja le, és ezt illesztjük a jegyzőkönyv szövegéhez: így '
+      + 'kattintásra az adott mondatnál indul a videó, lejátszás közben pedig '
+      + 'az éppen elhangzó mondat kiemelve követi. A kiemelt szöveg mindig a '
+      + 'jegyzőkönyvé, nem a gépi leiraté; az a mondat, amelyet nem sikerült '
+      + 'elhelyezni a felvételen, olvasható, de nem indítható.',
     // A jegyzőkönyv-nézet (BIZ-15).
     openMinutes: 'Jegyzőkönyv megnyitása',
     minutesTitle: 'Jegyzőkönyv',
@@ -775,6 +783,13 @@ export default {
     videoCoverage: 'Az Országgyűlés YouTube-csatornáján {from} óta vannak '
       + 'felvételek; a korábbi ülésekről nem készült közzétett közvetítés.',
     videoUnmatched: 'Ehhez a felvételhez nem találtunk ülést a nyilvántartásban.',
+    // A beágyazott lejátszó és a jegyzőkönyv szinkronja (BIZ-30).
+    part: '{n}. rész',
+    playRecording: 'A felvétel lejátszása',
+    playFromHere: 'Lejátszás ettől a felszólalástól',
+    playerConsent: 'A lejátszó csak az indításkor töltődik be a YouTube-ról.',
+    playerError: 'Ez a felvétel itt nem játszható le – a YouTube-on megnézhető.',
+    syncNote: 'Kattints egy mondatra, és a felvétel onnan indul; lejátszás közben az éppen elhangzó mondat kiemelve követi a videót.',
   },
   portfolios: {
     title: 'Tárcák',

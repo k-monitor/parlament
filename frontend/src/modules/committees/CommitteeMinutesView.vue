@@ -8,20 +8,30 @@
 //          into agenda sections of one row per speech (face, faction chip,
 //          share), a sticky agenda outline on wide screens, and prev/next
 //          navigation at the foot
-//   differ committee minutes carry **no timings** — no per-speech clip, no
-//          speaking time — so the toplist ranks by what was said rather than for
-//          how long, and no speech is playable. With no viewer page to link, a
-//          speech's address is an anchor on this one (`#sp-<ord>`, BIZ-29), and
-//          its text is shown rather than folded away: it is the whole record.
-//          And the whole document arrives in one response, so the filters
-//          narrow it in place instead of paging.
+//   differ committee minutes carry **no timings** of their own — no per-speech
+//          clip, no speaking time — so the toplist ranks by what was said rather
+//          than for how long. With no viewer page to link, a speech's address is
+//          an anchor on this one (`#sp-<ord>`, BIZ-29), and its text is shown
+//          rather than folded away: it is the whole record. And the whole
+//          document arrives in one response, so the filters narrow it in place
+//          instead of paging.
+//
+// Where the sitting was streamed, its recording plays **on this page** (BIZ-30),
+// beside the record as the proceedings viewer's player sits beside its
+// transcript: docked in the side column above the agenda outline on a wide
+// screen, pinned under the site header once started on a narrow one. Where the
+// recording has also been aligned to the record, it is the viewer's karaoke as
+// well — click a sentence to hear it, and the sentence being spoken is
+// highlighted and followed down the page (VIE-3/VIE-4). A sentence the alignment
+// could not place is shown as plain text, not playable.
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { loadMeta } from '../../store.js'
-import { formatDate, formatSpeakingTime } from '../../format.js'
+import { formatDate, formatDuration } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
+import YouTubePlayer from '../../components/YouTubePlayer.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import ShareButton from '../../components/ShareButton.vue'
@@ -158,6 +168,134 @@ function paragraphs(text) {
   return (text || '').split(/\n{2,}/).filter((p) => p.trim())
 }
 
+// --- the recording and its karaoke (BIZ-30) --------------------------------
+const hasVideos = computed(() => !!data.value?.videos?.length)
+const playerRef = ref(null)
+const sideEl = ref(null)
+const playerEngaged = ref(false)
+const playerPlaying = ref(false)
+// The sentence being spoken, as `<speech ord>-<sentence index>` — also the
+// suffix of its element id, so following it down the page is one lookup.
+const activeKey = ref(null)
+const activeOrd = computed(() =>
+  activeKey.value == null ? null : Number(activeKey.value.split('-')[0]))
+
+// A timed speech's sentences grouped back into its paragraphs, built once per
+// sitting rather than in the template (which re-renders on every playback tick).
+const sentenceParas = computed(() => {
+  const out = new Map()
+  for (const s of data.value?.transcript || []) {
+    if (!s.sentences?.length) continue
+    const paras = []
+    s.sentences.forEach((sent, i) => {
+      const row = { ...sent, key: `${s.ord}-${i}` }
+      const last = paras[paras.length - 1]
+      if (last && last.para === sent.para) last.rows.push(row)
+      else paras.push({ para: sent.para, rows: [row] })
+    })
+    out.set(s.ord, paras)
+  }
+  return out
+})
+// Every playable sentence in document order — which is also time order, the
+// alignment keeping the sentences' times non-decreasing across the sitting.
+const timedList = computed(() => {
+  const out = []
+  for (const s of data.value?.transcript || []) {
+    for (const p of sentenceParas.value.get(s.ord) || []) {
+      for (const r of p.rows) {
+        if (r.timeStart != null) {
+          out.push({ key: r.key, ord: s.ord, videoId: r.videoId,
+                     start: r.timeStart, end: r.timeEnd ?? r.timeStart })
+        }
+      }
+    }
+  }
+  return out
+})
+function firstTimed(s) {
+  return timedList.value.find((x) => x.ord === s.ord) || null
+}
+// Where the play button starts: the speech the address names, if it is timed
+// (the reader followed a link to that speech), else the top of the recording.
+const startAt = computed(() => {
+  if (targetOrd.value == null) return null
+  const x = timedList.value.find((y) => y.ord === targetOrd.value)
+  return x ? { videoId: x.videoId, t: x.start } : null
+})
+
+// A short pause between two sentences keeps the last one lit rather than
+// blinking the highlight off and on at every breath.
+const HOLD_S = 2
+function onTime({ videoId, t }) {
+  let key = null
+  for (const x of timedList.value) {
+    if (x.videoId !== videoId) continue
+    if (x.start > t) break
+    if (t < x.end + HOLD_S) key = x.key
+  }
+  if (key !== activeKey.value) {
+    activeKey.value = key
+    if (key && autoFollow) scrollToActive()
+  }
+}
+
+function playSentence(sent) {
+  if (sent.timeStart == null) return
+  autoFollow = true
+  activeKey.value = sent.key
+  playerRef.value?.seek(sent.videoId, sent.timeStart, true)
+}
+function playSpeech(s) {
+  const x = firstTimed(s)
+  if (!x) return
+  autoFollow = true
+  activeKey.value = x.key
+  playerRef.value?.seek(x.videoId, x.start, true)
+}
+
+// Karaoke follow, as the viewer does it: a smooth scroll fires scroll events of
+// its own, which must not read as the reader taking over — so they are ignored
+// for a moment after each programmatic scroll, and a real scroll pauses
+// following for a few seconds.
+let autoFollow = true
+let suppressScrollUntil = 0
+let followTimer = null
+// Centred in what is left of the window below the site header — and below the
+// player, where a narrow screen has it pinned over the top of the record.
+function scrollToActive() {
+  const el = document.getElementById('cs-' + activeKey.value)
+  if (!el) return
+  let top = headerH.value
+  if (sideEl.value && playerEngaged.value
+      && window.matchMedia('(max-width: 1099.98px)').matches) {
+    top = Math.max(top, sideEl.value.getBoundingClientRect().bottom)
+  }
+  const rect = el.getBoundingClientRect()
+  const room = window.innerHeight - top
+  const y = window.scrollY + rect.top - top - Math.max(0, (room - rect.height) / 2)
+  suppressScrollUntil = performance.now() + 900
+  const motion = !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  window.scrollTo({ top: Math.max(0, y), behavior: motion ? 'smooth' : 'auto' })
+}
+function onUserScroll() {
+  if (performance.now() < suppressScrollUntil) return
+  autoFollow = false
+  clearTimeout(followTimer)
+  followTimer = setTimeout(() => { autoFollow = true }, 4000)
+}
+
+// The docked player sits right under the site header — under what is *visible*
+// of it, measured as the page scrolls: its height moves with the width (the nav
+// wraps on a phone), and the header does not stay pinned past the first screen
+// (`#app` is one viewport tall, styles.css), so neither a fixed offset nor its
+// height would be right once the reader is down in the record.
+const headerH = ref(0)
+function measureHeader() {
+  const el = document.querySelector('.site-top')
+  headerH.value = el ? Math.max(0, Math.round(el.getBoundingClientRect().bottom)) : 0
+}
+
 // The line beside a speaker's name. A faction the shared table knows is drawn as
 // its chip instead (`factionColor` set); anything else in that column — a
 // guest's ministry, mostly — stays words here.
@@ -220,6 +358,7 @@ const showToc = computed(() => tocEntries.value.length > 1 && !filtered.value)
 let spyRaf = 0
 function updateActive() {
   spyRaf = 0
+  measureHeader()
   const els = rootEl.value ? rootEl.value.querySelectorAll('section.agenda') : []
   if (!els.length) { activeSection.value = null; return }
   let current = els[0].dataset.sectionOrd
@@ -229,7 +368,10 @@ function updateActive() {
   }
   activeSection.value = current
 }
-function onScroll() { if (!spyRaf) spyRaf = requestAnimationFrame(updateActive) }
+function onScroll() {
+  if (!spyRaf) spyRaf = requestAnimationFrame(updateActive)
+  onUserScroll()
+}
 
 function goToSection(ord) {
   const el = document.getElementById('sec-' + ord)
@@ -239,10 +381,16 @@ function goToSection(ord) {
   activeSection.value = String(ord)
 }
 
-onMounted(() => window.addEventListener('scroll', onScroll, { passive: true }))
+onMounted(() => {
+  window.addEventListener('scroll', onScroll, { passive: true })
+  window.addEventListener('resize', measureHeader, { passive: true })
+  measureHeader()
+})
 onUnmounted(() => {
   window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('resize', measureHeader)
   cancelAnimationFrame(spyRaf)
+  clearTimeout(followTimer)
 })
 
 let seq = 0
@@ -266,6 +414,9 @@ onMounted(async () => {
 })
 watch(() => props.meetingId, () => {
   speaker.value = ''; query.value = ''
+  // The player resets itself on a new recording, but one that is unmounted
+  // (a sitting with no video) cannot say so.
+  activeKey.value = null; playerEngaged.value = false; playerPlaying.value = false
   window.scrollTo({ top: 0 })
   load()
 })
@@ -328,22 +479,11 @@ watch(() => props.meetingId, () => {
         <span class="muted">({{ data.error }})</span>
       </p>
 
-      <div class="session-body">
+      <div class="session-body"
+           :class="{ 'has-player': hasVideos, engaged: playerEngaged,
+                     'player-leads': hasVideos && !data.transcript.length }"
+           :style="{ '--header-h': headerH + 'px' }">
         <div class="session-main">
-          <div v-if="data.videos && data.videos.length" class="vidrow">
-            <a v-for="v in data.videos" :key="v.videoId" class="card pad vid"
-               :href="v.url" target="_blank" rel="noopener">
-              <img v-if="v.thumbnail" :src="v.thumbnail" alt="" loading="lazy" />
-              <span class="vidmeta">
-                <strong>▶ {{ $t('committees.watch') }} ↗</strong>
-                <span class="small muted">
-                  <template v-if="v.continued">{{ $t('committees.videoPart') }} · </template>
-                  <template v-if="v.durationS">{{ formatSpeakingTime(v.durationS) }}</template>
-                </span>
-              </span>
-            </a>
-          </div>
-
           <!-- Who did the talking — the sitting day's toplist, asked of a record
                that has no timings. -->
           <section v-if="data.topSpeakers && data.topSpeakers.length"
@@ -476,7 +616,8 @@ watch(() => props.meetingId, () => {
             <ul v-if="sec.speeches.length" class="speeches">
               <li
                 v-for="s in sec.speeches" :key="s.ord" :id="'sp-' + s.ord"
-                class="speech" :class="{ targeted: targetOrd === s.ord }"
+                class="speech"
+                :class="{ targeted: targetOrd === s.ord, speaking: activeOrd === s.ord }"
               >
                 <div class="speech-row">
                   <div class="speech-main">
@@ -493,6 +634,15 @@ watch(() => props.meetingId, () => {
                     </span>
                   </div>
                   <div class="speech-actions">
+                    <!-- Play the recording from this speech (BIZ-30). -->
+                    <button v-if="sentenceParas.has(s.ord) && firstTimed(s)"
+                            type="button" class="permalink play-speech"
+                            :title="$t('committees.playFromHere')"
+                            :aria-label="$t('committees.playFromHere')"
+                            @click="playSpeech(s)">
+                      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"
+                           fill="currentColor"><path d="M8 5.5v13l11-6.5z" /></svg>
+                    </button>
                     <!-- `replace`: marking one speech after another should not
                          turn Back into a walk through them. -->
                     <RouterLink
@@ -511,7 +661,23 @@ watch(() => props.meetingId, () => {
                                  align="right" compact />
                   </div>
                 </div>
-                <div class="speech-body">
+                <!-- A timed speech is its sentences, each one a seek into the
+                     recording (VIE-3) and lit while it is spoken (VIE-4); an
+                     untimed one is the plain paragraphs it always was. -->
+                <div v-if="sentenceParas.has(s.ord)" class="speech-body">
+                  <p v-for="p in sentenceParas.get(s.ord)" :key="p.para" class="para">
+                    <template v-for="r in p.rows" :key="r.key">{{ r.sep }}<span
+                            v-if="r.timeStart != null" :id="'cs-' + r.key"
+                            class="sent" :class="{ active: activeKey === r.key }"
+                            role="button" tabindex="0"
+                            :title="formatDuration(r.timeStart)"
+                            @click="playSentence(r)"
+                            @keydown.enter.prevent="playSentence(r)"
+                            @keydown.space.prevent="playSentence(r)">{{ r.text }}</span><span
+                            v-else class="sent untimed">{{ r.text }}</span></template>
+                  </p>
+                </div>
+                <div v-else class="speech-body">
                   <p v-for="(para, i) in paragraphs(s.text)" :key="i" class="para">
                     {{ para }}
                   </p>
@@ -563,8 +729,20 @@ watch(() => props.meetingId, () => {
           </details>
         </div>
 
-        <aside v-if="showToc" class="session-toc">
-          <nav class="toc-inner" :aria-label="$t('sessions.agenda')">
+        <aside v-if="showToc || hasVideos" ref="sideEl" class="session-toc">
+          <div class="side-inner">
+          <!-- The recording (BIZ-30), above the outline so both stay in reach
+               while the record scrolls past. -->
+          <section v-if="hasVideos" class="side-player" :aria-label="$t('committees.videos')">
+            <YouTubePlayer ref="playerRef" :videos="data.videos" :start-at="startAt"
+                           :label="data.committeeName"
+                           @time="onTime" @engaged="playerEngaged = $event"
+                           @playing="playerPlaying = $event" />
+            <p v-if="data.timing" class="small muted sync-note">
+              {{ $t('committees.syncNote') }}
+            </p>
+          </section>
+          <nav v-if="showToc" class="toc-inner" :aria-label="$t('sessions.agenda')">
             <p class="toc-title">{{ $t('sessions.agenda') }}</p>
             <ol class="toc-list">
               <li v-for="(s, i) in tocEntries" :key="s.ord">
@@ -580,6 +758,7 @@ watch(() => props.meetingId, () => {
               </li>
             </ol>
           </nav>
+          </div>
         </aside>
       </div>
     </div>
@@ -602,20 +781,58 @@ watch(() => props.meetingId, () => {
     gap: var(--toc-gap);
     align-items: start;
   }
+  /* A player needs a column wide enough to watch in (BIZ-30). */
+  .session-body.has-player { --toc-w: 360px; }
   .session-toc { display: block; }
 }
 @media (min-width: 1650px) {
-  .session-body { margin-right: calc(-1 * (var(--toc-w) + var(--toc-gap))); }
+  .session-body:not(.has-player) { margin-right: calc(-1 * (var(--toc-w) + var(--toc-gap))); }
+}
+/* The wider column only fits in the right gutter on a wider screen. */
+@media (min-width: 1900px) {
+  .session-body.has-player { margin-right: calc(-1 * (var(--toc-w) + var(--toc-gap))); }
 }
 .session-toc { align-self: stretch; }
+/* The side column's content — player, then outline — sticks as one, so the
+   outline scrolls inside whatever height the player leaves it. */
+.side-inner {
+  position: sticky; top: calc(var(--header-h, 0px) + 1rem);
+  max-height: calc(100vh - var(--header-h, 0px) - 2rem);
+  display: flex; flex-direction: column; gap: .8rem;
+}
+.side-player { flex: none; }
+.sync-note { margin: .35rem 0 0; }
 .toc-inner {
-  position: sticky; top: 72px;
-  max-height: calc(100vh - 72px - 1rem);
+  flex: 0 1 auto; min-height: 0;
   overflow-y: auto; overscroll-behavior: contain;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: .85rem 1rem 1rem;
 }
+/* Narrow screens: no outline, and the player leads the page instead — pinned
+   under the site header once the reader has started it, so it stays in view
+   while the record scrolls beneath it (the viewer's mobile pane, VIE-4). Its
+   width is capped so a pinned player never takes more than ~40% of the height. */
+@media (max-width: 1099.98px) {
+  .session-body.has-player { display: flex; flex-direction: column; }
+  .session-body.has-player .session-toc { display: block; order: -1; margin-bottom: 1rem; }
+  .session-body.has-player .toc-inner { display: none; }
+  .session-body.has-player .side-inner { position: static; max-height: none; }
+  .session-body.has-player .side-player { width: 100%; max-width: calc(40vh * 16 / 9); }
+  .session-body.has-player.engaged:not(.player-leads) .session-toc {
+    position: sticky; top: var(--header-h, 0px); z-index: 10;
+    margin: 0 calc(-1 * var(--gutter)) 1rem; padding: .5rem var(--gutter);
+    background: var(--bg); box-shadow: 0 6px 8px -8px rgba(0, 0, 0, .35);
+  }
+  .session-body.has-player.engaged .sync-note { display: none; }
+}
+/* A sitting with a recording and no record to read beside it (BIZ-27): the
+   player is the page, so it leads the main column at a watchable size rather
+   than sitting in the side column next to an empty one. */
+.session-body.player-leads { display: flex; flex-direction: column; margin-right: 0; }
+.session-body.player-leads .session-toc { display: block; order: -1; margin-bottom: 1rem; }
+.session-body.player-leads .side-inner { position: static; max-height: none; }
+.session-body.player-leads .side-player { width: 100%; max-width: 760px; }
 .toc-title {
   margin: 0 0 .5rem; padding-bottom: .5rem; border-bottom: 1px solid var(--line);
   font-size: .72rem; font-weight: 700; letter-spacing: .06em;
@@ -690,14 +907,6 @@ watch(() => props.meetingId, () => {
 .filters { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: 1rem; }
 .filters .input { flex: 1 1 14rem; min-width: 0; }
 .filters .count { flex: 0 0 auto; }
-.vidrow { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
-.vid {
-  display: flex; gap: .6rem; align-items: center; text-decoration: none;
-  border: 1px solid var(--line); color: inherit;
-}
-.vid:hover { border-color: var(--accent); }
-.vid img { width: 8rem; height: auto; border-radius: .3rem; display: block; }
-.vidmeta { display: flex; flex-direction: column; gap: .1rem; }
 .empty-day { color: var(--ink-soft); text-align: center; }
 /* scroll-margin keeps a jumped-to section clear of the sticky site header. */
 .agenda { margin-bottom: 1rem; scroll-margin-top: 72px; }
@@ -735,6 +944,15 @@ watch(() => props.meetingId, () => {
 .speech-body { padding: 0 1rem .75rem calc(.7rem + 48px + .6rem); }
 .para { margin: 0 0 .6rem; line-height: 1.6; overflow-wrap: anywhere; }
 .para:last-child { margin-bottom: 0; }
+/* A timed sentence (BIZ-30): a seek into the recording, lit while it is spoken.
+   Inline, so the paragraph still reads as prose. */
+.sent { border-radius: 4px; transition: background .12s; }
+.sent[role="button"] { cursor: pointer; }
+.sent[role="button"]:hover { background: #f0eee8; }
+.sent[role="button"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.sent.active { background: var(--accent-soft); color: #5a121a; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.speech.speaking { border-color: var(--accent); }
+.play-speech { border: 0; background: transparent; cursor: pointer; padding: 0; }
 /* The speech the address names (BIZ-29). */
 .speech.targeted { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .speech.targeted .speech-row { background: var(--accent-soft); }
@@ -759,7 +977,4 @@ watch(() => props.meetingId, () => {
 .day-nav-date { font-size: .92rem; color: var(--ink); }
 .methodology { margin-top: 1.5rem; }
 .methodology summary { cursor: pointer; font-weight: 600; color: var(--ink-soft); font-size: .85rem; }
-@media (max-width: 720px) {
-  .vid img { width: 5.5rem; }
-}
 </style>

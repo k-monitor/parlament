@@ -422,3 +422,22 @@ class Paths:
 
     def committee_videos_file(self) -> Path:
         return self.processed / "committee-videos.json"
+
+    # --- committee sentence timing (Whisper on the recordings, BIZ-30) -------
+    # Cycle-less for the same reason as the recordings: only a sitting that has
+    # both a jegyzőkönyv and a video can be timed, and the channel decides which
+    # cycles those are. The Whisper words are cached per *video*, because a
+    # video is the unit that is transcribed — a sitting that overran into a
+    # second stream is two of them.
+
+    def committee_timing_file(self) -> Path:
+        return self.processed / "committee-timing.json"
+
+    def committee_whisper_cache(self, video_id: str) -> Path:
+        return self.data / "committees" / "whisper" / f"{video_id}.json"
+
+    def committee_audio_dir(self) -> Path:
+        """Scratch space for a recording's audio while it is transcribed. The
+        file is deleted as soon as its words are cached: the words are what a
+        re-run needs, and an hour of audio is 20 MB the disk does not."""
+        return self.data / "committees" / "audio"

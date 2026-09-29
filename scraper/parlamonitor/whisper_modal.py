@@ -98,3 +98,32 @@ def transcribe(misses, *, model: str, language: str):
             logger.warning("Modal transcription failed for %s (%s)", session, words)
             continue
         yield session, (words or [])
+
+
+def transcribe_audio(items, *, language: str):
+    """Yield ``(key, result)`` for each ``(key, audio_path)``, transcribing
+    already-downloaded audio files on Modal (BIZ-30); ``result`` is
+    ``{"words": [...], "durationS": float}``.
+
+    The committee recordings are on YouTube, whose media URLs are signed for the
+    IP that asked for them, so the container cannot fetch them itself as it does
+    a plenary HLS playlist; the host downloads the audio track and the bytes go
+    over instead. The files are read one at a time as ``.map`` asks for them,
+    so a batch never holds more than the recordings in flight in memory. A
+    failure on one recording is isolated exactly as in :func:`transcribe`."""
+    items = list(items)
+    if not items:
+        return
+    svc = _service()
+
+    def jobs():
+        for _key, path in items:
+            yield {"audio": Path(path).read_bytes(), "language": language}
+
+    logger.info("Modal Whisper: %d recording(s) dispatched", len(items))
+    for i, res in enumerate(svc.transcribe_audio.map(jobs(), return_exceptions=True)):
+        key = items[i][0]
+        if isinstance(res, BaseException):
+            logger.warning("Modal transcription failed for %s (%s)", key, res)
+            continue
+        yield key, (res or {})

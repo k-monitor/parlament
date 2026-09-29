@@ -115,6 +115,21 @@ x-nlp-env: &nlp-env
 x-timing-env: &timing-env
   PARLAMONITOR_TIMING_BACKEND: ${PARLAMONITOR_TIMING_BACKEND:-auto}
   PARLAMONITOR_WHISPER_MODAL_APP: ${PARLAMONITOR_WHISPER_MODAL_APP:-parlamonitor-whisper}
+  # Committee recordings are timed from their YouTube audio (BIZ-30), and YouTube
+  # bot-walls many VM / datacenter addresses ("Sign in to confirm you're not a
+  # bot"). A walled host stops asking for the block period (default 12h) and
+  # keeps aligning whatever words are already cached — including words made on
+  # another machine and copied into data/committees/whisper/. To fetch from here
+  # anyway, route the downloads around the wall with either:
+  #   PARLAMONITOR_YOUTUBE_PROXY=http://… | socks5://… | ssh   (ssh = the SSH
+  #     tunnel configured on the sync service below)
+  #   PARLAMONITOR_YOUTUBE_COOKIES_FILE=/host/path/cookies.txt  (a signed-in
+  #     session's Netscape cookies; mounted read-only on the sync service)
+  PARLAMONITOR_YOUTUBE_PROXY: ${PARLAMONITOR_YOUTUBE_PROXY:-}
+  PARLAMONITOR_YOUTUBE_BLOCK_HOURS: ${PARLAMONITOR_YOUTUBE_BLOCK_HOURS:-12}
+  # Fixed in-container path of the cookies file mounted below; the /dev/null
+  # placeholder mounted when none is configured is ignored.
+  PARLAMONITOR_YOUTUBE_COOKIES: /run/secrets/youtube_cookies
 
 # Bluesky announcements (§8.7). The sync pass posts when a sitting day becomes
 # FULLY processed (every speech has its transcript and its video window — the same
@@ -266,6 +281,9 @@ services:
       # not configured this defaults to /dev/null so compose stays happy and the
       # (never-read) mount is harmless.
       - ${PARLAMONITOR_SSH_KEY_FILE:-/dev/null}:/run/secrets/ssh_key:ro
+      # YouTube cookies for a bot-walled host (BIZ-30), read-only; same
+      # /dev/null default as the key above, which the scraper ignores.
+      - ${PARLAMONITOR_YOUTUBE_COOKIES_FILE:-/dev/null}:/run/secrets/youtube_cookies:ro
     # A hint for the modern compose provider; ./deploy.sh also orders init before
     # sync explicitly, so this works even where the condition is not honored.
     depends_on:

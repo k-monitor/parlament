@@ -3603,6 +3603,17 @@ this bill" is a question the corpus cannot answer at all.
   plain text in the speeches that moved, instead of being cut and highlighted in
   the wrong places.
 
+- **BIZ-34.** A host YouTube **bot-walls** ("Sign in to confirm you're not a
+  bot") is told apart from a failed download and **left alone**: the first
+  refusal ends that pass's downloads, and none is attempted for a block period
+  (12 hours by default), since each refused request deepens a verdict that is
+  about the address, not the video. Cached words are still aligned throughout,
+  so a walled server's sittings can be timed from words transcribed on another
+  machine and copied in; downloads can also be routed through a proxy (or the
+  scraper's own SSH tunnel) or a signed-in session's cookies. A walled host never
+  shows an error on the site — its sittings play without karaoke until words
+  arrive.
+
 > **Shipped 2026-09-21** for cycles 40–43 (the cycles the rest of the corpus is
 > richest for; the API serves 34–43 and the stage takes a `--cycle` like every
 > other). 167 bodies, 1 270 seats, 1 776 dated terms, 3 725 meetings and 18 875

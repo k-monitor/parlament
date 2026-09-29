@@ -95,6 +95,42 @@ def whisper_modal_app() -> str:
             or "parlamonitor-whisper").strip()
 
 
+# --- fetching committee recordings from YouTube (BIZ-30) --------------------
+# YouTube answers a host it has flagged — typically a VM or datacenter address —
+# with "Sign in to confirm you're not a bot" on every video, whatever the request
+# looks like. Only another egress or a signed-in session gets past it, so both are
+# knobs here; neither is needed on a host YouTube does not flag.
+
+def youtube_proxy() -> str | None:
+    """``PARLAMONITOR_YOUTUBE_PROXY``: a proxy URL for yt-dlp (``http://…``,
+    ``socks5://…``), or ``ssh`` to send the downloads through the scraper's own
+    SSH tunnel (``PARLAMONITOR_SSH_HOST`` …). Unset: YouTube is reached directly,
+    even when parlament.hu traffic is tunnelled — the tunnel exists for
+    parlament.hu, and nothing is routed through it that was not asked to be."""
+    raw = (os.environ.get("PARLAMONITOR_YOUTUBE_PROXY") or "").strip()
+    return raw or None
+
+
+def youtube_cookies() -> str | None:
+    """``PARLAMONITOR_YOUTUBE_COOKIES``: a Netscape-format cookies file of a
+    signed-in YouTube session, for a host YouTube bot-walls. yt-dlp rewrites the
+    file it is given, so it is handed a copy and the original is never touched."""
+    raw = (os.environ.get("PARLAMONITOR_YOUTUBE_COOKIES") or "").strip()
+    return raw or None
+
+
+def youtube_block_hours() -> float:
+    """How long to leave YouTube alone after it bot-walled this host
+    (``PARLAMONITOR_YOUTUBE_BLOCK_HOURS``, default 12). Each refused attempt
+    deepens the flag, so a walled host asks about once per period, not once per
+    sync pass per recording."""
+    try:
+        return max(0.0, float(os.environ.get("PARLAMONITOR_YOUTUBE_BLOCK_HOURS")
+                              or 12))
+    except ValueError:
+        return 12.0
+
+
 # --- iromány document files (DOC-1) ----------------------------------------
 # The irományok registry only ever held *links* to the document PDFs. Mirroring
 # the files themselves is what makes NLP over the actual document text possible

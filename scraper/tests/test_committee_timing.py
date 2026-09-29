@@ -296,7 +296,7 @@ def test_a_failed_download_is_reported_so_sync_tries_again(tmp_path, monkeypatch
     out = sync._sync_committee_timing(paths, state, force=False,
                                       backend="whisper-local")
     assert out["failed"] == 1
-    assert "committeeTiming" not in state          # not marked done: retried
+    assert "fp" not in state["committeeTiming"]    # not marked done: retried
 
     _cache(paths, "v1", _all_words(), 300.0)
     out = sync._sync_committee_timing(paths, state, force=False,
@@ -315,9 +315,9 @@ def test_modal_scope_keeps_older_cycles_off_the_gpu(tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr(timing, "download_audio",
                         lambda *a, **k: called.append(a) or None)
-    got, failed = timing.ensure_words(paths, [("v1", 43)], backend="whisper-modal",
-                                      model="large-v3-turbo", language="hu")
-    assert (got, failed, called) == ({}, [], [])
+    words = timing.ensure_words(paths, [("v1", 43)], backend="whisper-modal",
+                                model="large-v3-turbo", language="hu")
+    assert (words.got, words.failed, words.deferred, called) == ({}, [], [], [])
 
 
 def test_a_backend_that_fails_outright_fails_the_batch_not_the_stage(
@@ -344,3 +344,181 @@ def test_a_backend_that_fails_outright_fails_the_batch_not_the_stage(
     reg = timing.build_timing(paths, backend="whisper-modal", model="large-v3-turbo")
     assert reg["meta"]["failed"] == ["v1"] and reg["data"] == []
     assert not list(paths.committee_audio_dir().glob("*"))
+
+
+# --- YouTube walling the host ------------------------------------------------------
+
+BOT_WALL = ("ERROR: [youtube] LDAzOV-Di2s: Sign in to confirm you\u2019re not a bot. "
+            "Use --cookies-from-browser or --cookies for the authentication.")
+
+
+def _completed(stderr="", returncode=1, stdout=""):
+    import subprocess
+    return subprocess.CompletedProcess([], returncode, stdout.encode(),
+                                       stderr.encode())
+
+
+def test_the_bot_wall_is_raised_at_once_not_retried(tmp_path, monkeypatch):
+    calls = []
+
+    def run(cmd, **_kw):
+        calls.append(cmd)
+        return _completed(BOT_WALL)
+
+    monkeypatch.setattr(timing.subprocess, "run", run)
+    monkeypatch.setattr(timing, "_yt_dlp_cmd", lambda: ["yt-dlp"])
+    try:
+        timing.download_audio("LDAzOV-Di2s", tmp_path)
+    except timing.YouTubeBlocked as e:
+        assert "not a bot" in str(e)
+    else:
+        raise AssertionError("expected YouTubeBlocked")
+    assert len(calls) == 1
+
+
+def _two_sittings(tmp_path):
+    """Two recordings on two days, each with its own sitting."""
+    paths = _data_dir(tmp_path, videos=[_video("v1", "2026-06-10"),
+                                        _video("v2", "2026-06-11")])
+    reg = json.loads(paths.committee_minutes_file(43).read_text())
+    second = dict(reg["data"][0], meetingId="m2", cover={"date": "2026-06-11"},
+                  datetime="2026-06-11T07:00:00Z")
+    reg["data"].append(second)
+    paths.committee_minutes_file(43).write_text(json.dumps(reg, ensure_ascii=False))
+    return paths
+
+
+def test_a_bot_wall_stops_the_pass_and_is_remembered(tmp_path, monkeypatch):
+    paths = _two_sittings(tmp_path)
+    asked = []
+
+    def blocked(video_id, *_a, **_k):
+        asked.append(video_id)
+        raise timing.YouTubeBlocked(BOT_WALL)
+
+    monkeypatch.setattr(timing, "download_audio", blocked)
+    monkeypatch.setattr(whisper_align, "resolve_backend", lambda _b: "whisper-local")
+    reg = timing.build_timing(paths, backend="whisper-local", model="large-v3-turbo")
+    assert len(asked) == 1                       # the second one is not asked for
+    assert reg["meta"]["counts"]["deferred"] == 2
+    assert reg["meta"]["counts"]["failed"] == 0
+    block = timing.block_active(reg)
+    assert block and "not a bot" in block["error"]
+
+
+def test_while_walled_nothing_is_downloaded_but_cached_words_are_aligned(
+        tmp_path, monkeypatch):
+    paths = _two_sittings(tmp_path)
+    _cache(paths, "v1", _all_words(), 300.0)   # e.g. copied in from another machine
+    previous = {"meta": {"youtubeBlock": {"at": "2026-09-29T10:00:00+00:00",
+                                          "until": "2999-01-01T00:00:00+00:00",
+                                          "error": BOT_WALL}}, "data": []}
+    monkeypatch.setattr(timing, "download_audio",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked")))
+    monkeypatch.setattr(whisper_align, "resolve_backend", lambda _b: "whisper-local")
+    reg = timing.build_timing(paths, backend="whisper-local",
+                              model="large-v3-turbo", previous=previous)
+    assert [r["meetingId"] for r in reg["data"]] == ["m1"]
+    assert reg["meta"]["deferred"] == ["v2"]
+    assert timing.block_active(reg)             # carried until it expires
+
+
+def test_an_expired_block_lets_the_host_ask_again(tmp_path, monkeypatch):
+    paths = _data_dir(tmp_path)
+    previous = {"meta": {"youtubeBlock": {"at": "2026-01-01T00:00:00+00:00",
+                                          "until": "2026-01-01T12:00:00+00:00",
+                                          "error": BOT_WALL}}, "data": []}
+    asked = []
+    monkeypatch.setattr(timing, "download_audio",
+                        lambda v, *a, **k: asked.append(v) or None)
+    monkeypatch.setattr(whisper_align, "resolve_backend", lambda _b: "whisper-local")
+    reg = timing.build_timing(paths, backend="whisper-local",
+                              model="large-v3-turbo", previous=previous)
+    assert asked == ["v1"] and reg["meta"]["youtubeBlock"] is None
+
+
+def test_sync_waits_out_a_block_unless_words_arrive(tmp_path, monkeypatch):
+    paths = _data_dir(tmp_path)
+    monkeypatch.setattr(whisper_align, "resolve_backend", lambda _b: "whisper-local")
+
+    def blocked(*_a, **_k):
+        raise timing.YouTubeBlocked(BOT_WALL)
+
+    monkeypatch.setattr(timing, "download_audio", blocked)
+    state: dict = {}
+    first = sync._sync_committee_timing(paths, state, force=False,
+                                        backend="whisper-local")
+    assert first["deferred"] == 1
+    # Walled, nothing new: the next pass does not even run.
+    monkeypatch.setattr(timing, "build_timing",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
+    assert sync._sync_committee_timing(paths, state, force=False,
+                                       backend="whisper-local") is False
+
+
+def test_words_copied_in_during_a_block_are_aligned_on_the_next_pass(
+        tmp_path, monkeypatch):
+    paths = _data_dir(tmp_path)
+    monkeypatch.setattr(whisper_align, "resolve_backend", lambda _b: "whisper-local")
+
+    def blocked(*_a, **_k):
+        raise timing.YouTubeBlocked(BOT_WALL)
+
+    monkeypatch.setattr(timing, "download_audio", blocked)
+    state: dict = {}
+    sync._sync_committee_timing(paths, state, force=False, backend="whisper-local")
+    _cache(paths, "v1", _all_words(), 300.0)
+    out = sync._sync_committee_timing(paths, state, force=False,
+                                      backend="whisper-local")
+    assert out["aligned"] == 1 and out["deferred"] == 0
+    assert state["committeeTiming"].get("fp")
+
+
+def test_egress_hands_yt_dlp_a_private_cookie_copy_and_the_proxy(
+        tmp_path, monkeypatch):
+    jar = tmp_path / "cookies.txt"
+    jar.write_text("# Netscape HTTP Cookie File\n")
+    monkeypatch.setenv("PARLAMONITOR_YOUTUBE_COOKIES", str(jar))
+    monkeypatch.setenv("PARLAMONITOR_YOUTUBE_PROXY", "socks5://10.0.0.2:1080")
+    work = tmp_path / "audio"
+    with timing.youtube_egress(work) as args:
+        i = args.index("--cookies")
+        copy = args[i + 1]
+        assert copy != str(jar) and (work / "cookies.txt").exists()
+        assert args[args.index("--proxy") + 1] == "socks5://10.0.0.2:1080"
+    assert not (work / "cookies.txt").exists()
+    assert jar.exists()                          # the original is never touched
+
+
+def test_egress_can_reuse_the_scrapers_ssh_tunnel(tmp_path, monkeypatch):
+    from parlamonitor import ssh_proxy
+
+    class FakeTunnel:
+        started = closed = False
+
+        def start(self):
+            FakeTunnel.started = True
+
+        def requests_proxies(self):
+            return {"http": "http://127.0.0.1:4321", "https": "http://127.0.0.1:4321"}
+
+        def close(self):
+            FakeTunnel.closed = True
+
+    monkeypatch.setattr(ssh_proxy.SSHProxy, "from_config",
+                        classmethod(lambda cls, _c: FakeTunnel()))
+    monkeypatch.setenv("PARLAMONITOR_YOUTUBE_PROXY", "ssh")
+    monkeypatch.delenv("PARLAMONITOR_YOUTUBE_COOKIES", raising=False)
+    with timing.youtube_egress(tmp_path) as args:
+        assert args == ["--proxy", "http://127.0.0.1:4321"]
+        assert FakeTunnel.started
+    assert FakeTunnel.closed
+
+
+
+def test_the_compose_placeholder_for_no_cookies_is_ignored(tmp_path, monkeypatch):
+    """docker-compose mounts /dev/null when no cookies file is configured."""
+    monkeypatch.setenv("PARLAMONITOR_YOUTUBE_COOKIES", "/dev/null")
+    monkeypatch.delenv("PARLAMONITOR_YOUTUBE_PROXY", raising=False)
+    with timing.youtube_egress(tmp_path) as args:
+        assert args == []

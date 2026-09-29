@@ -618,6 +618,33 @@ so cycle 42's recordings need `PARLAMONITOR_MODAL_CYCLES=42,43` (or `all`) once.
 The channel starts in February 2024 (BIZ-23), so the whole backlog is a few
 dozen recordings.
 
+**When YouTube walls the host.** YouTube answers many VM and datacenter
+addresses with *"Sign in to confirm you're not a bot"* on every video — a
+verdict on the IP, like the parlament.hu CAPTCHA wall, and one that each refused
+attempt deepens. So the first refusal **ends the pass's downloads** (no retries,
+no moving on to the next video), is recorded in the timing file's
+`meta.youtubeBlock`, and nothing more is asked for
+`PARLAMONITOR_YOUTUBE_BLOCK_HOURS` (default 12). Meanwhile the stage keeps
+**aligning whatever words are already cached**, and sync re-runs it whenever the
+cache changes — which gives three ways to get a walled host's sittings timed:
+
+1. **Transcribe elsewhere and copy the words in** (no configuration): run
+   `committee-timing` on a machine YouTube does not wall, with the same data,
+   then copy its `committees/whisper/*.json` into the server's data dir. The
+   words are keyed by video id and model only, so they are valid anywhere; the
+   server's next sync pass aligns them against its own minutes.
+2. **Route the downloads through another egress**:
+   `PARLAMONITOR_YOUTUBE_PROXY=http://…`, `socks5://…`, or `ssh` to reuse the
+   scraper's SSH tunnel (`PARLAMONITOR_SSH_*`) — useful when that host is on an
+   address YouTube accepts.
+3. **Send a signed-in session's cookies**: `PARLAMONITOR_YOUTUBE_COOKIES` (in
+   the container, `PARLAMONITOR_YOUTUBE_COOKIES_FILE` in `.env` mounts it
+   read-only). yt-dlp gets a private copy, since it writes the jar back. Use a
+   throwaway account — YouTube can and does lock accounts used this way, and
+   the cookies expire.
+
+`--force` ignores a recorded block.
+
 **Measured 2026-09-29** on the two sittings that then had both records (the
 Törvényalkotási Bizottság on 09-10 and 09-14, 24 and 31 minutes of video): 78–79%
 of the minutes' tokens landed in solid matches, 412 of 455 sentences were

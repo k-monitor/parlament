@@ -66,6 +66,8 @@ import subprocess
 import sys
 import time
 import unicodedata
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -298,28 +300,96 @@ def _yt_dlp_cmd() -> list[str] | None:
     return None
 
 
+class YouTubeBlocked(RuntimeError):
+    """YouTube refused this host as a bot ("Sign in to confirm you're not a
+    bot") or rate-limited it. That is a verdict on the **address**, not on the
+    video: every other recording would be refused the same way, and each refused
+    attempt deepens the flag — so the pass stops asking rather than moving on to
+    the next one (the parlament.hu CAPTCHA wall teaches the same thing)."""
+
+
+# What yt-dlp prints when the refusal is about the host rather than the video.
+# The apostrophe is a curly one in the live message, hence the wildcard.
+_BOT_WALL_RE = re.compile(
+    r"confirm you.{1,3}re not a bot|sign in to confirm|rate-limited by youtube",
+    re.I)
+
+
+@contextmanager
+def youtube_egress(workdir: Path):
+    """The extra yt-dlp arguments that take a download past a bot wall, set up
+    for the duration of a batch and torn down after it (BIZ-30).
+
+    * ``PARLAMONITOR_YOUTUBE_PROXY`` — a proxy URL, or ``ssh`` for the scraper's
+      own SSH tunnel (the same ``PARLAMONITOR_SSH_*`` host parlament.hu can be
+      reached through; its local CONNECT proxy is one yt-dlp speaks too);
+    * ``PARLAMONITOR_YOUTUBE_COOKIES`` — a signed-in session's cookies file,
+      handed over as a private copy, because yt-dlp writes the jar back.
+
+    Neither is set by default, and a host YouTube does not flag needs neither."""
+    args: list[str] = []
+    tunnel = None
+    copy = workdir / "cookies.txt"
+    try:
+        cookies = config.youtube_cookies()
+        if cookies:
+            src = Path(cookies)
+            if src.is_file() and src.stat().st_size:
+                workdir.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, copy)
+                copy.chmod(0o600)
+                args += ["--cookies", str(copy)]
+            elif not src.exists():
+                logger.warning("PARLAMONITOR_YOUTUBE_COOKIES is %s, which does "
+                               "not exist — fetching without cookies", src)
+            # Otherwise it is the compose file's /dev/null placeholder (no
+            # cookies file configured on the host): nothing to say.
+        proxy = config.youtube_proxy()
+        if proxy and proxy.lower() == "ssh":
+            from ..ssh_proxy import SSHProxy
+            tunnel = SSHProxy.from_config(config.RuntimeConfig.from_env())
+            if tunnel is None:
+                logger.warning("PARLAMONITOR_YOUTUBE_PROXY=ssh, but no SSH tunnel "
+                               "is configured (PARLAMONITOR_SSH_HOST …) — fetching "
+                               "directly")
+            else:
+                tunnel.start()
+                args += ["--proxy", tunnel.requests_proxies()["https"]]
+        elif proxy:
+            args += ["--proxy", proxy]
+        yield args
+    finally:
+        if tunnel is not None:
+            tunnel.close()
+        copy.unlink(missing_ok=True)
+
+
 def download_audio(video_id: str, dest: Path, *, timeout: float = 3600.0,
-                   attempts: int = 3) -> Path | None:
+                   attempts: int = 3, extra_args: list[str] | None = None
+                   ) -> Path | None:
     """Download one recording's cheapest audio-only track into ``dest``.
 
     Returns the file, or None when there is nothing to fetch yet (a stream still
     live or still being processed) or the download failed — either way the
-    sitting simply waits for a later pass (SCR-5).
+    sitting simply waits for a later pass (SCR-5). Raises
+    :class:`YouTubeBlocked` when YouTube refuses the host itself.
 
     Retried a couple of times: YouTube now and then refuses a freshly signed
     media URL with a 403 that the very next extraction does not get (seen
     2026-09-29 on a video that downloaded a minute before and after), and a
-    whole sync pass is too long to wait out a coin toss."""
+    whole sync pass is too long to wait out a coin toss. The bot wall is never
+    retried — it is not a coin toss."""
     cmd = _yt_dlp_cmd()
     if cmd is None:
         logger.warning("Committee timing needs yt-dlp (on PATH or importable) "
                        "to fetch a recording's audio")
         return None
     dest.mkdir(parents=True, exist_ok=True)
-    cmd = cmd + ["-f", AUDIO_FORMAT, "--no-playlist", "--no-progress",
-                 "--no-warnings", "--match-filter", _LIVE_FILTER,
-                 "--no-simulate", "--print", "after_move:filepath",
-                 "-o", str(dest / f"{video_id}.%(ext)s"), _WATCH_URL % video_id]
+    cmd = cmd + list(extra_args or []) + [
+        "-f", AUDIO_FORMAT, "--no-playlist", "--no-progress",
+        "--no-warnings", "--match-filter", _LIVE_FILTER,
+        "--no-simulate", "--print", "after_move:filepath",
+        "-o", str(dest / f"{video_id}.%(ext)s"), _WATCH_URL % video_id]
     for attempt in range(1, attempts + 1):
         try:
             p = subprocess.run(cmd, capture_output=True, timeout=timeout)
@@ -331,7 +401,10 @@ def download_audio(video_id: str, dest: Path, *, timeout: float = 3600.0,
         path = Path(lines[-1]) if lines else None
         if p.returncode == 0 and path is not None and path.exists():
             return path
-        detail = p.stderr.decode("utf-8", "replace").strip()[:300]
+        stderr = p.stderr.decode("utf-8", "replace").strip()
+        detail = stderr[:300]
+        if _BOT_WALL_RE.search(stderr):
+            raise YouTubeBlocked(detail)
         if p.returncode == 0:
             # Exit 0 with nothing written is the live filter at work.
             logger.info("No audio for %s yet — still live or processing",
@@ -396,19 +469,37 @@ def _transcribe(resolved: str, batch: list[tuple[str, Path]], *, model: str,
     raise ValueError(f"unknown timing backend: {resolved!r}")
 
 
+@dataclass
+class Words:
+    """What :func:`ensure_words` could get.
+
+    ``got`` maps a video id to its ``{words, durationS}``. ``failed`` are misses
+    that were tried and produced nothing (a download or transcription error —
+    worth trying again next pass); ``deferred`` are misses **not tried** because
+    YouTube has walled this host, and ``blocked`` is its refusal when it came
+    on this pass."""
+    got: dict[str, dict] = field(default_factory=dict)
+    failed: list[str] = field(default_factory=list)
+    deferred: list[str] = field(default_factory=list)
+    blocked: str | None = None
+
+
 def ensure_words(paths: Paths, wanted: list[tuple[str, int | None]], *,
                  backend: str, model: str, language: str,
-                 force: bool = False) -> tuple[dict[str, dict], list[str]]:
-    """``({videoId: {words, durationS}}, failed)`` for the ``(videoId, cycle)``
-    pairs asked for, transcribing the cache misses.
+                 force: bool = False, download: bool = True) -> Words:
+    """The words of the ``(videoId, cycle)`` recordings asked for, transcribing
+    the cache misses (see :class:`Words`).
 
-    Cached recordings cost nothing and are always returned. A miss is sent to
-    the resolved backend — on Modal only when its sitting's cycle is inside
+    Cached recordings cost nothing and are always returned — including words
+    made on another machine and copied into the cache, which is how a host
+    YouTube walls gets its sittings timed at all. A miss is sent to the resolved
+    backend — on Modal only when its sitting's cycle is inside
     ``PARLAMONITOR_MODAL_CYCLES`` (the same spend guard the plenary obeys).
-    ``failed`` lists the misses that were due but produced no words (a download
-    or transcription error), so the caller knows the pass is incomplete."""
+    ``download=False`` fetches nothing (YouTube is known to be walling this
+    host) and reports every miss as deferred."""
     tag = whisper_align.method_tag(model)
-    out: dict[str, dict] = {}
+    res = Words()
+    out = res.got
     misses: list[tuple[str, int | None]] = []
     for video_id, cycle in wanted:
         if video_id in out:
@@ -424,7 +515,7 @@ def ensure_words(paths: Paths, wanted: list[tuple[str, int | None]], *,
         if misses:
             logger.info("No Whisper backend: %d committee recording(s) left "
                         "untimed", len(misses))
-        return out, []
+        return res
 
     if resolved == "whisper-modal":
         spec = config.modal_cycles()
@@ -439,18 +530,52 @@ def ensure_words(paths: Paths, wanted: list[tuple[str, int | None]], *,
                             len(skipped), spec, ", ".join(sorted(skipped)[:10]))
             misses = [(v, c) for v, c in misses if v not in skipped]
 
-    failed: list[str] = []
+    if misses and not download:
+        res.deferred = [v for v, _c in misses]
+        return res
+
+    failed = res.failed
     audio_dir = paths.committee_audio_dir()
-    for i in range(0, len(misses), _BATCH):
-        batch: list[tuple[str, Path]] = []
-        for video_id, _cycle in misses[i:i + _BATCH]:
-            path = download_audio(video_id, audio_dir)
+    with youtube_egress(audio_dir) as egress:
+        for i in range(0, len(misses), _BATCH):
+            if res.blocked:
+                break
+            _transcribe_batch(paths, res, misses[i:i + _BATCH], audio_dir,
+                              egress, resolved=resolved, model=model,
+                              language=language, tag=tag)
+    if res.blocked:
+        res.deferred = [v for v, _c in misses
+                        if v not in out and v not in failed]
+    return res
+
+
+def _transcribe_batch(paths: Paths, res: Words, chunk, audio_dir: Path,
+                      egress: list[str], *, resolved: str, model: str,
+                      language: str, tag: str) -> None:
+    """Download one batch of recordings, transcribe what arrived, cache the
+    words and delete the audio. Stops downloading at the first bot wall; what
+    was already downloaded is still transcribed."""
+    out, failed = res.got, res.failed
+    batch: list[tuple[str, Path]] = []
+    try:
+        for video_id, _cycle in chunk:
+            try:
+                path = download_audio(video_id, audio_dir, extra_args=egress)
+            except YouTubeBlocked as e:
+                res.blocked = str(e)
+                logger.warning(
+                    "YouTube refused this host as a bot (%s) — no more "
+                    "recordings are asked for this pass. Route around it with "
+                    "PARLAMONITOR_YOUTUBE_PROXY or PARLAMONITOR_YOUTUBE_COOKIES, "
+                    "or transcribe on another machine and copy "
+                    "committees/whisper/ over", e)
+                break
             if path is None:
                 failed.append(video_id)
             else:
                 batch.append((video_id, path))
         if not batch:
-            continue
+            return
         logger.info("Transcribing %d committee recording(s) with %s",
                     len(batch), resolved)
         got = set()
@@ -470,11 +595,10 @@ def ensure_words(paths: Paths, wanted: list[tuple[str, int | None]], *,
                            " — redeploy scraper/whisper_modal_app.py if it "
                            "predates transcribe_audio"
                            if resolved == "whisper-modal" else "")
-        finally:
-            for _video_id, path in batch:
-                path.unlink(missing_ok=True)
         failed.extend(v for v, _p in batch if v not in got)
-    return out, failed
+    finally:
+        for _video_id, path in batch:
+            path.unlink(missing_ok=True)
 
 
 # --- alignment ----------------------------------------------------------------
@@ -580,10 +704,25 @@ def build_timing(paths: Paths, *, backend: str | None = None,
     paired = [(g, candidates(g, by_key)) for g in groups]
     paired = [(g, c) for g, c in paired if c]
     wanted = [(v["videoId"], c[0].get("cycle")) for g, c in paired for v in g]
+    # While YouTube is walling this host, nothing is downloaded — but cached
+    # words (made here earlier, or on another machine and copied in) are still
+    # aligned, so the sittings they cover are timed all the same.
+    block = block_active(previous) if not force else None
+    if block:
+        logger.info("YouTube refused this host at %s; not asking again until %s "
+                    "(PARLAMONITOR_YOUTUBE_BLOCK_HOURS) — aligning cached "
+                    "recordings only", block.get("at"), block.get("until"))
     # A cached recording costs a file read; only a miss is downloaded and
     # transcribed, so this is cheap on every pass after the first.
-    got, failed = ensure_words(paths, wanted, backend=backend, model=model,
-                               language=language, force=force)
+    words = ensure_words(paths, wanted, backend=backend, model=model,
+                         language=language, force=force, download=not block)
+    got, failed = words.got, words.failed
+    if words.blocked:
+        now = datetime.now(timezone.utc)
+        block = {"at": now.isoformat(timespec="seconds"),
+                 "until": (now + timedelta(hours=config.youtube_block_hours()))
+                 .isoformat(timespec="seconds"),
+                 "error": words.blocked}
 
     # A group with several candidate sittings (a committee that met twice on
     # one day) goes to the one its recording actually aligns with.
@@ -613,7 +752,8 @@ def build_timing(paths: Paths, *, backend: str | None = None,
         mid: row for mid, row in held.items()
         if mid in waiting and mid not in by_meeting}
     counts = {"sittings": 0, "reused": 0, "aligned": 0, "untrusted": 0,
-              "failed": len(failed), "sentences": 0, "timed": 0}
+              "failed": len(failed), "deferred": len(words.deferred),
+              "sentences": 0, "timed": 0}
     for mid, (rec, group) in by_meeting.items():
         group.sort(key=lambda v: (bool(v.get("continued")),
                                   v.get("publishedAt") or "", v["videoId"]))
@@ -652,16 +792,34 @@ def build_timing(paths: Paths, *, backend: str | None = None,
     rows = sorted(data.values(), key=lambda r: (r.get("heldOn") or "",
                                                 r["meetingId"]), reverse=True)
     logger.info("Committee timing: %d sitting(s) timed (%d aligned, %d reused, "
-                "%d untrusted, %d recording(s) failed) — %d of %d sentences "
-                "placed", counts["sittings"], counts["aligned"], counts["reused"],
-                counts["untrusted"], counts["failed"], counts["timed"],
+                "%d untrusted, %d recording(s) failed, %d waiting on YouTube) — "
+                "%d of %d sentences placed", counts["sittings"],
+                counts["aligned"], counts["reused"], counts["untrusted"],
+                counts["failed"], counts["deferred"], counts["timed"],
                 counts["sentences"])
     return {
         "meta": {"source": SOURCE, "method": METHOD, "model": tag,
                  "alignVersion": ALIGN_VERSION, "scrapedAt": _now_iso(),
-                 "count": len(rows), "counts": counts, "failed": failed},
+                 "count": len(rows), "counts": counts, "failed": failed,
+                 "deferred": words.deferred,
+                 # Set while YouTube is walling this host (see block_active);
+                 # cleared by the first pass after it that can ask again.
+                 "youtubeBlock": block or None},
         "data": rows,
     }
+
+
+def block_active(registry: dict | None) -> dict | None:
+    """The YouTube bot wall a previous pass recorded, while it still stands —
+    ``{at, until, error}`` — or None once ``until`` has passed (or never set)."""
+    block = ((registry or {}).get("meta") or {}).get("youtubeBlock")
+    if not block or not block.get("until"):
+        return None
+    try:
+        until = datetime.fromisoformat(block["until"])
+    except (TypeError, ValueError):
+        return None
+    return block if until > datetime.now(timezone.utc) else None
 
 
 def load_previous(paths: Paths) -> dict | None:

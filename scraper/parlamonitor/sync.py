@@ -80,6 +80,7 @@ from .committees.minutes_scrape import (fetch_minutes, meetings_with_minutes,
 from .committees.videos import (fetch_videos, save_videos,
                                 load_previous as load_videos_file)
 from .committees.timing import (ALIGN_VERSION as TIMING_ALIGN_VERSION,
+                                block_active as timing_block_active,
                                 build_timing, save_timing,
                                 load_previous as load_timing_file)
 from .votes.scrape import fetch_votes, save_votes
@@ -598,11 +599,14 @@ def _sync_committee_videos(http, paths: Paths, state: dict, *,
 
 def _committee_timing_inputs(paths: Paths) -> str:
     """Signature of everything the committee timing reads: the recordings
-    registry, every cycle's parsed minutes, the model and the alignment
-    version. Taken from file stats, so an idle pass decides "nothing to time"
-    without opening the (large) minutes files."""
+    registry, every cycle's parsed minutes, the cached Whisper words, the model
+    and the alignment version. Taken from file stats, so an idle pass decides
+    "nothing to time" without opening the (large) minutes files. The words are
+    in it so that recordings transcribed on another machine and copied into the
+    cache get aligned on the next pass, even while YouTube is walling this one."""
     files = [paths.committee_videos_file(),
-             *sorted(paths.processed.glob("committee-minutes-*.json"))]
+             *sorted(paths.processed.glob("committee-minutes-*.json")),
+             *sorted(paths.committee_whisper_cache("_").parent.glob("*.json"))]
     sig = [[f.name, *(_stat(f) or [])] for f in files]
     payload = [TIMING_ALIGN_VERSION, whisper_model(), sig]
     return hashlib.sha256(json.dumps(payload).encode("utf-8")).hexdigest()[:16]
@@ -621,21 +625,34 @@ def _sync_committee_timing(paths: Paths, state: dict, *, force: bool,
     """Time any newly pairable committee sitting against its recording (BIZ-30).
 
     Last of the committee stages, because it needs both of the records they
-    produce. Skipped outright while its inputs are unchanged. The signature is
-    only recorded after a pass that left nothing behind, so a recording whose
-    download or transcription failed is tried again next time rather than
-    waiting for some unrelated change to the inputs."""
+    produce. Skipped outright while its inputs are unchanged. The "done"
+    signature is only recorded after a pass that left nothing behind, so a
+    recording whose download or transcription failed is tried again next time.
+
+    The one exception is YouTube walling this host: a pass is then only worth
+    running when an input moved (new minutes, or words copied in from another
+    machine) — asking YouTube again before the block period is up would only
+    deepen the flag, and ``build_timing`` does not ask."""
     fp = _committee_timing_inputs(paths)
-    if not force and (state.get("committeeTiming") or {}).get("fp") == fp:
+    held = state.get("committeeTiming") or {}
+    if not force and held.get("fp") == fp:
+        return False
+    previous = load_timing_file(paths)
+    if not force and held.get("attemptFp") == fp and timing_block_active(previous):
         return False
     registry = build_timing(paths, backend=backend, force=force,
-                            previous=load_timing_file(paths))
+                            previous=previous)
     counts = registry["meta"]["counts"]
     save_timing(paths, registry)
-    if not counts["failed"]:
-        state["committeeTiming"] = {"fp": fp, "count": registry["meta"]["count"],
-                                    "at": _now()}
-    return {k: counts[k] for k in ("sittings", "aligned", "failed", "timed")}
+    # After the pass: what it transcribed is in the cache now, and is part of
+    # the inputs the next pass compares against.
+    fp = _committee_timing_inputs(paths)
+    entry = {"attemptFp": fp, "count": registry["meta"]["count"], "at": _now()}
+    if not counts["failed"] and not counts["deferred"]:
+        entry["fp"] = fp
+    state["committeeTiming"] = entry
+    return {k: counts[k] for k in ("sittings", "aligned", "failed", "deferred",
+                                   "timed")}
 
 
 def _sync_representatives(felicitas: FelicitasClient, paths: Paths, cycle: int,

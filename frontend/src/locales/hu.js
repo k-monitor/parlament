@@ -112,17 +112,19 @@ export default {
       },
       interjections: {
         name: 'Közbeszólások',
-        text: 'alkalommal szólt közbe {name} mások felszólalása közben — senki sem többször.',
+        text: 'alkalommal szólt közbe mások felszólalása közben {name} — mindenki másnál többször.',
         link: 'Közbeszólások hálója',
       },
       blindSpots: {
         name: 'Vakfoltok',
-        text: 'település neve egyszer sem hangzott el az ülésteremben: a {total} magyar település {pct}-a.',
+        text: 'település neve még egyszer sem hangzott el az ülésteremben: ez a {total} magyarországi település {pct}-a.',
         link: 'Az említetlen települések térképe',
       },
       topTopic: {
         name: 'Leggyakoribb téma',
-        text: 'jutott a felszólalások szakpolitikai tartalmából a leggyakoribb témára: {topic}.',
+        // A százalék mindig „százalékot”-ként olvasandó, így a rag a számhoz tapad.
+        valueSuffix: '-ot',
+        text: 'tett ki a felszólalások szakpolitikai tartalmából a leggyakoribb téma: {topic}.',
         link: 'Témák elemzése',
       },
       factionShare: {

@@ -163,6 +163,9 @@ const scopeLabel = computed(() => {
   return c ? t('cycle.scope', { cycle: c }) : t('cycle.scopeAll')
 })
 const show = (v) => (typeof v === 'function' ? v() : v)
+// A case ending the language glues onto the number (hu "15%-ot"), since the
+// number stands on its own line above the sentence that continues it.
+const suffix = (id) => (te(`home.facts.${id}.valueSuffix`) ? t(`home.facts.${id}.valueSuffix`) : '')
 </script>
 
 <template>
@@ -181,7 +184,7 @@ const show = (v) => (typeof v === 'function' ? v() : v)
       <p v-else-if="!facts.length" class="soft">{{ $t('home.facts.empty') }}</p>
       <Transition v-else name="facts-fade" mode="out-in">
         <div v-if="fact" :key="fact.id" class="fact">
-          <p class="fact__value">{{ show(fact.value) }}</p>
+          <p class="fact__value">{{ show(fact.value) }}{{ suffix(fact.id) }}</p>
           <i18n-t :keypath="`home.facts.${fact.id}.text`" tag="p" class="fact__text" scope="global">
             <template v-for="(slot, name) in fact.slots" :key="name" #[name]>
               <router-link v-if="slot.to" :to="slot.to" class="fact__ref">{{ show(slot.text) }}</router-link>

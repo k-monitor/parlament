@@ -186,6 +186,9 @@ export const api = {
   bill: (id) => get(`/bills/${id}`),
   billFacets: (params) => get('/bills/facets', params),
   billTopicMix: (period) => get('/bills/topics', { period }),
+  // What the House decided between two dates — the week digest's list (HOME-4).
+  billDecisions: (dateFrom, dateTo) =>
+    get('/bills/decisions', { date_from: dateFrom, date_to: dateTo }),
   questionsSankey: (period, includeType = true, expandOther = false) =>
     get('/bills/questions/sankey',
         { period, include_type: includeType, expand_other: expandOther }),

@@ -111,6 +111,72 @@ def test_the_week_words_come_from_the_transcripts(client, today):
     assert "költségvetés" in words and "fejlesztés" in words
 
 
+def test_the_speakers_carry_the_office_they_spoke_in(conn, client, today):
+    today(date(2026, 5, 13))
+    conn.execute("UPDATE speech SET speaker_office = 'pénzügyminiszter' "
+                 "WHERE person_id = 'k001'")
+    conn.commit()
+    offices = {s["person_id"]: s["office"] for s in _week(client)["top_speakers"]}
+    # A minister tops a question day by office; an MP speaking as an MP has none.
+    assert offices == {"k001": "pénzügyminiszter", "n002": None}
+
+
+def test_the_words_say_whether_they_were_scored_or_only_counted(conn, client, today):
+    today(date(2026, 5, 13))
+    # With no document frequencies to score against, the week's words are only
+    # its most frequent ones, and the response says so rather than passing them
+    # off as distinctive.
+    conn.execute("DELETE FROM word_doc_total")
+    conn.commit()
+    body = _week(client)
+    assert body["words_measure"] == "frequency"
+    assert body["words"]                        # still served; the panel decides
+
+
+def test_the_words_are_tfidf_scored_where_the_cycle_has_frequencies(client, today):
+    today(date(2026, 5, 13))
+    assert _week(client)["words_measure"] == "tfidf"
+
+
+def test_this_weeks_days_before_today_are_listed_but_not_summed(conn, client, today):
+    # Monday's sitting has been held, the order paper (which shows only the days
+    # still ahead) has dropped it, and last week is still the week reported.
+    conn.executemany(
+        "INSERT INTO session (id, period_number, sitting, date, status) VALUES (?,?,?,?,?)",
+        [("43002", 43, 2, "2026-05-11", "scheduled"),
+         ("43003", 43, 3, "2026-05-13", "scheduled")])     # today: the order paper's
+    conn.commit()
+    today(date(2026, 5, 13))
+    body = _week(client)
+    assert body["week"]["start"] == "2026-05-04"
+    assert [(d["id"], d["status"], d["speeches"]) for d in body["this_week"]] == [
+        ("43002", "scheduled", 0)]
+    assert [d["id"] for d in body["days"]] == ["43001"]
+    assert body["totals"]["days"] == 1
+
+
+def test_on_a_monday_this_week_has_nothing_behind_it_yet(conn, client, today):
+    conn.execute("INSERT INTO session (id, period_number, sitting, date, status) "
+                 "VALUES ('43002', 43, 2, '2026-05-11', 'scheduled')")
+    conn.commit()
+    today(date(2026, 5, 11))
+    assert _week(client)["this_week"] == []
+
+
+def test_this_week_is_listed_even_with_no_earlier_week_to_report(conn, client, today):
+    # The sitting on Saturday 05-09 is this week's, so there is no last week; a
+    # Sunday reader still sees that the House sat.
+    today(date(2026, 5, 10))
+    body = _week(client)
+    assert body["week"] is None
+    assert [d["id"] for d in body["this_week"]] == ["43001"]
+
+
+def test_an_explicit_date_has_no_this_week(client, today):
+    today(date(2026, 5, 13))
+    assert _week(client, date="2026-05-06")["this_week"] == []
+
+
 @pytest.mark.parametrize("bad", ["2026-5-6", "tegnap", "2026-02-30"])
 def test_a_malformed_date_is_rejected(client, bad):
     assert client.get("/api/v1/proceedings/week", params={"date": bad}).status_code == 422

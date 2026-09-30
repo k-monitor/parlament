@@ -827,45 +827,37 @@ def sitting_week(day: Optional[str] = Query(
 
     Cycle-less, like the order paper: "last week" is a date, not a cycle. The
     speakers and the words count statistics-eligible speech only (STAT-1), exactly
-    like a sitting day's own toplist and word cloud; the words are scored by TF·IDF
+    like a sitting day's own toplist and word cloud; each speaker carries the
+    `office` they spoke in that week, if any. The words are scored by TF·IDF
     against the cycle's other sitting days, the day cloud's own measure applied to
-    the week's pooled counts."""
+    the week's pooled counts; `words_measure` says `frequency` instead when the DB
+    holds no document frequencies to score them against.
+
+    `this_week` lists the current week's days before today (never summed into the
+    totals), since the order paper shows only the days still ahead and a sitting
+    held on Monday would otherwise be nowhere on the home page until Sunday. It
+    is empty for an explicit `date`."""
     today = _hu_today()
     try:
         start = _week_start(db, day, today)
     except ValueError:
         raise HTTPException(422, "Invalid date")
-    empty = {"week": None, "days": [], "top_speakers": [], "words": [],
-             "totals": {"days": 0, "speeches": 0, "seconds": 0, "agenda_items": 0}}
+    # This week's days already behind us. The order paper on the same page shows
+    # only the days still ahead (NR-5), so without these a sitting held on Monday
+    # would be on the home page nowhere until the week was over. Listed, not
+    # summed: the totals, speakers and words stay the reported week's own.
+    this_monday = today - timedelta(days=today.weekday())
+    this_week = ([] if day or today == this_monday else
+                 _week_days(db, this_monday, today - timedelta(days=1), today))
     if start is None:
-        return empty
+        return {"week": None, "days": [], "top_speakers": [], "words": [],
+                "words_measure": None, "this_week": this_week,
+                "totals": {"days": 0, "speeches": 0, "seconds": 0, "agenda_items": 0}}
     end = start + timedelta(days=6)
-    last_monday = today - timedelta(days=today.weekday() + 7)
+    last_monday = this_monday - timedelta(days=7)
 
     def compute():
-        status_col = ("COALESCE(s.status, 'published')" if _has_session_status(db)
-                      else "'published'")
-        rows = db.execute(
-            f"""SELECT s.id, s.period_number, s.sitting, s.date, {status_col} AS status,
-                       (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id) AS speeches,
-                       (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id
-                         AND sp.has_text=1) AS speeches_with_text,
-                       (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id
-                         AND sp.video_start IS NOT NULL) AS speeches_with_video,
-                       (SELECT COALESCE(SUM(sp.duration), 0) FROM speech sp
-                         WHERE sp.session_id=s.id) AS seconds,
-                       (SELECT COUNT(*) FROM agenda_item ai
-                         WHERE ai.session_id=s.id) AS agenda_items
-                FROM session s
-                WHERE substr(s.date, 1, 10) BETWEEN :start AND :end
-                      {period_and(None, "s.period_number")}
-                ORDER BY s.date, s.sitting""",
-            {"start": start.isoformat(), "end": end.isoformat()}).fetchall()
-        days = [{**dict(r),
-                 "processing": processing_state(
-                     r["status"], r["date"], r["speeches"], r["speeches_with_text"],
-                     r["speeches_with_video"], today=today)}
-                for r in rows]
+        days = _week_days(db, start, end, today)
         ids = [d["id"] for d in days if d["speeches"]]
         ph = ",".join("?" * len(ids))
         speakers = db.execute(
@@ -880,6 +872,7 @@ def sitting_week(day: Optional[str] = Query(
                 GROUP BY sp.person_id
                 ORDER BY seconds DESC, speeches DESC, p.label, sp.person_id
                 LIMIT ?""", (*ids, _WEEK_TOP_SPEAKERS)).fetchall() if ids else []
+        offices = _week_offices(db, ids, [r["person_id"] for r in speakers])
 
         # The week's words: the days' term counts pooled, then scored like one
         # long sitting day against the rest of the cycle.
@@ -894,8 +887,13 @@ def sitting_week(day: Optional[str] = Query(
         period = max((d["period_number"] for d in days
                       if d["period_number"] is not None), default=None)
         df, n_docs = _doc_freqs(db, period, candidates)
+        # Without the cycle's document frequencies there is nothing to call a word
+        # *distinctive* against, and the raw counts that stand in for the score are
+        # the House's everyday vocabulary. Said so, so the panel does not present
+        # them under a heading they do not earn.
+        measure = ("tfidf" if n_docs and df else "frequency") if tf else None
         scores = (tfidf_scores({w: tf[w] for w in candidates}, df, n_docs)
-                  if n_docs and df else {w: float(tf[w]) for w in candidates})
+                  if measure == "tfidf" else {w: float(tf[w]) for w in candidates})
         top = sorted(candidates, key=lambda w: (-scores[w], w))[:_WEEK_WORDS]
 
         return {
@@ -911,16 +909,79 @@ def sitting_week(day: Optional[str] = Query(
                  "photo_uri": r["photo_uri"],
                  "faction": ({"label": r["faction_label"], "color": r["faction_color"]}
                              if r["faction_label"] else None),
+                 "office": offices.get(r["person_id"]),
                  "speeches": r["speeches"], "seconds": r["seconds"]}
                 for r in speakers],
             "words": [{"text": w, "count": tf[w], "kind": kinds.get(w, "term")}
                       for w in top],
+            "words_measure": measure,
         }
 
     # Keyed by today as well as the week: the `processing` badge ages out of its
     # window (SIT-2), and "last week" is itself a statement about today.
-    return cached_aggregate("proceedings_week", (start.isoformat(), today.isoformat()),
-                            compute)
+    return {**cached_aggregate("proceedings_week",
+                               (start.isoformat(), today.isoformat()), compute),
+            "this_week": this_week}
+
+
+def _week_days(db: sqlite3.Connection, start: date, end: date, today: date) -> list[dict]:
+    """The sitting days dated ``start``..``end`` (inclusive), whatever their
+    publication state, each with the same `status` / `processing` pair as the
+    sittings list (SIT-2) and its speech count and length."""
+    status_col = ("COALESCE(s.status, 'published')" if _has_session_status(db)
+                  else "'published'")
+    rows = db.execute(
+        f"""SELECT s.id, s.period_number, s.sitting, s.date, {status_col} AS status,
+                   (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id) AS speeches,
+                   (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id
+                     AND sp.has_text=1) AS speeches_with_text,
+                   (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id
+                     AND sp.video_start IS NOT NULL) AS speeches_with_video,
+                   (SELECT COALESCE(SUM(sp.duration), 0) FROM speech sp
+                     WHERE sp.session_id=s.id) AS seconds,
+                   (SELECT COUNT(*) FROM agenda_item ai
+                     WHERE ai.session_id=s.id) AS agenda_items
+            FROM session s
+            WHERE substr(s.date, 1, 10) BETWEEN :start AND :end
+                  {period_and(None, "s.period_number")}
+            ORDER BY s.date, s.sitting""",
+        {"start": start.isoformat(), "end": end.isoformat()}).fetchall()
+    return [{**dict(r),
+             "processing": processing_state(
+                 r["status"], r["date"], r["speeches"], r["speeches_with_text"],
+                 r["speeches_with_video"], today=today)}
+            for r in rows]
+
+
+def _week_offices(db: sqlite3.Connection, session_ids: list, person_ids: list) -> dict:
+    """The office each speaker held while speaking in these sittings — the one
+    they spoke longest in, where they spoke in one at all.
+
+    It is what explains a week's toplist: a minister or state secretary answering
+    the interpellations and questions of a Monday tops it by office, not by
+    choice, and the list should say so. Read off the speeches themselves
+    (`speech.speaker_office`), so it is the office of that week, not today's."""
+    if not session_ids or not person_ids:
+        return {}
+    sph = ",".join("?" * len(session_ids))
+    pph = ",".join("?" * len(person_ids))
+    try:
+        rows = db.execute(
+            f"""SELECT sp.person_id, sp.speaker_office AS office,
+                       SUM(COALESCE(sp.duration, 0)) AS seconds
+                FROM speech sp
+                WHERE sp.session_id IN ({sph}) AND sp.person_id IN ({pph})
+                      AND sp.procedural = 0
+                      AND sp.speaker_office IS NOT NULL AND sp.speaker_office <> ''
+                GROUP BY sp.person_id, sp.speaker_office
+                ORDER BY sp.person_id, seconds DESC, office""",
+            (*session_ids, *person_ids)).fetchall()
+    except sqlite3.OperationalError:
+        return {}                         # a DB built before the column existed
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r["person_id"], r["office"])
+    return out
 
 
 # ---------------------------------------------------------------------------

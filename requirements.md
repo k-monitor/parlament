@@ -777,6 +777,26 @@ scope), and *what is the House doing* (last week, then the coming sitting).
   legutóbbi ülésnapok"), so a recess never reads as an empty week. It stands
   above the coming sitting (NR-5): first what the House has done, then what it
   is about to do.
+  Volume alone ("36 szavazás") says nothing about *what was decided*, so the
+  panel also lists the week's **decisions**, one per iromány: the laws passed or
+  voted down, resolutions, elections, immunity and disciplinary cases, each with
+  its outcome and, where one vote decided it, that vote's tally. An iromány
+  refused onto the agenda is reported as that, never as "voted down"; an
+  election that went both ways says how many votes went each way. The kinds are
+  **tabs** (laws first), so a heavy week costs one list's height rather than
+  five; the interpellation answers the House voted on are the last tab, headed
+  by why they are there at all — it votes on one only when the MP who asked
+  rejected it. Beside them stand the week's
+  votes where a faction **split** — the Assembly's own "frakcióval szemben"
+  count, never a per-MP claim (§6B), and only from three MPs up, since one or
+  two off the line is a mis-press as often as a stance. Each top speaker carries
+  the **office** they spoke in that week, because a minister answering Monday's
+  questions tops the list by office. The distinctive words are shown only when
+  they were actually scored as distinctive; raw frequency is the House's
+  everyday vocabulary and is not presented under that heading. And the current
+  week's days **before today** are listed (not summed) at the foot of the panel:
+  the order paper shows only the days still ahead, so without them a sitting
+  held on Monday would be nowhere on the home page until the week was over.
 
 > **✅ realized.** `views/HomeView.vue` composes `HomeTrendCard`, `HomeFactsCard`,
 > `HomeFigureCard`, `LastWeekPanel` and `UpcomingSitting`; the three feature cards
@@ -791,6 +811,17 @@ scope), and *what is the House doing* (last week, then the coming sitting).
 > non-procedural speech (STAT-1), and scores the week's pooled word counts by the
 > day cloud's TF·IDF; the vote count comes from `/votes` (adopted + rejected, so
 > quorum calls are not counted as decisions) and only with that module on.
+> The same endpoint carries each speaker's `office` (the `speech.speaker_office`
+> they spoke longest in), `words_measure` (`tfidf` / `frequency`, the panel
+> hiding the latter) and `this_week` (this week's days before today, empty for an
+> explicit `date`). The decisions are `GET /bills/decisions?date_from&date_to`
+> (bills module, ≤ 31 days), read off `bill_vote` because a law's final vote
+> names only the document it was cast on in `vote_subject`; a vote is decisive
+> by its upstream wording (`önálló indítvány …`, `mentelmi jog …`,
+> `…interpellációs választ…`, `…tiszteletdíjának csökkentését…`, and
+> `…tárgysorozat…` as the separate agenda stage), stable since cycle 41, and its
+> outcome is its `result`. The split votes are `/votes?sort=crossvoting_desc`
+> over the week, votes module only. The day cards are `WeekDayCards.vue`.
 
 ---
 

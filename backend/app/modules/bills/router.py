@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,8 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ... import parlacap
 from ... import portfolios as portfolio_map
 from ...analytics import search_analytics
-from ...db import (get_db, like_contains, period_in_scope, period_key,
-                   period_list, period_sql)
+from ...db import (get_db, like_contains, period_and, period_in_scope,
+                   period_key, period_list, period_sql)
 from ...media import per_speech_clip
 from ...query_cache import cached_aggregate
 from ...vote_stats import (NO_ATTENDANCE, NO_CROSSVOTING, attendance_for,
@@ -976,6 +977,144 @@ def questions_list(
         "responder": responders.get(bid),
     } for bid in page_ids if (r := rows.get(bid))]
     return {"total": total, "limit": limit, "offset": offset, "bills": bills}
+
+
+# ---------------------------------------------------------------------------
+# What the House decided in a date range: the home page's week digest (HOME-4)
+# ---------------------------------------------------------------------------
+
+# A digest, not a search: a sitting week, or at most a month of them.
+_DECISIONS_MAX_DAYS = 31
+
+# How an iromány's own votes are told apart from the procedural votes on the way
+# to them (amendments, urgency, departures from the standing orders): by the vote's
+# own wording (`oka`, kept as `bill_vote.subject`). That wording has been stable
+# since cycle 41; before it the House labelled its votes differently
+# ("Határozathozatal módosítókról", or not at all), so an older week reports no
+# decisions rather than a guess at them. The outcome is always read off `result`,
+# never off the wording — the two disagree on at least one vote.
+_DECISIVE_PREFIXES = ("önálló indítvány ",   # the final vote (or one of its parts)
+                      "mentelmi jog ")        # immunity waived / kept
+_DECISIVE_PHRASES = ("interpellációs választ",          # see below
+                     "tiszteletdíjának csökkentését")    # a disciplinary fine upheld
+# Taking a motion onto the agenda (or refusing to) decides only that stage: it is
+# reported as its own decision, since "not even debated" is not "voted down".
+_AGENDA_PHRASE = "tárgysorozat"
+# When part of a law needs a two-thirds majority its final vote is split in two
+# ("…minősített / egyszerű többséget igénylő része…"). Both halves are one decision,
+# and the tally reported is the first, the qualified part.
+_PART_PHRASE = "többséget igénylő része"
+_DECIDED = ("Elfogadva", "Elutasítva")      # a quorum failure decides nothing
+
+# Grouped by what was decided, in the order the digest lists them.
+_DECISION_CATEGORIES = ("law", "resolution", "personnel", "immunity",
+                        "discipline", "interpellation")
+
+
+def _decisive_stage(subject: Optional[str]) -> Optional[str]:
+    """``"final"`` for a vote that settles the iromány itself, ``"agenda"`` for one
+    that settles whether the House takes it up, None for a procedural vote."""
+    s = (subject or "").strip().lower()
+    if _AGENDA_PHRASE in s:
+        return "agenda"
+    if s.startswith(_DECISIVE_PREFIXES) or any(p in s for p in _DECISIVE_PHRASES):
+        return "final"
+    return None
+
+
+def _decision_category(main_type: Optional[str], type_: Optional[str]) -> str:
+    t = (type_ or "").lower()
+    if t == "mentelmi":
+        return "immunity"
+    if "fegyelmi" in t:
+        return "discipline"
+    return {"T": "law", "S": "personnel", "I": "interpellation"}.get(
+        main_type or "", "resolution")      # H, P, B, V, Ü: resolutions and the like
+
+
+@router.get("/decisions")
+def bill_decisions(
+    date_from: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """What the House decided between two dates (inclusive): one entry per iromány
+    whose own vote fell in the range — the laws it passed or voted down, its
+    resolutions, elections, immunity cases, disciplinary cases, and the
+    interpellation answers it voted on.
+
+    Built for the home page's week digest (HOME-4), where "36 votes" says nothing
+    about what was decided. Read off the bill's own vote tally (`bill_vote`), which
+    links every vote to its iromány — the votes' own subject links do not for a
+    law, whose final vote names only the document it was cast on.
+
+    Each entry carries `outcome` — `adopted`, `rejected`, or `mixed` when one
+    iromány took several decisive votes that went both ways (an election, one vote
+    per nominee) — with the counts behind it, and a `tally` when a single vote
+    decided it. An interpellation answer is voted on only when the MP who asked
+    rejected it, so every `interpellation` entry is one of those. Cycle-less, like
+    the week itself: the range is a date span, not a cycle."""
+    try:
+        start, end = date.fromisoformat(date_from), date.fromisoformat(date_to)
+    except ValueError:
+        raise HTTPException(422, "Invalid date")
+    if end < start or (end - start).days >= _DECISIONS_MAX_DAYS:
+        raise HTTPException(
+            422, f"The range must be 1 to {_DECISIONS_MAX_DAYS} days, in order")
+
+    def compute():
+        sql = """SELECT bv.bill_id, bv.vote_date, bv.subject, bv.yes, bv.no,
+                        bv.abstain, bv.result, {vote_ref} AS vote_ref,
+                        b.bill_number, b.number_sort, b.title, b.type,
+                        b.main_type, b.status
+                 FROM bill_vote bv JOIN bill b ON b.id = bv.bill_id
+                 WHERE substr(bv.vote_date, 1, 10) BETWEEN ? AND ?{scope}
+                 ORDER BY bv.vote_date, bv.ord"""
+        scope = period_and(None, "b.period_number")
+        args = (date_from, date_to)
+        try:
+            rows = db.execute(sql.format(
+                vote_ref="(SELECT v.id FROM vote v WHERE v.id = bv.vote_id)",
+                scope=scope), args).fetchall()
+        except sqlite3.OperationalError:
+            # A DB without the Votes module's tables: the tallies stay, unlinked.
+            rows = db.execute(sql.format(vote_ref="NULL", scope=scope), args).fetchall()
+
+        groups: dict[tuple, list] = {}
+        for r in rows:
+            stage = _decisive_stage(r["subject"])
+            if stage and r["result"] in _DECIDED:
+                groups.setdefault((r["bill_id"], stage), []).append(r)
+
+        decisions = []
+        for (bill_id, stage), votes in groups.items():
+            b = votes[0]
+            adopted = sum(v["result"] == "Elfogadva" for v in votes)
+            outcome = ("adopted" if adopted == len(votes)
+                       else "rejected" if adopted == 0 else "mixed")
+            parts = all(_PART_PHRASE in (v["subject"] or "") for v in votes)
+            first = votes[0]
+            tally = ({"yes": first["yes"], "no": first["no"],
+                      "abstain": first["abstain"], "vote_ref": first["vote_ref"]}
+                     if outcome != "mixed" and (len(votes) == 1 or parts) else None)
+            decisions.append({
+                "bill_id": bill_id, "bill_number": b["bill_number"],
+                "title": b["title"], "type": b["type"],
+                "category": _decision_category(b["main_type"], b["type"]),
+                "stage": stage, "outcome": outcome,
+                "date": (votes[-1]["vote_date"] or "")[:10],
+                "votes": len(votes), "adopted": adopted,
+                "rejected": len(votes) - adopted,
+                "tally": tally, "status": b["status"],
+                "_sort": b["number_sort"] or 0,
+            })
+        decisions.sort(key=lambda d: (_DECISION_CATEGORIES.index(d["category"]),
+                                      d["date"], d["_sort"], d["bill_number"] or ""))
+        for d in decisions:
+            del d["_sort"]
+        return {"date_from": date_from, "date_to": date_to, "decisions": decisions}
+
+    return cached_aggregate("bill_decisions", (date_from, date_to), compute)
 
 
 def _rows(db: sqlite3.Connection, sql: str, bill_id: str) -> list[dict]:

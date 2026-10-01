@@ -45,6 +45,9 @@ politeness/transport knobs come from the environment or flags, never hard-coded
 
     # The Aktuális page: the next sitting's order paper (napirend), parsed
     python -m parlamonitor aktualis ./data
+
+    # Asset declarations filed in the EVNYR system (vagyonnyilatkozat-pub)
+    python -m parlamonitor asset-declarations ./data
 """
 
 from __future__ import annotations
@@ -78,6 +81,8 @@ from .committees.videos import (fetch_videos, save_videos,
                                 load_previous as load_videos_file)
 from .committees.timing import (build_timing, save_timing,
                                 load_previous as load_timing_file)
+from .declarations.scrape import (fetch_declarations, save_declarations,
+                                  load_previous as load_declarations_file)
 from .documents.scrape import fetch_documents, load_registry
 from .officeholders.scrape import fetch_office_holders, save_office_holders
 from .votes.scrape import fetch_votes, save_votes
@@ -493,6 +498,41 @@ def cmd_aktualis(args) -> None:
                        **registry["meta"]})
 
 
+def cmd_asset_declarations(args) -> None:
+    """Read the EVNYR asset-declaration system's daily snapshot (REP-18).
+
+    Cycle-less: the snapshot is every public declaration the system holds, MPs
+    and non-MP officials alike. A hand run reads every declaration page it needs
+    in one go; `sync` paces the same work over several passes."""
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    http = HttpClient(RuntimeConfig.from_env(
+        sleep=args.sleep, retry_count=args.retry_count, proxy=args.proxy,
+        captcha_retries=args.captcha_retries, ssh_host=args.ssh_host,
+        ssh_port=args.ssh_port, ssh_user=args.ssh_user, ssh_key=args.ssh_key,
+        ssh_known_hosts=args.ssh_known_hosts))
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            previous = load_declarations_file(paths)
+            registry = fetch_declarations(http, previous=previous, force=args.force,
+                                          page_limit=args.page_limit)
+            # An empty snapshot is never written over a non-empty one: it would
+            # only teach the loader to forget every declaration it holds (cf. the
+            # office-holder stage).
+            if registry["data"] or not (previous or {}).get("data"):
+                save_declarations(paths, registry)
+            else:
+                logger.warning("EVNYR snapshot lists no declarations; the %d on "
+                               "file are kept", len(previous["data"]))
+    finally:
+        http.close()
+
+    _write_log(paths, {"command": "asset-declarations",
+                       "ranAt": datetime.now(timezone.utc).isoformat(
+                           timespec="seconds"),
+                       **registry["meta"]})
+
+
 def _cmd_bills_archive(args, paths: Paths) -> None:
     """``bills --archive``: cycle 35 off the static 1994-98 site, which is the
     only place those irományok exist (the Felicitas API returns none)."""
@@ -719,6 +759,7 @@ def cmd_sync(args) -> None:
                 skip_advocates=args.skip_advocates,
                 skip_office_holders=args.skip_officeholders,
                 skip_aktualis=args.skip_aktualis,
+                skip_asset_declarations=args.skip_asset_declarations,
                 documents=args.documents,
                 documents_compression=args.documents_compression,
                 documents_max_mb=args.documents_max_mb,
@@ -919,6 +960,21 @@ def build_parser() -> argparse.ArgumentParser:
                          "its slug is the one already on file")
     sp.set_defaults(func=cmd_aktualis)
 
+    sp = sub.add_parser("asset-declarations",
+                        help="read the EVNYR asset-declaration system "
+                             "(vagyonnyilatkozat-pub.parlament.hu): every public "
+                             "declaration from its daily CSV, plus each one's PDF "
+                             "link")
+    _common(sp, cycle_required=False)
+    sp.add_argument("--force", action="store_true",
+                    help="re-download the snapshot and re-read every "
+                         "declaration page, even when nothing changed")
+    sp.add_argument("--page-limit", type=int, default=None,
+                    help="read at most this many declaration pages (for the "
+                         "PDF links); the rest wait for the next run "
+                         "(default: no limit)")
+    sp.set_defaults(func=cmd_asset_declarations)
+
     sp = sub.add_parser("bills", help="scrape the cycle's irományok (all document types)")
     _common(sp)
     sp.add_argument("--main-types", default=None,
@@ -1059,6 +1115,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="skip the office-holder (tisztségviselők) refresh")
     sp.add_argument("--skip-aktualis", action="store_true",
                     help="skip the Aktuális page / napirend pass")
+    sp.add_argument("--skip-asset-declarations", action="store_true",
+                    help="skip the EVNYR asset-declaration snapshot check")
     _documents_opts(sp)
     # Only `sync` is paced: a hand-run `documents` mirrors the cycle in one go
     # (that is what it is for), while a poll every half hour must not spend the

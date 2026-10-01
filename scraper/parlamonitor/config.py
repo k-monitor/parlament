@@ -387,6 +387,14 @@ class Paths:
     def aktualis_file(self) -> Path:
         return self.processed / "aktualis.json"
 
+    # --- asset declarations from the EVNYR system (REP-18) -------------------
+    # One cycle-less file, rewritten whole on every read: the system's daily
+    # snapshot is the complete list of public declarations, MPs and non-MP
+    # officials alike, and it names no person id to key a per-cycle file by.
+
+    def asset_declarations_file(self) -> Path:
+        return self.processed / "asset-declarations.json"
+
     # --- bills -------------------------------------------------------------
 
     def bills_file(self, cycle: int) -> Path:

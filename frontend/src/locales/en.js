@@ -848,10 +848,17 @@ export default {
     education: 'Highest education', email: 'Email', website: 'Website', committees: 'Committee memberships',
     factionHistory: 'Faction history', wikipedia: 'Wikipedia', kmonitor: 'K-Monitor', cv: 'CV',
     assetDeclarations: 'Asset declarations',
-    assetDeclarationsNote: 'The representative\'s asset declarations as published on parlament.hu; every entry links to the original PDF. The date is when the declared assets were held — the point in time the declaration describes. The list covers every cycle, regardless of the selected one.',
+    assetDeclarationsNote: 'Asset declarations as the National Assembly publishes them; every entry links to the original. For the PDFs published on the parlament.hu profile page, the date is when the declared assets were held, the point in time the declaration describes. For declarations filed in the electronic declaration system from 2026, the date is when the declaration was finalised, and their public contents are shown too, from the system\'s daily data file, as the declarant filed them. The list covers every cycle, regardless of the selected one.',
     assetDeclarationDate: 'assets as of {date}',
     assetDeclarationMissing: 'No published document',
     assetDeclarationDeadline: 'filing deadline: {date}',
+    // EVNYR declarations (REP-18): titled by their type, dated by finalisation.
+    declarationTitle: '{type} declaration',
+    declarationTitleUntyped: 'Asset declaration',
+    declarationTypes: { nyito: 'Opening', eves: 'Annual', zaro: 'Closing' },
+    declarationFinalized: 'finalised {date}',
+    declarationContents: 'Contents of the declaration',
+    declarationSource: 'Source: the National Assembly\'s electronic asset-declaration system, daily data file of {date}. The data is shown as the declarant filed it, unchanged: amounts are neither added up nor converted.',
     // Remuneration (REP-17). THE FIGURE IS OFFICIAL: parlament.hu publishes it
     // monthly. The statute only explains it — divided by the base it yields the
     // rate and the section. The page never says "earns this much": this is the
@@ -954,6 +961,60 @@ export default {
     noVotes: 'No recorded roll-call votes.', viewVote: 'View vote', allVotes: 'View all votes',
   },
   // Comparison (REP-15): speakers side by side, spec-sheet style.
+  // The contents of an EVNYR asset declaration (REP-18), section by section in
+  // the order of the House's own form. Block keys are upstream's paths with the
+  // dots made underscores (message keys cannot hold dots). The values are always
+  // shown as filed, in Hungarian.
+  declaration: {
+    sections: {
+      realEstate: 'Real estate', movables: 'High-value movable property', claims: 'Claims and savings',
+      debts: 'Debts', gifts: 'Protocol gifts', otherNotes: 'Other remarks',
+      income: 'Income declaration', interests: 'Economic interests',
+      unknown: 'Other data',
+    },
+    blocks: {
+      ingatlanok: 'Real estate',
+      nagyErtekuIngosagok_szemelygepjarmuvek: 'Cars',
+      nagyErtekuIngosagok_tehergepjarmuvek: 'Lorries and buses',
+      nagyErtekuIngosagok_motorkerekparok: 'Motorcycles',
+      nagyErtekuIngosagok_viziLegiJarmuvek: 'Boats and aircraft',
+      nagyErtekuIngosagok_vedettMualkotasok: 'Protected works of art',
+      nagyErtekuIngosagok_vedettGyujtemenyek: 'Protected collections',
+      nagyErtekuIngosagok_egyebIngosagok: 'Other high-value movables',
+      kovetelesek_ertekpapirok: 'Securities and investments',
+      kovetelesek_szamlakovetelesek: 'Bank accounts and deposits',
+      kovetelesek_keszpenz: 'Cash',
+      kovetelesek_szerzodesesKovetelesek: 'Contractual claims',
+      tartozasok_koztartozasok: 'Public debts',
+      tartozasok_hitelintezetiTartozasok: 'Debts to credit institutions',
+      tartozasok_maganszemelyiTartozasok: 'Debts to private persons',
+      protokollAjandekok: 'Protocol gifts',
+      egyebKozlendok: 'Other remarks',
+      jovedelemnyilatkozat_korabbiFoglalkozasok: 'Occupations and posts in the previous three years',
+      jovedelemnyilatkozat_jelenlegiTevekenysegek: 'Current income-earning activities',
+      gazdasagiErdekeltseg_tagsagok: 'Memberships and posts in organisations',
+      gazdasagiErdekeltseg_tarsasagiErdekeltsegek: 'Interests in companies',
+      gazdasagiErdekeltseg_egyebErdekek: 'Other interests',
+      gazdasagiErdekeltseg_nyilatkozattetelHelye: 'Place of declaration',
+    },
+    fields: {
+      telepules: 'Settlement', teruletNagysag: 'Plot area', muvelesiAg: 'Land use',
+      epuletJelleg: 'Building type', alapterulet: 'Floor area', jogiJelleg: 'Legal type',
+      jogallas: 'Legal status', tulajdoniHanyad: 'Ownership share', szerzesJogcime: 'Acquired by',
+      jogviszonyKezdete: 'Acquired on', szerzesEllenerteke: 'Consideration paid',
+      jarmuJellege: 'Kind', jarmuTipusa: 'Make and model', szerzesIdeje: 'Acquired on',
+      megnevezes: 'Description', isin: 'ISIN', nevErtek: 'Value',
+      atvaltasiArfolyam: 'Exchange rate', swiftBic: 'SWIFT/BIC', osszeg: 'Amount',
+      szerzodesIdeje: 'Contract date', jelleg: 'Kind', ajandekozoNeve: 'Given by',
+      reszesultDijazasban: 'Was paid', reszesulDijazasban: 'Is paid',
+      haviJovedelem: 'Average monthly income', kifizetoSzemelye: 'Paid by',
+      szervezetNeve: 'Organisation', tagsag: 'Membership or post', tarsasagNeve: 'Company',
+      erdekeltsegFormaja: 'Form of interest', tulajdoniArany: 'Ownership share',
+      leiras: 'Description',
+    },
+    yes: 'yes', no: 'no',
+    empty: 'The public part of this declaration contains no data.',
+  },
   compare: {
     title: 'Compare speakers',
     intro: 'Up to {max} speakers side by side, the same figure on every row.',

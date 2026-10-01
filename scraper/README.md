@@ -23,6 +23,7 @@ kept only as reference material; nothing here imports it at runtime.
 | `processed/committee-timing.json` | `parlamonitor.committees.timing` | **sentence timings** for every committee sitting that has both a parsed jegyzőkönyv and a recording (BIZ-30): each speech cut into sentences (paragraph, character offsets, text) and each sentence's `videoId`/`timeStart`/`timeEnd` in that video's own seconds, from Whisper run on the recording and aligned to the minutes. Cycle-less and rewritten whole. The Whisper words are cached per video under `committees/whisper/<videoId>.json`, so a recording is transcribed once. See [Committee sentence timing](#committee-sentence-timing-biz-30). |
 | `documents/<cycle>/` | `parlamonitor.documents` | **optional** mirror of the iromány document *files* themselves — the extracted text (`text/<docid>.txt.xz`), the source PDF (`pdf/<docid>.pdf`), or both, plus an `index.json` manifest. **Off by default**; see [Document files](#document-files-doc-1). |
 | `processed/aktualis.json` | `parlamonitor.aktualis` | the **Aktuális** page: the documents it links (napirend, ülésterv, submission deadlines, legislative programme) and the **order paper for the sitting that is coming**, parsed out of the napirend PDF into days, timetables and agenda items — plus the House Committee's next meeting. The one source on the site for what the House is *about to* do; see [The Aktuális page](#the-aktuális-page-nr-1). |
+| `processed/asset-declarations.json` | `parlamonitor.declarations` | every public **asset declaration** in the House's electronic declaration system (EVNYR, [`vagyonnyilatkozat-pub.parlament.hu`](https://vagyonnyilatkozat-pub.parlament.hu)), where declarations have been filed since 2026: per declaration the filer's name and post, its type and finalisation time, its **contents** (properties, vehicles, savings, debts, income, interests) and links to its page and PDF. Cycle-less and rewritten whole. It names no person id; the loader links declarations to people. See [Asset declarations](#asset-declarations-evnyr-rep-18). |
 | `logs/ingest-<ts>.json` | both | per-run ingestion log (run time, sittings added, errors, backend). |
 
 Each speech's speaker carries a `personID` (`kepviseloId`) that joins directly
@@ -195,6 +196,10 @@ python -m parlamonitor bills --cycle 43 ./data
 # sitting that is coming. Cycle-less, one HTML request unless the House has
 # published a new napirend since the last run.
 python -m parlamonitor aktualis ./data
+
+# Asset declarations filed in the EVNYR system: its daily CSV + one page per new
+# declaration (for the PDF link). Cycle-less; --page-limit paces the page reads.
+python -m parlamonitor asset-declarations ./data
 
 # …except 1994-98, which the API has none of — see below
 python -m parlamonitor bills --cycle 35 --archive ./data
@@ -735,6 +740,45 @@ slug means the PDF is not fetched again (`--force` overrides). Text extraction
 needs `pdftotext` (poppler-utils); without it the page's own findings are still
 written and the agenda records why it is empty (SCR-6).
 
+### Asset declarations (EVNYR, REP-18)
+
+Since 2026 asset declarations are filed in the House's **electronic declaration
+system** (*Elektronikus Vagyonnyilatkozati Rendszer*), published at
+[`vagyonnyilatkozat-pub.parlament.hu`](https://vagyonnyilatkozat-pub.parlament.hu),
+instead of as one PDF per filing on the MP's adatlap (which the representatives
+stage still reads, REP-13). They cover MPs and the non-MP ministers and state
+secretaries who file under the same rules.
+
+**Where the data comes from.** The site is client-rendered and its search sits
+behind a proof-of-work challenge (ALTCHA), so it is not scraped. It does not need
+to be: the home page offers a **daily CSV of every public declaration**, explicitly
+for free reuse ("A fájlt szabadon feldolgozhatja"). The file is regenerated at
+01:00 under a date-stamped name
+(`/media/napi/csv-snapshot/vagyonnyilatkozatok_napi_adatok_2026-10-01_01-00.csv`),
+so its URL is read off the home page, never built. The CSV has everything except
+the PDF. The PDF's file name carries a date and a name slug no field supplies,
+so it is read off the declaration's own server-rendered page
+(`/nyilatkozat/<id>`), one request per declaration.
+
+**The CSV's shape is the trap.** A declaration is a header plus about twenty
+independent lists, and the export **zips the lists side by side**. Row *i*
+repeats the header and carries the *i*-th entry of every list, so a declaration
+with seven properties and one car is seven rows, with the car in row 0 next to
+the first property and unrelated to it. Columns are named by their path
+(`kovetelesek.ertekpapirok.isin`); `declarations/evnyr.py` groups rows by id and
+reads each list down its own columns. A path with lists beneath it
+(`gazdasagiErdekeltseg`) is a section, so its direct column
+(`…nyilatkozattetelHelye`) is a single value. Values are kept as filed: amounts
+are free text upstream ("Aktuális érték: 211448,29 EUR (77083474 HUF)").
+
+**Cost.** An idle check is one HTML request, and the CSV is fetched only when
+the home page names a new one. A declaration's PDF link is carried over while
+the declaration is unchanged (same finalisation/modification time). A page that
+names no PDF is asked again only on the next snapshot. `--page-limit` caps how
+many pages one run reads (`sync` uses 60). The rest are written with
+`pdfUrl: null` (their page link is always there) and read by the next run.
+An empty snapshot is never written over a non-empty one.
+
 ### The 1994-98 irományok (`bills --archive`)
 
 The Felicitas `iromany` API knows nothing about the **35th cycle**: the query that
@@ -853,6 +897,12 @@ python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
   after the sitting was never published at all as far as the site is concerned.
   One HTML request unless the House has issued a new order paper, and the file is
   rewritten only when something actually changed.
+- **Asset declarations (EVNYR):** the home page is checked at most every 3 hours
+  (the snapshot changes daily), and every pass while declaration pages are still
+  unread, at most 60 per pass (`--skip-asset-declarations` opts out). The
+  snapshot last read is kept in `sync-state.json`, so a new day's snapshot with
+  the same contents is neither rewritten (that would make the loader copy the DB
+  to reload it) nor downloaded again.
 
 An idle poll is a handful of requests and writes nothing. Last-seen signatures
 live in `data/sync-state.json`; the run prints a one-line JSON summary of what
@@ -907,6 +957,10 @@ parlamonitor/
                        Committee's next meeting
     nr.py              the napirend (order paper) PDF → days, timetables, items
     scrape.py          fetch + parse + write → aktualis.json
+  declarations/
+    evnyr.py           the EVNYR site: snapshot URL, the zipped CSV → declarations,
+                       a declaration page → its PDF
+    scrape.py          fetch + parse + write → asset-declarations.json
   cli.py               workflow orchestration (stages, lockfile, ingest log)
 whisper_modal_app.py   the Modal app deployed for the GPU backend
 check_whisper_cache.py which copied whisper-<session>.json caches are usable

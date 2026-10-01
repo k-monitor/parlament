@@ -386,7 +386,8 @@ def test_profile_lists_asset_declarations_and_cv(client):
     due but never published keeps its (unlinked) row, since that absence is the
     fact a reader is looking for."""
     d = client.get("/api/v1/representatives/k001").json()
-    decls = d["asset_declarations"]
+    # The adatlap's entries; the EVNYR ones listed among them are REP-18's.
+    decls = [x for x in d["asset_declarations"] if x.get("source") != "evnyr"]
     assert [x["assetDate"] for x in decls] == ["2026-05-09", "2025-12-31"]
     assert decls[0]["url"].endswith("/vagynyil/2026/k001_j0260509k.pdf")
     assert decls[1]["url"] is None and decls[1]["deadline"] == "2026-01-31"
@@ -394,7 +395,7 @@ def test_profile_lists_asset_declarations_and_cv(client):
     # The declarations are biography, not statistics: selecting a cycle must not
     # trim the series (§4A applies to the stats, not to this).
     scoped = client.get("/api/v1/representatives/k001?period=43").json()
-    assert scoped["asset_declarations"] == decls
+    assert scoped["asset_declarations"] == d["asset_declarations"]
     # An MP with neither is served an empty list and a null link, never an error.
     other = client.get("/api/v1/representatives/n002").json()
     assert other["asset_declarations"] == [] and other["cv_url"] is None

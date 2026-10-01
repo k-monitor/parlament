@@ -17,11 +17,12 @@ import ShareButton from '../../components/ShareButton.vue'
 import EmbedButton from '../../components/EmbedButton.vue'
 import { compareRoute } from '../../lib/compareUrl.js'
 import { signsOf } from '../../lib/zodiac.js'
-import { REMUNERATION_ENABLED } from '../../features.js'
+import { REMUNERATION_ENABLED, ASSET_DECLARATION_DETAILS_ENABLED } from '../../features.js'
+import AssetDeclarationContent from './AssetDeclarationContent.vue'
 import { usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ id: String })
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 
 // First day of the earliest cycle in scope, so the activity board always starts
 // there (null under "all cycles" → the board starts at the MP's first active day).
@@ -109,8 +110,20 @@ function shown(list, key) {
   return expanded[key] ? list : list.slice(0, COLLAPSE_LIMIT)
 }
 
-// Asset declarations (REP-13) come with the profile, already newest first.
+// Asset declarations (REP-13) come with the profile, already newest first: the
+// adatlap's PDFs and, since 2026, the ones filed in the House's electronic system
+// (REP-18, `source: 'evnyr'`), which carry their contents too.
 const declarations = computed(() => profile.value?.asset_declarations || [])
+const isEvnyr = (d) => d.source === 'evnyr'
+// "Nyitó" / "Éves" / "Záró" -> a message key; an unknown type is shown as filed.
+function declarationTitle(d) {
+  if (!d.type) return t('profile.declarationTitleUntyped')
+  const key = d.type.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const type = te(`profile.declarationTypes.${key}`) ? t(`profile.declarationTypes.${key}`) : d.type
+  return t('profile.declarationTitle', { type })
+}
+const showDeclarationContent = (d) => ASSET_DECLARATION_DETAILS_ENABLED
+  && d.content && Object.keys(d.content).length > 0
 
 // Remuneration (REP-17). The amount is parlament.hu's published monthly figure;
 // `basis` is only the arithmetic that explains it against the Ogytv. Null for
@@ -881,8 +894,23 @@ watch(() => store.cycles.join(','), load)
               </HelpTip>
             </div>
             <ul class="plain">
-              <li v-for="(d, i) in shown(declarations, 'declarations')" :key="i" class="small">
-                <a v-if="d.url" :href="d.url" target="_blank" rel="noopener">
+              <li v-for="(d, i) in shown(declarations, 'declarations')" :key="d.id || i" class="small">
+                <!-- Filed in the EVNYR system (REP-18): the title opens the
+                     declaration's own page on parlament.hu, the PDF sits beside
+                     it once the scraper has read its link, and the contents
+                     fold out underneath. -->
+                <template v-if="isEvnyr(d)">
+                  <a :href="d.url" target="_blank" rel="noopener">{{ declarationTitle(d) }}</a>
+                  <template v-if="d.pdfUrl"> · <a :href="d.pdfUrl" target="_blank" rel="noopener">PDF</a></template>
+                  <span class="muted term" v-if="d.finalizedAt">{{ $t('profile.declarationFinalized', { date: formatDate(d.finalizedAt) }) }}</span>
+                  <span class="muted decl-office" v-if="d.office">{{ d.office }}</span>
+                  <details v-if="showDeclarationContent(d)" class="decl-details">
+                    <summary>{{ $t('profile.declarationContents') }}</summary>
+                    <AssetDeclarationContent :content="d.content" />
+                    <p class="muted decl-source">{{ $t('profile.declarationSource', { date: formatDate(d.snapshotAt) }) }}</p>
+                  </details>
+                </template>
+                <a v-else-if="d.url" :href="d.url" target="_blank" rel="noopener">
                   {{ d.title || $t('profile.assetDeclarations') }} (PDF)
                 </a>
                 <span v-else>
@@ -1165,6 +1193,12 @@ watch(() => store.cycles.join(','), load)
    embed control (`.fig-foot` pushes its last child to the right). */
 .topiclink { margin-right: auto; }
 .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; align-items: start; }
+/* An EVNYR declaration (REP-18): the post it was filed for on a line of its own
+   under the title, and the contents folding out below, quiet until opened. */
+.decl-office { display: block; font-size: .78rem; }
+.decl-details { margin: .3rem 0 .6rem; }
+.decl-details > summary { cursor: pointer; color: var(--accent); font-size: .8rem; }
+.decl-source { font-size: .72rem; margin: .4rem 0 0; }
 .pcol { display: flex; flex-direction: column; gap: 1.2rem; }
 .bignums { display: flex; gap: 2rem; flex-wrap: wrap; }
 .bignums .num { font-size: 1.8rem; font-weight: 800; color: var(--accent); display: block; }

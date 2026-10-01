@@ -29,3 +29,15 @@ export const SPEECH_METRICS_ENABLED = true
 // figure is not on the public site yet. Flipping this to `true` restores the
 // card as it stands; nothing else has to change.
 export const REMUNERATION_ENABLED = false
+
+// Asset-declaration contents (REP-18): the itemised public part of a declaration
+// filed in the House's electronic system (properties, vehicles, savings, debts,
+// income, interests), shown under the declaration on a profile.
+//
+// ON. The House publishes this data for free reuse ("szabadon feldolgozhatja"),
+// and every load replaces it with the system's current daily snapshot, so a
+// correction upstream is never masked by an older copy here. It is still a step
+// beyond linking the PDF, which is why it has a switch of its own: `false` keeps
+// every declaration listed and linked (page and PDF) and only drops the
+// expandable contents. The API serves `content` either way.
+export const ASSET_DECLARATION_DETAILS_ENABLED = true

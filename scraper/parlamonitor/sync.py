@@ -59,6 +59,8 @@ from .advocates.scrape import fetch_advocates, save_advocates
 from .aktualis.scrape import (fetch_aktualis, load_previous,
                               save_aktualis)
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
+from .declarations.scrape import (fetch_declarations, save_declarations,
+                                  load_previous as load_declarations_file)
 from .config import Paths, session_id, timing_backend as _default_timing_backend
 from .config import documents_compression as _documents_compression
 from .config import documents_max_mb as _documents_max_mb
@@ -103,6 +105,16 @@ UPCOMING_HORIZON_DAYS = 21
 # is still short of 100% is one parlament.hu never finished segmenting, and
 # chasing it forever would cost a request per poll per day for nothing.
 MEDIA_CHASE_DAYS = 30
+
+# The EVNYR asset-declaration snapshot (REP-18) is regenerated once a day, so a
+# home-page check more often than this finds the same file. A run that still has
+# declaration pages to read ignores the cadence until it has read them.
+DECLARATIONS_MAX_AGE = 3 * 3600
+# How many declaration pages (each one PDF link) one sync pass may read. The
+# first pass after the cycle's declarations are filed meets a few hundred; this
+# spreads them over a few passes instead of spending one pass's politeness budget
+# on a backlog that is in no hurry.
+DECLARATION_PAGES_PER_SYNC = 60
 
 
 def _now() -> str:
@@ -757,6 +769,54 @@ def _sync_aktualis(paths: Paths, http, *, force: bool) -> bool:
     return True
 
 
+def _sync_asset_declarations(paths: Paths, http, state: dict, *,
+                             force: bool) -> bool:
+    """Refresh the EVNYR asset-declaration registry (REP-18).
+
+    The check is one HTML request (the home page names the current snapshot),
+    made at most every ``DECLARATIONS_MAX_AGE``. A new snapshot costs the CSV and
+    the pages of the declarations that are new or changed, at most
+    ``DECLARATION_PAGES_PER_SYNC`` of them; while some are still unread the
+    cadence is waived so the backlog drains pass by pass. Rewritten only when the
+    contents changed, so an unchanged snapshot leaves the loader nothing to do."""
+    prev = state.get("assetDeclarations") or {}
+    age = _now_ts() - float(prev.get("ts") or 0)
+    if not force and prev and not prev.get("pending") and age < DECLARATIONS_MAX_AGE:
+        return False
+    previous = load_declarations_file(paths)
+    registry = fetch_declarations(http, previous=previous,
+                                  seen_csv_url=prev.get("csvUrl"), force=force,
+                                  page_limit=DECLARATION_PAGES_PER_SYNC)
+    state["assetDeclarations"] = {"ts": _now_ts(), "at": _now(),
+                                  "csvUrl": registry["meta"]["csvUrl"],
+                                  "count": registry["meta"]["count"],
+                                  "pending": registry["meta"]["pdfPending"]}
+    old = (previous or {}).get("data") or []
+    if not registry["data"] and old:
+        # Never write an empty snapshot over one the loader already holds.
+        logger.warning("EVNYR snapshot lists no declarations; the %d on file "
+                       "are kept", len(old))
+        return False
+    # The snapshot just read is recorded in the state above, not only in the
+    # file, so an unchanged one is not rewritten (the loader would copy the whole
+    # DB to reload it) and still is not downloaded again on the next pass.
+    if not force and previous and _declarations_equal(old, registry["data"]):
+        return False
+    save_declarations(paths, registry)
+    return True
+
+
+def _declarations_equal(a: list, b: list) -> bool:
+    """Same declarations, same content, same links. *When* each page was last
+    read does not count (a re-check that found the same PDF changes nothing worth
+    a reload), but *whether* it has been read does: a page read for the first time
+    must be recorded, or it is read again on every pass."""
+    def strip(rows):
+        return [{**{k: v for k, v in r.items() if k != "pdfCheckedAt"},
+                 "pdfChecked": bool(r.get("pdfCheckedAt"))} for r in rows]
+    return strip(a) == strip(b)
+
+
 # --- orchestration ---------------------------------------------------------
 
 def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
@@ -766,6 +826,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
              skip_committees: bool = False,
              skip_reps: bool = False, skip_advocates: bool = False,
              skip_office_holders: bool = False, skip_aktualis: bool = False,
+             skip_asset_declarations: bool = False,
              timing_backend: str | None = None,
              documents: str | None = None,
              documents_compression: str | None = None,
@@ -783,7 +844,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
                "committeeMinutes": False, "committeeVideos": False,
                "committeeTiming": False, "representatives": False, "advocates": False,
                "officeHolders": False, "documents": False, "aktualis": False,
-               "errors": []}
+               "assetDeclarations": False, "errors": []}
 
     try:
         summary["sessions"], summary["removedSessions"] = _sync_proceedings(
@@ -902,6 +963,16 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
             logger.exception("Aktuális sync failed")
             summary["errors"].append(f"aktualis: {e}")
 
+    if not skip_asset_declarations:
+        # A host of its own (vagyonnyilatkozat-pub), but the same politeness and
+        # transport settings, so it shares the client.
+        try:
+            summary["assetDeclarations"] = _sync_asset_declarations(
+                paths, felicitas.http, state, force=force)
+        except Exception as e:
+            logger.exception("Asset-declaration sync failed")
+            summary["errors"].append(f"asset-declarations: {e}")
+
     state["cycle"] = cycle
     state["lastCheckAt"] = summary["checkedAt"]
     save_state(paths.sync_state, state)
@@ -914,5 +985,6 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
                               or summary["committeeTiming"]
                               or summary["representatives"]
                               or summary["advocates"]
-                              or summary["aktualis"])
+                              or summary["aktualis"]
+                              or summary["assetDeclarations"])
     return summary

@@ -7,7 +7,7 @@ representatives. It is built to grow: new data domains (bills, votes,
 committees, …) can be added as self-contained modules.
 
 This document specifies **what** the system must do and the constraints it must
-respect. Concr  ete technology choices are recommended where useful but are not
+respect. Concrete technology choices are recommended where useful but are not
 binding unless marked **MUST**.
 
 ---
@@ -1892,6 +1892,8 @@ scope), and *what is the House doing* (last week, then the coming sitting).
   - A declaration that was **due but never published** stays in the list as a
     dated, unlinked row. Silently dropping it would hide exactly the fact a reader
     is looking for.
+  - Declarations filed from 2026 in the House's electronic declaration system
+    are listed in the same panel, from that system (REP-18).
   - The profile also links the **CV** (*önéletrajz*) the representative had the
     House publish, when there is one. Publication is the MP's own choice and the
     file is taken down when the mandate ends, so the link MUST only be published
@@ -2103,6 +2105,48 @@ scope), and *what is the House doing* (last week, then the coming sitting).
     **confirmed rather than inferred**: every clean published fee divides by it to
     a statutory rate exactly, which a wrong base could not do. A new entry is due
     each March; past entries are never edited.
+
+- **REP-18 (SHOULD).** **Declarations filed in the electronic declaration system
+  (*Elektronikus Vagyonnyilatkozati Rendszer*, EVNYR).** From 2026 the House no
+  longer publishes declarations only as PDFs on the adatlap (REP-13): they are
+  filed in a system of their own,
+  [`vagyonnyilatkozat-pub.parlament.hu`](https://vagyonnyilatkozat-pub.parlament.hu),
+  which publishes each one as **data**. It holds MPs' declarations and those of
+  the non-MP ministers and state secretaries who file under the same rules. A
+  profile whose declarations moved there and that read only the adatlap would
+  show the newest filing as missing, which is exactly the fact REP-13 must never
+  get wrong.
+  - **Source.** The system's **daily CSV snapshot** of every public declaration,
+    which the House offers for free reuse. The site's search is behind a
+    proof-of-work challenge and is not used. The snapshot is re-read when a new
+    one is published, and every load **replaces the whole set**, so a declaration
+    withdrawn or corrected upstream changes or leaves here with it.
+  - **Linked as REP-13 requires, and shown.** Each declaration links its own page
+    on the system (always) and its PDF (once read). Unlike the adatlap's PDFs, its
+    public **contents** are shown too, section by section as on the House's own
+    form (property, high-value movables, claims and savings, debts, gifts, income,
+    economic interests). That is not the stale mirror REP-13 rules out: the data
+    is replaced from the House's current snapshot on every refresh, and the
+    snapshot's date is stated beside it. Values are shown **as filed**. Amounts are
+    free text upstream ("Aktuális érték: 211448,29 EUR (77083474 HUF)"), so
+    nothing is summed, converted or ranked (TRUST-1). The contents have an
+    editorial switch of their own (`ASSET_DECLARATION_DETAILS_ENABLED`); with it
+    off the declarations are still listed and linked.
+  - **Dated by finalisation**, not by the declared assets' date: the snapshot
+    has no such field, and the entry says which date it shows.
+  - **Matching a declaration to a person.** The snapshot names the filer and
+    their post but carries **no person id**, so this is the one place a person is
+    joined by name (cf. EXT-2), and a wrong match would attribute one person's
+    assets to another. A declaration is linked only when **exactly one** person
+    fits by name (case and academic titles aside; *ifj.* is part of the name), by
+    the kind of role the post names (an MP's seat; an advocate's seat; for an
+    official "without an MP mandate", a government office and no seat on the
+    filing date), and by holding it around the filing date. Anything else stays
+    **unlinked and still listed**: a filer the corpus does not know yet is no
+    reason to hide a declaration the House published. Links are re-derived
+    whenever the people change.
+  - Biography, like REP-13: **not cycle-scoped**, listed with the adatlap's
+    declarations in one list, newest first.
 
 - **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
   representative and faction statistics** (speaking time, speech counts, trends —

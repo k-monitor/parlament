@@ -37,7 +37,7 @@ import re
 import sqlite3
 import unicodedata
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 try:                                    # POSIX only; the writer lock degrades to
@@ -5148,6 +5148,232 @@ def load_aktualis(conn: sqlite3.Connection, registry: dict) -> int:
     return items
 
 
+# ---------------------------------------------------------------------------
+# Asset declarations from the EVNYR system (REP-18)
+# ---------------------------------------------------------------------------
+
+def _ensure_asset_declaration_table(conn: sqlite3.Connection) -> None:
+    """Create ``asset_declaration`` on a pre-existing DB (REP-18), so the
+    declarations land on an already-built deployment through the incremental
+    update alone (dropping in ``asset-declarations.json``). A no-op on a fresh
+    DB."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS asset_declaration (
+            declaration_id   TEXT PRIMARY KEY,
+            person_id        TEXT REFERENCES person(person_id),
+            name             TEXT NOT NULL,
+            organisation     TEXT,
+            office           TEXT,
+            declaration_type TEXT,
+            finalized_at     TEXT,
+            modified_at      TEXT,
+            schema_version   TEXT,
+            url              TEXT NOT NULL,
+            pdf_url          TEXT,
+            content_json     TEXT,
+            snapshot_at      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_asset_declaration_person
+            ON asset_declaration(person_id);
+    """)
+
+
+# Academic titles a declarant may or may not write in front of their name. They
+# never tell two people apart, so they are dropped from the match key. "ifj." /
+# "id." / "özv." are NOT: they are how a son is told from his father, and
+# dropping them could hand one's declaration to the other.
+_DECLARANT_TITLES = frozenset({"dr", "prof", "habil", "phd"})
+# How far before a declaration its filer's seat or office may have ended. A
+# closing declaration (*záró*) comes after the mandate ends and a yearly one
+# describes the year before, so a year and a bit covers both.
+_DECLARANT_LOOKBACK_DAYS = 400
+# The office-holder registry's categories (officeholders.scrape) whose holders
+# are the "politikai felsővezetők" a non-MP official's declaration is filed by.
+_GOVERNMENT_CATEGORIES = frozenset({"pm", "minister", "state-secretary"})
+
+
+def _declarant_key(name: str | None) -> str:
+    """Case/title-folded match key for a declarant's name. The system writes
+    names in capitals ("DR. HOFFMAN ISTVÁN") and the person table does not, so
+    case is folded. Accents are kept: folding them would merge distinct names
+    (cf. kmonitor._norm)."""
+    s = unicodedata.normalize("NFC", name or "").casefold()
+    s = re.sub(r"\s*-\s*", "-", s)
+    return " ".join(t for t in re.split(r"[\s.,]+", s)
+                    if t and t not in _DECLARANT_TITLES)
+
+
+def _declarant_role(office: str | None) -> str | None:
+    """Which kind of person the declaration's office says the filer is:
+    ``mp``, ``advocate`` (nemzetiségi szószóló), ``official`` (a minister or
+    state secretary with no seat, "…képviselői megbízással nem rendelkező
+    politikai felsővezető"), or ``None`` for an office text not recognised."""
+    o = (office or "").casefold()
+    if "nem rendelkező" in o or "felsővezető" in o:
+        return "official"
+    if "szószóló" in o:
+        return "advocate"
+    if "képviselő" in o:
+        return "mp"
+    return None
+
+
+def _link_asset_declarations(conn: sqlite3.Connection) -> int:
+    """Set ``asset_declaration.person_id`` where the declarant is unambiguous.
+
+    The snapshot names the declarant and the post they filed for, and carries no
+    id we could join on (EXT-2). So this is a name match, kept deliberately
+    narrow, because a wrong match would attribute one person's assets to
+    another, which is far worse than a declaration listed without a profile
+    link. A person is a candidate only if:
+
+    * their name matches exactly, titles and case aside (:func:`_declarant_key`);
+    * they held a role of the kind the filed office names: a seat for an MP's
+      declaration, an advocate's seat for an advocate's, and for a non-MP
+      official's a government office term from the office-holder registry
+      (minister, state secretary, PM) **and no seat on the day of filing**, since
+      that is what the office says ("…képviselői megbízással nem rendelkező…");
+    * they held it around the time of filing: started by the declaration's
+      finalisation date and not ended more than ``_DECLARANT_LOOKBACK_DAYS``
+      before it.
+
+    The link is made only when **exactly one** person passes. Two people of the
+    same name who both qualify (or a declarant not in the corpus at all) leave
+    the row unlinked, still listed. Re-run whenever the people move (a registry
+    or a sitting changed), since a declarant may appear in the corpus after
+    their declaration does. Returns the number of declarations linked."""
+    _ensure_advocate_columns(conn)
+    conn.execute("UPDATE asset_declaration SET person_id = NULL")
+    rows = conn.execute(
+        "SELECT declaration_id, name, office, finalized_at, snapshot_at "
+        "FROM asset_declaration").fetchall()
+    if not rows:
+        return 0
+
+    by_key: dict[str, set[str]] = {}
+    flags: dict[str, tuple[bool, bool]] = {}
+    for r in conn.execute("SELECT person_id, label, label_full, is_mp, "
+                          "is_advocate FROM person"):
+        flags[r[0]] = (bool(r[3]), bool(r[4]))
+        for label in (r[1], r[2]):
+            key = _declarant_key(label)
+            if key:
+                by_key.setdefault(key, set()).add(r[0])
+
+    # (kind, start, end) per person: every seat (per cycle, dated by the cycle)
+    # and every registry office term, a government one ("government") or any
+    # other ("office"). Dates compared as YYYY-MM-DD.
+    roles: dict[str, list[tuple[str, str, str | None]]] = {}
+    for r in conn.execute(
+            "SELECT m.person_id, e.date_start, e.date_end FROM membership m "
+            "JOIN electoral_period e ON e.number = m.period_number"):
+        roles.setdefault(r[0], []).append(("seat", (r[1] or "")[:10], (r[2] or "")[:10] or None))
+    if _table_exists(conn, "person_office"):
+        _ensure_person_office(conn)
+        for r in conn.execute("SELECT person_id, category, date_start, date_end "
+                              "FROM person_office WHERE source = 'registry'"):
+            kind = "government" if r[1] in _GOVERNMENT_CATEGORIES else "office"
+            roles.setdefault(r[0], []).append((kind, (r[2] or "")[:10], (r[3] or "")[:10] or None))
+
+    def held(pid: str, kinds: set[str] | None, start_by: str, end_from: str) -> bool:
+        return any((kinds is None or kind in kinds)
+                   and start <= start_by and (end is None or end >= end_from)
+                   for kind, start, end in roles.get(pid, ()))
+
+    def qualifies(pid: str, role: str | None, on: str, since: str) -> bool:
+        is_mp, is_advocate = flags.get(pid, (False, False))
+        if role == "mp":
+            return is_mp and held(pid, {"seat"}, on, since)
+        if role == "advocate":
+            return is_advocate and held(pid, {"seat"}, on, since)
+        if role == "official":
+            return (held(pid, {"government"}, on, since)
+                    and not held(pid, {"seat"}, on, on))
+        return held(pid, None, on, since)
+
+    linked = 0
+    for r in rows:
+        on = (r["finalized_at"] or r["snapshot_at"] or "")[:10]
+        if not on:
+            continue
+        try:
+            since = (datetime.fromisoformat(on).date()
+                     - timedelta(days=_DECLARANT_LOOKBACK_DAYS)).isoformat()
+        except ValueError:
+            continue
+        role = _declarant_role(r["office"])
+        candidates = [pid for pid in by_key.get(_declarant_key(r["name"]), ())
+                      if qualifies(pid, role, on, since)]
+        if len(candidates) == 1:
+            conn.execute("UPDATE asset_declaration SET person_id = ? "
+                         "WHERE declaration_id = ?", (candidates[0], r["declaration_id"]))
+            linked += 1
+        elif candidates:
+            logger.warning("Asset declaration %s (%s): %d people fit, left unlinked",
+                           r["declaration_id"], r["name"], len(candidates))
+    unlinked = len(rows) - linked
+    if unlinked:
+        logger.info("%d of %d asset declaration(s) matched no single person",
+                    unlinked, len(rows))
+    return linked
+
+
+def _load_asset_declarations_file(conn: sqlite3.Connection, data_dir: Path) -> int:
+    """Load ``processed/asset-declarations.json`` if the scrape has produced one.
+
+    Absent on a corpus scraped before this stage existed, which is not an error:
+    profiles then show the parlament.hu adatlap's declarations only."""
+    path = Path(data_dir) / "processed" / "asset-declarations.json"
+    if not path.exists():
+        logger.info("No asset-declarations.json in %s — skipping EVNYR declarations",
+                    path.parent)
+        return 0
+    try:
+        registry = json.loads(path.read_text())
+    except ValueError as e:
+        logger.warning("Could not parse %s (%s) — skipping", path, e)
+        return 0
+    return load_asset_declarations(conn, registry)
+
+
+def load_asset_declarations(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load the EVNYR snapshot (REP-18) and link each declaration to its filer.
+
+    Replaces the whole set: the snapshot is the system's complete list of
+    public declarations, so one withdrawn or corrected upstream must change or
+    leave here too rather than linger as a stale copy of what the House no
+    longer publishes."""
+    _ensure_asset_declaration_table(conn)
+    snapshot = (registry.get("meta") or {}).get("snapshotAt")
+    n = linked = 0
+    try:
+        conn.execute("DELETE FROM asset_declaration")
+        for d in registry.get("data") or []:
+            did, name, url = d.get("id"), (d.get("name") or "").strip(), d.get("url")
+            if not (did and name and url):
+                continue
+            conn.execute(
+                """INSERT OR REPLACE INTO asset_declaration(declaration_id, name,
+                       organisation, office, declaration_type, finalized_at,
+                       modified_at, schema_version, url, pdf_url, content_json,
+                       snapshot_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (did, name, d.get("organisation"), d.get("office"), d.get("type"),
+                 d.get("finalizedAt"), d.get("modifiedAt"), d.get("schemaVersion"),
+                 url, d.get("pdfUrl"),
+                 json.dumps(d.get("content") or {}, ensure_ascii=False),
+                 snapshot))
+            n += 1
+        linked = _link_asset_declarations(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    logger.info("Loaded %d EVNYR asset declaration(s), %d linked to a person",
+                n, linked)
+    return n
+
+
 def build_database(data_dir: str | Path, db_path: str | Path, *,
                    only_session: str | None = None,
                    skip_wordcloud: bool = False) -> None:
@@ -5240,6 +5466,9 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         # and their office terms are exactly what this registry supplies (REP-2).
         _load_office_holders_file(conn, data_dir)
         _load_aktualis_file(conn, data_dir)
+        # After every person registry and sitting: the declarations are linked to
+        # their filers by name against the people loaded above (REP-18).
+        _load_asset_declarations_file(conn, data_dir)
 
         # Lemmatize / entity-extract each sitting's text into session_word_count
         # before the aggregates so word_doc_freq can derive from it (WCLOUD-2);
@@ -5315,7 +5544,8 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
 _PROCESSED_GLOBS = ("representatives-*.json", "advocates-*.json", "bills-*.json",
                     "votes-*.json", "committees-*.json",
                     "committee-minutes-*.json", "committee-videos.json",
-                    "committee-timing.json", "*-session.json", "officeholders.json", "aktualis.json")
+                    "committee-timing.json", "*-session.json", "officeholders.json", "aktualis.json",
+                    "asset-declarations.json")
 
 
 def _file_sig(path: Path) -> tuple[float, int]:
@@ -5585,6 +5815,18 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
         # parsed has no row to link to until the registry catches up.
         if changed["aktualis.json"] or changed["bills-*.json"]:
             _load_aktualis_file(conn, data_dir)
+
+        # EVNYR declarations (REP-18): reloaded when the snapshot changed, and
+        # re-linked when only the people did. A declarant can enter the corpus
+        # after their declaration (a new state secretary's first speech, the next
+        # office-holder refresh), and the link is a match against who is there.
+        if changed["asset-declarations.json"]:
+            _load_asset_declarations_file(conn, data_dir)
+        elif ((loaded_sessions or changed["representatives-*.json"]
+               or changed["advocates-*.json"] or changed["officeholders.json"])
+              and _table_exists(conn, "asset_declaration")):
+            _link_asset_declarations(conn)
+            conn.commit()
 
         # Aggregates are speech-derived, so they only need rebuilding when a
         # sitting changed (bills/votes/reps carry their own rows). Word counts are

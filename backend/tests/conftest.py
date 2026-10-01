@@ -199,6 +199,52 @@ def _officeholders_registry():
     }
 
 
+def _asset_declarations_registry():
+    """The EVNYR snapshot (REP-18), as the scraper writes it: Kovács Béla's
+    opening declaration as an MP, with contents and its PDF, and one by somebody
+    the corpus does not know, whose page has not been read yet (no PDF). The
+    second must stay listed, unlinked."""
+    host = "https://vagyonnyilatkozat-pub.parlament.hu"
+    return {
+        "meta": {"source": "parlament-hu-evnyr", "snapshotAt": "2026-10-01T01:00",
+                 "csvUrl": host + "/media/napi/csv-snapshot/"
+                                  "vagyonnyilatkozatok_napi_adatok_2026-10-01_01-00.csv",
+                 "count": 2},
+        "data": [
+            {"id": "1111aaaa-0000-4000-8000-000000000001", "name": "KOVÁCS BÉLA",
+             "organisation": "Országgyűlés Hivatala",
+             "office": "Országgyűlési képviselő", "type": "Nyitó",
+             "finalizedAt": "2026-06-02T10:00:00", "modifiedAt": None,
+             "schemaVersion": "1",
+             "url": host + "/nyilatkozat/1111aaaa-0000-4000-8000-000000000001",
+             "pdfUrl": host + "/media/nyilatkozat/1/1/1/1111aaaa-0000-4000-8000-"
+                              "000000000001/vagyonnyilatkozat_20260603_kovacs_bela.pdf",
+             "pdfCheckedAt": "2026-10-01T02:00:00+00:00",
+             "content": {
+                 "ingatlanok": [
+                     {"telepules": "Budapest XI. kerület", "alapterulet": "64 m2",
+                      "jogallas": "tulajdonos", "tulajdoniHanyad": "1/2"},
+                     {"telepules": "Balatonfüred", "jogallas": "haszonélvező"}],
+                 "nagyErtekuIngosagok.szemelygepjarmuvek": [
+                     {"jarmuTipusa": "Škoda Octavia", "szerzesIdeje": "2019-04-01",
+                      "szerzesJogcime": "adásvétel"}],
+                 "jovedelemnyilatkozat.korabbiFoglalkozasok": [
+                     {"megnevezes": "ügyvéd", "reszesultDijazasban": "igen",
+                      "haviJovedelem": "900000"}],
+                 "gazdasagiErdekeltseg.nyilatkozattetelHelye": "Budapest"}},
+            {"id": "2222bbbb-0000-4000-8000-000000000002", "name": "DR. ISMERETLEN ELEK",
+             "organisation": "Országgyűlés Hivatala",
+             "office": "Országgyűlési képviselői megbízással nem rendelkező "
+                       "politikai felsővezető",
+             "type": "Nyitó", "finalizedAt": "2026-09-20T11:48:04",
+             "modifiedAt": None, "schemaVersion": "1",
+             "url": host + "/nyilatkozat/2222bbbb-0000-4000-8000-000000000002",
+             "pdfUrl": None, "pdfCheckedAt": None,
+             "content": {"egyebKozlendok": "Nincs."}},
+        ],
+    }
+
+
 def _bills_registry():
     """Three irományok: two törvényjavaslatok (mainType T) — one with a known-MP
     sponsor (links to k001), one government bill (no MP link) — and one non-bill
@@ -745,6 +791,8 @@ def data_dir(tmp_path):
         json.dumps(_officeholders_registry(), ensure_ascii=False))
     (data / "processed" / "aktualis.json").write_text(
         json.dumps(_aktualis_registry(), ensure_ascii=False))
+    (data / "processed" / "asset-declarations.json").write_text(
+        json.dumps(_asset_declarations_registry(), ensure_ascii=False))
     return data
 
 

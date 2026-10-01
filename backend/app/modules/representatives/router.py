@@ -661,6 +661,97 @@ _OFFICE_METHODOLOGY = (
 )
 
 
+def _has_evnyr(db: sqlite3.Connection) -> bool:
+    """Whether the DB carries the EVNYR declarations (REP-18): false on one built
+    before the stage existed, where the profile simply lists the adatlap's."""
+    return bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                           "AND name='asset_declaration'").fetchone())
+
+
+def _evnyr_declaration_out(r: sqlite3.Row, *, content: bool) -> dict:
+    """One EVNYR declaration in the profile's ``asset_declarations`` shape
+    (camelCase, like the adatlap entries it is listed among), told apart from
+    them by ``source``. The PDF link is null while the scraper has not read the
+    declaration's page yet; ``url``, the declaration's own public page, is
+    always there."""
+    out = {
+        "source": "evnyr",
+        "id": r["declaration_id"],
+        "type": r["declaration_type"],
+        "url": r["url"],
+        "pdfUrl": r["pdf_url"],
+        "finalizedAt": r["finalized_at"],
+        "modifiedAt": r["modified_at"],
+        "office": r["office"],
+        "organisation": r["organisation"],
+        "snapshotAt": r["snapshot_at"],
+    }
+    if content:
+        try:
+            out["content"] = json.loads(r["content_json"]) if r["content_json"] else {}
+        except ValueError:
+            out["content"] = {}
+    return out
+
+
+def _evnyr_declarations(db: sqlite3.Connection, person_id: str) -> list[dict]:
+    """The person's declarations in the EVNYR system, newest first, with their
+    contents (REP-18)."""
+    if not _has_evnyr(db):
+        return []
+    return [_evnyr_declaration_out(r, content=True) for r in db.execute(
+        "SELECT * FROM asset_declaration WHERE person_id = ? "
+        "ORDER BY finalized_at DESC, declaration_id", (person_id,))]
+
+
+def _asset_declarations(db: sqlite3.Connection, person_id: str,
+                        adatlap: list) -> list[dict]:
+    """Every declaration on record for the person, both sources in one list,
+    newest first (REP-13 / REP-18).
+
+    The adatlap's entries are dated by the declared assets' date and the EVNYR
+    ones by their finalisation; both are "when the filing is about", and the two
+    regimes do not overlap in time, so one sort serves. An adatlap entry that
+    links the very PDF an EVNYR one does is the same filing reported twice and
+    is dropped."""
+    evnyr = _evnyr_declarations(db, person_id)
+    pdfs = {d["pdfUrl"] for d in evnyr if d.get("pdfUrl")}
+    merged = evnyr + [d for d in adatlap or [] if not (d.get("url") and d["url"] in pdfs)]
+
+    def when(d: dict) -> str:
+        return ((d.get("finalizedAt") if d.get("source") == "evnyr"
+                 else d.get("assetDate")) or "")[:10]
+    return sorted(merged, key=when, reverse=True)
+
+
+@router.get("/asset-declarations")
+def list_asset_declarations(db: sqlite3.Connection = Depends(get_db)):
+    """Every declaration in the EVNYR system's current snapshot (REP-18), newest
+    first, each with the profile it belongs to when the filer could be matched.
+
+    The snapshot names the declarant but carries no id, so ``person`` is a name
+    match made only when exactly one person in the corpus fits (see
+    ``loader._link_asset_declarations``), and is null otherwise. The unmatched
+    rows are still listed: they are declarations the House published, and a
+    filer the corpus does not know (a newly appointed state secretary who has
+    not spoken yet) is not a reason to hide one. Contents are left out here; a
+    profile serves them with the person's own declarations."""
+    if not _has_evnyr(db):
+        return {"snapshot_at": None, "total": 0, "linked": 0, "items": []}
+    rows = db.execute(
+        "SELECT d.*, p.label AS person_label FROM asset_declaration d "
+        "LEFT JOIN person p ON p.person_id = d.person_id "
+        "ORDER BY d.finalized_at DESC, d.declaration_id").fetchall()
+    items = [{**_evnyr_declaration_out(r, content=False),
+              "name": r["name"],
+              "person": ({"person_id": r["person_id"], "label": r["person_label"]}
+                         if r["person_id"] else None)} for r in rows]
+    return {"snapshot_at": max((r["snapshot_at"] or "" for r in rows), default="") or None,
+            "total": len(items),
+            "linked": sum(1 for i in items if i["person"]),
+            "items": items}
+
+
 @router.get("/officials")
 def list_officials(
     q: Optional[str] = None,
@@ -1233,7 +1324,8 @@ def compare_representatives(
                                             total_rollcall)
                          if votes_available and is_mp else None)
 
-        declarations = _loads(_col(p, "asset_declarations_json")) or []
+        declarations = _asset_declarations(
+            db, person_id, _loads(_col(p, "asset_declarations_json")) or [])
         committees = _loads(p["committees_json"]) or []
 
         people.append({
@@ -1273,6 +1365,8 @@ def compare_representatives(
             # whole career's committee seats and published declarations, whatever
             # cycle is selected — `_note` on the row says so in the UI.
             "committee_count": len(committees),
+            # Published filings only: an EVNYR declaration always has its page,
+            # an adatlap one counts when it has a PDF.
             "declaration_count": sum(1 for d in declarations if d.get("url")),
             # Null (not 0) for a non-MP: they have no mandate to attend roll calls,
             # so "missed none" would be as wrong as "missed all" (REP-3).
@@ -1392,10 +1486,13 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         # (REP-13). Absent on a DB built before the column existed (`_col`).
         "cv_url": _col(p, "cv_url"),
         # Every asset declaration (vagyonnyilatkozat) on record, newest first,
-        # each linking to its PDF on parlament.hu (REP-13). Biography, like the
-        # office and committee history — deliberately NOT cycle-scoped, so the
-        # series stays whole no matter which cycle is selected.
-        "asset_declarations": _loads(_col(p, "asset_declarations_json")),
+        # each linking to its PDF on parlament.hu (REP-13): the adatlap's, and
+        # the ones filed in the EVNYR system since 2026 with their contents
+        # (REP-18, `source: "evnyr"`). Biography, like the office and committee
+        # history — deliberately NOT cycle-scoped, so the series stays whole no
+        # matter which cycle is selected.
+        "asset_declarations": _asset_declarations(
+            db, person_id, _loads(_col(p, "asset_declarations_json"))),
         "constituency": p["constituency"],
         "seat": p["seat"], "email": p["email"], "website": p["website"],
         "highest_education": p["highest_education"], "active": p["active"],

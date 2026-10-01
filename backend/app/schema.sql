@@ -1441,3 +1441,30 @@ CREATE TABLE agenda_meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- Asset declarations filed in the House's electronic declaration system
+-- (EVNYR, vagyonnyilatkozat-pub.parlament.hu; REP-18). One row per declaration
+-- in the system's daily snapshot, which is the complete list of public
+-- declarations, so the loader replaces the whole set on every load and a
+-- declaration withdrawn upstream leaves the site with it.
+--
+-- The snapshot names the declarant but carries no person id, so `person_id`
+-- is a name match against the people sitting in the latest cycle, made only
+-- when exactly one of them fits (see loader._link_asset_declarations). NULL
+-- means unmatched, and the row is still kept and listed.
+CREATE TABLE asset_declaration (
+    declaration_id   TEXT PRIMARY KEY,     -- the system's UUID
+    person_id        TEXT REFERENCES person(person_id),
+    name             TEXT NOT NULL,        -- as filed ("DR. HOFFMAN ISTVÁN")
+    organisation     TEXT,                 -- "Országgyűlés Hivatala"
+    office           TEXT,                 -- the post it is filed for
+    declaration_type TEXT,                 -- Nyitó / Éves / Záró …
+    finalized_at     TEXT,                 -- local time, as published
+    modified_at      TEXT,
+    schema_version   TEXT,
+    url              TEXT NOT NULL,        -- the declaration's public page
+    pdf_url          TEXT,                 -- NULL until its page has been read
+    content_json     TEXT,                 -- {path: [entries] | text}, upstream's paths
+    snapshot_at      TEXT                  -- the snapshot it was read from
+);
+CREATE INDEX idx_asset_declaration_person ON asset_declaration(person_id);

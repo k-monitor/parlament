@@ -176,9 +176,10 @@ def test_career_figures_are_not_cycle_scoped(client):
     b = _compare(client, ["k001"], period=1)["people"][0]
     assert a["declaration_count"] == b["declaration_count"]
     assert a["committee_count"] == b["committee_count"]
-    # The fixture's k001 has two declarations, one of which was never published —
-    # only the published one is counted (REP-13).
-    assert a["declaration_count"] == 1
+    # The fixture's k001 has two adatlap declarations, one of which was never
+    # published — only the published one is counted (REP-13) — plus one filed in
+    # the EVNYR system, which is published by being listed at all (REP-18).
+    assert a["declaration_count"] == 2
 
 
 def test_compare_is_not_taken_for_a_person_id(client):

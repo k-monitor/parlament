@@ -155,6 +155,9 @@ CREATE TABLE session (
     status        TEXT DEFAULT 'published',
     source        TEXT,
     source_page   TEXT,
+    -- parlament.hu's own id for the day (UUID from 2026, an integer before); the
+    -- API builds the day's deep link from it (parlament_links)
+    day_id        TEXT,
     scraped_at    TEXT,
     timing_method TEXT,
     -- per-day media (one whole-day stream per sitting):

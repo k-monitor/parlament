@@ -3,9 +3,10 @@
 The public site keeps its whole navigation state in a ``#page=`` URL fragment:
 a gzip-compressed, url-safe-base64-encoded JSON blob prefixed with ``cv1gzb-``.
 Rebuilding that fragment lets our "view on parlament.hu" links land on the exact
-record's adatlap (detail sheet) rather than a generic listing page. The scraper
-builds the sitting-day variant (see ``parlamonitor.proceedings.transform``); the
-rest are assembled here.
+record's adatlap (detail sheet) rather than a generic listing page. They are
+built per request from the record's upstream id, so a renamed page is fixed for
+every row at once. (The scraper also stamps a sitting-day link onto each day it
+writes, ``parlamonitor.proceedings.transform.plenary_day_page_url``.)
 
 Every adatlap the portal links to is a page with an ``open`` contract that takes
 the record's ``id`` and fans it out to the page's own datasources, so the state is
@@ -52,6 +53,9 @@ PERSON_PAGE = (f"{BASE}/web/guest/kepviselok",
                "kepviseloexportok/kepviselo-adatlap-with-contract/kepviselo-adatlap-with-contract")
 COMMITTEE_PAGE = (f"{BASE}/web/guest/bizottsagok1",
                   "bizottsagexportok/exported-bizottsag-adatlap/exported-bizottsag-adatlap")
+SITTING_DAY_PAGE = (f"{BASE}/ulesnapok-ulesidok",
+                    "plenarisulesexportok/ulesnap-felszolalasai-with-contract/"
+                    "ulesnap-felszolalasai-with-contract")
 SPEECH_PAGE = (f"{BASE}/ulesnapok-ulesidok",
                "plenarisulesexportok/ulesnap-felszolalas-adata-with-contract/"
                "ulesnap-felszolalas-adata-with-contract")
@@ -91,6 +95,11 @@ def person_page_url(person_id) -> str | None:
 def committee_page_url(committee_id) -> str | None:
     """Deep link to a committee's (or subcommittee's) adatlap on parlament.hu."""
     return _adatlap_url(COMMITTEE_PAGE, committee_id, _RECORD_ID_RE)
+
+
+def sitting_day_page_url(day_id) -> str | None:
+    """Deep link to a sitting day's speech listing on parlament.hu."""
+    return _adatlap_url(SITTING_DAY_PAGE, day_id, _RECORD_ID_RE)
 
 
 def speech_page_url(speech_uuid) -> str | None:

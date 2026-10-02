@@ -106,6 +106,22 @@ def test_fetch_missing_photos_downloads_and_negative_caches(tmp_path):
     assert f2.calls == []
 
 
+def test_fetch_missing_photos_without_negative_cache_keeps_retrying(tmp_path):
+    """Sitting MPs: a 404 today may be a portrait published tomorrow."""
+    from parlamonitor.representatives.scrape import (fetch_missing_photos,
+                                                     load_photo_negcache)
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    (photos / "photos-missing.json").write_text('["006F"]')   # cached by the advocates
+    f = _PhotoFelicitas(have={"006F"}, missing={"006E"})
+    res = fetch_missing_photos(f, photos, ["006E", "006F"], negative_cache=False)
+    assert res["fetched"] == 1 and (photos / "006F.jpg").exists()
+    assert load_photo_negcache(photos) == {"006F"}       # neither read nor extended
+    f2 = _PhotoFelicitas(have=set(), missing={"006E"})
+    fetch_missing_photos(f2, photos, ["006E", "006F"], negative_cache=False)
+    assert f2.calls == ["006E"]                          # asked again, 006F on disk
+
+
 def test_fetch_missing_photos_retries_transient_errors(tmp_path):
     from parlamonitor.representatives.scrape import (fetch_missing_photos,
                                                      load_photo_negcache)
@@ -154,6 +170,13 @@ def test_kozlony_degrades_when_fetch_fails():
     out = magyarkozlony.resolve(_FakeHttp(fail=True), 44, "2026-05-09")
     assert out["url"].endswith("serial=44")
     assert out["docUrl"] is None
+
+
+def test_kozlony_none_for_an_issue_the_site_does_not_carry():
+    """magyarkozlony.hu's archive starts in 1998; its listing for an earlier
+    issue is an empty page, which must not become the bill's gazette link."""
+    http = _FakeHttp(text="<div class='alert'>Nincs megjeleníthető tartalom</div>")
+    assert magyarkozlony.resolve(http, 127, "1992-12-22") is None
 
 
 def test_kozlony_none_without_inputs():
@@ -556,19 +579,25 @@ def test_plenary_day_page_url_round_trips():
     token += "=" * (-len(token) % 4)
     state = _json.loads(_gzip.decompress(_b64.b64decode(token)).decode("utf-8"))
     assert "ulesnap-felszolalasai-with-contract" in state["page"]
-    assert state["binding"]["felszolalasDao.parameter"]["content"]["pUlesnapId"] == uid
+    # The page's own `open` contract, as parlament.hu's client links it.
+    assert state["hydration"] == {"open": {"id": uid}}
 
 
-def test_plenary_day_page_url_none_without_uuid():
+def test_plenary_day_page_url_opens_archive_days_too():
     from parlamonitor.proceedings.transform import plenary_day_page_url
     assert plenary_day_page_url(None) is None
-    # Legacy cycle-42 numeric day ids don't resolve on the new SPA page.
-    assert plenary_day_page_url("2741490") is None
+    # Every pre-2026 day has a plain integer id, and the page opens by it
+    # (2007-10-25, checked in a browser on 2026-10-02).
+    assert plenary_day_page_url("2730192").startswith(
+        "https://www.parlament.hu/ulesnapok-ulesidok#page=cv1gzb-")
+    assert plenary_day_page_url("43007-1") is None    # our own uid, not upstream's
 
 
 def test_transform_day_carries_day_page_url():
     rec = transform_day(_raw_bundle())
     assert "ulesnapok-ulesidok#page=cv1gzb-" in rec["meta"]["sourcePage"]
+    # …and the day's own id, which the site rebuilds the link from.
+    assert rec["meta"]["dayId"] == "623075ee-d900-4f17-8944-da6465a86766"
 
 
 def test_transform_degraded_speech_flagged():

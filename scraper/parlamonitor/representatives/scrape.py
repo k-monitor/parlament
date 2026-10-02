@@ -570,17 +570,22 @@ def load_photo_negcache(photos_dir) -> set[str]:
         return set()
 
 
-def fetch_missing_photos(felicitas: FelicitasClient, photos_dir, ids) -> dict:
+def fetch_missing_photos(felicitas: FelicitasClient, photos_dir, ids, *,
+                         negative_cache: bool = True) -> dict:
     """Download portraits for ``ids`` that aren't already on disk.
 
     Skips ids whose ``<pid>.jpg`` already exists or that are in the negative
     cache. A definitive 404 (``felicitas.photo`` returns ``None``) is recorded in
     the negative cache so a later run doesn't re-request it; a transient error
     (raises) is left uncached so it is retried next time. Returns counts.
+
+    ``negative_cache=False`` neither consults nor extends the cache, for sitting
+    MPs: a newly seated MP's portrait is often published days later, and a
+    remembered 404 would keep it off the site for good.
     """
     photos_dir = Path(photos_dir)
     photos_dir.mkdir(parents=True, exist_ok=True)
-    missing = load_photo_negcache(photos_dir)
+    missing = load_photo_negcache(photos_dir) if negative_cache else set()
     fetched = 0
     for pid in ids:
         if not pid:
@@ -595,10 +600,11 @@ def fetch_missing_photos(felicitas: FelicitasClient, photos_dir, ids) -> dict:
         if data:
             (photos_dir / f"{pid}.jpg").write_bytes(data)
             fetched += 1
-        else:
+        elif negative_cache:
             missing.add(pid)  # definitive 404 — no portrait upstream
-    _photo_negcache_path(photos_dir).write_text(
-        json.dumps(sorted(missing), ensure_ascii=False))
+    if negative_cache:
+        _photo_negcache_path(photos_dir).write_text(
+            json.dumps(sorted(missing), ensure_ascii=False))
     return {"fetched": fetched, "cached_missing": len(missing)}
 
 

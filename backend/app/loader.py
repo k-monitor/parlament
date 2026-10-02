@@ -324,11 +324,11 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
         # "bills submitted" stays hidden in the UI until the Bills module (REP-3).
         ext_stats = rec.get("statistics")
 
-        # Prefer the locally-downloaded portrait (served at /media/photos) over
-        # the upstream resource URL, so the site doesn't hot-link parlament.hu.
-        photo_uri = rec.get("photoURI")
-        if rec.get("photoFile"):
-            photo_uri = f"/media/photos/{rec['photoFile']}"
+        # Only the locally-downloaded portrait (served at /media/photos), never the
+        # upstream resource URL, as for advocates and non-MP speakers: the
+        # scraper saves every portrait that exists, so a record without one is
+        # one parlament.hu 404s on (20 of the 22 the site used to hot-link).
+        photo_uri = f"/media/photos/{rec['photoFile']}" if rec.get("photoFile") else None
 
         conn.execute(
             """
@@ -781,7 +781,7 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
              h.get("subtype"), h.get("character"), h.get("negotiationMode"),
              h.get("statusType"), h.get("currentEvent"), h.get("promulgationNumber"),
              h.get("mkNumber"), h.get("promulgationDate"), h.get("remark"),
-             h.get("lastModifier"), h.get("kozlonyUrl"), h.get("kozlonyDocUrl")))
+             h.get("lastModifier"), _kozlony_url(h), h.get("kozlonyDocUrl")))
 
         for i, sp in enumerate(rec.get("sponsors") or []):
             pid = _person(sp.get("personID"))
@@ -1293,6 +1293,24 @@ def load_committees(conn: sqlite3.Connection, registry: dict) -> int:
             "inconsistent with itself; re-run the committees stage",
             period, ", ".join(f"{n} {k}" for k, n in sorted(dropped.items())))
     return len(bodies)
+
+
+# magyarkozlony.hu carries no issue before 1998: its listing page for one says
+# "Nincs megjeleníthető tartalom" (nothing to show). The scraper used to keep that
+# listing as the fallback link whenever it found no PDF in it, so the 1990-93
+# promulgations (215 bills) linked an empty page. From 1998 every link resolves.
+_KOZLONY_ONLINE_FROM = 1998
+
+
+def _kozlony_url(h: dict) -> str | None:
+    """The gazette listing link, unless it is one of those empty pre-1998 pages.
+    (A later year with no PDF link is a fetch that failed, so it is kept.)"""
+    url = h.get("kozlonyUrl")
+    if url and not h.get("kozlonyDocUrl"):
+        year = str(h.get("promulgationDate") or "")[:4]
+        if year.isdigit() and int(year) < _KOZLONY_ONLINE_FROM:
+            return None
+    return url
 
 
 # A bill's original is its adatlap (`bill_page_url`, which the API also rebuilds
@@ -1811,6 +1829,53 @@ def load_committee_timing(conn: sqlite3.Connection, registry: dict) -> int:
     return sittings
 
 
+def _ensure_session_day_id(conn: sqlite3.Connection) -> None:
+    """Add ``session.day_id`` to a pre-existing DB (see `_ensure_session_status`)."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(session)")]
+    if cols and "day_id" not in cols:
+        conn.execute("ALTER TABLE session ADD COLUMN day_id TEXT")
+
+
+# Where the scraper keeps each day's raw bundle (`parlamonitor.paths`). Its
+# `day_uuid` is parlament.hu's id for the day; processed records written before
+# the transform carried it as `meta.dayId` have it only here.
+_RAW_DAY_FILE = "original/plenary/raw-{session}-day.json"
+_RAW_DAY_ID_RE = re.compile(r'"day_uuid"\s*:\s*"?([0-9A-Za-z-]+)"?')
+
+
+def _raw_day_id(data_dir: Path, session_id) -> str | None:
+    path = Path(data_dir) / _RAW_DAY_FILE.format(session=session_id)
+    try:
+        with path.open(encoding="utf-8") as f:
+            head = f.read(4096)     # the key sits at the top; a bundle is ~1 MB
+    except OSError:
+        return None
+    m = _RAW_DAY_ID_RE.search(head)
+    if m:
+        return m.group(1)
+    try:
+        return (json.loads(path.read_text(encoding="utf-8")) or {}).get("day_uuid")
+    except (OSError, ValueError):
+        return None
+
+
+def backfill_session_day_ids(conn: sqlite3.Connection, data_dir) -> int:
+    """Fill ``session.day_id`` from the raw bundles wherever the processed record
+    did not carry it. Only touches NULL rows, so after the first pass it costs one
+    file read per newly loaded day. Returns how many it filled."""
+    _ensure_session_day_id(conn)
+    filled = 0
+    for (sid,) in conn.execute(
+            "SELECT id FROM session WHERE day_id IS NULL").fetchall():
+        day_id = _raw_day_id(data_dir, sid)
+        if day_id:
+            conn.execute("UPDATE session SET day_id = ? WHERE id = ?", (day_id, sid))
+            filled += 1
+    if filled:
+        logger.info("Linked %d sitting day(s) to their parlament.hu day id", filled)
+    return filled
+
+
 def _ensure_session_status(conn: sqlite3.Connection) -> None:
     """Add ``session.status`` to a pre-existing DB, so the upcoming/scheduled-day
     feature also lands via the incremental ``--update`` path (which snapshots the
@@ -1842,6 +1907,7 @@ def load_session(conn: sqlite3.Connection, record: dict) -> str:
     period = meta.get("electoralPeriod")
     try:
         _ensure_session_status(conn)
+        _ensure_session_day_id(conn)
         _ensure_speaker_office(conn)
         # delete-then-insert keyed on session id => idempotent replace (ING-4).
         _delete_session(conn, sid)
@@ -1853,15 +1919,15 @@ def load_session(conn: sqlite3.Connection, record: dict) -> str:
 
         conn.execute(
             """INSERT INTO session(id, period_number, sitting, date, date_start,
-                   date_end, status, source, source_page, scraped_at, timing_method,
-                   video_uri, video_playseq, video_duration, video_license,
-                   video_creator)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   date_end, status, source, source_page, day_id, scraped_at,
+                   timing_method, video_uri, video_playseq, video_duration,
+                   video_license, video_creator)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (sid, period, meta.get("sitting"), meta.get("date"),
              meta.get("dateStart"), meta.get("dateEnd"),
              meta.get("status") or "published", meta.get("source"),
              meta.get("sourcePage") or _first_source_page(record),
-             meta.get("sourceScrapedAt"),
+             meta.get("dayId"), meta.get("sourceScrapedAt"),
              meta.get("timingMethod"), meta.get("dayVideoURI"),
              meta.get("dayVideoPlayseq"),
              _day_duration(record), _day_license(record), _day_creator(record)))
@@ -5393,6 +5459,60 @@ def load_asset_declarations(conn: sqlite3.Connection, registry: dict) -> int:
     return n
 
 
+# ---------------------------------------------------------------------------
+# Link repairs
+# ---------------------------------------------------------------------------
+
+# Links already in a DB that the loader now derives differently, on rows whose
+# source file will never change again (the archive cycles) — so no incremental
+# update would ever reload them. Bump the version when adding a step: the next
+# `--update` then runs the pass once, even when no processed file moved.
+_LINK_REPAIRS_KEY = "link_repairs"
+_LINK_REPAIRS_VERSION = "1"
+
+
+def _link_repairs_stale(conn: sqlite3.Connection) -> bool:
+    try:
+        row = conn.execute("SELECT value FROM build_meta WHERE key = ?",
+                           (_LINK_REPAIRS_KEY,)).fetchone()
+    except sqlite3.OperationalError:        # a DB built before build_meta
+        return True
+    return (row[0] if row else None) != _LINK_REPAIRS_VERSION
+
+
+def repair_links(conn: sqlite3.Connection, data_dir) -> None:
+    """Bring every stored link in line with how the loader derives it now, then
+    stamp the version. Idempotent; each step is a no-op on a fresh build except
+    the day-id backfill, which is how a build gets the archive days' ids."""
+    days = backfill_session_day_ids(conn, data_dir)
+    photos = minutes = gazettes = 0
+    if _table_exists(conn, "person"):
+        # Never hot-link a parlament.hu portrait (see load_representatives).
+        photos = conn.execute(
+            "UPDATE person SET photo_uri = NULL WHERE photo_uri LIKE 'http%'").rowcount
+    if _table_exists(conn, "committee_meeting"):
+        rows = conn.execute(
+            "SELECT id, minutes_url FROM committee_meeting WHERE minutes_url LIKE ?",
+            (_COMMITTEE_FILE_BASE + "%",)).fetchall()
+        for mid, url in rows:
+            fixed = _committee_file_url(url)
+            if fixed != url:
+                conn.execute("UPDATE committee_meeting SET minutes_url = ? WHERE id = ?",
+                             (fixed, mid))
+                minutes += 1
+    if _table_exists(conn, "bill"):
+        gazettes = conn.execute(
+            """UPDATE bill SET kozlony_url = NULL
+               WHERE kozlony_url IS NOT NULL AND kozlony_doc_url IS NULL
+                 AND CAST(substr(promulgation_date, 1, 4) AS INTEGER)
+                     BETWEEN 1 AND ?""", (_KOZLONY_ONLINE_FROM - 1,)).rowcount
+    conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
+                 (_LINK_REPAIRS_KEY, _LINK_REPAIRS_VERSION))
+    logger.info("Link repairs v%s: %d day id(s), %d hot-linked portrait(s), "
+                "%d minutes URL(s), %d empty gazette listing(s)",
+                _LINK_REPAIRS_VERSION, days, photos, minutes, gazettes)
+
+
 def build_database(data_dir: str | Path, db_path: str | Path, *,
                    only_session: str | None = None,
                    skip_wordcloud: bool = False) -> None:
@@ -5527,6 +5647,7 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         # only the transcript and the register, whose person rows are all loaded by
         # now (the office-holder file above seats the non-MP ministers).
         rebuild_interjections(conn)
+        repair_links(conn, data_dir)
         wire_nonmp_photos(conn, Path(data_dir) / "media" / "photos")
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("sessions_loaded", str(loaded)))
@@ -5721,6 +5842,9 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
         # code, so an edit to it (or to PARLAMONITOR_PORTFOLIO_MAP) leaves every
         # processed file untouched while making the derived tables wrong.
         portfolios_stale = _portfolios_stale(live)
+        # The same blind spot for a change to how links are derived (see
+        # `repair_links`): it reaches rows no processed file will ever reload.
+        repairs_stale = _link_repairs_stale(live)
     finally:
         live.close()
 
@@ -5728,11 +5852,13 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
     removed = _removed_sessions(processed, prev)
     n_changed = sum(len(v) for v in changed.values())
     if n_changed == 0 and not removed:
-        if not portfolios_stale:
+        if not portfolios_stale and not repairs_stale:
             logger.info("No processed file changed since last load; DB is up to date")
             return False
-        logger.info("No processed file changed, but the portfolio mapping did — "
-                    "rebuilding the §6C tables")
+        logger.info("No processed file changed, but %s did — updating",
+                    " and ".join(what for what, stale in (
+                        ("the portfolio mapping", portfolios_stale),
+                        ("the link derivation", repairs_stale)) if stale))
     else:
         logger.info("Incremental update: %d changed file(s), %d removed sitting(s) — %s",
                     n_changed, len(removed),
@@ -5902,6 +6028,12 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
                 or changed["representatives-*.json"]
                 or changed["advocates-*.json"] or changed["officeholders.json"]):
             rebuild_portfolios(conn)
+        # Day ids for the sittings just loaded from records that predate
+        # `meta.dayId` — or, once per link-repair version, everything.
+        if repairs_stale:
+            repair_links(conn, data_dir)
+        elif loaded_sessions:
+            backfill_session_day_ids(conn, data_dir)
         # Wire any non-MP speaker portraits the scraper has downloaded since the
         # last load (global, cheap — see wire_nonmp_photos). Also runs for an
         # advocates-only update: advocates are non-MP rows, so this is what gives

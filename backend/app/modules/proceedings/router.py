@@ -22,7 +22,7 @@ from ...db import (QueryBudgetExceeded, get_db, like_contains, period_and,
                    query_budget, sentence_id_range)
 from ...media import per_speech_clip
 from ...nlp import LINKABLE_LABELS
-from ...parlament_links import speech_page_url
+from ...parlament_links import sitting_day_page_url, speech_page_url
 # How completely a held day is published (SIT-2). Shared with the Bluesky
 # announcer, whose "fully processed" MUST mean what the site's badge means.
 from ...publication import processing_state
@@ -2115,7 +2115,11 @@ def _session_dict(s) -> dict:
         "video_duration": s["video_duration"],
         "video_license": _RETIRED_LICENSE.get(s["video_license"], s["video_license"]),
         "video_creator": s["video_creator"],
-        "source": s["source"], "source_page": s["source_page"],
+        # The day's own speech listing on parlament.hu, built from its upstream
+        # id (every cycle has one); the stored page only for a day without it.
+        "source": s["source"],
+        "source_page": (sitting_day_page_url(s["day_id"] if "day_id" in s.keys() else None)
+                        or s["source_page"]),
         "timing_method": s["timing_method"],
     }
 

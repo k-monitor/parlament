@@ -6,7 +6,7 @@ import json
 import pytest
 
 from app.parlament_links import (bill_page_url, committee_page_url, person_page_url,
-                                 speech_page_url, vote_page_url)
+                                 sitting_day_page_url, speech_page_url, vote_page_url)
 
 
 def _decode(url: str) -> dict:
@@ -45,6 +45,10 @@ def _opens(page: str, record_id: str) -> dict:
     (committee_page_url, "101145",  # cycle 40
      "https://www.parlament.hu/web/guest/bizottsagok1",
      "bizottsagexportok/exported-bizottsag-adatlap/exported-bizottsag-adatlap"),
+    (sitting_day_page_url, "2730192",  # 2007-10-25
+     "https://www.parlament.hu/ulesnapok-ulesidok",
+     "plenarisulesexportok/ulesnap-felszolalasai-with-contract/"
+     "ulesnap-felszolalasai-with-contract"),
     (speech_page_url, "2952408",
      "https://www.parlament.hu/ulesnapok-ulesidok",
      "plenarisulesexportok/ulesnap-felszolalas-adata-with-contract/"

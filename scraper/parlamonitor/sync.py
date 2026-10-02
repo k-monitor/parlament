@@ -677,7 +677,13 @@ def _sync_representatives(felicitas: FelicitasClient, paths: Paths, cycle: int,
     registry = fetch_representatives(felicitas, cycle, details=with_detail)
     # Keep the local portraits (served at /media/photos) without re-downloading:
     # point each record at the file already on disk so the loader keeps the link.
+    # An MP seated since the last full scrape (a successor, a by-election) has no
+    # file yet and nothing else fetches one, so top those up first — one request
+    # per portrait-less MP per refresh. The site never hot-links parlament.hu.
     photos_dir = paths.data / "media" / "photos"
+    fetch_missing_photos(felicitas, photos_dir,
+                         [r.get("personID") for r in registry["data"]],
+                         negative_cache=False)
     for rec in registry["data"]:
         pid = rec.get("personID")
         if pid and (photos_dir / f"{pid}.jpg").exists():

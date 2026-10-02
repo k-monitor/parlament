@@ -161,11 +161,12 @@ const videoPlayseq = computed(() => usingClip.value
 const clipOrigin = computed(() =>
   (usingClip.value && speech.value.video_start != null) ? speech.value.video_start : 0)
 
-// "View on parlament.hu" (VIE-7): the per-speech playseq player plays exactly
-// this speech's clip on parlament.hu's own server — a real per-speech original,
-// not the generic portal. Falls back to the generic page when there's no clip.
+// "View on parlament.hu" (VIE-7): the speech's own adatlap — speaker, text and
+// video of exactly this speech. Falls back to the per-speech playseq player
+// (the clip alone, on parlament.hu's own server), then to the generic portal.
 const sourceLink = computed(() => (speech.value
-  && (speech.value.video_playseq || speech.value.source_page)) || null)
+  && (speech.value.parlament_url || speech.value.video_playseq
+      || speech.value.source_page)) || null)
 
 // Monotonic load id: rapid prev/next navigation can leave several speech
 // fetches in flight, and they may resolve out of order — only the latest may

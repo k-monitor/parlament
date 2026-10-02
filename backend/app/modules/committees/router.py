@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ...analytics import search_analytics
 from ...db import (get_db, like_contains, period_in_scope, period_key,
                    period_list, period_sql)
+from ...parlament_links import committee_page_url
 from ...query_cache import cached_aggregate
 
 router = APIRouter(prefix="/committees", tags=["committees"])
@@ -105,6 +106,9 @@ def _committee_row(r: sqlite3.Row) -> dict:
         "isSubcommittee": r["parent_id"] is not None,
         "email": r["email"],
         "siteUrl": r["site_url"],
+        # The body's adatlap on parlament.hu: members, meetings, minutes. Every
+        # cycle and every subcommittee has one, unlike the homepage above.
+        "parlamentUrl": committee_page_url(r["id"]),
         "dateStart": r["date_start"],
         "dateEnd": r["date_end"],
         # Upstream's own meeting aggregates. `meetings` counts sittings the

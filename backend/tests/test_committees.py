@@ -67,6 +67,8 @@ def test_committee_sheet_separates_current_and_former_members(client):
     assert r.status_code == 200
     c = r.json()
     assert c["name"] == "Költségvetési Bizottság"
+    # The parlament.hu adatlap link; null only because "biz-1" is a placeholder.
+    assert "parlamentUrl" in c and c["parlamentUrl"] is None
     # Roster in seniority order, chair first.
     assert [(m["role"], m["name"]) for m in c["members"]] == [
         ("chair", "Kovács Béla"), ("member", "Külső Elek")]
@@ -332,6 +334,20 @@ def test_reingesting_a_cycle_replaces_it(conn, data_dir, db_path):
     after = conn.execute("SELECT COUNT(*) FROM committee_member").fetchone()[0]
     assert before == after == 3
     assert conn.execute("SELECT COUNT(*) FROM committee").fetchone()[0] == 2
+
+
+def test_minutes_url_missing_its_slash_is_repaired(conn, data_dir):
+    """Cycle 40-41 registries carry `https://www.parlament.hubiz40/…` minutes
+    links (a host that does not resolve); the loader puts the slash back."""
+    import json
+    from app import loader
+    registry = json.loads((data_dir / "processed" / "committees-43.json").read_text())
+    registry["meetings"][0]["minutesUrl"] = \
+        "https://www.parlament.hubiz40/bizjkv40/TAB/1802191.pdf"
+    loader.load_committees(conn, registry)
+    urls = {r[0] for r in conn.execute("SELECT minutes_url FROM committee_meeting")}
+    assert "https://www.parlament.hu/biz40/bizjkv40/TAB/1802191.pdf" in urls
+    assert not any(u and u.startswith("https://www.parlament.hubiz") for u in urls)
 
 
 def test_a_registry_inconsistent_with_itself_is_reported(data_dir, conn, caplog):

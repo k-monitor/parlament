@@ -22,6 +22,7 @@ from ...db import (QueryBudgetExceeded, get_db, like_contains, period_and,
                    query_budget, sentence_id_range)
 from ...media import per_speech_clip
 from ...nlp import LINKABLE_LABELS
+from ...parlament_links import speech_page_url
 # How completely a held day is published (SIT-2). Shared with the Bluesky
 # announcer, whose "fully processed" MUST mean what the site's badge means.
 from ...publication import processing_state
@@ -1942,6 +1943,9 @@ def get_speech(uid: str, db: sqlite3.Connection = Depends(get_db)):
                            sp["video_start"], sp["video_end"]) if session else None
     speech["video_uri"] = clip["video_uri"] if clip else None
     speech["video_playseq"] = clip["video_playseq"] if clip else None
+    # This one speech's adatlap on parlament.hu — speaker, text and video, the
+    # most specific original there is (VIE-7). Every cycle carries the upstream id.
+    speech["parlament_url"] = speech_page_url(sp["speech_uuid"])
     return {
         "speech": speech,
         "session": _session_dict(session),
@@ -2088,6 +2092,17 @@ def _session_neighbours(db, s) -> dict:
 # serializers
 # ---------------------------------------------------------------------------
 
+# The terms-of-use page the 2022-26 scrape stamped on every recording (cycles
+# 41-42) is gone (404 by 2026-10-02); the one the scraper links now
+# (`proceedings.transform.LICENSE`) is the House's current terms for its content.
+# Swapped on the way out: the stale value is in those 427 days' session files
+# themselves, so no reload would fix it.
+_RETIRED_LICENSE = {
+    "https://www.parlament.hu/web/guest/jogi-nyilatkozat":
+        "https://www.parlament.hu/web/guest/felhasznalasi-feltetelek",
+}
+
+
 def _session_dict(s) -> dict:
     if s is None:
         return None
@@ -2098,7 +2113,8 @@ def _session_dict(s) -> dict:
         "status": (s["status"] if "status" in s.keys() else None) or "published",
         "video_uri": s["video_uri"], "video_playseq": s["video_playseq"],
         "video_duration": s["video_duration"],
-        "video_license": s["video_license"], "video_creator": s["video_creator"],
+        "video_license": _RETIRED_LICENSE.get(s["video_license"], s["video_license"]),
+        "video_creator": s["video_creator"],
         "source": s["source"], "source_page": s["source_page"],
         "timing_method": s["timing_method"],
     }

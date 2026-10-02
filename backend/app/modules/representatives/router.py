@@ -22,6 +22,7 @@ from ...analytics import search_analytics
 from ...config import settings
 from ...db import (fold_text, get_db, like_contains, local_instant, period_and,
                    period_bounds, period_list, period_sql)
+from ...parlament_links import person_page_url
 from ...query_cache import cached_aggregate
 
 router = APIRouter(prefix="/representatives", tags=["representatives"])
@@ -1471,6 +1472,10 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         "lastname": p["lastname"], "photo_uri": p["photo_uri"],
         "wikidata_id": p["wikidata_id"], "wikipedia_url": p["wikipedia_url"],
         "kmonitor_url": p["kmonitor_url"],
+        # Their adatlap on parlament.hu. Every person here has one — MPs of any
+        # cycle, nationality advocates, and the non-MP ministers and state
+        # secretaries who spoke — keyed by the kepviseloId that is our person_id.
+        "parlament_url": person_page_url(p["person_id"]),
         # The two astrological signs the scraper derives from the Wikidata birth
         # date (P569, day-precision only) — the sun sign and the Chinese zodiac
         # animal (REP-16). Language-neutral keys ("taurus", "dragon"); the display

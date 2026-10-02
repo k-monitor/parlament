@@ -243,6 +243,9 @@ watch(() => [route.query.tab, route.query.offset].join('|'), loadList)
         <a v-if="data.siteUrl" :href="data.siteUrl" target="_blank" rel="noopener">
           {{ $t('committees.site') }} ↗
         </a>
+        <a v-if="data.parlamentUrl" :href="data.parlamentUrl" target="_blank" rel="noopener">
+          {{ $t('committees.parlament') }} ↗
+        </a>
         <!-- The address is published obfuscated upstream ("x[kukac]…"); it is
              shown exactly as published and never turned into a mailto:, which
              would undo the protection the House chose for it. -->

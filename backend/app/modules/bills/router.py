@@ -22,6 +22,7 @@ from ...analytics import search_analytics
 from ...db import (get_db, like_contains, period_and, period_in_scope,
                    period_key, period_list, period_sql)
 from ...media import per_speech_clip
+from ...parlament_links import bill_page_url
 from ...query_cache import cached_aggregate
 from ...vote_stats import (NO_ATTENDANCE, NO_CROSSVOTING, attendance_for,
                            crossvoting_for)
@@ -175,6 +176,13 @@ def _committee_sponsors(db: sqlite3.Connection,
              GROUP BY cd.bill_id, c.name""", bill_ids).fetchall()
     return {(r["bill_id"], r["name"]): {"id": r["id"], "name": r["name"]}
             for r in rows}
+
+
+def _source_url(b: sqlite3.Row) -> Optional[str]:
+    """The bill's adatlap on parlament.hu, built per request from its id so a
+    fixed link reaches every loaded bill at once; the stored URL (PDF, legacy
+    archive page or portal search) only where upstream has no adatlap for it."""
+    return bill_page_url(b["id"]) or b["source_url"]
 
 
 def _stages(stages_json: Optional[str]) -> list[dict]:
@@ -484,7 +492,7 @@ def list_bills(
                 "id": r["id"], "bill_number": r["bill_number"], "title": r["title"],
                 "type": r["type"], "main_type": r["main_type"], "status": r["status"],
                 "submitted_date": r["submitted_date"], "text_url": r["text_url"],
-                "source_url": r["source_url"], "period_number": r["period_number"],
+                "source_url": _source_url(r), "period_number": r["period_number"],
                 "sponsors": sponsors.get(r["id"], []),
                 "responder": responders.get(r["id"]),
                 "topic": topics.get(r["id"]),
@@ -1375,7 +1383,7 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "id": b["id"], "bill_number": b["bill_number"], "title": b["title"],
         "type": b["type"], "main_type": b["main_type"], "status": b["status"],
         "submitted_date": b["submitted_date"], "text_url": b["text_url"],
-        "text_caption": b["text_caption"], "source_url": b["source_url"],
+        "text_caption": b["text_caption"], "source_url": _source_url(b),
         "no_text": bool(b["no_text"]), "period_number": b["period_number"],
         "stages": _stages(b["stages_json"]),
         "sponsors": sponsors,

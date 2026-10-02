@@ -1083,6 +1083,23 @@ def _ensure_committee_tables(conn: sqlite3.Connection) -> None:
     """)
 
 
+# Registries scraped before `felicitas._committee_file_url` put a slash between
+# the host and the path carry 1 422 minutes links (all of cycle 40's, 223 of
+# cycle 41's) of the form `https://www.parlament.hubiz40/…` — a host that does
+# not resolve. Repaired here against the known base, exactly as
+# `parlamonitor.committees.minutes_scrape.normalise_url` does for the fetcher,
+# so the meeting list stops linking a dead host without re-scraping four cycles.
+_COMMITTEE_FILE_BASE = "https://www.parlament.hu"
+
+
+def _committee_file_url(url: str | None) -> str | None:
+    if url and url.startswith(_COMMITTEE_FILE_BASE):
+        rest = url[len(_COMMITTEE_FILE_BASE):]
+        if rest and not rest.startswith("/"):
+            return f"{_COMMITTEE_FILE_BASE}/{rest}"
+    return url
+
+
 def load_committees(conn: sqlite3.Connection, registry: dict) -> int:
     """Load a cycle's committees (Committees module, §6F). Re-ingesting a cycle
     replaces its committees and everything hanging off them (idempotent, ING-4).
@@ -1212,7 +1229,8 @@ def load_committees(conn: sqlite3.Connection, registry: dict) -> int:
                VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (mt.get("meetingId"), mt["committeeId"], period, mt.get("number"),
              mt.get("numberInYear"), mt.get("datetime"), mt.get("kind"),
-             mt.get("quorum"), mt.get("durationS"), mt.get("minutesUrl")))
+             mt.get("quorum"), mt.get("durationS"),
+             _committee_file_url(mt.get("minutesUrl"))))
 
     for d in _rows("documents"):
         conn.execute(
@@ -1277,9 +1295,10 @@ def load_committees(conn: sqlite3.Connection, registry: dict) -> int:
     return len(bodies)
 
 
-# Bills have no clean per-bill permalink on the modern portal; the text PDF is
-# the most specific resolvable original (LEGAL-1). This generic search page is
-# the fallback when a bill has no text.
+# A bill's original is its adatlap (`bill_page_url`, which the API also rebuilds
+# per request). Where upstream has none, the text PDF is the most specific
+# resolvable original (LEGAL-1), and this generic search page is the fallback
+# when a bill has no text either.
 #
 # A source that carries its own document page instead says so in `sourceUrl` —
 # the 1994-98 archive (parlamonitor.bills.legacy) does, because the modern portal

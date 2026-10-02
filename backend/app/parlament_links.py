@@ -3,9 +3,23 @@
 The public site keeps its whole navigation state in a ``#page=`` URL fragment:
 a gzip-compressed, url-safe-base64-encoded JSON blob prefixed with ``cv1gzb-``.
 Rebuilding that fragment lets our "view on parlament.hu" links land on the exact
-bill / vote sheet rather than a generic listing page. The scraper builds the
-sitting-day variant (see ``parlamonitor.proceedings.transform``); bills and votes
-are assembled here because they are loaded straight from the scrape output.
+record's adatlap (detail sheet) rather than a generic listing page. The scraper
+builds the sitting-day variant (see ``parlamonitor.proceedings.transform``); the
+rest are assembled here.
+
+Every adatlap the portal links to is a page with an ``open`` contract that takes
+the record's ``id`` and fans it out to the page's own datasources, so the state is
+just ``{"page": <page>, "hydration": {"open": {"id": <id>}}}`` — what the portal's
+own client builds for its in-page links (``renderPageUrlForHydration`` in
+``felicitas/static/js/felicitas_client_full.js``). It names the page and nothing
+inside it; the full ``binding`` state the portal writes after navigating has to
+spell out every internal dao, and is not needed to open a sheet.
+
+When a link starts showing "Failed to load page", the page was renamed (the vote
+adatlap was, by 2026-10-02): the list page that links to it names the current
+one in a ``pageReference.pageName`` — fetch
+``/felicitas/api/page-info/page-item/<list page>``, the ``data-page`` of e.g.
+``/web/guest/szavazasok``.
 """
 
 from __future__ import annotations
@@ -16,90 +30,70 @@ import json
 import re
 
 _FRAGMENT_PREFIX = "cv1gzb-"
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
-BILL_BASE = "https://www.parlament.hu/web/guest/iromanyok"
-BILL_PAGE = "iromanyexportok/iromany-adatlap-with-contract/iromany-adatlap-with-contract"
+# Felicitas record ids: a UUID from the 2026 backend on, a plain integer for
+# everything the portal carried over from before it (votes, bills and speeches
+# back to 1990 all open by it). Anything else — the legacy archive's "35-1234",
+# a test fixture's "bill-uuid-1" — has no adatlap.
+_RECORD_ID_RE = re.compile(
+    r"^(?:\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$", re.I)
+# A person's kepviseloId: "a011", "004O", "0005" — MPs, nationality advocates
+# and the non-MP office holders (ministers, state secretaries) who spoke alike.
+_PERSON_ID_RE = re.compile(r"^[0-9a-z]{4}$", re.I)
 
-# Bindings on the bill adatlap keyed by the bill's own iromány id (`pOnalId`);
-# the primary `dao` binding keys on `pId`. Captured verbatim from a real URL.
-_BILL_ONAL_DAOS = (
-    "azonnalikerdesDao", "bizottsagiNemOnalloDao", "felszolalasDao",
-    "hataridokDao", "hatteranyagokDao", "indoklasokDao",
-    "iromanyBizottsagiEsemenyekDao", "iromanyEsemenyekDao",
-    "iromanySzavazasaiDao", "iromanyokhozhatteranyagokDao",
-    "iromanytTargyaloBizottsagokDao", "nemOnalloDao", "nemOnalloosszesitoDao",
-)
+BASE = "https://www.parlament.hu"
+
+# (page that hosts the portal app, adatlap page name)
+VOTE_PAGE = (f"{BASE}/web/guest/szavazasok",
+             "szavazasokexportok/exported-szavazas-adatlap-page/exported-szavazas-adatlap-page")
+BILL_PAGE = (f"{BASE}/web/guest/iromanyok",
+             "iromanyexportok/iromany-adatlap-with-contract/iromany-adatlap-with-contract")
+PERSON_PAGE = (f"{BASE}/web/guest/kepviselok",
+               "kepviseloexportok/kepviselo-adatlap-with-contract/kepviselo-adatlap-with-contract")
+COMMITTEE_PAGE = (f"{BASE}/web/guest/bizottsagok1",
+                  "bizottsagexportok/exported-bizottsag-adatlap/exported-bizottsag-adatlap")
+SPEECH_PAGE = (f"{BASE}/ulesnapok-ulesidok",
+               "plenarisulesexportok/ulesnap-felszolalas-adata-with-contract/"
+               "ulesnap-felszolalas-adata-with-contract")
 
 
 def _fragment(state: dict) -> str:
     payload = json.dumps(state, separators=(",", ":"), ensure_ascii=False)
-    gz = gzip.compress(payload.encode("utf-8"))
+    # mtime=0: the same record always yields the same URL (the bill's is stored).
+    gz = gzip.compress(payload.encode("utf-8"), mtime=0)
     b64 = base64.b64encode(gz).decode("ascii").translate(str.maketrans("/+", "_-"))
-    return _FRAGMENT_PREFIX + b64
+    return _FRAGMENT_PREFIX + b64.rstrip("=")
 
 
-def _datasource(param: str, value: str) -> dict:
-    return {"type": "datasource",
-            "content": {"parameters": {param: value}, "open": True,
-                        "openPossibleCounts": False, "state": {"page": 0}}}
-
-
-def _parameter(param: str, value: str) -> dict:
-    return {"type": "parameter", "content": {param: value}}
-
-
-VOTE_BASE = "https://www.parlament.hu/web/guest/szavazasok"
-VOTE_PAGE = "szavazasokexportok/szavazas-adatlap-with-contract/szavazas-adatlap-with-contract"
-
-# The vote adatlap keys most daos on the vote's own id as `pId`, but the per-MP
-# roll-call dao (`szavazasByKepviseloDao`) names it `pSzavazasId`. Captured
-# verbatim (names + order) from a real URL.
-_VOTE_PID_DAOS = ("szavazasPatkoDao", "szavazasAlapadatokDao", "szavazasByFrakcioDao")
-
-
-def vote_page_url(vote_id: str | None) -> str | None:
-    """Deep link to a vote's adatlap (detail sheet) on parlament.hu."""
-    if not vote_id or not _UUID_RE.match(str(vote_id)):
+def _adatlap_url(page: tuple[str, str], record_id, id_re: re.Pattern) -> str | None:
+    if record_id is None or not id_re.match(str(record_id)):
         return None
-    binding: dict = {
-        "emptyIntBinding": {"type": "normal", "content": None},
-        "kepviselo": {"type": "state", "content": {"content": {
-            "dao.dataSource": {"type": "datasource",
-                               "content": {"parameters": {}, "open": True,
-                                           "openPossibleCounts": False,
-                                           "state": {"page": 0}}},
-            "dao.parameter": {"type": "parameter", "content": {}},
-        }, "open": False}},
-        "kepviseloId": {"type": "normal", "content": None},
-        "szavazasPatkoDao.dataSource": _datasource("pId", vote_id),
-        "szavazasAlapadatokDao.dataSource": _datasource("pId", vote_id),
-        "szavazasAlapadatokDao.parameter": _parameter("pId", vote_id),
-        "szavazasByFrakcioDao.dataSource": _datasource("pId", vote_id),
-        "szavazasByFrakcioDao.parameter": _parameter("pId", vote_id),
-        "szavazasByKepviseloDao.dataSource": _datasource("pSzavazasId", vote_id),
-        "szavazasByKepviseloDao.parameter": _parameter("pSzavazasId", vote_id),
-        "szavazasPatkoDao.parameter": _parameter("pId", vote_id),
-    }
-    state = {"page": VOTE_PAGE, "binding": binding, "globals": {}}
-    return f"{VOTE_BASE}#page={_fragment(state)}"
+    host, name = page
+    state = {"page": name, "hydration": {"open": {"id": str(record_id)}}}
+    return f"{host}#page={_fragment(state)}"
 
 
-def bill_page_url(bill_id: str | None) -> str | None:
-    """Deep link to a bill's adatlap (detail sheet) on parlament.hu."""
-    if not bill_id or not _UUID_RE.match(str(bill_id)):
-        return None
-    binding: dict = {
-        "bizottsagMiniAdatlap": {"type": "state", "content": {}},
-        "emptyIntBinding": {"type": "normal", "content": None},
-        "emptyIntListParameter": {"type": "normal", "content": None},
-        "emptyStringListParameter": {"type": "normal", "content": None},
-    }
-    for dao in _BILL_ONAL_DAOS:
-        binding[f"{dao}.dataSource"] = _datasource("pOnalId", bill_id)
-        binding[f"{dao}.parameter"] = _parameter("pOnalId", bill_id)
-    binding["dao.dataSource"] = _datasource("pId", bill_id)
-    binding["dao.parameter"] = _parameter("pId", bill_id)
-    state = {"page": BILL_PAGE, "binding": binding, "globals": {}}
-    return f"{BILL_BASE}#page={_fragment(state)}"
+def vote_page_url(vote_id) -> str | None:
+    """Deep link to a vote's adatlap on parlament.hu."""
+    return _adatlap_url(VOTE_PAGE, vote_id, _RECORD_ID_RE)
+
+
+def bill_page_url(bill_id) -> str | None:
+    """Deep link to a bill's (iromány's) adatlap on parlament.hu."""
+    return _adatlap_url(BILL_PAGE, bill_id, _RECORD_ID_RE)
+
+
+def person_page_url(person_id) -> str | None:
+    """Deep link to a person's adatlap on parlament.hu."""
+    return _adatlap_url(PERSON_PAGE, person_id, _PERSON_ID_RE)
+
+
+def committee_page_url(committee_id) -> str | None:
+    """Deep link to a committee's (or subcommittee's) adatlap on parlament.hu."""
+    return _adatlap_url(COMMITTEE_PAGE, committee_id, _RECORD_ID_RE)
+
+
+def speech_page_url(speech_uuid) -> str | None:
+    """Deep link to one plenary speech's adatlap on parlament.hu: speaker, text
+    and its video clip, with links to the neighbouring speeches."""
+    return _adatlap_url(SPEECH_PAGE, speech_uuid, _RECORD_ID_RE)

@@ -553,7 +553,8 @@ watch(() => store.cycles.join(','), load)
                 <a v-if="profile.website" :href="profile.website" target="_blank" rel="noopener">🌐 {{ $t('profile.website') }}</a>
                 <a v-if="profile.email" :href="'mailto:' + profile.email">✉ {{ profile.email }}</a>
               </div>
-              <div class="row small links" style="gap:1rem;margin-top:.35rem;" v-if="profile.wikipedia_url || profile.kmonitor_url || profile.cv_url">
+              <div class="row small links" style="gap:1rem;margin-top:.35rem;" v-if="profile.parlament_url || profile.wikipedia_url || profile.kmonitor_url || profile.cv_url">
+                <a v-if="profile.parlament_url" :href="profile.parlament_url" target="_blank" rel="noopener">↗ {{ $t('profile.parlament') }}</a>
                 <a v-if="profile.wikipedia_url" :href="profile.wikipedia_url" target="_blank" rel="noopener"><span class="link-badge link-badge--w" aria-hidden="true">W</span> {{ $t('profile.wikipedia') }}</a>
                 <a v-if="profile.kmonitor_url" :href="profile.kmonitor_url" target="_blank" rel="noopener"><span class="link-badge" aria-hidden="true"><img src="/kmonitor-badge.png" alt="" /></span> {{ $t('profile.kmonitor') }}</a>
                 <!-- The CV the MP had the House publish (REP-13) — a parlament.hu

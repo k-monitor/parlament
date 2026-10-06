@@ -152,6 +152,11 @@ export default {
         summary: 'A leggyakoribb {n} téma (összesen: {total})',
         link: 'Összes téma',
       },
+      speakers: {
+        title: 'Ki beszél a legtöbbet?',
+        legend: 'Frakciók',
+        link: 'Felszólalási toplista',
+      },
     },
   },
   // "A múlt héten" — the home page's digest of the sitting week just gone.

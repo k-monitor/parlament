@@ -104,6 +104,11 @@ export default {
         summary: 'The {n} most discussed topics (of {total})',
         link: 'All topics',
       },
+      speakers: {
+        title: 'Who speaks the most?',
+        legend: 'Factions',
+        link: 'Speaking-time ranking',
+      },
     },
   },
   // "A múlt héten" — the home page's digest of the sitting week just gone.

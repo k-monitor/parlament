@@ -1,6 +1,7 @@
 <script setup>
 // The site's figures, one at a time, on the home page: the settlement map, the
-// interjection network and the topic mix, taking turns (lib/rotation.js).
+// interjection network, the topic mix and the speaking-time ranking, taking turns
+// (lib/rotation.js).
 //
 // They are the real, interactive components, not pictures of them: a reader can
 // hover a town, drag a member, open a topic — and every such click lands on the
@@ -10,7 +11,7 @@
 //
 // One height for every figure (`--fig-h`), so that a turn never moves the page:
 // the map is sized to it, the network is pinned to its aspect, and the topic mix
-// shows as many rows as fit. Each figure is gated on the module behind it, and
+// and the speaker bars show as many rows as fit. Each figure is gated on the module behind it, and
 // one with nothing to draw in this scope is left out of the turn.
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -19,6 +20,8 @@ import { api } from '../api.js'
 import { store, currentCycleLabel } from '../store.js'
 import { useRotation } from '../lib/rotation.js'
 import RotationControls from './RotationControls.vue'
+import BarChart from './BarChart.vue'
+import { formatSpeakingTime } from '../format.js'
 
 // Loaded with the figure, not with the home page: Leaflet and d3 are the two
 // heaviest libraries on the site, and each is needed only while its figure shows.
@@ -29,9 +32,11 @@ const TopicMixChart = defineAsyncComponent(() => import('./TopicMixChart.vue'))
 const router = useRouter()
 const { t } = useI18n()
 
-// How many members the network draws, and topics the mix lists, in a card.
+// How many members the network draws, topics the mix lists, and speakers the
+// ranking bars, in a card.
 const GRAPH_TOP = 10
 const TOPIC_ROWS = 9
+const SPEAKER_ROWS = 10
 
 const FIGURES = [
   {
@@ -54,6 +59,15 @@ const FIGURES = [
     load: (period) => api.topicMix(period),
     usable: (d) => !!(d.topics && d.topics.length),
     link: { name: 'topics' },
+  },
+  {
+    // The same ranking the speaking-time fact tops and the Felszólalók list opens
+    // on (its default sort), so the bars here are that list's first rows.
+    id: 'speakers',
+    on: () => store.moduleEnabled('representatives'),
+    load: (period) => api.representatives({ period, sort: 'speaking_time', limit: SPEAKER_ROWS }),
+    usable: (d) => (d.representatives || []).some((r) => r.speaking_seconds > 0),
+    link: { name: 'representatives' },
   },
 ]
 
@@ -150,6 +164,27 @@ const topicHead = computed(() => {
 function openTopic(label) {
   router.push({ name: 'topics', query: { topic: label } })
 }
+
+// ---- speakers -----------------------------------------------------------------------
+// A bar wears its member's faction colour, so the factions drawn get a legend:
+// colour is never the only thing saying who sits where.
+const NO_FACTION = 'var(--ink-faint)'
+const speakerRows = computed(() => {
+  const d = figure.value && figure.value.id === 'speakers' ? figure.value.data : null
+  return d ? d.representatives.filter((r) => r.speaking_seconds > 0) : []
+})
+const speakerBars = computed(() => speakerRows.value.map((r) => ({
+  label: r.label, value: r.speaking_seconds,
+  color: (r.faction && r.faction.color) || NO_FACTION,
+  to: { name: 'profile', params: { id: r.person_id } },
+})))
+const speakerFactions = computed(() => {
+  const seen = new Map()
+  for (const r of speakerRows.value) {
+    if (r.faction && !seen.has(r.faction.id)) seen.set(r.faction.id, r.faction)
+  }
+  return [...seen.values()]
+})
 </script>
 
 <template>
@@ -187,6 +222,11 @@ function openTopic(label) {
             v-else-if="figure.id === 'topics'"
             :speech="topicHead" @select="openTopic"
           />
+          <BarChart
+            v-else-if="figure.id === 'speakers'"
+            :items="speakerBars" :value-format="formatSpeakingTime"
+            :caption="$t('home.figures.speakers.title')" :show-caption="false"
+          />
         </div>
       </Transition>
     </div>
@@ -204,6 +244,13 @@ function openTopic(label) {
       <p v-else-if="figure.id === 'topics'" class="figcard__note soft">
         {{ $t('home.figures.topics.summary',
               { n: topicHead.topics.length, total: figure.data.topics.length }) }}
+      </p>
+      <p v-else-if="figure.id === 'speakers'" class="figcard__places"
+         :aria-label="$t('home.figures.speakers.legend')">
+        <span v-for="f in speakerFactions" :key="f.id" class="figcard__legend">
+          <span class="figcard__dot" :style="{ background: f.color || NO_FACTION }"
+                aria-hidden="true"></span>{{ f.label }}
+        </span>
       </p>
       <router-link :to="figure.link" class="figcard__more">
         {{ $t(`home.figures.${figure.id}.link`) }} <span aria-hidden="true">→</span>
@@ -230,6 +277,8 @@ function openTopic(label) {
 .figcard__figure { min-width: 0; }
 /* The topic mix is a list, not a picture: it keeps to the stage, top-aligned. */
 .figcard__figure :deep(.mix) { margin: 0; }
+/* Speaker names are the point of that figure: a wider name column than BarChart's. */
+.figcard__figure :deep(.bar-row) { grid-template-columns: minmax(90px, 36%) 1fr auto; }
 .figcard__skeleton { height: var(--fig-h); border-radius: var(--radius); background: #f0eee8; }
 .figcard__empty { margin: 0; padding-top: 3rem; text-align: center; }
 
@@ -239,6 +288,10 @@ function openTopic(label) {
 }
 .figcard__places { display: flex; flex-wrap: wrap; gap: .2rem .9rem; margin: 0; font-size: .85rem; color: var(--ink-soft); }
 .figcard__places strong { color: var(--ink); }
+/* Baseline-aligned, with the dot centred out of it, so the legend sits on the
+   same line as the link — a centred row would make this summary 1px taller. */
+.figcard__legend { display: inline-flex; align-items: baseline; gap: .3rem; }
+.figcard__dot { align-self: center; width: .65rem; height: .65rem; border-radius: 50%; flex: none; border: 1px solid rgba(0,0,0,.15); }
 .figcard__note { margin: 0; font-size: .82rem; }
 .figcard__more { font-weight: 700; font-size: .9rem; white-space: nowrap; margin-left: auto; }
 .figcard__foot { margin-top: .6rem; }

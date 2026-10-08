@@ -1,7 +1,7 @@
 <script setup>
 // One sitting day (use case 2): transcript segmented agenda item → speech, each
 // speech links into the viewer.
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
@@ -17,6 +17,10 @@ import ShareButton from '../../components/ShareButton.vue'
 import UpcomingSitting from '../../components/UpcomingSitting.vue'
 import SpeechRow from './SpeechRow.vue'
 import { titleDate, usePageTitle } from '../../lib/pageTitle.js'
+// The interjections dialog belongs to its own module (§6E) and pulls in d3, so it
+// is loaded only when somebody opens it.
+const DayInterjectionsDialog = defineAsyncComponent(
+  () => import('../interjections/DayInterjectionsDialog.vue'))
 
 const props = defineProps({ id: String })
 const router = useRouter()
@@ -37,6 +41,16 @@ const newWordsOpen = ref(false)
 const topSpeakers = ref(null)
 // Longest single speaking time, for sizing the (decorative) bars (TOPSPK-4).
 const topMax = computed(() => Math.max(1, ...(topSpeakers.value?.speakers || []).map((s) => s.seconds || 0)))
+// Who heckled whom on this day (§6E): a separate, non-blocking request like the
+// ones above, made only to learn whether the day has any — the button that opens
+// the figure is offered only then, since one that opens onto nothing is worse
+// than none. The dialog is handed the same payload rather than fetching it again.
+// The API caps the figure at its 40 most involved people, which on all but the
+// rowdiest days is everyone.
+const DAY_INTERJECTION_TOP = 40
+const interjections = ref(null)
+const interjectionsOpen = ref(false)
+const hasInterjections = computed(() => (interjections.value?.total || 0) > 0)
 // Held, but parlament.hu has not published per-speech timings/video/transcript yet:
 // there are no durations or clips, so suppress the (meaningless) toplist and show a
 // not-yet-ready notice instead (the sittings list also renders it disabled).
@@ -90,6 +104,7 @@ let loadSeq = 0
 async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false; cloud.value = null; newWords.value = null; topSpeakers.value = null
+  interjections.value = null; interjectionsOpen.value = false
   try {
     const res = await api.session(props.id)
     if (seq === loadSeq) data.value = res
@@ -101,6 +116,11 @@ async function load() {
   api.sessionWordcloud(props.id).then((c) => { if (seq === loadSeq) cloud.value = c }).catch(() => {})
   api.sessionNewWords(props.id).then((n) => { if (seq === loadSeq) newWords.value = n }).catch(() => {})
   api.sessionTopSpeakers(props.id).then((t) => { if (seq === loadSeq) topSpeakers.value = t }).catch(() => {})
+  // A switched-off module, or a DB without the table (503), simply offers no button.
+  if (store.moduleEnabled('interjections')) {
+    api.interjectionGraph(undefined, DAY_INTERJECTION_TOP, undefined, props.id)
+      .then((g) => { if (seq === loadSeq) interjections.value = g }).catch(() => {})
+  }
 }
 // Agenda table of contents (TOC-1): a sticky right-hand outline shown only when
 // there is horizontal room (wide screens) and there are several items worth
@@ -253,21 +273,39 @@ function searchWord(word) {
             </ol>
           </section>
 
-          <!-- Beszédmetrikák (READ-5). The chips are OFF by default on this list:
-               a sitting day runs to hundreds of rows, and two extra chips on each
-               would bury the speaker, faction and duration people actually scan
-               for. One control turns the column on for a reader who came to
-               compare, and the choice is remembered across days and visits. The
-               single-speech viewer shows the same numbers unconditionally, so the
-               annotation is discoverable whether or not this is ever pressed. -->
-          <div v-if="hasSpeechMetrics" class="metrics-toggle">
+          <!-- The day's optional extras, as small secondary buttons in one quiet
+               row above the agenda, so neither competes with the transcript. -->
+          <div v-if="hasSpeechMetrics || hasInterjections" class="day-tools">
+            <!-- Közbeszólások (§6E): who heckled whom on this day, in a dialog
+                 rather than a section of the page — on most days a curiosity,
+                 not the record. -->
             <button
-              type="button" class="btn secondary small"
-              :aria-pressed="store.showSpeechMetrics ? 'true' : 'false'"
-              @click="setShowSpeechMetrics(!store.showSpeechMetrics)"
-            >📖 {{ store.showSpeechMetrics ? $t('sessions.metricsHide') : $t('sessions.metricsShow') }}</button>
-            <HelpTip :label="$t('sessions.metricsLabel')"><p>{{ $t('sessions.metricsCaption') }}</p></HelpTip>
+              v-if="hasInterjections" type="button" class="btn secondary small"
+              aria-haspopup="dialog" :title="$t('interjections.dayButtonTitle')"
+              @click="interjectionsOpen = true"
+            >💬 {{ $t('interjections.dayButton') }}<span class="tool-count">{{ interjections.total }}</span></button>
+            <!-- Beszédmetrikák (READ-5). The chips are OFF by default on this list:
+                 a sitting day runs to hundreds of rows, and two extra chips on each
+                 would bury the speaker, faction and duration people actually scan
+                 for. One control turns the column on for a reader who came to
+                 compare, and the choice is remembered across days and visits. The
+                 single-speech viewer shows the same numbers unconditionally, so the
+                 annotation is discoverable whether or not this is ever pressed. -->
+            <span v-if="hasSpeechMetrics" class="tool">
+              <button
+                type="button" class="btn secondary small"
+                :aria-pressed="store.showSpeechMetrics ? 'true' : 'false'"
+                @click="setShowSpeechMetrics(!store.showSpeechMetrics)"
+              >📖 {{ store.showSpeechMetrics ? $t('sessions.metricsHide') : $t('sessions.metricsShow') }}</button>
+              <HelpTip :label="$t('sessions.metricsLabel')"><p>{{ $t('sessions.metricsCaption') }}</p></HelpTip>
+            </span>
           </div>
+          <DayInterjectionsDialog
+            v-if="interjectionsOpen && hasInterjections"
+            :session-id="String(data.session.id)" :graph="interjections"
+            :period="data.session.period" :date-label="shareTitle"
+            @close="interjectionsOpen = false"
+          />
 
           <!-- The agenda + speaker list is shown even for a not-yet-processed day
                (names/order exist); only the timing toplist above is suppressed. -->
@@ -457,9 +495,11 @@ function searchWord(word) {
 .chips .chip:hover, .chips .chip:focus-visible { border-color: var(--accent); outline: none; }
 .chips .chip-count { font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .toplist { margin-bottom: 1rem; }
-/* Right-aligned control row above the agenda, so the toggle reads as a display
-   option for the list below rather than as part of the day's content. */
-.metrics-toggle { display: flex; align-items: center; justify-content: flex-end; gap: .4rem; margin: 0 0 .5rem; }
+/* Right-aligned control row above the agenda, so its buttons read as options for
+   the day rather than as part of its content. */
+.day-tools { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; margin: 0 0 .5rem; }
+.day-tools .tool { display: inline-flex; align-items: center; gap: .4rem; }
+.tool-count { font-size: .75rem; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
 .top-rows { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(130px, 1.5fr) auto 1fr auto auto; row-gap: .24rem; }
 .top-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; column-gap: .55rem; align-items: center; padding: .12rem 0; font-size: .9rem; }
 .top-row :deep(.row span) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

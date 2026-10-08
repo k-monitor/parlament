@@ -195,8 +195,9 @@ export const api = {
   questionsList: (params) => get('/bills/questions/list', params),
   // Közbeszólások (§6E) — who interjects over whose speech. The graph is one
   // request per (cycle scope, top N); the list is what one clicked arrow holds.
-  interjectionGraph: (period, top, rank) =>
-    get('/interjections/graph', { period, top, rank }),
+  // `session` draws one sitting day instead of the cycle scope (the day page).
+  interjectionGraph: (period, top, rank, session) =>
+    get('/interjections/graph', { period, top, rank, session }),
   interjectionList: (params) => get('/interjections/list', params),
   interjectionPartners: (period, person) =>
     get('/interjections/partners', { period, person }),

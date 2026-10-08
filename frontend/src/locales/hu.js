@@ -1396,6 +1396,16 @@ export default {
     close: 'Bezárás',
     methodology: 'A gyorsírói jegyzőkönyv a hangosabb bekiabálásokat zárójelben, szó szerint, a félbeszakított felszólalás szövegébe írja: „(Balla György: Úgy van!)”. A Parlamonitor ezeket emeli ki, és köti össze a két képviselőt: a közbeszólót a zárójelben megnevezett név alapján, a másik oldalon pedig azt, akié a felszólalás. A név csak akkor számít, ha egyetlen képviselőre illik – ha a Parlamentben egyszerre több azonos nevű képviselő ült (például két Tóth István), a közbeszólás megnevezetlen marad, nem tippelünk. Ugyanezt a szabályt használja a jegyzőkönyv-olvasó is, amikor a szövegben a közbeszóló nevét a profiljára linkeli, így az ábra és a jegyzőkönyv ugyanazt mondja.',
     methodologyExclusions: 'Nem számítjuk bele az ülésvezetői felszólalások alatt elhangzott közbeszólásokat: egy szavazási blokk a jegyzőkönyvben egyetlen, órákig tartó levezető elnöki felszólalás, így egy egész délután bekiabálásai oda esnének, és az alelnökök lennének a Parlament messze legtöbbet félbeszakított tagjai (ugyanaz a szabály, ami minden más képviselői statisztikából is kihagyja az ülésvezetést). Nem számítjuk azokat sem, amelyeknél a jegyzőkönyv csak az eseményt rögzíti, a szavakat nem („Gulyás Gergely közbeszól.”), és azokat sem, ahol a szavak megvannak, de a bekiabáló nem („Közbeszólások a Fidesz padsoraiból: Nem!”).',
+    // Egy ülésnap közbeszólásai, a napi oldal gombja mögött nyíló ablakban.
+    dayButton: 'Közbeszólások',
+    dayButtonTitle: 'Ki kinek szólt közbe ezen a napon',
+    dayTitle: 'Közbeszólások ezen a napon',
+    dayClickHint: 'Kattints egy nyílra vagy egy képviselőre, és a lista csak a hozzá tartozó közbeszólásokat mutatja.',
+    dayShownShare: 'Az ábrán a {n} legtöbbet érintett képviselő látszik: a köztük elhangzott közbeszólások a nap összes közbeszólásának {share}%-a.',
+    dayAll: 'A nap összes közbeszólása',
+    dayPerson: '{made} közbeszólás, {received} kapott',
+    dayShowAll: 'Összes',
+    dayCycleLink: 'A teljes ciklus közbeszólásai',
     coverage: 'A kiválasztott ciklusban {extracted} szó szerinti közbeszólás került elő, ebből {attributed} volt egyértelmű névhez köthető; {procedural} ülésvezetői felszólalás alatt hangzott el.',
   },
   // Elemzések (§4E) — a szekció nyitóoldala. A kártyák szövege itt van, a

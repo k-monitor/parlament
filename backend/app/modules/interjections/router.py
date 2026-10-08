@@ -17,6 +17,11 @@ module serves the two shapes that relation is read in:
   shout at, each way with its count, which is what fills the two choosers the
   panel's one arrow hangs between (INT-11).
 
+``/graph`` and ``/list`` also answer for **one sitting day** (``session``), which is
+what the day page's "who heckled whom today" dialog asks for. A day is one day of
+one cycle, so it replaces the cycle scope rather than narrowing it (see
+:func:`_scope`).
+
 Two exclusions are applied to everything counted here, and to nothing stored:
 
 - **chairing speeches** (``procedural``), as in every other representative statistic
@@ -74,6 +79,23 @@ def _require_tables(db: sqlite3.Connection) -> None:
             detail="Interjection table not built yet; run the loader to derive it.")
 
 
+def _scope(db: sqlite3.Connection, period: Optional[List[int]],
+           session: Optional[str]) -> tuple[str, list, Optional[List[int]]]:
+    """Which interjections a request is about: a WHERE fragment (led by ``AND``)
+    with its parameters, and the cycle scope a member's faction is read in.
+
+    A sitting day *replaces* the cycle scope rather than narrowing it: the day page
+    asks for its own interjections whatever cycle the reader has chosen elsewhere,
+    and its members wear the faction they sat in on that day's cycle."""
+    if not session:
+        return period_and(period, "i.period_number"), [], period
+    row = db.execute("SELECT period_number FROM session WHERE id = ?",
+                     (session,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown sitting day.")
+    return " AND i.session_id = ?", [session], [row["period_number"]]
+
+
 # The faction shown for a node: the most recent membership *within the scope in
 # view*, exactly as the representatives list resolves it (§4A), so one person wears
 # the same colour on both pages.
@@ -109,6 +131,7 @@ def interjection_graph(
     period: Optional[List[int]] = Query(None),
     top: int = Query(DEFAULT_TOP, ge=MIN_TOP, le=MAX_TOP),
     rank: str = Query(DEFAULT_RANK, pattern="^(total|made|received)$"),
+    session: Optional[str] = Query(None, max_length=16),
     db: sqlite3.Connection = Depends(get_db),
 ):
     """Who interjects over whose speeches, as a directed graph (INT-5, INT-10).
@@ -132,18 +155,21 @@ def interjection_graph(
     page can say how much of a person's cross-talk is on screen rather than
     implying the picture is all of it.
 
+    ``session`` draws one sitting day instead of the cycle scope (``period`` is
+    then ignored).
+
     The pair counts are grouped per request (no aggregate table, INT-5) and the
-    payload memoized per cycle scope + ``top`` + ``rank`` like the other
-    aggregates.
+    payload memoized per scope + ``top`` + ``rank`` like the other aggregates.
     """
     _require_tables(db)
+    where_scope, scope_params, faction_period = _scope(db, period, session)
 
     def compute():
         pairs = db.execute(
             f"""SELECT i.speaker_id, i.target_id, COUNT(*) AS n
                 FROM interjection i
-                WHERE {_GRAPH_WHERE}{period_and(period, 'i.period_number')}
-                GROUP BY i.speaker_id, i.target_id""").fetchall()
+                WHERE {_GRAPH_WHERE}{where_scope}
+                GROUP BY i.speaker_id, i.target_id""", scope_params).fetchall()
 
         out_total: dict[str, int] = {}
         in_total: dict[str, int] = {}
@@ -173,7 +199,7 @@ def interjection_graph(
             shown_out[link["source"]] = shown_out.get(link["source"], 0) + link["count"]
             shown_in[link["target"]] = shown_in.get(link["target"], 0) + link["count"]
 
-        people = _people(db, ranked, period)
+        people = _people(db, ranked, faction_period)
         # Order the nodes by faction, then by involvement inside it: the circular
         # layout draws them in the order given, so grouping here is what makes the
         # picture legible — an arrow crossing the circle is then a cross-bench one.
@@ -206,14 +232,15 @@ def interjection_graph(
             "people_total": len(everyone),
             "total": total,
             "shown": sum(link["count"] for link in links),
-            "coverage": _coverage(db, period),
+            "coverage": _coverage(db, where_scope, scope_params),
         }
 
     return cached_aggregate(
-        "interjection_graph", (period_key(period), top, rank), compute)
+        "interjection_graph",
+        (session or period_key(period), top, rank), compute)
 
 
-def _coverage(db: sqlite3.Connection, period: Optional[List[int]]) -> dict:
+def _coverage(db: sqlite3.Connection, where_scope: str, scope_params: list) -> dict:
     """What the extraction found in scope and how much of it the graph can use —
     the module's methodology note in numbers (INT-8)."""
     row = db.execute(
@@ -221,7 +248,7 @@ def _coverage(db: sqlite3.Connection, period: Optional[List[int]]) -> dict:
                    SUM(i.speaker_id IS NOT NULL) AS attributed,
                    SUM(i.procedural) AS procedural
             FROM interjection i
-            WHERE 1=1{period_and(period, 'i.period_number')}""").fetchone()
+            WHERE 1=1{where_scope}""", scope_params).fetchone()
     return {"extracted": row["extracted"] or 0,
             "attributed": row["attributed"] or 0,
             "procedural": row["procedural"] or 0}
@@ -277,14 +304,17 @@ def interjection_list(
     speaker: Optional[str] = Query(None, max_length=32),
     target: Optional[str] = Query(None, max_length=32),
     person: Optional[str] = Query(None, max_length=32),
+    session: Optional[str] = Query(None, max_length=16),
     limit: int = Query(25, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: sqlite3.Connection = Depends(get_db),
 ):
     """The interjections behind one arrow, or all of one person's.
 
-    All three filters are person ids, and at least one is required — an unfiltered
-    dump of a hundred thousand shouts is not a view of anything. ``speaker`` +
+    The person filters are ids, and one of them or a ``session`` is required — an
+    unfiltered dump of a hundred thousand shouts is not a view of anything, while
+    one sitting day's is (a few dozen, read in the order they were shouted, which
+    is how a day is listed; any other scope lists newest first). ``speaker`` +
     ``target`` together are one arrow; either alone is one end of it against
     everyone, which is what the page opens a clicked member with (INT-11).
     ``person`` is both of their directions at once — what a clicked node opened
@@ -296,10 +326,12 @@ def interjection_list(
     graph opens onto the moment it was shouted (INT-7).
     """
     _require_tables(db)
-    if not speaker and not target and not person:
+    if not speaker and not target and not person and not session:
         raise HTTPException(
-            status_code=400, detail="Pass speaker, target and/or person (ids).")
+            status_code=400,
+            detail="Pass speaker, target, person (ids) and/or session.")
 
+    where_scope, scope_params, _ = _scope(db, period, session)
     where = [_GRAPH_WHERE]
     params: list = []
     if speaker:
@@ -311,7 +343,10 @@ def interjection_list(
     if person:
         where.append("(i.speaker_id = ? OR i.target_id = ?)")
         params.extend((person, person))
-    where_sql = " AND ".join(where) + period_and(period, "i.period_number")
+    where_sql = " AND ".join(where) + where_scope
+    params += scope_params
+    order = ("sp.speech_index, i.speech_uid, i.ord" if session
+             else "ss.date DESC, i.speech_uid DESC, i.ord DESC")
 
     total = db.execute(
         f"SELECT COUNT(*) AS c FROM interjection i WHERE {where_sql}",
@@ -330,7 +365,7 @@ def interjection_list(
             LEFT JOIN person whom   ON whom.person_id = i.target_id
             LEFT JOIN agenda_item ai ON ai.id = sp.agenda_item_id
             WHERE {where_sql}
-            ORDER BY ss.date DESC, i.speech_uid DESC, i.ord DESC
+            ORDER BY {order}
             LIMIT ? OFFSET ?""", [*params, limit, offset]).fetchall()
     return {
         "total": total, "limit": limit, "offset": offset,

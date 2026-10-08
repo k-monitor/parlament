@@ -1251,6 +1251,16 @@ export default {
     dragHint: 'The chart can be zoomed and panned, and any member dragged out of the tangle.',
     methodology: 'The shorthand record puts the louder heckling in parentheses, verbatim, inside the speech it interrupted: "(Balla György: Úgy van!)". Parlamonitor lifts those out and joins the two members: the heckler by the name in the parenthesis, the other end by whoever held the floor. A name counts only when it fits exactly one member — where two members of the same House shared a name (two Tóth Istváns, say), the interjection is left unattributed rather than guessed at. The transcript reader applies the same rule when it links a heckler\'s name to their profile, so the chart and the transcript agree.',
     methodologyExclusions: 'Interjections shouted over a chairing speech are not counted: a voting block is one hours-long speech by the presiding officer in the record, so a whole afternoon of heckling would land inside it and the deputy speakers would be the most-interrupted members of the House by a wide margin — the same rule that keeps chairing out of every other representative statistic. Nor are the ones where the record notes the event but not the words ("Gulyás Gergely közbeszól."), or the words but not the heckler ("Közbeszólások a Fidesz padsoraiból: Nem!").',
+    // One sitting day's interjections, in the dialog behind the day page's button.
+    dayButton: 'Interjections',
+    dayButtonTitle: 'Who interjected over whom on this day',
+    dayTitle: 'Interjections on this day',
+    dayClickHint: 'Click an arrow or a member to narrow the list to their interjections.',
+    dayShownShare: 'The chart shows the {n} members most involved: the interjections between them are {share}% of the day\'s.',
+    dayAll: 'All of the day\'s interjections',
+    dayPerson: '{made} made, {received} received',
+    dayShowAll: 'All',
+    dayCycleLink: 'Interjections across the whole term',
     coverage: 'In the selected term {extracted} verbatim interjections were found, {attributed} of them attributable to a single member; {procedural} were shouted over a chairing speech.',
   },
   analyses: {

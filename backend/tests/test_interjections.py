@@ -416,6 +416,58 @@ def test_the_list_refuses_an_unfiltered_dump(heckled_client):
     assert heckled_client.get("/api/v1/interjections/list").status_code == 400
 
 
+def _another_day(conn):
+    """A second sitting day of the same cycle, with one heckle of its own, so a
+    day-scoped request has something to leave out."""
+    conn.execute("INSERT INTO session (id, period_number, sitting, date) "
+                 "VALUES ('43003', 43, 3, '2026-05-17')")
+    conn.execute(
+        "INSERT INTO interjection (speech_uid, session_id, period_number, ord, "
+        "speaker_name, speaker_id, target_id, text, procedural) "
+        "VALUES ('x', '43003', 43, 0, 'Szabó Géza', 's003', 'n002', 'Másnap!', 0)")
+    conn.commit()
+
+
+def test_the_graph_draws_one_sitting_day(heckled_client, heckled_conn):
+    """The day page's dialog: only that day's arrows, whatever the cycle scope."""
+    _another_day(heckled_conn)
+    whole = heckled_client.get("/api/v1/interjections/graph",
+                               params={"period": 43}).json()
+    assert whole["total"] == 6
+    data = heckled_client.get("/api/v1/interjections/graph",
+                              params={"session": "43002", "period": 42}).json()
+    edges = {(data["nodes"][l["source"]]["person_id"],
+              data["nodes"][l["target"]]["person_id"]): l["count"]
+             for l in data["links"]}
+    assert edges == {("n002", "k001"): 2, ("s003", "k001"): 1, ("k001", "n002"): 2}
+    assert data["total"] == 5
+    assert data["coverage"] == {"extracted": 6, "attributed": 6, "procedural": 1}
+    # The faction is the one held in the day's own cycle, not the `period` passed.
+    kovacs = next(n for n in data["nodes"] if n["person_id"] == "k001")
+    assert kovacs["faction"]["label"] == "Fidesz"
+
+
+def test_a_day_lists_its_interjections_in_the_order_they_were_shouted(
+        heckled_client, heckled_conn):
+    _another_day(heckled_conn)
+    data = heckled_client.get("/api/v1/interjections/list",
+                              params={"session": "43002"}).json()
+    assert data["total"] == 5
+    assert [i["text"] for i in data["interjections"]] == [
+        "Ez nem igaz!", "Mondja már!", "Elég volt!", "Nem így van!", "Tessék?"]
+    # ...and narrows to one arrow like any other scope.
+    one = heckled_client.get("/api/v1/interjections/list",
+                             params={"session": "43002", "speaker": "k001"}).json()
+    assert [i["text"] for i in one["interjections"]] == ["Nem így van!", "Tessék?"]
+
+
+def test_an_unknown_sitting_day_is_not_found(heckled_client):
+    for path in ("graph", "list"):
+        res = heckled_client.get(f"/api/v1/interjections/{path}",
+                                 params={"session": "99999"})
+        assert res.status_code == 404
+
+
 def test_the_module_is_advertised_in_the_manifest(heckled_client):
     modules = {m["name"] for m in heckled_client.get("/api/v1/meta").json()["modules"]}
     assert "interjections" in modules

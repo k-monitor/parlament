@@ -354,6 +354,18 @@ def test_clicking_an_arrow_lists_the_words_behind_it(heckled_client):
     assert one["target"]["label"] == "Kovács Béla"
 
 
+def test_a_listed_interjection_deep_links_to_its_sentence(heckled_client, heckled_conn):
+    """The viewer opens at ``?s=<ord>`` — the sentence's position within the
+    speech, not its row id — so the row has to carry that position (VIE-5)."""
+    data = heckled_client.get("/api/v1/interjections/list",
+                              params={"period": 43, "speaker": "n002",
+                                      "target": "k001"}).json()
+    for i in data["interjections"]:
+        ord_ = heckled_conn.execute(
+            "SELECT ord FROM sentence WHERE id = ?", (i["sentence_id"],)).fetchone()[0]
+        assert i["sentence_ord"] == ord_
+
+
 def test_clicking_a_person_lists_both_directions(heckled_client):
     """A picked node highlights every arrow touching it, so the list under it has
     to hold every arrow touching it — made and received alike."""

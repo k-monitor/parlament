@@ -319,7 +319,7 @@ def interjection_list(
     rows = db.execute(
         f"""SELECT i.id, i.text, i.speech_uid, i.session_id, i.sentence_id,
                    i.speaker_id, i.target_id,
-                   sp.speaker_label, se.time_start, ss.date,
+                   sp.speaker_label, se.ord AS sentence_ord, se.time_start, ss.date,
                    who.label AS speaker_label_name, whom.label AS target_label_name,
                    ai.title AS agenda_title
             FROM interjection i
@@ -337,7 +337,8 @@ def interjection_list(
         "interjections": [{
             "id": r["id"], "text": r["text"],
             "speech_uid": r["speech_uid"], "session_id": r["session_id"],
-            "sentence_id": r["sentence_id"], "time_start": r["time_start"],
+            "sentence_id": r["sentence_id"], "sentence_ord": r["sentence_ord"],
+            "time_start": r["time_start"],
             "date": r["date"], "agenda_title": r["agenda_title"],
             "speaker": {"person_id": r["speaker_id"],
                         "label": r["speaker_label_name"]},

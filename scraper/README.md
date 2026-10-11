@@ -20,8 +20,10 @@ kept only as reference material; nothing here imports it at runtime.
 | `processed/committees-<cycle>.json` | `parlamonitor.committees` | the **committee** registry (*bizottságok*) for a cycle: every body — main committees and subcommittees in one flat list keyed by its own id — with its type, dates and contact, plus who sits on it (`members`, the roster on one date), every **dated** membership and office term (`terms`), every `meeting` with its minutes PDF, and the irományok it dealt with (`documents`) and tabled (`submissions`), plus the meetings it has scheduled but not yet held (`upcoming` — state, not history). Membership needs both listings: see [Committees](#committees-6f). |
 | `processed/committee-minutes-<cycle>.json` | `parlamonitor.committees.minutes_scrape` | the **jegyzőkönyvek** of that cycle's committee meetings, read out of the PDFs (BIZ-15): per sitting its cover (when, where, who presided, whether it was closed), the proposed agenda with each point's iromány, the attendance in the document's own categories, and the debate as speeches under the agenda heading they were made under. A sitting we could not read keeps its row carrying `error`. The extracted text is cached under `committees/minutes/<cycle>/` so a re-parse fetches nothing. See [Committee minutes](#committee-minutes-biz-15). |
 | `processed/committee-videos.json` | `parlamonitor.committees.videos` | every video on the Országgyűlés YouTube channel (BIZ-16), with the date and committee **parsed out of its title** — the only thing that links a recording to a sitting. Cycle-less and additive: each pass merges into the last, so a cheap RSS poll never discards a backfilled history. Matching to a body and a meeting happens in the loader, not here. |
+| `processed/committee-timing.json` | `parlamonitor.committees.timing` | **sentence timings** for every committee sitting that has both a parsed jegyzőkönyv and a recording (BIZ-30): each speech cut into sentences (paragraph, character offsets, text) and each sentence's `videoId`/`timeStart`/`timeEnd` in that video's own seconds, from Whisper run on the recording and aligned to the minutes. Cycle-less and rewritten whole. The Whisper words are cached per video under `committees/whisper/<videoId>.json`, so a recording is transcribed once. See [Committee sentence timing](#committee-sentence-timing-biz-30). |
 | `documents/<cycle>/` | `parlamonitor.documents` | **optional** mirror of the iromány document *files* themselves — the extracted text (`text/<docid>.txt.xz`), the source PDF (`pdf/<docid>.pdf`), or both, plus an `index.json` manifest. **Off by default**; see [Document files](#document-files-doc-1). |
 | `processed/aktualis.json` | `parlamonitor.aktualis` | the **Aktuális** page: the documents it links (napirend, ülésterv, submission deadlines, legislative programme) and the **order paper for the sitting that is coming**, parsed out of the napirend PDF into days, timetables and agenda items — plus the House Committee's next meeting. The one source on the site for what the House is *about to* do; see [The Aktuális page](#the-aktuális-page-nr-1). |
+| `processed/asset-declarations.json` | `parlamonitor.declarations` | every public **asset declaration** in the House's electronic declaration system (EVNYR, [`vagyonnyilatkozat-pub.parlament.hu`](https://vagyonnyilatkozat-pub.parlament.hu)), where declarations have been filed since 2026: per declaration the filer's name and post, its type and finalisation time, its **contents** (properties, vehicles, savings, debts, income, interests) and links to its page and PDF. Cycle-less and rewritten whole. It names no person id; the loader links declarations to people. See [Asset declarations](#asset-declarations-evnyr-rep-18). |
 | `logs/ingest-<ts>.json` | both | per-run ingestion log (run time, sittings added, errors, backend). |
 
 Each speech's speaker carries a `personID` (`kepviseloId`) that joins directly
@@ -175,6 +177,13 @@ python -m parlamonitor committee-minutes --cycle 40 --limit 200 ./data
 python -m parlamonitor committee-videos ./data
 python -m parlamonitor committee-videos --backfill ./data
 
+# Time committee sittings' sentences against their recordings (BIZ-30): Whisper
+# on each recording's audio, aligned to the minutes. Only sittings with BOTH a
+# parsed jegyzőkönyv and a video; run after the two stages above. Each video is
+# transcribed once (cached); --meeting narrows a run, --force redoes it.
+python -m parlamonitor committee-timing ./data
+python -m parlamonitor committee-timing --meeting <meetingId> --force ./data
+
 # Nationality advocates (szószólók) — one cycle, or backfill every cycle that
 # has them (40 on). Portraits are downloaded by default (~13 people per cycle).
 python -m parlamonitor advocates --cycle 43 ./data
@@ -187,6 +196,10 @@ python -m parlamonitor bills --cycle 43 ./data
 # sitting that is coming. Cycle-less, one HTML request unless the House has
 # published a new napirend since the last run.
 python -m parlamonitor aktualis ./data
+
+# Asset declarations filed in the EVNYR system: its daily CSV + one page per new
+# declaration (for the PDF link). Cycle-less; --page-limit paces the page reads.
+python -m parlamonitor asset-declarations ./data
 
 # …except 1994-98, which the API has none of — see below
 python -m parlamonitor bills --cycle 35 --archive ./data
@@ -561,6 +574,91 @@ tabs. 30 of them are committee meetings. So cycles 40 and 41 have no recordings
 to find at all, and the site says so rather than showing an unexplained empty
 list.
 
+### Committee sentence timing (BIZ-30)
+
+The minutes viewer plays a sitting's recording beside its jegyzőkönyv and, like
+the plenary viewer, highlights the sentence being spoken. The jegyzőkönyv
+carries **no timings at all**, so they are made here the way the plenary's are
+(TIM-1) — Whisper transcribes the recording and the transcript is aligned to the
+*authoritative* text — with two differences the source forces:
+
+- **The audio is fetched on the host.** YouTube's media URLs are signed for the
+  address that asked for them, so the Modal container cannot fetch one the way
+  it fetches a plenary HLS playlist. The host downloads the cheapest audio-only
+  track with `yt-dlp` (Opus at ~45 kbit/s, ~20 MB an hour) and sends the bytes to
+  the Whisper app's `transcribe_audio` method; the file is deleted as soon as its
+  words are cached. **That method is newer than the plenary one** — an app
+  deployed before it answers with "method not found" until it is redeployed
+  (`modal deploy whisper_modal_app.py`). A stream that is still live (or not yet
+  processed) is skipped by a `--match-filter`, not recorded.
+- **The whole sitting is aligned at once** (`whisper_align.align_sitting`):
+  there are no per-speech windows to cut the recording by. Two rules replace
+  what the window used to guarantee. Only solid matches (runs of ≥ 2 tokens)
+  anchor, since across a sitting a lone "hogy" could be any of thousands. And an
+  unmatched run of sentences is spread across the gap between its anchors only
+  when its spoken length plausibly **fits** that gap (between 0.8 and 5 tokens a
+  second, with a little slack); otherwise it is left **unplaced** — shown on the
+  page, not playable — because a run that "fits" a recess only because nothing
+  else does would be highlighted while nobody speaks. A run before the first
+  anchor or after the last is set against that anchor at a normal pace.
+
+A sitting that overran into a second stream ("Folytatás") is two videos: they
+are laid end to end with a gap between them, aligned as one, and every sentence
+is mapped back to the video it fell in, in **that video's own seconds**.
+
+**Pairing** uses the loader's rule (BIZ-22) — folded committee name, and the
+title's date (exact, else a day either side) — applied to the minutes records,
+which carry both. A body that met twice on one day gets each recording by
+content: it is aligned against each candidate sitting and goes to the one it
+matches best. The API only serves a sitting's timing while every video it was
+made on is one that sitting is served with, and only serves a speech's sentences
+while each is still the text at its stored offsets — so a re-parsed jegyzőkönyv
+falls back to plain text instead of being highlighted at stale positions.
+
+**Cost.** Words are cached per video (keyed by video id + model); each sitting's
+alignment is fingerprinted by its videos, its text and `ALIGN_VERSION`, so a
+repeat pass aligns nothing. On Modal the transcription obeys
+`PARLAMONITOR_MODAL_CYCLES` like the plenary's (default: the newest cycle only),
+so cycle 42's recordings need `PARLAMONITOR_MODAL_CYCLES=42,43` (or `all`) once.
+The channel starts in February 2024 (BIZ-23), so the whole backlog is a few
+dozen recordings.
+
+**When YouTube walls the host.** YouTube answers many VM and datacenter
+addresses with *"Sign in to confirm you're not a bot"* on every video — a
+verdict on the IP, like the parlament.hu CAPTCHA wall, and one that each refused
+attempt deepens. So the first refusal **ends the pass's downloads** (no retries,
+no moving on to the next video), is recorded in the timing file's
+`meta.youtubeBlock`, and nothing more is asked for
+`PARLAMONITOR_YOUTUBE_BLOCK_HOURS` (default 12). Meanwhile the stage keeps
+**aligning whatever words are already cached**, and sync re-runs it whenever the
+cache changes — which gives three ways to get a walled host's sittings timed:
+
+1. **Transcribe elsewhere and copy the words in** (no configuration): run
+   `committee-timing` on a machine YouTube does not wall, with the same data,
+   then copy its `committees/whisper/*.json` into the server's data dir. The
+   words are keyed by video id and model only, so they are valid anywhere; the
+   server's next sync pass aligns them against its own minutes.
+2. **Route the downloads through another egress**:
+   `PARLAMONITOR_YOUTUBE_PROXY=http://…`, `socks5://…`, or `ssh` to reuse the
+   scraper's SSH tunnel (`PARLAMONITOR_SSH_*`) — useful when that host is on an
+   address YouTube accepts.
+3. **Send a signed-in session's cookies**: `PARLAMONITOR_YOUTUBE_COOKIES` (in
+   the container, `PARLAMONITOR_YOUTUBE_COOKIES_FILE` in `.env` mounts it
+   read-only). yt-dlp gets a private copy, since it writes the jar back. Use a
+   throwaway account — YouTube can and does lock accounts used this way, and
+   the cookies expire.
+
+`--force` ignores a recorded block.
+
+**Measured 2026-09-29** on the two sittings that then had both records (the
+Törvényalkotási Bizottság on 09-10 and 09-14, 24 and 31 minutes of video): 78–79%
+of the minutes' tokens landed in solid matches, 412 of 455 sentences were
+placed, and **every unplaced one was a parenthetical stage direction**
+("(Szavazás.)", "(Nincs jelentkező.)"). Spot checks against the Whisper words
+land on the exact phrase; the 09-14 stream's 11½ minutes of pre-roll are skipped
+correctly. Aligning a sitting takes about a second (21 s for the longest in the
+corpus); the transcription is the only real cost.
+
 ### The Aktuális page (NR-1)
 
 Everything the Felicitas API exposes is a record of what the House **has done**.
@@ -641,6 +739,45 @@ the House issues a new slug rather than editing one in place, so an unchanged
 slug means the PDF is not fetched again (`--force` overrides). Text extraction
 needs `pdftotext` (poppler-utils); without it the page's own findings are still
 written and the agenda records why it is empty (SCR-6).
+
+### Asset declarations (EVNYR, REP-18)
+
+Since 2026 asset declarations are filed in the House's **electronic declaration
+system** (*Elektronikus Vagyonnyilatkozati Rendszer*), published at
+[`vagyonnyilatkozat-pub.parlament.hu`](https://vagyonnyilatkozat-pub.parlament.hu),
+instead of as one PDF per filing on the MP's adatlap (which the representatives
+stage still reads, REP-13). They cover MPs and the non-MP ministers and state
+secretaries who file under the same rules.
+
+**Where the data comes from.** The site is client-rendered and its search sits
+behind a proof-of-work challenge (ALTCHA), so it is not scraped. It does not need
+to be: the home page offers a **daily CSV of every public declaration**, explicitly
+for free reuse ("A fájlt szabadon feldolgozhatja"). The file is regenerated at
+01:00 under a date-stamped name
+(`/media/napi/csv-snapshot/vagyonnyilatkozatok_napi_adatok_2026-10-01_01-00.csv`),
+so its URL is read off the home page, never built. The CSV has everything except
+the PDF. The PDF's file name carries a date and a name slug no field supplies,
+so it is read off the declaration's own server-rendered page
+(`/nyilatkozat/<id>`), one request per declaration.
+
+**The CSV's shape is the trap.** A declaration is a header plus about twenty
+independent lists, and the export **zips the lists side by side**. Row *i*
+repeats the header and carries the *i*-th entry of every list, so a declaration
+with seven properties and one car is seven rows, with the car in row 0 next to
+the first property and unrelated to it. Columns are named by their path
+(`kovetelesek.ertekpapirok.isin`); `declarations/evnyr.py` groups rows by id and
+reads each list down its own columns. A path with lists beneath it
+(`gazdasagiErdekeltseg`) is a section, so its direct column
+(`…nyilatkozattetelHelye`) is a single value. Values are kept as filed: amounts
+are free text upstream ("Aktuális érték: 211448,29 EUR (77083474 HUF)").
+
+**Cost.** An idle check is one HTML request, and the CSV is fetched only when
+the home page names a new one. A declaration's PDF link is carried over while
+the declaration is unchanged (same finalisation/modification time). A page that
+names no PDF is asked again only on the next snapshot. `--page-limit` caps how
+many pages one run reads (`sync` uses 60). The rest are written with
+`pdfUrl: null` (their page link is always there) and read by the next run.
+An empty snapshot is never written over a non-empty one.
 
 ### The 1994-98 irományok (`bills --archive`)
 
@@ -742,6 +879,12 @@ python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
   whole upload history and belongs in the explicit `committee-videos --backfill`
   command. If the 15-video feed window is ever overrun, that command closes the
   gap rather than every sync pass paying for it.
+- **Committee timing:** last of the committee stages, since it needs both of
+  their records. Skipped outright while the recordings registry and the minutes
+  files are unchanged (file stats, so an idle pass opens nothing). Transcribing
+  a recording happens once per video, ever; a pass in which a download or a
+  transcription failed does not record its signature, so the next pass tries
+  again.
 - **Bills / votes:** the cheap list query runs, but per-item detail reuses the
   detail cache above, and the registry JSON is rewritten only when it differs.
 - **Representatives:** refreshed on a slow cadence (`--reps-max-age`, default 12h,
@@ -754,6 +897,12 @@ python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
   after the sitting was never published at all as far as the site is concerned.
   One HTML request unless the House has issued a new order paper, and the file is
   rewritten only when something actually changed.
+- **Asset declarations (EVNYR):** the home page is checked at most every 3 hours
+  (the snapshot changes daily), and every pass while declaration pages are still
+  unread, at most 60 per pass (`--skip-asset-declarations` opts out). The
+  snapshot last read is kept in `sync-state.json`, so a new day's snapshot with
+  the same contents is neither rewritten (that would make the loader copy the DB
+  to reload it) nor downloaded again.
 
 An idle poll is a handful of requests and writes nothing. Last-seen signatures
 live in `data/sync-state.json`; the run prints a one-line JSON summary of what
@@ -808,6 +957,10 @@ parlamonitor/
                        Committee's next meeting
     nr.py              the napirend (order paper) PDF → days, timetables, items
     scrape.py          fetch + parse + write → aktualis.json
+  declarations/
+    evnyr.py           the EVNYR site: snapshot URL, the zipped CSV → declarations,
+                       a declaration page → its PDF
+    scrape.py          fetch + parse + write → asset-declarations.json
   cli.py               workflow orchestration (stages, lockfile, ingest log)
 whisper_modal_app.py   the Modal app deployed for the GPU backend
 check_whisper_cache.py which copied whisper-<session>.json caches are usable

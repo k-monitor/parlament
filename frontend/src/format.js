@@ -144,9 +144,68 @@ const INTERJECTION_SEP = /\s+[‐-―−-]\s+/
 //   • a Hungarian legal date — Roman-numeral month + day — as in
 //     "17/2026. (V. 9.) OGY-határozat" or "H/170. … (II. 24.)".
 // Recognised structurally: the content is made up only of digits, Roman-numeral
-// letters, dots and whitespace, and contains at least one digit (so a real
-// heckle — which has lowercase words — never matches).
-const REFERENCE_PAREN = /^[IVXLCDM\d.\s]+$/
+// letters, dots, slashes, dashes and whitespace, and contains at least one digit
+// (so a real heckle — which has lowercase words — never matches). The slash and
+// dash admit a year range or a file number — "(2013-2014)", "(2016/0133)".
+const REFERENCE_PAREN = /^[IVXLCDM\d.\s/‐-―−-]+$/
+// A lettered paragraph or point — "a (2a) bekezdés", "az (1b)", "44. § (a)".
+const POINT_PAREN = /^(?:\d+[a-z]?|[a-z])$/
+// A clause that ends as a sentence does is a stage direction or a heckle —
+// "(Szavazás.)", "(Jelzésre:)", "(Gőgös Zoltán: Ez nem igaz!)".
+const PUNCTUATED = /[.!?:…]$/
+
+// Whether the parenthetical at block[open..close] belongs to the sentence
+// around it — and so stays INLINE — rather than being set apart as an aside.
+// Beyond the dictated references above, the committee minutes (BIZ-15) print
+// parentheses the plenary record rarely does, and all of them read as part of
+// the sentence:
+//   • "(sic!)" — the clerk's own mark on what was said;
+//   • a parenthetical glued to the word before it — "blokk(ok)", "§(2)" — or to
+//     a hyphenated word after it, "a Ráckevei (Soroksári)-Duna-ág";
+//   • a tag after a name — "Szabó Timea (Párbeszéd) képviselő", "dr. Czombos
+//     Tamás (Igazságügyi Minisztérium) előterjesztése" — which old plenary
+//     cycles print too, in whole lists of members ("dr. Gál Zoltán (MSZP),
+//     Halász István (MDF), …").
+// The last two apply only to an unpunctuated parenthetical: "jegyző(Olvassa.)"
+// and "Jacek Janiszewski feláll." glue on a stage direction just the same. A
+// tag is told from a bare stage direction ("szavazzanak! (Szavazás)", "vigécként
+// (derültség)") by what sits either side: a capitalised word before it, ending
+// in a letter, and a capital opening it.
+function isInlineParen(block, open, close) {
+  const inner = block.slice(open + 1, close).trim()
+  if (/\d/.test(inner) && REFERENCE_PAREN.test(inner)) return true
+  if (POINT_PAREN.test(inner) || /^sic!?$/i.test(inner)) return true
+  if (!inner || PUNCTUATED.test(inner)) return false
+  if (/[\p{L}\d§]/u.test(block[open - 1] || '')) return true
+  if (/^[‐-―−-]\p{L}/u.test(block.slice(close + 1, close + 3))) return true
+  return /\p{Lu}[\p{L}'’.-]*\p{L} $/u.test(block.slice(Math.max(0, open - 40), open))
+    && /^\p{Lu}/u.test(inner) && !/\d/.test(inner)
+}
+
+// Where the aside whose text starts at `from` is closed: the index of its ")",
+// or -1 when the block ends first. A short pair nested inside it is stepped
+// over — "(Az ülés vezetését dr. Vas Imre (Fidesz), a bizottság alelnöke veszi
+// át.)" is ONE aside, not one ending at "Fidesz" and a spoken ", a bizottság …
+// át.)" after it — but only a pair that reads as a tag or a reference (no
+// parenthesis of its own, not ending as a sentence). Anything else is not
+// nesting but a typo: a dropped ")" in "(Derültség. (Taps a kormánypártok
+// padsoraiban.)" or a doubled "((Taps.)" — a few hundred in the plenary record
+// — and counting it as a level would leave the aside open for the rest of the
+// speech. So such a "(" is simply ignored, as it always was. `nest` false closes
+// at the first ")" regardless — for an aside carried in from an earlier
+// sentence, whose "(" is as often a stray in garbled text ("dr.(pa", "// (")
+// as a real opening: stepping over the next sentence's "(20.40)" there would
+// hold the aside open across the speech.
+function closeParen(block, from, nest = true) {
+  for (let i = from; i < block.length; i++) {
+    if (block[i] === ')') return i
+    if (!nest || block[i] !== '(' || block[i - 1] === '(') continue
+    const end = block.indexOf(')', i + 1)
+    const inner = end < 0 ? '' : block.slice(i + 1, end)
+    if (end > 0 && !inner.includes('(') && inner.trim() && !PUNCTUATED.test(inner.trim())) i = end
+  }
+  return -1
+}
 
 // An interjection often opens with the heckler's name — "Vitályos Eszter:
 // Végrehajtod vagy nem?". Split that "Name:" attribution off so the caller can
@@ -241,13 +300,16 @@ function pushAsides(out, inner) {
 // patkóban… gratulál az esküt tett minisztereknek.)" — is cut into several
 // sentences, so no single sentence holds a balanced "(…)". `inParen` (from the
 // previous sentence) tells us the sentence opens inside a still-running aside;
-// the returned `inParen` tells the next one the same. No nesting is expected in
-// the transcripts, so the state is a simple boolean.
+// the returned `inParen` tells the next one the same. No deeper nesting than a
+// tag inside an aside ("(Az ülés vezetését dr. Vas Imre (Fidesz), …)", see
+// closeParen) is expected, so the state is a simple boolean.
 //
 // Parentheticals become `interjection: true` segments (stage directions / named
-// heckles); numeric & date references — "(2)", "(V. 9.)" — stay inline in the
-// spoken text; punctuation orphaned after a dropped parenthetical is reattached
-// to the preceding spoken segment.
+// heckles); references and tags — "(2)", "(V. 9.)", "(Fidesz)", see
+// isInlineParen — stay inline in the spoken text, as does anything inside square
+// brackets ("[COM (2016) 270; 2016/0133 (COD)]", an EU document number);
+// punctuation orphaned after a dropped parenthetical is reattached to the
+// preceding spoken segment.
 export function splitSegmentsCarry(block, inParen = false, prevSpoken = null) {
   const out = []
   // `prevSpoken` is the last spoken segment seen so far — it may live in an
@@ -259,31 +321,38 @@ export function splitSegmentsCarry(block, inParen = false, prevSpoken = null) {
   // Continuation of an aside opened in an earlier sentence: everything up to the
   // closing ")" (or the whole block, if it never closes) is still the aside.
   if (inParen) {
-    const close = block.indexOf(')')
+    const close = closeParen(block, 0, false)
     if (close < 0) { pushAsides(out, block); return { segments: out, inParen: true, lastSpoken: prevSpoken } }
     pushAsides(out, block.slice(0, close))
     block = block.slice(close + 1)
-    inParen = false
   }
 
   let last = 0, idx = 0
   while (idx < block.length) {
     const open = block.indexOf('(', idx)
     if (open < 0) break
-    const close = block.indexOf(')', open + 1)
+    // A bracketed reference is left whole, parentheses and all (advance past it
+    // without moving `last`, so the next spoken slice swallows it).
+    const bracket = block.lastIndexOf('[', open)
+    if (bracket >= idx) {
+      const end = block.indexOf(']', bracket)
+      if (end > open) { idx = end + 1; continue }
+    }
+    // Where the aside's own text starts: past a doubled "((" as well.
+    let body = open + 1
+    while (block[body] === '(') body++
+    const close = closeParen(block, body)
     if (close < 0) {
       // Unclosed "(": opens an aside that runs on into the next sentence.
       prevSpoken = pushSpoken(out, block.slice(last, open), prevSpoken)
-      pushAsides(out, block.slice(open + 1))
+      pushAsides(out, block.slice(body))
       return { segments: out, inParen: true, lastSpoken: prevSpoken }
     }
-    const inner = block.slice(open + 1, close).trim()
-    // A reference like "(2)" or "(V. 9.)" is part of the speech, not a heckle:
-    // leave it inline (advance past it without moving `last`, so the next spoken
-    // slice swallows it).
-    if (/\d/.test(inner) && REFERENCE_PAREN.test(inner)) { idx = close + 1; continue }
+    // A reference like "(2)" or a tag like "(Fidesz)" is part of the sentence,
+    // not a heckle: leave it inline, as a bracket is.
+    if (isInlineParen(block, open, close)) { idx = close + 1; continue }
     prevSpoken = pushSpoken(out, block.slice(last, open), prevSpoken)
-    pushAsides(out, block.slice(open + 1, close))
+    pushAsides(out, block.slice(body, close))
     last = close + 1
     idx = close + 1
   }
@@ -298,13 +367,35 @@ export function splitSegments(block) {
   return splitSegmentsCarry(block).segments
 }
 
+// Whether an aside left open at the end of one paragraph runs on into the next,
+// which opens with `text`. It does unless that text reads as speech — holds a
+// finished sentence before any ")" that would close the aside. A heading the
+// committee minutes wrap across lines carries on ("(Varga Mihály, Cseresnyés
+// Péter (Fidesz) képviselők önálló" / "indítványa)"), as does an old plenary
+// sitting's opening note ("(Az ülésnap kezdete: 10 óra 4 perc" / "- Elnök:
+// Szabad György -" / "Jegyzők: …)"); but a "(" never closed at all ("(Részletes
+// vita a HHSZ 44-45. §-a alapján", then the chair's speech) stops at the break,
+// rather than lifting whole paragraphs of speech into the aside. A sentence end
+// is a stop after a word (three lowercase letters, so not "dr. Dornbach" or
+// "41. §") with a capital or the end of the text after it; before a closing
+// ")" only the capital counts — an aside ends as a sentence does, "Derültség.)".
+function continuesAside(text) {
+  const close = closeParen(text, 0, false)
+  if (close < 0) return !/\p{Ll}{3}[.!?…](?:\s+\p{Lu}|\s*$)/u.test(text)
+  return !/\p{Ll}{3}[.!?…]\s+\p{Lu}/u.test(text.slice(0, close))
+}
+
 // Segment a speech's flat karaoke sentence list, threading open-parenthesis state
 // from each sentence into the next so a stage direction split across sentence
 // boundaries is lifted out as italic asides (not left as spoken text with stray
-// "(" / ")"). Returns each sentence with a `.segments` array; the ord/time_start/
+// "(" / ")"). An aside crosses a paragraph boundary only as continuesAside allows.
+// Returns each sentence with a `.segments` array; the ord/time_start/
 // time_end fields are preserved for seeking and karaoke highlight. The redundant
-// leading speaker label is stripped from the opening sentence.
-export function segmentSentences(sentences) {
+// leading speaker label is stripped from the opening sentence, unless
+// `stripLabel` is false: a committee speech (BIZ-30) arrives with its speaker
+// already parsed off, and a label left at its start is the record's own — a
+// speaker the parser did not split off — so it stays readable.
+export function segmentSentences(sentences, { stripLabel = true } = {}) {
   let inParen = false
   // Thread the last spoken segment across sentences so a comma orphaned by a
   // parenthetical that closed in a LATER sentence ("…szégyellték (heckle" /
@@ -314,9 +405,12 @@ export function segmentSentences(sentences) {
   let prevSpoken = null
   let prevPara
   return (sentences || []).map((s, i) => {
-    if (i > 0 && s.paragraph !== prevPara) prevSpoken = null
+    if (i > 0 && s.paragraph !== prevPara) {
+      prevSpoken = null
+      if (inParen && !continuesAside(s.text)) inParen = false
+    }
     prevPara = s.paragraph
-    const text = i === 0 ? stripSpeakerLabel(s.text) : s.text
+    const text = i === 0 && stripLabel ? stripSpeakerLabel(s.text) : s.text
     const res = splitSegmentsCarry(text, inParen, prevSpoken)
     inParen = res.inParen
     prevSpoken = res.lastSpoken

@@ -37,7 +37,7 @@ import re
 import sqlite3
 import unicodedata
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 try:                                    # POSIX only; the writer lock degrades to
@@ -324,11 +324,11 @@ def load_representatives(conn: sqlite3.Connection, registry: dict) -> int:
         # "bills submitted" stays hidden in the UI until the Bills module (REP-3).
         ext_stats = rec.get("statistics")
 
-        # Prefer the locally-downloaded portrait (served at /media/photos) over
-        # the upstream resource URL, so the site doesn't hot-link parlament.hu.
-        photo_uri = rec.get("photoURI")
-        if rec.get("photoFile"):
-            photo_uri = f"/media/photos/{rec['photoFile']}"
+        # Only the locally-downloaded portrait (served at /media/photos), never the
+        # upstream resource URL, as for advocates and non-MP speakers: the
+        # scraper saves every portrait that exists, so a record without one is
+        # one parlament.hu 404s on (20 of the 22 the site used to hot-link).
+        photo_uri = f"/media/photos/{rec['photoFile']}" if rec.get("photoFile") else None
 
         conn.execute(
             """
@@ -781,7 +781,7 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
              h.get("subtype"), h.get("character"), h.get("negotiationMode"),
              h.get("statusType"), h.get("currentEvent"), h.get("promulgationNumber"),
              h.get("mkNumber"), h.get("promulgationDate"), h.get("remark"),
-             h.get("lastModifier"), h.get("kozlonyUrl"), h.get("kozlonyDocUrl")))
+             h.get("lastModifier"), _kozlony_url(h), h.get("kozlonyDocUrl")))
 
         for i, sp in enumerate(rec.get("sponsors") or []):
             pid = _person(sp.get("personID"))
@@ -1083,6 +1083,23 @@ def _ensure_committee_tables(conn: sqlite3.Connection) -> None:
     """)
 
 
+# Registries scraped before `felicitas._committee_file_url` put a slash between
+# the host and the path carry 1 422 minutes links (all of cycle 40's, 223 of
+# cycle 41's) of the form `https://www.parlament.hubiz40/…` — a host that does
+# not resolve. Repaired here against the known base, exactly as
+# `parlamonitor.committees.minutes_scrape.normalise_url` does for the fetcher,
+# so the meeting list stops linking a dead host without re-scraping four cycles.
+_COMMITTEE_FILE_BASE = "https://www.parlament.hu"
+
+
+def _committee_file_url(url: str | None) -> str | None:
+    if url and url.startswith(_COMMITTEE_FILE_BASE):
+        rest = url[len(_COMMITTEE_FILE_BASE):]
+        if rest and not rest.startswith("/"):
+            return f"{_COMMITTEE_FILE_BASE}/{rest}"
+    return url
+
+
 def load_committees(conn: sqlite3.Connection, registry: dict) -> int:
     """Load a cycle's committees (Committees module, §6F). Re-ingesting a cycle
     replaces its committees and everything hanging off them (idempotent, ING-4).
@@ -1212,7 +1229,8 @@ def load_committees(conn: sqlite3.Connection, registry: dict) -> int:
                VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (mt.get("meetingId"), mt["committeeId"], period, mt.get("number"),
              mt.get("numberInYear"), mt.get("datetime"), mt.get("kind"),
-             mt.get("quorum"), mt.get("durationS"), mt.get("minutesUrl")))
+             mt.get("quorum"), mt.get("durationS"),
+             _committee_file_url(mt.get("minutesUrl"))))
 
     for d in _rows("documents"):
         conn.execute(
@@ -1277,9 +1295,28 @@ def load_committees(conn: sqlite3.Connection, registry: dict) -> int:
     return len(bodies)
 
 
-# Bills have no clean per-bill permalink on the modern portal; the text PDF is
-# the most specific resolvable original (LEGAL-1). This generic search page is
-# the fallback when a bill has no text.
+# magyarkozlony.hu carries no issue before 1998: its listing page for one says
+# "Nincs megjeleníthető tartalom" (nothing to show). The scraper used to keep that
+# listing as the fallback link whenever it found no PDF in it, so the 1990-93
+# promulgations (215 bills) linked an empty page. From 1998 every link resolves.
+_KOZLONY_ONLINE_FROM = 1998
+
+
+def _kozlony_url(h: dict) -> str | None:
+    """The gazette listing link, unless it is one of those empty pre-1998 pages.
+    (A later year with no PDF link is a fetch that failed, so it is kept.)"""
+    url = h.get("kozlonyUrl")
+    if url and not h.get("kozlonyDocUrl"):
+        year = str(h.get("promulgationDate") or "")[:4]
+        if year.isdigit() and int(year) < _KOZLONY_ONLINE_FROM:
+            return None
+    return url
+
+
+# A bill's original is its adatlap (`bill_page_url`, which the API also rebuilds
+# per request). Where upstream has none, the text PDF is the most specific
+# resolvable original (LEGAL-1), and this generic search page is the fallback
+# when a bill has no text either.
 #
 # A source that carries its own document page instead says so in `sourceUrl` —
 # the 1994-98 archive (parlamonitor.bills.legacy) does, because the modern portal
@@ -1719,6 +1756,126 @@ def _match_meeting(conn: sqlite3.Connection, committee_id: str,
     return next((r["id"] for r in rows if r["d"] == date), rows[0]["id"])
 
 
+def _ensure_committee_timing_tables(conn: sqlite3.Connection) -> None:
+    """Create the BIZ-30 sentence-timing tables on a pre-existing DB, so the
+    karaoke lands on an already-built deployment through the incremental update
+    alone.
+
+    Deliberately **no foreign key** into the minutes: a cycle's minutes are
+    replaced wholesale on every reload (``load_committee_minutes``), and timing
+    that cascaded away with them would vanish until the timing file happened to
+    be rewritten. The rows are instead checked against the speech text when they
+    are *served* (each carries the text it was cut at), which is also what makes
+    a re-parsed jegyzőkönyv safe: a speech whose text moved simply stops being
+    timed, instead of being highlighted at stale offsets."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS committee_timing (
+            meeting_id TEXT PRIMARY KEY,
+            method TEXT, model TEXT, coverage REAL,
+            sentences INTEGER, timed INTEGER, aligned_at TEXT,
+            videos TEXT);
+        CREATE TABLE IF NOT EXISTS committee_sentence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_id TEXT NOT NULL,
+            speech_ord INTEGER, ord INTEGER, para INTEGER,
+            char_start INTEGER, char_end INTEGER, text TEXT,
+            video_id TEXT, time_start REAL, time_end REAL);
+        CREATE INDEX IF NOT EXISTS idx_committee_sentence_meeting
+            ON committee_sentence(meeting_id, speech_ord, ord);
+    """)
+
+
+def load_committee_timing(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load the committee sentence timings (§6F / BIZ-30).
+
+    Cycle-less and replaced whole, like the recordings it is made from: the
+    scraper rewrites the file from every sitting it can time, so the file is the
+    answer. Runs after the minutes and the videos only by convention — nothing
+    here resolves against them (see :func:`_ensure_committee_timing_tables`).
+    """
+    _ensure_committee_timing_tables(conn)
+    conn.execute("DELETE FROM committee_sentence")
+    conn.execute("DELETE FROM committee_timing")
+    sittings = sentences = timed = 0
+    for rec in registry.get("data") or []:
+        mid = rec.get("meetingId")
+        if not mid:
+            continue
+        conn.execute("""
+            INSERT OR REPLACE INTO committee_timing(meeting_id, method, model,
+                coverage, sentences, timed, aligned_at, videos)
+            VALUES (?,?,?,?,?,?,?,?)
+        """, (mid, rec.get("method"), rec.get("model"), rec.get("coverage"),
+              rec.get("sentences"), rec.get("timed"), rec.get("alignedAt"),
+              _json_or_none(rec.get("videos") or None)))
+        rows = []
+        for sp in rec.get("speeches") or []:
+            for i, s in enumerate(sp.get("sentences") or []):
+                chars = s.get("chars") or [None, None]
+                rows.append((mid, sp.get("ord"), i, s.get("para"), chars[0],
+                             chars[1], s.get("text"), s.get("videoId"),
+                             s.get("timeStart"), s.get("timeEnd")))
+                timed += 1 if s.get("timeStart") is not None else 0
+        if rows:
+            conn.executemany("""
+                INSERT INTO committee_sentence(meeting_id, speech_ord, ord, para,
+                    char_start, char_end, text, video_id, time_start, time_end)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""", rows)
+        sittings += 1
+        sentences += len(rows)
+    conn.commit()
+    logger.info("Loaded committee timing: %d sittings, %d of %d sentences timed",
+                sittings, timed, sentences)
+    return sittings
+
+
+def _ensure_session_day_id(conn: sqlite3.Connection) -> None:
+    """Add ``session.day_id`` to a pre-existing DB (see `_ensure_session_status`)."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(session)")]
+    if cols and "day_id" not in cols:
+        conn.execute("ALTER TABLE session ADD COLUMN day_id TEXT")
+
+
+# Where the scraper keeps each day's raw bundle (`parlamonitor.paths`). Its
+# `day_uuid` is parlament.hu's id for the day; processed records written before
+# the transform carried it as `meta.dayId` have it only here.
+_RAW_DAY_FILE = "original/plenary/raw-{session}-day.json"
+_RAW_DAY_ID_RE = re.compile(r'"day_uuid"\s*:\s*"?([0-9A-Za-z-]+)"?')
+
+
+def _raw_day_id(data_dir: Path, session_id) -> str | None:
+    path = Path(data_dir) / _RAW_DAY_FILE.format(session=session_id)
+    try:
+        with path.open(encoding="utf-8") as f:
+            head = f.read(4096)     # the key sits at the top; a bundle is ~1 MB
+    except OSError:
+        return None
+    m = _RAW_DAY_ID_RE.search(head)
+    if m:
+        return m.group(1)
+    try:
+        return (json.loads(path.read_text(encoding="utf-8")) or {}).get("day_uuid")
+    except (OSError, ValueError):
+        return None
+
+
+def backfill_session_day_ids(conn: sqlite3.Connection, data_dir) -> int:
+    """Fill ``session.day_id`` from the raw bundles wherever the processed record
+    did not carry it. Only touches NULL rows, so after the first pass it costs one
+    file read per newly loaded day. Returns how many it filled."""
+    _ensure_session_day_id(conn)
+    filled = 0
+    for (sid,) in conn.execute(
+            "SELECT id FROM session WHERE day_id IS NULL").fetchall():
+        day_id = _raw_day_id(data_dir, sid)
+        if day_id:
+            conn.execute("UPDATE session SET day_id = ? WHERE id = ?", (day_id, sid))
+            filled += 1
+    if filled:
+        logger.info("Linked %d sitting day(s) to their parlament.hu day id", filled)
+    return filled
+
+
 def _ensure_session_status(conn: sqlite3.Connection) -> None:
     """Add ``session.status`` to a pre-existing DB, so the upcoming/scheduled-day
     feature also lands via the incremental ``--update`` path (which snapshots the
@@ -1750,6 +1907,7 @@ def load_session(conn: sqlite3.Connection, record: dict) -> str:
     period = meta.get("electoralPeriod")
     try:
         _ensure_session_status(conn)
+        _ensure_session_day_id(conn)
         _ensure_speaker_office(conn)
         # delete-then-insert keyed on session id => idempotent replace (ING-4).
         _delete_session(conn, sid)
@@ -1761,15 +1919,15 @@ def load_session(conn: sqlite3.Connection, record: dict) -> str:
 
         conn.execute(
             """INSERT INTO session(id, period_number, sitting, date, date_start,
-                   date_end, status, source, source_page, scraped_at, timing_method,
-                   video_uri, video_playseq, video_duration, video_license,
-                   video_creator)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   date_end, status, source, source_page, day_id, scraped_at,
+                   timing_method, video_uri, video_playseq, video_duration,
+                   video_license, video_creator)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (sid, period, meta.get("sitting"), meta.get("date"),
              meta.get("dateStart"), meta.get("dateEnd"),
              meta.get("status") or "published", meta.get("source"),
              meta.get("sourcePage") or _first_source_page(record),
-             meta.get("sourceScrapedAt"),
+             meta.get("dayId"), meta.get("sourceScrapedAt"),
              meta.get("timingMethod"), meta.get("dayVideoURI"),
              meta.get("dayVideoPlayseq"),
              _day_duration(record), _day_license(record), _day_creator(record)))
@@ -5075,6 +5233,286 @@ def load_aktualis(conn: sqlite3.Connection, registry: dict) -> int:
     return items
 
 
+# ---------------------------------------------------------------------------
+# Asset declarations from the EVNYR system (REP-18)
+# ---------------------------------------------------------------------------
+
+def _ensure_asset_declaration_table(conn: sqlite3.Connection) -> None:
+    """Create ``asset_declaration`` on a pre-existing DB (REP-18), so the
+    declarations land on an already-built deployment through the incremental
+    update alone (dropping in ``asset-declarations.json``). A no-op on a fresh
+    DB."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS asset_declaration (
+            declaration_id   TEXT PRIMARY KEY,
+            person_id        TEXT REFERENCES person(person_id),
+            name             TEXT NOT NULL,
+            organisation     TEXT,
+            office           TEXT,
+            declaration_type TEXT,
+            finalized_at     TEXT,
+            modified_at      TEXT,
+            schema_version   TEXT,
+            url              TEXT NOT NULL,
+            pdf_url          TEXT,
+            content_json     TEXT,
+            snapshot_at      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_asset_declaration_person
+            ON asset_declaration(person_id);
+    """)
+
+
+# Academic titles a declarant may or may not write in front of their name. They
+# never tell two people apart, so they are dropped from the match key. "ifj." /
+# "id." / "özv." are NOT: they are how a son is told from his father, and
+# dropping them could hand one's declaration to the other.
+_DECLARANT_TITLES = frozenset({"dr", "prof", "habil", "phd"})
+# How far before a declaration its filer's seat or office may have ended. A
+# closing declaration (*záró*) comes after the mandate ends and a yearly one
+# describes the year before, so a year and a bit covers both.
+_DECLARANT_LOOKBACK_DAYS = 400
+# The office-holder registry's categories (officeholders.scrape) whose holders
+# are the "politikai felsővezetők" a non-MP official's declaration is filed by.
+_GOVERNMENT_CATEGORIES = frozenset({"pm", "minister", "state-secretary"})
+
+
+def _declarant_key(name: str | None) -> str:
+    """Case/title-folded match key for a declarant's name. The system writes
+    names in capitals ("DR. HOFFMAN ISTVÁN") and the person table does not, so
+    case is folded. Accents are kept: folding them would merge distinct names
+    (cf. kmonitor._norm)."""
+    s = unicodedata.normalize("NFC", name or "").casefold()
+    s = re.sub(r"\s*-\s*", "-", s)
+    return " ".join(t for t in re.split(r"[\s.,]+", s)
+                    if t and t not in _DECLARANT_TITLES)
+
+
+def _declarant_role(office: str | None) -> str | None:
+    """Which kind of person the declaration's office says the filer is:
+    ``mp``, ``advocate`` (nemzetiségi szószóló), ``official`` (a minister or
+    state secretary with no seat, "…képviselői megbízással nem rendelkező
+    politikai felsővezető"), or ``None`` for an office text not recognised."""
+    o = (office or "").casefold()
+    if "nem rendelkező" in o or "felsővezető" in o:
+        return "official"
+    if "szószóló" in o:
+        return "advocate"
+    if "képviselő" in o:
+        return "mp"
+    return None
+
+
+def _link_asset_declarations(conn: sqlite3.Connection) -> int:
+    """Set ``asset_declaration.person_id`` where the declarant is unambiguous.
+
+    The snapshot names the declarant and the post they filed for, and carries no
+    id we could join on (EXT-2). So this is a name match, kept deliberately
+    narrow, because a wrong match would attribute one person's assets to
+    another, which is far worse than a declaration listed without a profile
+    link. A person is a candidate only if:
+
+    * their name matches exactly, titles and case aside (:func:`_declarant_key`);
+    * they held a role of the kind the filed office names: a seat for an MP's
+      declaration, an advocate's seat for an advocate's, and for a non-MP
+      official's a government office term from the office-holder registry
+      (minister, state secretary, PM) **and no seat on the day of filing**, since
+      that is what the office says ("…képviselői megbízással nem rendelkező…");
+    * they held it around the time of filing: started by the declaration's
+      finalisation date and not ended more than ``_DECLARANT_LOOKBACK_DAYS``
+      before it.
+
+    The link is made only when **exactly one** person passes. Two people of the
+    same name who both qualify (or a declarant not in the corpus at all) leave
+    the row unlinked, still listed. Re-run whenever the people move (a registry
+    or a sitting changed), since a declarant may appear in the corpus after
+    their declaration does. Returns the number of declarations linked."""
+    _ensure_advocate_columns(conn)
+    conn.execute("UPDATE asset_declaration SET person_id = NULL")
+    rows = conn.execute(
+        "SELECT declaration_id, name, office, finalized_at, snapshot_at "
+        "FROM asset_declaration").fetchall()
+    if not rows:
+        return 0
+
+    by_key: dict[str, set[str]] = {}
+    flags: dict[str, tuple[bool, bool]] = {}
+    for r in conn.execute("SELECT person_id, label, label_full, is_mp, "
+                          "is_advocate FROM person"):
+        flags[r[0]] = (bool(r[3]), bool(r[4]))
+        for label in (r[1], r[2]):
+            key = _declarant_key(label)
+            if key:
+                by_key.setdefault(key, set()).add(r[0])
+
+    # (kind, start, end) per person: every seat (per cycle, dated by the cycle)
+    # and every registry office term, a government one ("government") or any
+    # other ("office"). Dates compared as YYYY-MM-DD.
+    roles: dict[str, list[tuple[str, str, str | None]]] = {}
+    for r in conn.execute(
+            "SELECT m.person_id, e.date_start, e.date_end FROM membership m "
+            "JOIN electoral_period e ON e.number = m.period_number"):
+        roles.setdefault(r[0], []).append(("seat", (r[1] or "")[:10], (r[2] or "")[:10] or None))
+    if _table_exists(conn, "person_office"):
+        _ensure_person_office(conn)
+        for r in conn.execute("SELECT person_id, category, date_start, date_end "
+                              "FROM person_office WHERE source = 'registry'"):
+            kind = "government" if r[1] in _GOVERNMENT_CATEGORIES else "office"
+            roles.setdefault(r[0], []).append((kind, (r[2] or "")[:10], (r[3] or "")[:10] or None))
+
+    def held(pid: str, kinds: set[str] | None, start_by: str, end_from: str) -> bool:
+        return any((kinds is None or kind in kinds)
+                   and start <= start_by and (end is None or end >= end_from)
+                   for kind, start, end in roles.get(pid, ()))
+
+    def qualifies(pid: str, role: str | None, on: str, since: str) -> bool:
+        is_mp, is_advocate = flags.get(pid, (False, False))
+        if role == "mp":
+            return is_mp and held(pid, {"seat"}, on, since)
+        if role == "advocate":
+            return is_advocate and held(pid, {"seat"}, on, since)
+        if role == "official":
+            return (held(pid, {"government"}, on, since)
+                    and not held(pid, {"seat"}, on, on))
+        return held(pid, None, on, since)
+
+    linked = 0
+    for r in rows:
+        on = (r["finalized_at"] or r["snapshot_at"] or "")[:10]
+        if not on:
+            continue
+        try:
+            since = (datetime.fromisoformat(on).date()
+                     - timedelta(days=_DECLARANT_LOOKBACK_DAYS)).isoformat()
+        except ValueError:
+            continue
+        role = _declarant_role(r["office"])
+        candidates = [pid for pid in by_key.get(_declarant_key(r["name"]), ())
+                      if qualifies(pid, role, on, since)]
+        if len(candidates) == 1:
+            conn.execute("UPDATE asset_declaration SET person_id = ? "
+                         "WHERE declaration_id = ?", (candidates[0], r["declaration_id"]))
+            linked += 1
+        elif candidates:
+            logger.warning("Asset declaration %s (%s): %d people fit, left unlinked",
+                           r["declaration_id"], r["name"], len(candidates))
+    unlinked = len(rows) - linked
+    if unlinked:
+        logger.info("%d of %d asset declaration(s) matched no single person",
+                    unlinked, len(rows))
+    return linked
+
+
+def _load_asset_declarations_file(conn: sqlite3.Connection, data_dir: Path) -> int:
+    """Load ``processed/asset-declarations.json`` if the scrape has produced one.
+
+    Absent on a corpus scraped before this stage existed, which is not an error:
+    profiles then show the parlament.hu adatlap's declarations only."""
+    path = Path(data_dir) / "processed" / "asset-declarations.json"
+    if not path.exists():
+        logger.info("No asset-declarations.json in %s — skipping EVNYR declarations",
+                    path.parent)
+        return 0
+    try:
+        registry = json.loads(path.read_text())
+    except ValueError as e:
+        logger.warning("Could not parse %s (%s) — skipping", path, e)
+        return 0
+    return load_asset_declarations(conn, registry)
+
+
+def load_asset_declarations(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load the EVNYR snapshot (REP-18) and link each declaration to its filer.
+
+    Replaces the whole set: the snapshot is the system's complete list of
+    public declarations, so one withdrawn or corrected upstream must change or
+    leave here too rather than linger as a stale copy of what the House no
+    longer publishes."""
+    _ensure_asset_declaration_table(conn)
+    snapshot = (registry.get("meta") or {}).get("snapshotAt")
+    n = linked = 0
+    try:
+        conn.execute("DELETE FROM asset_declaration")
+        for d in registry.get("data") or []:
+            did, name, url = d.get("id"), (d.get("name") or "").strip(), d.get("url")
+            if not (did and name and url):
+                continue
+            conn.execute(
+                """INSERT OR REPLACE INTO asset_declaration(declaration_id, name,
+                       organisation, office, declaration_type, finalized_at,
+                       modified_at, schema_version, url, pdf_url, content_json,
+                       snapshot_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (did, name, d.get("organisation"), d.get("office"), d.get("type"),
+                 d.get("finalizedAt"), d.get("modifiedAt"), d.get("schemaVersion"),
+                 url, d.get("pdfUrl"),
+                 json.dumps(d.get("content") or {}, ensure_ascii=False),
+                 snapshot))
+            n += 1
+        linked = _link_asset_declarations(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    logger.info("Loaded %d EVNYR asset declaration(s), %d linked to a person",
+                n, linked)
+    return n
+
+
+# ---------------------------------------------------------------------------
+# Link repairs
+# ---------------------------------------------------------------------------
+
+# Links already in a DB that the loader now derives differently, on rows whose
+# source file will never change again (the archive cycles) — so no incremental
+# update would ever reload them. Bump the version when adding a step: the next
+# `--update` then runs the pass once, even when no processed file moved.
+_LINK_REPAIRS_KEY = "link_repairs"
+_LINK_REPAIRS_VERSION = "1"
+
+
+def _link_repairs_stale(conn: sqlite3.Connection) -> bool:
+    try:
+        row = conn.execute("SELECT value FROM build_meta WHERE key = ?",
+                           (_LINK_REPAIRS_KEY,)).fetchone()
+    except sqlite3.OperationalError:        # a DB built before build_meta
+        return True
+    return (row[0] if row else None) != _LINK_REPAIRS_VERSION
+
+
+def repair_links(conn: sqlite3.Connection, data_dir) -> None:
+    """Bring every stored link in line with how the loader derives it now, then
+    stamp the version. Idempotent; each step is a no-op on a fresh build except
+    the day-id backfill, which is how a build gets the archive days' ids."""
+    days = backfill_session_day_ids(conn, data_dir)
+    photos = minutes = gazettes = 0
+    if _table_exists(conn, "person"):
+        # Never hot-link a parlament.hu portrait (see load_representatives).
+        photos = conn.execute(
+            "UPDATE person SET photo_uri = NULL WHERE photo_uri LIKE 'http%'").rowcount
+    if _table_exists(conn, "committee_meeting"):
+        rows = conn.execute(
+            "SELECT id, minutes_url FROM committee_meeting WHERE minutes_url LIKE ?",
+            (_COMMITTEE_FILE_BASE + "%",)).fetchall()
+        for mid, url in rows:
+            fixed = _committee_file_url(url)
+            if fixed != url:
+                conn.execute("UPDATE committee_meeting SET minutes_url = ? WHERE id = ?",
+                             (fixed, mid))
+                minutes += 1
+    if _table_exists(conn, "bill"):
+        gazettes = conn.execute(
+            """UPDATE bill SET kozlony_url = NULL
+               WHERE kozlony_url IS NOT NULL AND kozlony_doc_url IS NULL
+                 AND CAST(substr(promulgation_date, 1, 4) AS INTEGER)
+                     BETWEEN 1 AND ?""", (_KOZLONY_ONLINE_FROM - 1,)).rowcount
+    conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
+                 (_LINK_REPAIRS_KEY, _LINK_REPAIRS_VERSION))
+    logger.info("Link repairs v%s: %d day id(s), %d hot-linked portrait(s), "
+                "%d minutes URL(s), %d empty gazette listing(s)",
+                _LINK_REPAIRS_VERSION, days, photos, minutes, gazettes)
+
+
 def build_database(data_dir: str | Path, db_path: str | Path, *,
                    only_session: str | None = None,
                    skip_wordcloud: bool = False) -> None:
@@ -5148,6 +5586,10 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         vp = data_dir / "processed" / "committee-videos.json"
         if vp.exists():
             load_committee_videos(conn, json.loads(vp.read_text()))
+        # The sentence timings made from those recordings (BIZ-30).
+        tp = data_dir / "processed" / "committee-timing.json"
+        if tp.exists():
+            load_committee_timing(conn, json.loads(tp.read_text()))
 
         sessions = sorted((data_dir / "processed").glob("*-session.json"))
         loaded = 0
@@ -5163,6 +5605,9 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         # and their office terms are exactly what this registry supplies (REP-2).
         _load_office_holders_file(conn, data_dir)
         _load_aktualis_file(conn, data_dir)
+        # After every person registry and sitting: the declarations are linked to
+        # their filers by name against the people loaded above (REP-18).
+        _load_asset_declarations_file(conn, data_dir)
 
         # Lemmatize / entity-extract each sitting's text into session_word_count
         # before the aggregates so word_doc_freq can derive from it (WCLOUD-2);
@@ -5202,6 +5647,7 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         # only the transcript and the register, whose person rows are all loaded by
         # now (the office-holder file above seats the non-MP ministers).
         rebuild_interjections(conn)
+        repair_links(conn, data_dir)
         wire_nonmp_photos(conn, Path(data_dir) / "media" / "photos")
         conn.execute("INSERT OR REPLACE INTO build_meta(key, value) VALUES (?,?)",
                      ("sessions_loaded", str(loaded)))
@@ -5238,7 +5684,8 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
 _PROCESSED_GLOBS = ("representatives-*.json", "advocates-*.json", "bills-*.json",
                     "votes-*.json", "committees-*.json",
                     "committee-minutes-*.json", "committee-videos.json",
-                    "*-session.json", "officeholders.json", "aktualis.json")
+                    "committee-timing.json", "*-session.json", "officeholders.json", "aktualis.json",
+                    "asset-declarations.json")
 
 
 def _file_sig(path: Path) -> tuple[float, int]:
@@ -5395,6 +5842,9 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
         # code, so an edit to it (or to PARLAMONITOR_PORTFOLIO_MAP) leaves every
         # processed file untouched while making the derived tables wrong.
         portfolios_stale = _portfolios_stale(live)
+        # The same blind spot for a change to how links are derived (see
+        # `repair_links`): it reaches rows no processed file will ever reload.
+        repairs_stale = _link_repairs_stale(live)
     finally:
         live.close()
 
@@ -5402,11 +5852,13 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
     removed = _removed_sessions(processed, prev)
     n_changed = sum(len(v) for v in changed.values())
     if n_changed == 0 and not removed:
-        if not portfolios_stale:
+        if not portfolios_stale and not repairs_stale:
             logger.info("No processed file changed since last load; DB is up to date")
             return False
-        logger.info("No processed file changed, but the portfolio mapping did — "
-                    "rebuilding the §6C tables")
+        logger.info("No processed file changed, but %s did — updating",
+                    " and ".join(what for what, stale in (
+                        ("the portfolio mapping", portfolios_stale),
+                        ("the link derivation", repairs_stale)) if stale))
     else:
         logger.info("Incremental update: %d changed file(s), %d removed sitting(s) — %s",
                     n_changed, len(removed),
@@ -5473,6 +5925,10 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             videos = [candidate] if candidate.exists() else []
         for p in videos:
             load_committee_videos(conn, json.loads(p.read_text()))
+        # Checked against the speech text when served rather than keyed to the
+        # minutes rows, so only a change to the file itself reloads it.
+        for p in changed["committee-timing.json"]:
+            load_committee_timing(conn, json.loads(p.read_text()))
 
         for p in changed["*-session.json"]:
             record = json.loads(p.read_text())
@@ -5504,6 +5960,18 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
         # parsed has no row to link to until the registry catches up.
         if changed["aktualis.json"] or changed["bills-*.json"]:
             _load_aktualis_file(conn, data_dir)
+
+        # EVNYR declarations (REP-18): reloaded when the snapshot changed, and
+        # re-linked when only the people did. A declarant can enter the corpus
+        # after their declaration (a new state secretary's first speech, the next
+        # office-holder refresh), and the link is a match against who is there.
+        if changed["asset-declarations.json"]:
+            _load_asset_declarations_file(conn, data_dir)
+        elif ((loaded_sessions or changed["representatives-*.json"]
+               or changed["advocates-*.json"] or changed["officeholders.json"])
+              and _table_exists(conn, "asset_declaration")):
+            _link_asset_declarations(conn)
+            conn.commit()
 
         # Aggregates are speech-derived, so they only need rebuilding when a
         # sitting changed (bills/votes/reps carry their own rows). Word counts are
@@ -5560,6 +6028,12 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
                 or changed["representatives-*.json"]
                 or changed["advocates-*.json"] or changed["officeholders.json"]):
             rebuild_portfolios(conn)
+        # Day ids for the sittings just loaded from records that predate
+        # `meta.dayId` — or, once per link-repair version, everything.
+        if repairs_stale:
+            repair_links(conn, data_dir)
+        elif loaded_sessions:
+            backfill_session_day_ids(conn, data_dir)
         # Wire any non-MP speaker portraits the scraper has downloaded since the
         # last load (global, cheap — see wire_nonmp_photos). Also runs for an
         # advocates-only update: advocates are non-MP rows, so this is what gives

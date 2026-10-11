@@ -3,7 +3,6 @@ export default {
   app: {
     title: 'Parlamonitor',
     tagline: 'Tudd meg, mi történik a Parlamentben!',
-    taglineSub: 'Keress felszólalásokban, nézd meg, hogyan szavaztak a képviselők, és kövesd végig a törvényjavaslatok sorsát.',
     skipToContent: 'Ugrás a tartalomra',
     loading: 'Betöltés…',
     error: 'Hiba történt az adatok betöltésekor.',
@@ -91,21 +90,115 @@ export default {
     scopeAll: 'Összes ciklus adatai',
   },
   home: {
-    searchPlaceholder: 'Keress egy kifejezésre a felszólalásokban…',
+    searchLabel: 'Keress a felszólalásokban',
+    searchPlaceholder: 'pl. lakhatás, Paks, költségvetés…',
     searchButton: 'Keresés',
-    statsLead: 'Böngészd {year} óta a Magyar Országgyűlés munkájának adatait!',
-    statsLeadNoYear: 'Böngészd a Magyar Országgyűlés munkájának adatait!',
+    since: '{year} óta:',
+    countsLabel: 'Az adatbázis tartalma',
     stats: { sessions: 'ülésnap', speeches: 'felszólalás', sentences: 'mondat', representatives: 'képviselő' },
-    exploreSearch: 'Szöveg kereső',
-    exploreSearchDesc: 'Keress bármilyen kifejezésre a jegyzőkönyvben, és ugorj egyenesen az elhangzás pillanatára a videóban!',
-    exploreReps: 'Képviselők és statisztikák',
-    exploreRepsDesc: 'Böngészd a képviselőket, nézd meg felszólalásaikat és aktivitásukat!',
-    exploreSessions: 'Ülésnapok böngészése',
-    exploreSessionsDesc: 'Olvasd végig egy ülésnap jegyzőkönyvét napirendi pontokra bontva!',
-    examplesTitle: 'Példakeresések',
-    examplesLead: 'Kattints egy témára a teljes keresés megnyitásához; a diagram az adott kifejezés időbeli előfordulását mutatja.',
+    examplesTitle: 'Példakeresés',
     examplesEmpty: 'Nincs találat ebben a ciklusban.',
-    examplesMore: 'További témák megtekintése',
+    rotation: { pause: 'Váltakozás megállítása', play: 'Váltakozás indítása', prev: 'Előző', next: 'Következő' },
+    facts: {
+      title: 'Számok a parlamentből',
+      empty: 'Ehhez a ciklushoz még nincs kiemelhető adat.',
+      hoursMinutes: '{h} óra {m} perc',
+      hours: '{h} óra',
+      minutes: '{m} perc',
+      speakingTime: {
+        name: 'Felszólalási idő',
+        text: 'ennyit beszélt {name}, többet bármelyik másik képviselőnél.',
+        link: 'Felszólalási toplista',
+      },
+      interjections: {
+        name: 'Közbeszólások',
+        text: 'alkalommal szólt közbe mások felszólalása közben {name} — mindenki másnál többször.',
+        link: 'Közbeszólások hálója',
+      },
+      blindSpots: {
+        name: 'Vakfoltok',
+        text: 'település neve még egyszer sem hangzott el az ülésteremben: ez a {total} magyarországi település {pct}-a.',
+        link: 'Az említetlen települések térképe',
+      },
+      topTopic: {
+        name: 'Leggyakoribb téma',
+        // A százalék mindig „százalékot”-ként olvasandó, így a rag a számhoz tapad.
+        valueSuffix: '-ot',
+        text: 'tett ki a felszólalások szakpolitikai tartalmából a leggyakoribb téma: {topic}.',
+        link: 'Témák elemzése',
+      },
+      factionShare: {
+        name: 'Frakciók',
+        text: 'jutott a felszólalási időből a legtöbbet beszélő frakcióra: {faction}.',
+        link: 'Frakciók felszólalási ideje',
+      },
+      questions: {
+        name: 'Kérdések',
+        text: 'kérdésre és interpellációra válaszolt a legtöbbet kérdezett tárca: {portfolio}.',
+        link: 'Tárcák',
+      },
+    },
+    figures: {
+      title: 'Ábrák a parlamentből',
+      empty: 'Ehhez a ciklushoz még nincs megjeleníthető ábra.',
+      map: { title: 'Melyik településről esett szó?', link: 'Teljes térkép' },
+      interjections: {
+        title: 'Ki kinek szól közbe?',
+        summary: 'A leginkább érintett {n} képviselő · összesen {total} közbeszólás',
+        link: 'Teljes háló',
+      },
+      topics: {
+        title: 'Miről beszél az Országgyűlés?',
+        summary: 'A leggyakoribb {n} téma (összesen: {total})',
+        link: 'Összes téma',
+      },
+      speakers: {
+        title: 'Ki beszél a legtöbbet?',
+        legend: 'Frakciók',
+        link: 'Felszólalási toplista',
+      },
+    },
+  },
+  // "A múlt héten" — the home page's digest of the sitting week just gone.
+  lastWeek: {
+    title: 'A múlt héten',
+    titleEarlier: 'A legutóbbi ülésnapok',
+    allSittings: 'Összes ülésnap',
+    stats: { days: 'ülésnap', speeches: 'felszólalás', time: 'ülésidő', votes: 'szavazás, ebből {adopted} elfogadva' },
+    waiting: 'Még nincs feldolgozva',
+    waitingNote: 'Az ülésnap megtörtént vagy be van jelentve, de a parlament.hu még nem tette közzé a felvételét és a jegyzőkönyvét. Amint megjelennek, automatikusan bekerülnek.',
+    someWaiting: 'Egy ülésnap még feldolgozásra vár; az összesítés csak a már közzétett napokat tartalmazza. | {n} ülésnap még feldolgozásra vár; az összesítés csak a már közzétett napokat tartalmazza.',
+    allWaiting: 'Az ülésnap felvétele és jegyzőkönyve még nem jelent meg a parlament.hu-n; amint megérkezik, itt összesítjük. | Az ülésnapok felvételei és jegyzőkönyvei még nem jelentek meg a parlament.hu-n; amint megérkeznek, itt összesítjük őket.',
+    somePartial: 'Egy ülésnap még csak részben feldolgozott: a hiányzó jegyzőkönyvek és videórészletek még érkeznek. | Néhány ülésnap még csak részben feldolgozott: a hiányzó jegyzőkönyvek és videórészletek még érkeznek.',
+    topSpeakers: 'Legtöbbet felszólalók',
+    words: 'A hét szavai',
+    wordTitle: '{n} előfordulás — keresés a hét felszólalásaiban',
+    // A hét döntései (HOME-4): iromány szerint, a döntés tárgya szerint csoportosítva.
+    decisions: 'Döntések',
+    categories: {
+      law: 'Törvények',
+      resolution: 'Határozatok',
+      personnel: 'Személyi döntések',
+      immunity: 'Mentelmi ügyek',
+      discipline: 'Fegyelmi ügyek',
+      interpellation: 'Interpellációk',
+    },
+    outcome: {
+      plain: { adopted: 'elfogadva', rejected: 'elutasítva' },
+      agenda: { adopted: 'tárgysorozatba véve', rejected: 'tárgysorozatba vétel elutasítva' },
+      immunity: { adopted: 'mentelmi jog felfüggesztve', rejected: 'mentelmi jog fenntartva' },
+      discipline: { adopted: 'fenntartva', rejected: 'nem tartotta fenn' },
+      interpellation: { adopted: 'válasz elfogadva', rejected: 'válasz elutasítva' },
+      mixed: '{votes} szavazás: {adopted} elfogadva, {rejected} elutasítva',
+    },
+    tallyTitle: '{yes} igen, {no} nem, {abstain} tartózkodás',
+    moreDecisions: '+ {n} további',
+    fewerDecisions: 'Kevesebb',
+    interpNote: 'Interpellációs válaszról akkor szavaz az Országgyűlés, ha a kérdező képviselő nem fogadta el.',
+    splits: 'Frakciótól eltérő szavazatok',
+    splitDefectors: '1 képviselő szavazott a frakciója álláspontjától eltérően: | {n} képviselő szavazott a frakciója álláspontjától eltérően:',
+    allSplits: 'A hét szavazásai eltérés szerint',
+    thisWeek: 'Ezen a héten',
   },
   search: {
     title: 'Keresés a felszólalásokban',
@@ -634,6 +727,7 @@ export default {
     sponsors: 'Benyújtó',
     more: 'További {count} megjelenítése',
     site: 'A bizottság honlapja',
+    parlament: 'Adatlap a parlament.hu-n',
     email: 'Elérhetőség',
     created: 'Létrehozva',
     ended: 'Megszűnt',
@@ -659,7 +753,15 @@ export default {
       + 'származik, a hiteles változat mindig a hivatkozott eredeti. A '
       + 'felvételek az Országgyűlés saját YouTube-csatornájáról származnak, és '
       + 'a videó címében szereplő dátum és bizottságnév alapján kapcsoljuk őket '
-      + 'az ülésekhez; a csatorna 2024 februárja előtt nem közölt felvételt.',
+      + 'az ülésekhez; a csatorna 2024 februárja előtt nem közölt felvételt. '
+      + 'A felvétel itt, a jegyzőkönyv mellett játszható le; a lejátszó csak az '
+      + 'indításkor, a YouTube adatkímélő módjában töltődik be. Ahol a '
+      + 'jegyzőkönyv is megvan, a felvétel hangját gépi beszédfelismerés '
+      + '(Whisper) írja le, és ezt illesztjük a jegyzőkönyv szövegéhez: így '
+      + 'kattintásra az adott mondatnál indul a videó, lejátszás közben pedig '
+      + 'az éppen elhangzó mondat kiemelve követi. A kiemelt szöveg mindig a '
+      + 'jegyzőkönyvé, nem a gépi leiraté; az a mondat, amelyet nem sikerült '
+      + 'elhelyezni a felvételen, olvasható, de nem indítható.',
     // A jegyzőkönyv-nézet (BIZ-15).
     openMinutes: 'Jegyzőkönyv megnyitása',
     minutesTitle: 'Jegyzőkönyv',
@@ -698,6 +800,11 @@ export default {
     searchInMinutes: 'Keresés a jegyzőkönyvben…',
     noMatch: 'Nincs találat a jegyzőkönyvben.',
     matches: '{count} találat',
+    // Egy felszólalás buboréka (BIZ-15): a saját címe, és a jelzés, ha ugyanaz
+    // a felszólaló folytatja egy napirendi pont fejléce után.
+    speechLink: 'Hivatkozás erre a felszólalásra',
+    speechContinued: 'folytatás',
+    speechContinuedNote: 'Ugyanaz a felszólaló folytatja az új napirendi pont alatt; a jegyzőkönyv itt nem írja ki újra a nevét.',
     // Felvételek (BIZ-16).
     videos: 'Felvételek',
     video: 'Felvétel',
@@ -710,6 +817,13 @@ export default {
     videoCoverage: 'Az Országgyűlés YouTube-csatornáján {from} óta vannak '
       + 'felvételek; a korábbi ülésekről nem készült közzétett közvetítés.',
     videoUnmatched: 'Ehhez a felvételhez nem találtunk ülést a nyilvántartásban.',
+    // A beágyazott lejátszó és a jegyzőkönyv szinkronja (BIZ-30).
+    part: '{n}. rész',
+    playRecording: 'A felvétel lejátszása',
+    playFromHere: 'Lejátszás ettől a felszólalástól',
+    playerConsent: 'A lejátszó csak az indításkor töltődik be a YouTube-ról.',
+    playerError: 'Ez a felvétel itt nem játszható le – a YouTube-on megnézhető.',
+    syncNote: 'Kattints egy mondatra, és a felvétel onnan indul; lejátszás közben az éppen elhangzó mondat kiemelve követi a videót.',
   },
   portfolios: {
     title: 'Tárcák',
@@ -836,11 +950,19 @@ export default {
     wikipedia: 'Wikipédia',
     kmonitor: 'K-Monitor',
     cv: 'Önéletrajz',
+    parlament: 'parlament.hu adatlap',
     assetDeclarations: 'Vagyonnyilatkozatok',
-    assetDeclarationsNote: 'A képviselő vagyonnyilatkozatai a parlament.hu-n közzétett formában; minden tétel az eredeti PDF-re mutat. A dátum a vagyoni állapot időpontja, vagyis az az időpont, amelyre a nyilatkozat vonatkozik. A lista minden ciklust tartalmaz, függetlenül a kiválasztott ciklustól.',
+    assetDeclarationsNote: 'A vagyonnyilatkozatok az Országgyűlés közzététele szerint; minden tétel az eredetire mutat. A parlament.hu adatlapján közzétett PDF-eknél a dátum a vagyoni állapot időpontja, vagyis az az időpont, amelyre a nyilatkozat vonatkozik. A 2026-tól az Elektronikus Vagyonnyilatkozati Rendszerben tett nyilatkozatoknál a dátum a véglegesítésé; ezek nyilvános tartalmát is megmutatjuk, a rendszer napi adatállománya alapján, a nyilatkozó által megadott formában. A lista minden ciklust tartalmaz, függetlenül a kiválasztott ciklustól.',
     assetDeclarationDate: 'vagyoni állapot: {date}',
     assetDeclarationMissing: 'Nincs közzétett dokumentum',
     assetDeclarationDeadline: 'beadási határidő: {date}',
+    // EVNYR declarations (REP-18): titled by their type, dated by finalisation.
+    declarationTitle: '{type} vagyonnyilatkozat',
+    declarationTitleUntyped: 'Vagyonnyilatkozat',
+    declarationTypes: { nyito: 'Nyitó', eves: 'Éves', zaro: 'Záró' },
+    declarationFinalized: 'véglegesítve: {date}',
+    declarationContents: 'A nyilatkozat tartalma',
+    declarationSource: 'Forrás: az Országgyűlés Elektronikus Vagyonnyilatkozati Rendszere, {date}-i napi adatállomány. Az adatokat a nyilatkozó által megadott formában, változtatás nélkül közöljük: az összegeket nem adjuk össze és nem váltjuk át.',
     // Tiszteletdíj (REP-17). Az ÖSSZEG HIVATALOS: a parlament.hu közli havonta.
     // A törvény csak magyarázza — az alapdíjjal elosztva kijön a szorzó és a §.
     // A felület sosem mondhatja, hogy „ennyit keres”: ez a képviselői tiszteletdíj,
@@ -958,6 +1080,60 @@ export default {
     allVotes: 'Összes szavazás megtekintése',
   },
   // Összehasonlítás (REP-15): felszólalók egymás mellett, terméklap-szerűen.
+  // The contents of an EVNYR asset declaration (REP-18), section by section in
+  // the order of the House's own form. Block keys are upstream's paths with the
+  // dots made underscores (message keys cannot hold dots). The labels are short
+  // forms of the form's own wording; the values are always shown as filed.
+  declaration: {
+    sections: {
+      realEstate: 'Ingatlanok', movables: 'Nagy értékű ingóságok', claims: 'Követelések',
+      debts: 'Tartozások', gifts: 'Protokollajándékok', otherNotes: 'Egyéb közlendők',
+      income: 'Jövedelemnyilatkozat', interests: 'Gazdasági érdekeltségek',
+      unknown: 'Egyéb adatok',
+    },
+    blocks: {
+      ingatlanok: 'Ingatlanok',
+      nagyErtekuIngosagok_szemelygepjarmuvek: 'Személygépkocsik',
+      nagyErtekuIngosagok_tehergepjarmuvek: 'Tehergépjárművek, autóbuszok',
+      nagyErtekuIngosagok_motorkerekparok: 'Motorkerékpárok',
+      nagyErtekuIngosagok_viziLegiJarmuvek: 'Vízi vagy légi járművek',
+      nagyErtekuIngosagok_vedettMualkotasok: 'Védett műalkotások',
+      nagyErtekuIngosagok_vedettGyujtemenyek: 'Védett gyűjtemények',
+      nagyErtekuIngosagok_egyebIngosagok: 'Egyéb nagy értékű ingóságok',
+      kovetelesek_ertekpapirok: 'Értékpapírok, befektetések',
+      kovetelesek_szamlakovetelesek: 'Bankszámlák, betétek',
+      kovetelesek_keszpenz: 'Készpénz',
+      kovetelesek_szerzodesesKovetelesek: 'Szerződéses követelések',
+      tartozasok_koztartozasok: 'Köztartozások',
+      tartozasok_hitelintezetiTartozasok: 'Hitelintézeti tartozások',
+      tartozasok_maganszemelyiTartozasok: 'Magánszemélyekkel szembeni tartozások',
+      protokollAjandekok: 'Protokollajándékok',
+      egyebKozlendok: 'Egyéb közlendők',
+      jovedelemnyilatkozat_korabbiFoglalkozasok: 'Az előző három év foglalkozásai, tisztségei',
+      jovedelemnyilatkozat_jelenlegiTevekenysegek: 'Jelenlegi jövedelemszerző tevékenységek',
+      gazdasagiErdekeltseg_tagsagok: 'Tagságok, tisztségek szervezetekben',
+      gazdasagiErdekeltseg_tarsasagiErdekeltsegek: 'Érdekeltségek gazdasági társaságokban',
+      gazdasagiErdekeltseg_egyebErdekek: 'Egyéb érdekek',
+      gazdasagiErdekeltseg_nyilatkozattetelHelye: 'A nyilatkozattétel helye',
+    },
+    fields: {
+      telepules: 'Település', teruletNagysag: 'Terület', muvelesiAg: 'Művelési ág',
+      epuletJelleg: 'Az épület jellege', alapterulet: 'Alapterület', jogiJelleg: 'Jogi jelleg',
+      jogallas: 'Jogállás', tulajdoniHanyad: 'Tulajdoni hányad', szerzesJogcime: 'A szerzés jogcíme',
+      jogviszonyKezdete: 'A szerzés ideje', szerzesEllenerteke: 'A szerzés ellenértéke',
+      jarmuJellege: 'Jellege', jarmuTipusa: 'Típusa', szerzesIdeje: 'A szerzés ideje',
+      megnevezes: 'Megnevezés', isin: 'ISIN-kód', nevErtek: 'Érték',
+      atvaltasiArfolyam: 'Átváltási árfolyam', swiftBic: 'SWIFT/BIC', osszeg: 'Összeg',
+      szerzodesIdeje: 'A szerződés ideje', jelleg: 'Jellege', ajandekozoNeve: 'Ajándékozó',
+      reszesultDijazasban: 'Részesült díjazásban', reszesulDijazasban: 'Részesül díjazásban',
+      haviJovedelem: 'Havi átlagos jövedelem', kifizetoSzemelye: 'Kifizető',
+      szervezetNeve: 'Szervezet', tagsag: 'Tagság, tisztség', tarsasagNeve: 'Társaság',
+      erdekeltsegFormaja: 'Az érdekeltség formája', tulajdoniArany: 'Tulajdoni arány',
+      leiras: 'Leírás',
+    },
+    yes: 'igen', no: 'nem',
+    empty: 'A nyilatkozat nyilvános része nem tartalmaz adatot.',
+  },
   compare: {
     title: 'Felszólalók összehasonlítása',
     intro: 'Legfeljebb {max} felszólaló egymás mellett, soronként ugyanaz az adat.',
@@ -1220,6 +1396,16 @@ export default {
     close: 'Bezárás',
     methodology: 'A gyorsírói jegyzőkönyv a hangosabb bekiabálásokat zárójelben, szó szerint, a félbeszakított felszólalás szövegébe írja: „(Balla György: Úgy van!)”. A Parlamonitor ezeket emeli ki, és köti össze a két képviselőt: a közbeszólót a zárójelben megnevezett név alapján, a másik oldalon pedig azt, akié a felszólalás. A név csak akkor számít, ha egyetlen képviselőre illik – ha a Parlamentben egyszerre több azonos nevű képviselő ült (például két Tóth István), a közbeszólás megnevezetlen marad, nem tippelünk. Ugyanezt a szabályt használja a jegyzőkönyv-olvasó is, amikor a szövegben a közbeszóló nevét a profiljára linkeli, így az ábra és a jegyzőkönyv ugyanazt mondja.',
     methodologyExclusions: 'Nem számítjuk bele az ülésvezetői felszólalások alatt elhangzott közbeszólásokat: egy szavazási blokk a jegyzőkönyvben egyetlen, órákig tartó levezető elnöki felszólalás, így egy egész délután bekiabálásai oda esnének, és az alelnökök lennének a Parlament messze legtöbbet félbeszakított tagjai (ugyanaz a szabály, ami minden más képviselői statisztikából is kihagyja az ülésvezetést). Nem számítjuk azokat sem, amelyeknél a jegyzőkönyv csak az eseményt rögzíti, a szavakat nem („Gulyás Gergely közbeszól.”), és azokat sem, ahol a szavak megvannak, de a bekiabáló nem („Közbeszólások a Fidesz padsoraiból: Nem!”).',
+    // Egy ülésnap közbeszólásai, a napi oldal gombja mögött nyíló ablakban.
+    dayButton: 'Közbeszólások',
+    dayButtonTitle: 'Ki kinek szólt közbe ezen a napon',
+    dayTitle: 'Közbeszólások ezen a napon',
+    dayClickHint: 'Kattints egy nyílra vagy egy képviselőre, és a lista csak a hozzá tartozó közbeszólásokat mutatja.',
+    dayShownShare: 'Az ábrán a {n} legtöbbet érintett képviselő látszik: a köztük elhangzott közbeszólások a nap összes közbeszólásának {share}%-a.',
+    dayAll: 'A nap összes közbeszólása',
+    dayPerson: '{made} közbeszólás, {received} kapott',
+    dayShowAll: 'Összes',
+    dayCycleLink: 'A teljes ciklus közbeszólásai',
     coverage: 'A kiválasztott ciklusban {extracted} szó szerinti közbeszólás került elő, ebből {attributed} volt egyértelmű névhez köthető; {procedural} ülésvezetői felszólalás alatt hangzott el.',
   },
   // Elemzések (§4E) — a szekció nyitóoldala. A kártyák szövege itt van, a

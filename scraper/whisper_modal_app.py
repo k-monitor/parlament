@@ -13,6 +13,12 @@ Deploy (from the ``scraper/`` directory):
     modal token new                       # once, to authenticate
     modal deploy whisper_modal_app.py     # builds the image (bakes the model), deploys
 
+Committee recordings (BIZ-30) come from YouTube, whose media URLs only work for
+the IP that requested them, so for those the host downloads the audio and calls
+``transcribe_audio`` with the bytes instead. That method was added after the
+plenary one: an app deployed before it exists answers the committee stage with a
+"method not found" error until it is redeployed with the command above.
+
 Smoke-test the deployed service (transcribes ~1 min of a recording if given a URL):
 
     PARLAMONITOR_WHISPER_TEST_M3U8="https://…/playlist.m3u8" modal run whisper_modal_app.py
@@ -93,6 +99,20 @@ def _decode_audio(url: str, playseq: str | None):
     return np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+def _decode_bytes(data: bytes):
+    """Decode an audio file handed over as bytes (any container ffmpeg reads —
+    a YouTube recording arrives as WebM/Opus or M4A) to the same 16 kHz mono
+    float32 array. Read from stdin rather than a temp file: nothing to clean up."""
+    import numpy as np
+
+    cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", "pipe:0",
+           "-f", "s16le", "-ac", "1", "-ar", "16000", "-"]
+    proc = subprocess.run(cmd, input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {proc.stderr.decode('utf-8', 'replace')[:400]}")
+    return np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+
+
 @app.cls(
     image=image,
     gpu=GPU,
@@ -107,13 +127,9 @@ class WhisperService:
         self.model = WhisperModel(MODEL, device="cuda", compute_type=COMPUTE_TYPE)
         self.pipe = BatchedInferencePipeline(self.model)
 
-    @modal.method()
-    def transcribe(self, job: dict) -> list:
-        """Transcribe one day's recording. ``job`` = ``{m3u8, playseq, language}``;
-        returns ``[[start, end, text], ...]`` words in the day-stream timeline."""
-        audio = _decode_audio(job["m3u8"], job.get("playseq"))
+    def _words(self, audio, language: str | None) -> list:
         segments, _info = self.pipe.transcribe(
-            audio, language=job.get("language") or "hu",
+            audio, language=language or "hu",
             word_timestamps=True, vad_filter=True, batch_size=BATCH_SIZE)
         words: list = []
         for seg in segments:
@@ -123,6 +139,27 @@ class WhisperService:
                 words.append([round(float(w.start), 3), round(float(w.end), 3),
                               (w.word or "").strip()])
         return words
+
+    @modal.method()
+    def transcribe(self, job: dict) -> list:
+        """Transcribe one day's recording. ``job`` = ``{m3u8, playseq, language}``;
+        returns ``[[start, end, text], ...]`` words in the day-stream timeline."""
+        audio = _decode_audio(job["m3u8"], job.get("playseq"))
+        return self._words(audio, job.get("language"))
+
+    @modal.method()
+    def transcribe_audio(self, job: dict) -> dict:
+        """Transcribe a recording the host has already downloaded (BIZ-30).
+
+        ``job`` = ``{audio: bytes, language}``. A committee sitting is streamed to
+        YouTube, whose media URLs are signed for the IP that asked for them, so
+        the container cannot fetch one itself the way it fetches a plenary HLS
+        playlist: the host downloads the (low-bitrate) audio track and ships the
+        bytes. Returns ``{words, durationS}`` — the duration is the decoded
+        audio's own length, which is the timeline the words are measured on."""
+        audio = _decode_bytes(job["audio"])
+        return {"words": self._words(audio, job.get("language")),
+                "durationS": round(len(audio) / 16000.0, 3)}
 
 
 @app.local_entrypoint()

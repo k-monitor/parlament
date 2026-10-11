@@ -9,8 +9,9 @@ from __future__ import annotations
 import html
 import json
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -21,6 +22,7 @@ from ...db import (QueryBudgetExceeded, get_db, like_contains, period_and,
                    query_budget, sentence_id_range)
 from ...media import per_speech_clip
 from ...nlp import LINKABLE_LABELS
+from ...parlament_links import sitting_day_page_url, speech_page_url
 # How completely a held day is published (SIT-2). Shared with the Bluesky
 # announcer, whose "fully processed" MUST mean what the site's badge means.
 from ...publication import processing_state
@@ -756,6 +758,231 @@ def list_sessions(period: Optional[List[int]] = Query(
                               r["status"], r["date"], r["speeches"],
                               r["speeches_with_text"], r["speeches_with_video"])}
                          for r in rows]}
+
+
+# ---------------------------------------------------------------------------
+# The week that has just gone: the home page's "A múlt héten" digest
+# ---------------------------------------------------------------------------
+
+# How much of the week the digest names. It is a summary on the home page, not a
+# sitting-day page: each day links to its own page, which has the full lists.
+_WEEK_TOP_SPEAKERS = 5
+_WEEK_WORDS = 10
+
+
+def _hu_today() -> date:
+    """Today on the Hungarian calendar. The House sits in Budapest, and a server
+    running on UTC would otherwise move "last week" an hour or two late on every
+    Monday morning — exactly when the digest is most read."""
+    try:
+        return datetime.now(ZoneInfo("Europe/Budapest")).date()
+    except Exception:                     # no tzdata on this platform
+        return date.today()
+
+
+def _week_start(db: sqlite3.Connection, day: Optional[str], today: date) -> Optional[date]:
+    """The Monday of the week the digest reports on, or None when there is none.
+
+    Given a ``day``, the Monday–Sunday week containing it. Otherwise last week —
+    and when the House did not sit last week (a recess, or simply an off week
+    between two sitting weeks), the latest earlier week it *did* sit in, so the
+    home page reports the last sitting week rather than an empty one. The current
+    week is never picked on its own: its days are still being held, and the order
+    paper on the same page already speaks for them."""
+    window = period_and(None, "period_number")
+    if day:
+        d = date.fromisoformat(day)
+        return d - timedelta(days=d.weekday())
+    start = today - timedelta(days=today.weekday() + 7)
+    end = start + timedelta(days=6)
+    if db.execute(
+            "SELECT 1 FROM session WHERE substr(date, 1, 10) BETWEEN ? AND ?"
+            + window + " LIMIT 1",
+            (start.isoformat(), end.isoformat())).fetchone():
+        return start
+    row = db.execute(
+        "SELECT MAX(substr(date, 1, 10)) AS d FROM session WHERE substr(date, 1, 10) < ?"
+        + window, (start.isoformat(),)).fetchone()
+    if not row or not row["d"]:
+        return None
+    latest = date.fromisoformat(row["d"])
+    return latest - timedelta(days=latest.weekday())
+
+
+@router.get("/week")
+def sitting_week(day: Optional[str] = Query(
+                     None, alias="date", pattern=r"^\d{4}-\d{2}-\d{2}$",
+                     description="Any day of the week to report (ISO date). Omitted: "
+                                 "last week, or the latest earlier week with a sitting"),
+                 db: sqlite3.Connection = Depends(get_db)):
+    """One sitting week at a glance: its days, what they add up to, who spoke the
+    most and what the week was distinctively about.
+
+    Built for the home page's "A múlt héten" panel, which is the reason every day
+    of the week is listed **whatever its publication state**: parlament.hu
+    publishes a held sitting in instalments (SIT-2), so a sitting from last
+    Thursday can still be an announced `scheduled` day, an `awaiting_media` one or
+    a half-published `pending` one, and the digest has to say so rather than
+    quietly add up the days that happen to be in. Each day carries the same
+    `status` / `processing` pair as the sittings list, so the two cannot disagree.
+
+    Cycle-less, like the order paper: "last week" is a date, not a cycle. The
+    speakers and the words count statistics-eligible speech only (STAT-1), exactly
+    like a sitting day's own toplist and word cloud; each speaker carries the
+    `office` they spoke in that week, if any. The words are scored by TF·IDF
+    against the cycle's other sitting days, the day cloud's own measure applied to
+    the week's pooled counts; `words_measure` says `frequency` instead when the DB
+    holds no document frequencies to score them against.
+
+    `this_week` lists the current week's days before today (never summed into the
+    totals), since the order paper shows only the days still ahead and a sitting
+    held on Monday would otherwise be nowhere on the home page until Sunday. It
+    is empty for an explicit `date`."""
+    today = _hu_today()
+    try:
+        start = _week_start(db, day, today)
+    except ValueError:
+        raise HTTPException(422, "Invalid date")
+    # This week's days already behind us. The order paper on the same page shows
+    # only the days still ahead (NR-5), so without these a sitting held on Monday
+    # would be on the home page nowhere until the week was over. Listed, not
+    # summed: the totals, speakers and words stay the reported week's own.
+    this_monday = today - timedelta(days=today.weekday())
+    this_week = ([] if day or today == this_monday else
+                 _week_days(db, this_monday, today - timedelta(days=1), today))
+    if start is None:
+        return {"week": None, "days": [], "top_speakers": [], "words": [],
+                "words_measure": None, "this_week": this_week,
+                "totals": {"days": 0, "speeches": 0, "seconds": 0, "agenda_items": 0}}
+    end = start + timedelta(days=6)
+    last_monday = this_monday - timedelta(days=7)
+
+    def compute():
+        days = _week_days(db, start, end, today)
+        ids = [d["id"] for d in days if d["speeches"]]
+        ph = ",".join("?" * len(ids))
+        speakers = db.execute(
+            f"""SELECT sp.person_id, p.label, p.photo_uri,
+                       f.label AS faction_label, f.color AS faction_color,
+                       COUNT(*) AS speeches, COALESCE(SUM(sp.duration), 0) AS seconds
+                FROM speech sp
+                LEFT JOIN person p ON p.person_id = sp.person_id
+                LEFT JOIN faction f ON f.id = sp.faction_id
+                WHERE sp.session_id IN ({ph}) AND sp.procedural = 0
+                      AND sp.person_id IS NOT NULL
+                GROUP BY sp.person_id
+                ORDER BY seconds DESC, speeches DESC, p.label, sp.person_id
+                LIMIT ?""", (*ids, _WEEK_TOP_SPEAKERS)).fetchall() if ids else []
+        offices = _week_offices(db, ids, [r["person_id"] for r in speakers])
+
+        # The week's words: the days' term counts pooled, then scored like one
+        # long sitting day against the rest of the cycle.
+        tf: dict = {}
+        kinds: dict = {}
+        for sid in (d["id"] for d in days if d["speeches_with_text"]):
+            day_tf, day_kinds = _session_term_freqs(db, sid)
+            for w, c in day_tf.items():
+                tf[w] = tf.get(w, 0) + c
+            kinds.update(day_kinds)
+        candidates = [w for w, c in tf.items() if c >= _WORDCLOUD_MIN_TF] or list(tf)
+        period = max((d["period_number"] for d in days
+                      if d["period_number"] is not None), default=None)
+        df, n_docs = _doc_freqs(db, period, candidates)
+        # Without the cycle's document frequencies there is nothing to call a word
+        # *distinctive* against, and the raw counts that stand in for the score are
+        # the House's everyday vocabulary. Said so, so the panel does not present
+        # them under a heading they do not earn.
+        measure = ("tfidf" if n_docs and df else "frequency") if tf else None
+        scores = (tfidf_scores({w: tf[w] for w in candidates}, df, n_docs)
+                  if measure == "tfidf" else {w: float(tf[w]) for w in candidates})
+        top = sorted(candidates, key=lambda w: (-scores[w], w))[:_WEEK_WORDS]
+
+        return {
+            "week": {"start": start.isoformat(), "end": end.isoformat(),
+                     "last_week": start == last_monday},
+            "days": days,
+            "totals": {"days": len(days),
+                       "speeches": sum(d["speeches"] for d in days),
+                       "seconds": sum(d["seconds"] for d in days),
+                       "agenda_items": sum(d["agenda_items"] for d in days)},
+            "top_speakers": [
+                {"person_id": r["person_id"], "label": r["label"],
+                 "photo_uri": r["photo_uri"],
+                 "faction": ({"label": r["faction_label"], "color": r["faction_color"]}
+                             if r["faction_label"] else None),
+                 "office": offices.get(r["person_id"]),
+                 "speeches": r["speeches"], "seconds": r["seconds"]}
+                for r in speakers],
+            "words": [{"text": w, "count": tf[w], "kind": kinds.get(w, "term")}
+                      for w in top],
+            "words_measure": measure,
+        }
+
+    # Keyed by today as well as the week: the `processing` badge ages out of its
+    # window (SIT-2), and "last week" is itself a statement about today.
+    return {**cached_aggregate("proceedings_week",
+                               (start.isoformat(), today.isoformat()), compute),
+            "this_week": this_week}
+
+
+def _week_days(db: sqlite3.Connection, start: date, end: date, today: date) -> list[dict]:
+    """The sitting days dated ``start``..``end`` (inclusive), whatever their
+    publication state, each with the same `status` / `processing` pair as the
+    sittings list (SIT-2) and its speech count and length."""
+    status_col = ("COALESCE(s.status, 'published')" if _has_session_status(db)
+                  else "'published'")
+    rows = db.execute(
+        f"""SELECT s.id, s.period_number, s.sitting, s.date, {status_col} AS status,
+                   (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id) AS speeches,
+                   (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id
+                     AND sp.has_text=1) AS speeches_with_text,
+                   (SELECT COUNT(*) FROM speech sp WHERE sp.session_id=s.id
+                     AND sp.video_start IS NOT NULL) AS speeches_with_video,
+                   (SELECT COALESCE(SUM(sp.duration), 0) FROM speech sp
+                     WHERE sp.session_id=s.id) AS seconds,
+                   (SELECT COUNT(*) FROM agenda_item ai
+                     WHERE ai.session_id=s.id) AS agenda_items
+            FROM session s
+            WHERE substr(s.date, 1, 10) BETWEEN :start AND :end
+                  {period_and(None, "s.period_number")}
+            ORDER BY s.date, s.sitting""",
+        {"start": start.isoformat(), "end": end.isoformat()}).fetchall()
+    return [{**dict(r),
+             "processing": processing_state(
+                 r["status"], r["date"], r["speeches"], r["speeches_with_text"],
+                 r["speeches_with_video"], today=today)}
+            for r in rows]
+
+
+def _week_offices(db: sqlite3.Connection, session_ids: list, person_ids: list) -> dict:
+    """The office each speaker held while speaking in these sittings — the one
+    they spoke longest in, where they spoke in one at all.
+
+    It is what explains a week's toplist: a minister or state secretary answering
+    the interpellations and questions of a Monday tops it by office, not by
+    choice, and the list should say so. Read off the speeches themselves
+    (`speech.speaker_office`), so it is the office of that week, not today's."""
+    if not session_ids or not person_ids:
+        return {}
+    sph = ",".join("?" * len(session_ids))
+    pph = ",".join("?" * len(person_ids))
+    try:
+        rows = db.execute(
+            f"""SELECT sp.person_id, sp.speaker_office AS office,
+                       SUM(COALESCE(sp.duration, 0)) AS seconds
+                FROM speech sp
+                WHERE sp.session_id IN ({sph}) AND sp.person_id IN ({pph})
+                      AND sp.procedural = 0
+                      AND sp.speaker_office IS NOT NULL AND sp.speaker_office <> ''
+                GROUP BY sp.person_id, sp.speaker_office
+                ORDER BY sp.person_id, seconds DESC, office""",
+            (*session_ids, *person_ids)).fetchall()
+    except sqlite3.OperationalError:
+        return {}                         # a DB built before the column existed
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r["person_id"], r["office"])
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1716,6 +1943,9 @@ def get_speech(uid: str, db: sqlite3.Connection = Depends(get_db)):
                            sp["video_start"], sp["video_end"]) if session else None
     speech["video_uri"] = clip["video_uri"] if clip else None
     speech["video_playseq"] = clip["video_playseq"] if clip else None
+    # This one speech's adatlap on parlament.hu — speaker, text and video, the
+    # most specific original there is (VIE-7). Every cycle carries the upstream id.
+    speech["parlament_url"] = speech_page_url(sp["speech_uuid"])
     return {
         "speech": speech,
         "session": _session_dict(session),
@@ -1862,6 +2092,17 @@ def _session_neighbours(db, s) -> dict:
 # serializers
 # ---------------------------------------------------------------------------
 
+# The terms-of-use page the 2022-26 scrape stamped on every recording (cycles
+# 41-42) is gone (404 by 2026-10-02); the one the scraper links now
+# (`proceedings.transform.LICENSE`) is the House's current terms for its content.
+# Swapped on the way out: the stale value is in those 427 days' session files
+# themselves, so no reload would fix it.
+_RETIRED_LICENSE = {
+    "https://www.parlament.hu/web/guest/jogi-nyilatkozat":
+        "https://www.parlament.hu/web/guest/felhasznalasi-feltetelek",
+}
+
+
 def _session_dict(s) -> dict:
     if s is None:
         return None
@@ -1872,8 +2113,13 @@ def _session_dict(s) -> dict:
         "status": (s["status"] if "status" in s.keys() else None) or "published",
         "video_uri": s["video_uri"], "video_playseq": s["video_playseq"],
         "video_duration": s["video_duration"],
-        "video_license": s["video_license"], "video_creator": s["video_creator"],
-        "source": s["source"], "source_page": s["source_page"],
+        "video_license": _RETIRED_LICENSE.get(s["video_license"], s["video_license"]),
+        "video_creator": s["video_creator"],
+        # The day's own speech listing on parlament.hu, built from its upstream
+        # id (every cycle has one); the stored page only for a day without it.
+        "source": s["source"],
+        "source_page": (sitting_day_page_url(s["day_id"] if "day_id" in s.keys() else None)
+                        or s["source_page"]),
         "timing_method": s["timing_method"],
     }
 

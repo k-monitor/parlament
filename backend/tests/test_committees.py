@@ -67,6 +67,8 @@ def test_committee_sheet_separates_current_and_former_members(client):
     assert r.status_code == 200
     c = r.json()
     assert c["name"] == "Költségvetési Bizottság"
+    # The parlament.hu adatlap link; null only because "biz-1" is a placeholder.
+    assert "parlamentUrl" in c and c["parlamentUrl"] is None
     # Roster in seniority order, chair first.
     assert [(m["role"], m["name"]) for m in c["members"]] == [
         ("chair", "Kovács Béla"), ("member", "Külső Elek")]
@@ -334,6 +336,20 @@ def test_reingesting_a_cycle_replaces_it(conn, data_dir, db_path):
     assert conn.execute("SELECT COUNT(*) FROM committee").fetchone()[0] == 2
 
 
+def test_minutes_url_missing_its_slash_is_repaired(conn, data_dir):
+    """Cycle 40-41 registries carry `https://www.parlament.hubiz40/…` minutes
+    links (a host that does not resolve); the loader puts the slash back."""
+    import json
+    from app import loader
+    registry = json.loads((data_dir / "processed" / "committees-43.json").read_text())
+    registry["meetings"][0]["minutesUrl"] = \
+        "https://www.parlament.hubiz40/bizjkv40/TAB/1802191.pdf"
+    loader.load_committees(conn, registry)
+    urls = {r[0] for r in conn.execute("SELECT minutes_url FROM committee_meeting")}
+    assert "https://www.parlament.hu/biz40/bizjkv40/TAB/1802191.pdf" in urls
+    assert not any(u and u.startswith("https://www.parlament.hubiz") for u in urls)
+
+
 def test_a_registry_inconsistent_with_itself_is_reported(data_dir, conn, caplog):
     """A detail row naming a body the registry's own listing does not hold is
     the `albizottsagId`/`bizottsagId` trap showing up. It cannot be loaded (the
@@ -500,6 +516,27 @@ def test_minutes_endpoint_serves_the_whole_sitting(client):
     assert m["participants"]["proxy"][0]["proxyName"] == "Kovács Béla"
     # The recording of this sitting rides along on the sheet.
     assert [v["videoId"] for v in m["videos"]] == ["vid-1"]
+
+
+def test_each_minutes_speech_carries_its_speakers_face_and_faction(conn, client):
+    """Every speech is drawn as a sitting day's speech row is: the speaker's
+    portrait, and a faction chip only where the label is a faction. A guest's
+    ministry sits in the same column and must not come back coloured as one."""
+    conn.execute("UPDATE person SET photo_uri = '/media/photos/k001.jpg' "
+                 "WHERE person_id = 'k001'")
+    # A clerk's capitals still name the faction.
+    conn.execute("UPDATE committee_speech SET faction_name = 'FIDESZ' "
+                 "WHERE meeting_id = 'ules-1' AND ord = 1")
+    conn.execute("UPDATE committee_speech SET faction_name = 'Pénzügyminisztérium' "
+                 "WHERE meeting_id = 'ules-1' AND name = 'Vendég Viktor'")
+    conn.commit()
+    fidesz = conn.execute(
+        "SELECT color FROM faction WHERE label = 'Fidesz'").fetchone()["color"]
+    t = client.get("/api/v1/committees/meetings/ules-1/minutes").json()["transcript"]
+    assert [(s["photoUri"], s["factionColor"]) for s in t] == [
+        ("/media/photos/k001.jpg", fidesz),
+        ("/media/photos/k001.jpg", fidesz),
+        (None, None)]
 
 
 def test_minutes_endpoint_404s_for_a_meeting_with_none(client):
@@ -688,3 +725,61 @@ def test_top_speaker_words_count_the_text_not_the_separators(client):
     assert by_name["Kovács Béla"]["words"] == 10
     # "Köszönöm a szót, elnök úr." (5)
     assert by_name["Vendég Viktor"]["words"] == 5
+
+
+# --- Sentence timing against the recording (BIZ-30) -------------------------
+
+def test_timing_loaded_one_row_per_sentence(conn):
+    t = conn.execute("SELECT * FROM committee_timing").fetchall()
+    assert [(r["meeting_id"], r["coverage"]) for r in t] == [("ules-1", 0.91)]
+    rows = conn.execute(
+        "SELECT speech_ord, video_id, time_start FROM committee_sentence "
+        "ORDER BY speech_ord, ord").fetchall()
+    assert [tuple(r) for r in rows] == [
+        (0, "vid-1", 12.0), (1, "vid-1", 15.0), (2, None, None)]
+
+
+def test_minutes_endpoint_carries_each_speechs_timed_sentences(client):
+    m = client.get("/api/v1/committees/meetings/ules-1/minutes").json()
+    assert m["timing"]["timed"] == 2
+    assert m["timing"]["videos"] == [{"videoId": "vid-1", "durationS": 3900.0}]
+    first, _, guest = m["transcript"]
+    assert first["sentences"] == [{
+        "para": 0, "text": "Köszöntöm a bizottság tagjait.", "sep": "",
+        "videoId": "vid-1", "timeStart": 12.0, "timeEnd": 14.5}]
+    # Not placed in the recording: shown, not playable.
+    assert guest["sentences"][0]["timeStart"] is None
+    # The plain text stays alongside, for the in-page search.
+    assert first["text"] == "Köszöntöm a bizottság tagjait."
+
+
+def test_a_speech_whose_text_moved_is_served_untimed(conn, client):
+    """A jegyzőkönyv re-parsed since the alignment ran: that speech's offsets
+    no longer cut the text they were made on, so it reads as plain text
+    rather than being highlighted in the wrong places."""
+    conn.execute("UPDATE committee_speech SET text = 'Jó napot. ' || text "
+                 "WHERE meeting_id = 'ules-1' AND ord = 0")
+    conn.commit()
+    m = client.get("/api/v1/committees/meetings/ules-1/minutes").json()
+    assert "sentences" not in m["transcript"][0]
+    assert m["transcript"][1]["sentences"][0]["timeStart"] == 15.0
+    assert m["timing"]["timed"] == 1
+
+
+def test_timing_is_dropped_when_its_video_is_not_the_sittings(conn, client):
+    """The alignment was made on a video this sitting is not served with (the
+    scraper and the loader disagreed on the pairing): no karaoke at all rather
+    than a highlight running against a different recording."""
+    conn.execute("UPDATE committee_video SET meeting_id = NULL "
+                 "WHERE video_id = 'vid-1'")
+    conn.commit()
+    m = client.get("/api/v1/committees/meetings/ules-1/minutes").json()
+    assert m["timing"] is None
+    assert all("sentences" not in s for s in m["transcript"])
+
+
+def test_a_recording_only_sitting_has_no_timing(client, conn):
+    _record_a_video(conn)
+    m = client.get("/api/v1/committees/meetings/ules-2/minutes").json()
+    assert m["timing"] is None
+

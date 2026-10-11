@@ -5,18 +5,34 @@
 // furniture, and differ only where the underlying records genuinely differ:
 //
 //   same   back link + titlebar + share, a top-speaker block, the transcript cut
-//          into agenda sections, a sticky agenda outline on wide screens, and
-//          prev/next navigation at the foot
-//   differ committee minutes carry **no timings** — no per-speech clip, no
-//          speaking time — so the toplist ranks by what was said rather than for
-//          how long, and no speech is playable. And the whole document arrives
-//          in one response, so the filters narrow it in place instead of paging.
+//          into agenda sections of one row per speech (face, faction chip,
+//          share), a sticky agenda outline on wide screens, and prev/next
+//          navigation at the foot
+//   differ committee minutes carry **no timings** of their own — no per-speech
+//          clip, no speaking time — so the toplist ranks by what was said rather
+//          than for how long. With no viewer page to link, a speech's address is
+//          an anchor on this one (`#sp-<ord>`, BIZ-29), and its text is shown
+//          rather than folded away: it is the whole record. And the whole
+//          document arrives in one response, so the filters narrow it in place
+//          instead of paging.
+//
+// Where the sitting was streamed, its recording plays **on this page** (BIZ-30),
+// beside the record as the proceedings viewer's player sits beside its
+// transcript: docked in the side column above the agenda outline on a wide
+// screen, pinned under the site header once started on a narrow one. Where the
+// recording has also been aligned to the record, it is the viewer's karaoke as
+// well — click a sentence to hear it, and the sentence being spoken is
+// highlighted and followed down the page (VIE-3/VIE-4). A sentence the alignment
+// could not place is shown as plain text, not playable.
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { loadMeta } from '../../store.js'
-import { formatDate, formatSpeakingTime } from '../../format.js'
+import { formatDate, formatDuration, segmentSentences } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
+import YouTubePlayer from '../../components/YouTubePlayer.vue'
+import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import HelpTip from '../../components/HelpTip.vue'
@@ -24,6 +40,8 @@ import { clipTitle, titleDate, usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ meetingId: { type: String, required: true } })
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 
 const data = ref(null)
 const loading = ref(false)
@@ -69,7 +87,8 @@ const topMax = computed(
   () => Math.max(1, ...(data.value?.topSpeakers || []).map((s) => s.words || 0)))
 
 // SpeakerLink speaks the proceedings module's snake_case shape; this module is
-// camelCase throughout. Mapped here rather than bending either convention.
+// camelCase throughout. Mapped here rather than bending either convention. Takes
+// a toplist row or a transcript speech alike: both carry the same three fields.
 function asSpeaker(s) {
   return { person_id: s.personId, label: s.name, photo_uri: s.photoUri }
 }
@@ -149,13 +168,253 @@ function paragraphs(text) {
   return (text || '').split(/\n{2,}/).filter((p) => p.trim())
 }
 
+// A speech's text as the lines it is read in, as a sitting day's transcript
+// reads (SpeechRow): its paragraphs, with the parentheticals the clerk wrote
+// into them — "(Szavazás.)", "(Jelzésre:)", "(Derültség.)", "(Gőgös Zoltán: Ez
+// nem igaz!)" — lifted out onto italic lines of their own, and a heckle's
+// "Name:" split off so it can carry the heckler's face. References and tags stay
+// in the sentence ("a 46. § (2a) bekezdése", "Szabó Timea (Párbeszéd)"): the
+// segmenter in format.js tells them apart. Each line is either an aside
+// `{ aside: true, text, speaker }` or spoken text `{ pieces: [{ text, sep, row }] }`.
+//
+// A speech's label is never stripped here, as a plenary one is: the parser has
+// already taken the speaker off, and a label still at the start is a speaker it
+// missed — the one sign on the page of who was really talking.
+function plainLines(text) {
+  const paras = paragraphs(text).map((t, i) => ({ text: t, paragraph: i }))
+  return segmentSentences(paras, { stripLabel: false }).flatMap((p) => p.segments.map((g) =>
+    (g.interjection ? { aside: true, text: g.text, speaker: g.speaker } : { pieces: [{ text: g.text }] })))
+}
+
+// The same for a timed speech (BIZ-30), whose lines are built from its
+// sentences so each piece of spoken text stays a seek into the recording. A
+// sentence can hold an aside ("Ki nem? (Szavazás. - Nincs ilyen.)") and an aside
+// can run over several, so the parenthesis state is threaded sentence to
+// sentence and a line breaks wherever an aside is lifted out or a paragraph
+// ends. `anchor` marks the first thing each sentence puts on the page — the
+// element the karaoke follows down it.
+function timedLines(paras) {
+  const rows = paras.flatMap((p) => p.rows)
+  const lines = []
+  let line = null
+  segmentSentences(rows.map((r) => ({ ...r, paragraph: r.para })), { stripLabel: false })
+    .forEach((r, i) => {
+      if (i && r.para !== rows[i - 1].para) line = null
+      r.segments.forEach((g, j) => {
+        const anchor = j === 0
+        if (g.interjection) {
+          lines.push({ aside: true, text: g.text, speaker: g.speaker, row: rows[i], anchor })
+          line = null
+          return
+        }
+        const sep = line ? (anchor ? r.sep : ' ') : ''
+        if (!line) { line = { pieces: [] }; lines.push(line) }
+        line.pieces.push({ text: g.text, sep, row: rows[i], anchor })
+      })
+    })
+  return lines
+}
+
+// --- the recording and its karaoke (BIZ-30) --------------------------------
+const hasVideos = computed(() => !!data.value?.videos?.length)
+const playerRef = ref(null)
+const sideEl = ref(null)
+const playerEngaged = ref(false)
+const playerPlaying = ref(false)
+// The sentence being spoken, as `<speech ord>-<sentence index>` — also the
+// suffix of its element id, so following it down the page is one lookup.
+const activeKey = ref(null)
+const activeOrd = computed(() =>
+  activeKey.value == null ? null : Number(activeKey.value.split('-')[0]))
+
+// A timed speech's sentences grouped back into its paragraphs, built once per
+// sitting rather than in the template (which re-renders on every playback tick).
+const sentenceParas = computed(() => {
+  const out = new Map()
+  for (const s of data.value?.transcript || []) {
+    if (!s.sentences?.length) continue
+    const paras = []
+    s.sentences.forEach((sent, i) => {
+      const row = { ...sent, key: `${s.ord}-${i}` }
+      const last = paras[paras.length - 1]
+      if (last && last.para === sent.para) last.rows.push(row)
+      else paras.push({ para: sent.para, rows: [row] })
+    })
+    out.set(s.ord, paras)
+  }
+  return out
+})
+// Every playable sentence in document order — which is also time order, the
+// alignment keeping the sentences' times non-decreasing across the sitting.
+const timedList = computed(() => {
+  const out = []
+  for (const s of data.value?.transcript || []) {
+    for (const p of sentenceParas.value.get(s.ord) || []) {
+      for (const r of p.rows) {
+        if (r.timeStart != null) {
+          out.push({ key: r.key, ord: s.ord, videoId: r.videoId,
+                     start: r.timeStart, end: r.timeEnd ?? r.timeStart })
+        }
+      }
+    }
+  }
+  return out
+})
+// Every speech's lines, built once per sitting for the same reason.
+const bodies = computed(() => {
+  const out = new Map()
+  for (const s of data.value?.transcript || []) {
+    const paras = sentenceParas.value.get(s.ord)
+    out.set(s.ord, paras ? timedLines(paras) : plainLines(s.text))
+  }
+  return out
+})
+
+// name -> { person_id, label, photo_uri } for the heckles whose "Name:" is a
+// representative's: those get a face and a link, the rest stay text.
+// Best-effort, as on a sitting day: a failure leaves every heckle as text.
+const hecklers = ref({})
+async function resolveHecklers(mine) {
+  hecklers.value = {}
+  const names = [...bodies.value.values()].flat().filter((l) => l.speaker).map((l) => l.speaker)
+  if (!names.length) return
+  try {
+    const resolved = await api.resolveSpeakers(names)
+    if (mine === seq) hecklers.value = resolved
+  } catch { /* keep plain */ }
+}
+
+function firstTimed(s) {
+  return timedList.value.find((x) => x.ord === s.ord) || null
+}
+// Where the play button starts: the speech the address names, if it is timed
+// (the reader followed a link to that speech), else the top of the recording.
+const startAt = computed(() => {
+  if (targetOrd.value == null) return null
+  const x = timedList.value.find((y) => y.ord === targetOrd.value)
+  return x ? { videoId: x.videoId, t: x.start } : null
+})
+
+// A short pause between two sentences keeps the last one lit rather than
+// blinking the highlight off and on at every breath.
+const HOLD_S = 2
+function onTime({ videoId, t }) {
+  let key = null
+  for (const x of timedList.value) {
+    if (x.videoId !== videoId) continue
+    if (x.start > t) break
+    if (t < x.end + HOLD_S) key = x.key
+  }
+  if (key !== activeKey.value) {
+    activeKey.value = key
+    if (key && autoFollow) scrollToActive()
+  }
+}
+
+function playSentence(sent) {
+  if (sent.timeStart == null) return
+  autoFollow = true
+  activeKey.value = sent.key
+  playerRef.value?.seek(sent.videoId, sent.timeStart, true)
+}
+function playSpeech(s) {
+  const x = firstTimed(s)
+  if (!x) return
+  autoFollow = true
+  activeKey.value = x.key
+  playerRef.value?.seek(x.videoId, x.start, true)
+}
+
+// Karaoke follow, as the viewer does it: a smooth scroll fires scroll events of
+// its own, which must not read as the reader taking over — so they are ignored
+// for a moment after each programmatic scroll, and a real scroll pauses
+// following for a few seconds.
+let autoFollow = true
+let suppressScrollUntil = 0
+let followTimer = null
+// Centred in what is left of the window below the site header — and below the
+// player, where a narrow screen has it pinned over the top of the record.
+function scrollToActive() {
+  const el = document.getElementById('cs-' + activeKey.value)
+  if (!el) return
+  let top = headerH.value
+  if (sideEl.value && playerEngaged.value
+      && window.matchMedia('(max-width: 1099.98px)').matches) {
+    top = Math.max(top, sideEl.value.getBoundingClientRect().bottom)
+  }
+  const rect = el.getBoundingClientRect()
+  const room = window.innerHeight - top
+  const y = window.scrollY + rect.top - top - Math.max(0, (room - rect.height) / 2)
+  suppressScrollUntil = performance.now() + 900
+  const motion = !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  window.scrollTo({ top: Math.max(0, y), behavior: motion ? 'smooth' : 'auto' })
+}
+function onUserScroll() {
+  if (performance.now() < suppressScrollUntil) return
+  autoFollow = false
+  clearTimeout(followTimer)
+  followTimer = setTimeout(() => { autoFollow = true }, 4000)
+}
+
+// The docked player sits right under the site header — under what is *visible*
+// of it, measured as the page scrolls: its height moves with the width (the nav
+// wraps on a phone), and the header does not stay pinned past the first screen
+// (`#app` is one viewport tall, styles.css), so neither a fixed offset nor its
+// height would be right once the reader is down in the record.
+const headerH = ref(0)
+function measureHeader() {
+  const el = document.querySelector('.site-top')
+  headerH.value = el ? Math.max(0, Math.round(el.getBoundingClientRect().bottom)) : 0
+}
+
+// The line beside a speaker's name. A faction the shared table knows is drawn as
+// its chip instead (`factionColor` set); anything else in that column — a
+// guest's ministry, mostly — stays words here.
 function speakerLabel(s) {
   const bits = []
-  if (s.faction) bits.push(s.faction)
+  if (s.faction && !s.factionColor) bits.push(s.faction)
   if (s.role) bits.push(s.role)
   if (s.org) bits.push(s.org)
   return bits.join(' · ')
 }
+
+// --- a speech's own address (BIZ-29) ---------------------------------------
+// A plenary speech is linked by its viewer page; a committee speech has none (no
+// clip to play), so it is an anchor on this page — `#sp-<ord>`, the speech's
+// place in the document. The router leaves a hash target's scrolling to the page
+// (router.js scrollBehavior), so the page brings the speech into view itself,
+// once the record has arrived, and marks it for as long as the address names it.
+const targetOrd = computed(() => {
+  const m = /^#sp-(\d+)$/.exec(route.hash || '')
+  return m ? Number(m[1]) : null
+})
+
+function speechLocation(s) {
+  return { name: 'committee-minutes', params: { meetingId: props.meetingId },
+           query: route.query, hash: '#sp-' + s.ord }
+}
+// Resolved once rather than per speech: a long sitting runs to 200 of them.
+const pageUrl = computed(() => location.origin + router.resolve(
+  { name: 'committee-minutes', params: { meetingId: props.meetingId }, query: route.query }).href)
+function speechUrl(s) { return pageUrl.value + '#sp-' + s.ord }
+function speechShareTitle(s) { return `${s.name} · ${shareTitle.value}` }
+
+function revealTarget(smooth) {
+  const ord = targetOrd.value
+  const d = data.value
+  if (ord == null || !d || d.meetingId !== props.meetingId) return
+  if (!d.transcript.some((s) => s.ord === ord)) return
+  // A filter that hides the linked speech gives way to it: the reader followed a
+  // link to that speech, not to what they had typed before.
+  if (!shown.value.some((s) => s.ord === ord)) { speaker.value = ''; query.value = '' }
+  nextTick(() => {
+    const el = document.getElementById('sp-' + ord)
+    if (!el) return
+    const motion = smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ behavior: motion ? 'smooth' : 'auto', block: 'start' })
+  })
+}
+watch(targetOrd, () => revealTarget(true))
 
 // --- the sticky agenda outline (TOC-1, as on a sitting day) ----------------
 // Only the level-0 headings: the sub-entries ("Határozathozatalok") are stages
@@ -170,6 +429,7 @@ const showToc = computed(() => tocEntries.value.length > 1 && !filtered.value)
 let spyRaf = 0
 function updateActive() {
   spyRaf = 0
+  measureHeader()
   const els = rootEl.value ? rootEl.value.querySelectorAll('section.agenda') : []
   if (!els.length) { activeSection.value = null; return }
   let current = els[0].dataset.sectionOrd
@@ -179,7 +439,10 @@ function updateActive() {
   }
   activeSection.value = current
 }
-function onScroll() { if (!spyRaf) spyRaf = requestAnimationFrame(updateActive) }
+function onScroll() {
+  if (!spyRaf) spyRaf = requestAnimationFrame(updateActive)
+  onUserScroll()
+}
 
 function goToSection(ord) {
   const el = document.getElementById('sec-' + ord)
@@ -189,10 +452,16 @@ function goToSection(ord) {
   activeSection.value = String(ord)
 }
 
-onMounted(() => window.addEventListener('scroll', onScroll, { passive: true }))
+onMounted(() => {
+  window.addEventListener('scroll', onScroll, { passive: true })
+  window.addEventListener('resize', measureHeader, { passive: true })
+  measureHeader()
+})
 onUnmounted(() => {
   window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('resize', measureHeader)
   cancelAnimationFrame(spyRaf)
+  clearTimeout(followTimer)
 })
 
 let seq = 0
@@ -201,13 +470,13 @@ async function load() {
   loading.value = true; error.value = false
   try {
     const res = await api.committeeMinutes(props.meetingId)
-    if (mine === seq) data.value = res
+    if (mine === seq) { data.value = res; resolveHecklers(mine) }
   } catch {
     if (mine === seq) error.value = true
   } finally {
     if (mine === seq) loading.value = false
   }
-  if (mine === seq) nextTick(updateActive)
+  if (mine === seq) nextTick(() => { revealTarget(false); updateActive() })
 }
 
 onMounted(async () => {
@@ -216,6 +485,9 @@ onMounted(async () => {
 })
 watch(() => props.meetingId, () => {
   speaker.value = ''; query.value = ''
+  // The player resets itself on a new recording, but one that is unmounted
+  // (a sitting with no video) cannot say so.
+  activeKey.value = null; playerEngaged.value = false; playerPlaying.value = false
   window.scrollTo({ top: 0 })
   load()
 })
@@ -278,22 +550,11 @@ watch(() => props.meetingId, () => {
         <span class="muted">({{ data.error }})</span>
       </p>
 
-      <div class="session-body">
+      <div class="session-body"
+           :class="{ 'has-player': hasVideos, engaged: playerEngaged,
+                     'player-leads': hasVideos && !data.transcript.length }"
+           :style="{ '--header-h': headerH + 'px' }">
         <div class="session-main">
-          <div v-if="data.videos && data.videos.length" class="vidrow">
-            <a v-for="v in data.videos" :key="v.videoId" class="card pad vid"
-               :href="v.url" target="_blank" rel="noopener">
-              <img v-if="v.thumbnail" :src="v.thumbnail" alt="" loading="lazy" />
-              <span class="vidmeta">
-                <strong>▶ {{ $t('committees.watch') }} ↗</strong>
-                <span class="small muted">
-                  <template v-if="v.continued">{{ $t('committees.videoPart') }} · </template>
-                  <template v-if="v.durationS">{{ formatSpeakingTime(v.durationS) }}</template>
-                </span>
-              </span>
-            </a>
-          </div>
-
           <!-- Who did the talking — the sitting day's toplist, asked of a record
                that has no timings. -->
           <section v-if="data.topSpeakers && data.topSpeakers.length"
@@ -419,29 +680,90 @@ watch(() => props.meetingId, () => {
             <h2 v-if="sec.title" class="pad agenda-title" :class="{ sub: sec.level > 0 }">
               {{ sec.title }}
             </h2>
-            <div class="speeches">
-              <p v-if="sec.preamble" class="stage small muted">{{ sec.preamble }}</p>
-              <article v-for="s in sec.speeches" :key="s.ord" class="speech">
-                <!-- A `continued` speech is the same person carrying on past the
-                     heading without their name being printed again; repeating
-                     the name would read as someone taking the floor. Under a
-                     filter the name is always shown, because the speech it
-                     continues may not be on screen. -->
-                <p v-if="!s.continued || filtered" class="who">
-                  <RouterLink
-                    v-if="s.personId"
-                    :to="{ name: 'profile', params: { id: s.personId } }"
-                  >{{ s.name }}</RouterLink>
-                  <span v-else>{{ s.name }}</span>
-                  <span v-if="speakerLabel(s)" class="small muted">
-                    · {{ speakerLabel(s) }}
-                  </span>
-                </p>
-                <p v-for="(para, i) in paragraphs(s.text)" :key="i" class="para">
-                  {{ para }}
-                </p>
-              </article>
-            </div>
+            <p v-if="sec.preamble" class="stage small muted">{{ sec.preamble }}</p>
+            <!-- One bubble per speech, headed as a sitting day's speech row is:
+                 face, name, faction chip, then the speech's own link and share
+                 (BIZ-29). -->
+            <ul v-if="sec.speeches.length" class="speeches">
+              <li
+                v-for="s in sec.speeches" :key="s.ord" :id="'sp-' + s.ord"
+                class="speech"
+                :class="{ targeted: targetOrd === s.ord, speaking: activeOrd === s.ord }"
+              >
+                <div class="speech-row">
+                  <div class="speech-main">
+                    <SpeakerLink :speaker="asSpeaker(s)" />
+                    <FactionBadge v-if="s.factionColor"
+                                  :faction="{ label: s.faction, color: s.factionColor }" />
+                    <span v-if="speakerLabel(s)" class="small muted role">{{ speakerLabel(s) }}</span>
+                    <!-- The same person carrying on past a heading without the
+                         clerk printing the name again. Said, so the bubble does
+                         not read as them taking the floor a second time. -->
+                    <span v-if="s.continued" class="badge subtle"
+                          :title="$t('committees.speechContinuedNote')">
+                      {{ $t('committees.speechContinued') }}
+                    </span>
+                  </div>
+                  <div class="speech-actions">
+                    <!-- Play the recording from this speech (BIZ-30). -->
+                    <button v-if="sentenceParas.has(s.ord) && firstTimed(s)"
+                            type="button" class="permalink play-speech"
+                            :title="$t('committees.playFromHere')"
+                            :aria-label="$t('committees.playFromHere')"
+                            @click="playSpeech(s)">
+                      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"
+                           fill="currentColor"><path d="M8 5.5v13l11-6.5z" /></svg>
+                    </button>
+                    <!-- `replace`: marking one speech after another should not
+                         turn Back into a walk through them. -->
+                    <RouterLink
+                      :to="speechLocation(s)" replace class="permalink"
+                      :title="$t('committees.speechLink')"
+                      :aria-label="$t('committees.speechLink')"
+                    >
+                      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"
+                           fill="none" stroke="currentColor" stroke-width="2"
+                           stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                        <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                      </svg>
+                    </RouterLink>
+                    <ShareButton :title="speechShareTitle(s)" :url="speechUrl(s)"
+                                 align="right" compact />
+                  </div>
+                </div>
+                <!-- The speech's lines (see plainLines): spoken text, and the
+                     stage directions and heckles lifted out of it in italics — a
+                     heckle by a representative with their face. In a timed
+                     speech each sentence of the spoken text is a seek into the
+                     recording (VIE-3), lit while it is spoken (VIE-4). -->
+                <div class="speech-body">
+                  <template v-for="(ln, i) in bodies.get(s.ord)" :key="i">
+                    <p v-if="ln.aside && ln.speaker && hecklers[ln.speaker]"
+                       class="para aside heckle"
+                       :id="ln.anchor ? 'cs-' + ln.row.key : undefined">
+                      <SpeakerLink :speaker="hecklers[ln.speaker]" size="xs" class="heckle-who" />
+                      <span>{{ ln.text }}</span>
+                    </p>
+                    <p v-else-if="ln.aside" class="para aside"
+                       :id="ln.anchor ? 'cs-' + ln.row.key : undefined">
+                      {{ ln.speaker ? `${ln.speaker}: ${ln.text}` : ln.text }}
+                    </p>
+                    <p v-else class="para"><template v-for="(pc, j) in ln.pieces" :key="j">{{ pc.sep }}<span
+                            v-if="pc.row && pc.row.timeStart != null"
+                            :id="pc.anchor ? 'cs-' + pc.row.key : undefined"
+                            class="sent" :class="{ active: activeKey === pc.row.key }"
+                            role="button" tabindex="0"
+                            :title="formatDuration(pc.row.timeStart)"
+                            @click="playSentence(pc.row)"
+                            @keydown.enter.prevent="playSentence(pc.row)"
+                            @keydown.space.prevent="playSentence(pc.row)">{{ pc.text }}</span><span
+                            v-else-if="pc.row" class="sent untimed">{{ pc.text }}</span><template
+                            v-else>{{ pc.text }}</template></template></p>
+                  </template>
+                </div>
+              </li>
+            </ul>
           </section>
 
           <!-- Move to the committee's adjacent sitting, as a sitting day moves
@@ -487,8 +809,20 @@ watch(() => props.meetingId, () => {
           </details>
         </div>
 
-        <aside v-if="showToc" class="session-toc">
-          <nav class="toc-inner" :aria-label="$t('sessions.agenda')">
+        <aside v-if="showToc || hasVideos" ref="sideEl" class="session-toc">
+          <div class="side-inner">
+          <!-- The recording (BIZ-30), above the outline so both stay in reach
+               while the record scrolls past. -->
+          <section v-if="hasVideos" class="side-player" :aria-label="$t('committees.videos')">
+            <YouTubePlayer ref="playerRef" :videos="data.videos" :start-at="startAt"
+                           :label="data.committeeName"
+                           @time="onTime" @engaged="playerEngaged = $event"
+                           @playing="playerPlaying = $event" />
+            <p v-if="data.timing" class="small muted sync-note">
+              {{ $t('committees.syncNote') }}
+            </p>
+          </section>
+          <nav v-if="showToc" class="toc-inner" :aria-label="$t('sessions.agenda')">
             <p class="toc-title">{{ $t('sessions.agenda') }}</p>
             <ol class="toc-list">
               <li v-for="(s, i) in tocEntries" :key="s.ord">
@@ -504,6 +838,7 @@ watch(() => props.meetingId, () => {
               </li>
             </ol>
           </nav>
+          </div>
         </aside>
       </div>
     </div>
@@ -526,20 +861,58 @@ watch(() => props.meetingId, () => {
     gap: var(--toc-gap);
     align-items: start;
   }
+  /* A player needs a column wide enough to watch in (BIZ-30). */
+  .session-body.has-player { --toc-w: 360px; }
   .session-toc { display: block; }
 }
 @media (min-width: 1650px) {
-  .session-body { margin-right: calc(-1 * (var(--toc-w) + var(--toc-gap))); }
+  .session-body:not(.has-player) { margin-right: calc(-1 * (var(--toc-w) + var(--toc-gap))); }
+}
+/* The wider column only fits in the right gutter on a wider screen. */
+@media (min-width: 1900px) {
+  .session-body.has-player { margin-right: calc(-1 * (var(--toc-w) + var(--toc-gap))); }
 }
 .session-toc { align-self: stretch; }
+/* The side column's content — player, then outline — sticks as one, so the
+   outline scrolls inside whatever height the player leaves it. */
+.side-inner {
+  position: sticky; top: calc(var(--header-h, 0px) + 1rem);
+  max-height: calc(100vh - var(--header-h, 0px) - 2rem);
+  display: flex; flex-direction: column; gap: .8rem;
+}
+.side-player { flex: none; }
+.sync-note { margin: .35rem 0 0; }
 .toc-inner {
-  position: sticky; top: 72px;
-  max-height: calc(100vh - 72px - 1rem);
+  flex: 0 1 auto; min-height: 0;
   overflow-y: auto; overscroll-behavior: contain;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: .85rem 1rem 1rem;
 }
+/* Narrow screens: no outline, and the player leads the page instead — pinned
+   under the site header once the reader has started it, so it stays in view
+   while the record scrolls beneath it (the viewer's mobile pane, VIE-4). Its
+   width is capped so a pinned player never takes more than ~40% of the height. */
+@media (max-width: 1099.98px) {
+  .session-body.has-player { display: flex; flex-direction: column; }
+  .session-body.has-player .session-toc { display: block; order: -1; margin-bottom: 1rem; }
+  .session-body.has-player .toc-inner { display: none; }
+  .session-body.has-player .side-inner { position: static; max-height: none; }
+  .session-body.has-player .side-player { width: 100%; max-width: calc(40vh * 16 / 9); }
+  .session-body.has-player.engaged:not(.player-leads) .session-toc {
+    position: sticky; top: var(--header-h, 0px); z-index: 10;
+    margin: 0 calc(-1 * var(--gutter)) 1rem; padding: .5rem var(--gutter);
+    background: var(--bg); box-shadow: 0 6px 8px -8px rgba(0, 0, 0, .35);
+  }
+  .session-body.has-player.engaged .sync-note { display: none; }
+}
+/* A sitting with a recording and no record to read beside it (BIZ-27): the
+   player is the page, so it leads the main column at a watchable size rather
+   than sitting in the side column next to an empty one. */
+.session-body.player-leads { display: flex; flex-direction: column; margin-right: 0; }
+.session-body.player-leads .session-toc { display: block; order: -1; margin-bottom: 1rem; }
+.session-body.player-leads .side-inner { position: static; max-height: none; }
+.session-body.player-leads .side-player { width: 100%; max-width: 760px; }
 .toc-title {
   margin: 0 0 .5rem; padding-bottom: .5rem; border-bottom: 1px solid var(--line);
   font-size: .72rem; font-weight: 700; letter-spacing: .06em;
@@ -597,7 +970,11 @@ watch(() => props.meetingId, () => {
 .agenda-list { margin: 0; padding-left: 1.2rem; display: grid; gap: .5rem; }
 .agenda-list .atitle { overflow-wrap: anywhere; }
 .agenda-list .notes { display: block; }
-.chip {
+/* Scoped to the agenda on purpose: an unqualified `.chip` also matches the root
+   of the FactionBadge child component (scoped CSS reaches a child's root), which
+   squashed every speech's faction chip into this bordered pill — the same trap
+   SessionView's `.chips .chip` notes. */
+.agenda-list .chip {
   display: inline-block; margin-left: .4rem; font-size: .75rem;
   border: 1px solid var(--line); border-radius: .6rem; padding: 0 .4rem;
 }
@@ -610,14 +987,6 @@ watch(() => props.meetingId, () => {
 .filters { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: 1rem; }
 .filters .input { flex: 1 1 14rem; min-width: 0; }
 .filters .count { flex: 0 0 auto; }
-.vidrow { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
-.vid {
-  display: flex; gap: .6rem; align-items: center; text-decoration: none;
-  border: 1px solid var(--line); color: inherit;
-}
-.vid:hover { border-color: var(--accent); }
-.vid img { width: 8rem; height: auto; border-radius: .3rem; display: block; }
-.vidmeta { display: flex; flex-direction: column; gap: .1rem; }
 .empty-day { color: var(--ink-soft); text-align: center; }
 /* scroll-margin keeps a jumped-to section clear of the sticky site header. */
 .agenda { margin-bottom: 1rem; scroll-margin-top: 72px; }
@@ -628,11 +997,61 @@ watch(() => props.meetingId, () => {
 /* A stage within an agenda point ("Határozathozatalok"), not a point of its
    own — quieter, and absent from the outline. */
 .agenda-title.sub { font-size: .92rem; color: var(--ink-soft); }
-.speeches { padding: .3rem 1rem 1rem; }
-.stage { margin: .6rem 0; font-style: italic; }
-.speech { margin: 0 0 1rem; }
-.who { margin: .6rem 0 .2rem; font-weight: 600; }
-.para { margin: 0 0 .5rem; overflow-wrap: anywhere; }
+.stage { margin: .8rem 1rem; font-style: italic; }
+/* Each speech a bubble of its own, its head laid out as SpeechRow's row is so
+   the two chambers' transcripts read alike. */
+.speeches { list-style: none; margin: 0; padding: .6rem; display: grid; gap: .5rem; }
+.speech {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  scroll-margin-top: 72px;
+  transition: border-color .12s, box-shadow .12s;
+}
+.speech-row { display: flex; align-items: center; gap: .8rem; padding: .5rem .7rem; border-radius: var(--radius) var(--radius) 0 0; }
+.speech-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: .4rem .8rem; }
+.speech-main .role { overflow-wrap: anywhere; }
+/* The face and the name stay one unit: a long name wraps beside the avatar
+   rather than dropping below it (SpeakerLink's `.row` wraps by default). */
+.speech-main .row { flex-wrap: nowrap; min-width: 0; }
+.speech-actions { flex: 0 0 auto; display: flex; align-items: center; gap: .15rem; }
+.permalink {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.9rem; height: 1.9rem; border-radius: 6px; color: var(--ink-faint);
+}
+.permalink:hover, .permalink:focus-visible { background: var(--line); color: var(--accent); text-decoration: none; }
+.badge.subtle { background: var(--line); color: var(--ink-faint); font-weight: 400; cursor: help; }
+/* The text sits under the speaker's name, past the avatar, as a sitting day's
+   opened transcript does. */
+.speech-body { padding: 0 1rem .75rem calc(.7rem + 48px + .6rem); }
+.para { margin: 0 0 .6rem; line-height: 1.6; overflow-wrap: anywhere; }
+.para:last-child { margin-bottom: 0; }
+/* The stage directions and heckles lifted out of the record's parentheses:
+   italic, in the softer (still AA) tone, so they read as asides rather than as
+   what was said — as a sitting day's transcript sets them (SpeechRow). */
+.para.aside { font-style: italic; color: var(--ink-soft); }
+/* A heckle by a known representative: a small face and linked name before the
+   remark, kept smaller than the speech so it never reads as one. */
+.para.heckle { display: flex; align-items: center; gap: .45rem; font-size: .9em; }
+.heckle-who { flex: none; flex-wrap: nowrap; font-style: normal; font-weight: 600; gap: .35rem !important; }
+/* A timed sentence (BIZ-30): a seek into the recording, lit while it is spoken.
+   Inline, so the paragraph still reads as prose. */
+.sent { border-radius: 4px; transition: background .12s; }
+.sent[role="button"] { cursor: pointer; }
+.sent[role="button"]:hover { background: #f0eee8; }
+.sent[role="button"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.sent.active { background: var(--accent-soft); color: #5a121a; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.speech.speaking { border-color: var(--accent); }
+.play-speech { border: 0; background: transparent; cursor: pointer; padding: 0; }
+/* The speech the address names (BIZ-29). */
+.speech.targeted { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.speech.targeted .speech-row { background: var(--accent-soft); }
+/* On a phone the avatar indent would cost a fifth of the line; the text takes
+   the bubble's full width instead, and the actions stay pinned top-right beside
+   a name that wraps. */
+@media (max-width: 560px) {
+  .speeches { padding: .4rem; }
+  .speech-row { align-items: flex-start; gap: .5rem; padding: .5rem .6rem; }
+  .speech-body { padding: .1rem .75rem .7rem; }
+}
 .day-nav { display: flex; justify-content: space-between; gap: 1rem; margin-top: 1.5rem; }
 .day-nav-btn {
   display: flex; flex-direction: column; gap: .12rem; max-width: 47%;
@@ -646,7 +1065,4 @@ watch(() => props.meetingId, () => {
 .day-nav-date { font-size: .92rem; color: var(--ink); }
 .methodology { margin-top: 1.5rem; }
 .methodology summary { cursor: pointer; font-weight: 600; color: var(--ink-soft); font-size: .85rem; }
-@media (max-width: 720px) {
-  .vid img { width: 5.5rem; }
-}
 </style>

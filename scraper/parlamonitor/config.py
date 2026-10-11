@@ -95,6 +95,42 @@ def whisper_modal_app() -> str:
             or "parlamonitor-whisper").strip()
 
 
+# --- fetching committee recordings from YouTube (BIZ-30) --------------------
+# YouTube answers a host it has flagged — typically a VM or datacenter address —
+# with "Sign in to confirm you're not a bot" on every video, whatever the request
+# looks like. Only another egress or a signed-in session gets past it, so both are
+# knobs here; neither is needed on a host YouTube does not flag.
+
+def youtube_proxy() -> str | None:
+    """``PARLAMONITOR_YOUTUBE_PROXY``: a proxy URL for yt-dlp (``http://…``,
+    ``socks5://…``), or ``ssh`` to send the downloads through the scraper's own
+    SSH tunnel (``PARLAMONITOR_SSH_HOST`` …). Unset: YouTube is reached directly,
+    even when parlament.hu traffic is tunnelled — the tunnel exists for
+    parlament.hu, and nothing is routed through it that was not asked to be."""
+    raw = (os.environ.get("PARLAMONITOR_YOUTUBE_PROXY") or "").strip()
+    return raw or None
+
+
+def youtube_cookies() -> str | None:
+    """``PARLAMONITOR_YOUTUBE_COOKIES``: a Netscape-format cookies file of a
+    signed-in YouTube session, for a host YouTube bot-walls. yt-dlp rewrites the
+    file it is given, so it is handed a copy and the original is never touched."""
+    raw = (os.environ.get("PARLAMONITOR_YOUTUBE_COOKIES") or "").strip()
+    return raw or None
+
+
+def youtube_block_hours() -> float:
+    """How long to leave YouTube alone after it bot-walled this host
+    (``PARLAMONITOR_YOUTUBE_BLOCK_HOURS``, default 12). Each refused attempt
+    deepens the flag, so a walled host asks about once per period, not once per
+    sync pass per recording."""
+    try:
+        return max(0.0, float(os.environ.get("PARLAMONITOR_YOUTUBE_BLOCK_HOURS")
+                              or 12))
+    except ValueError:
+        return 12.0
+
+
 # --- iromány document files (DOC-1) ----------------------------------------
 # The irományok registry only ever held *links* to the document PDFs. Mirroring
 # the files themselves is what makes NLP over the actual document text possible
@@ -351,6 +387,14 @@ class Paths:
     def aktualis_file(self) -> Path:
         return self.processed / "aktualis.json"
 
+    # --- asset declarations from the EVNYR system (REP-18) -------------------
+    # One cycle-less file, rewritten whole on every read: the system's daily
+    # snapshot is the complete list of public declarations, MPs and non-MP
+    # officials alike, and it names no person id to key a per-cycle file by.
+
+    def asset_declarations_file(self) -> Path:
+        return self.processed / "asset-declarations.json"
+
     # --- bills -------------------------------------------------------------
 
     def bills_file(self, cycle: int) -> Path:
@@ -422,3 +466,22 @@ class Paths:
 
     def committee_videos_file(self) -> Path:
         return self.processed / "committee-videos.json"
+
+    # --- committee sentence timing (Whisper on the recordings, BIZ-30) -------
+    # Cycle-less for the same reason as the recordings: only a sitting that has
+    # both a jegyzőkönyv and a video can be timed, and the channel decides which
+    # cycles those are. The Whisper words are cached per *video*, because a
+    # video is the unit that is transcribed — a sitting that overran into a
+    # second stream is two of them.
+
+    def committee_timing_file(self) -> Path:
+        return self.processed / "committee-timing.json"
+
+    def committee_whisper_cache(self, video_id: str) -> Path:
+        return self.data / "committees" / "whisper" / f"{video_id}.json"
+
+    def committee_audio_dir(self) -> Path:
+        """Scratch space for a recording's audio while it is transcribed. The
+        file is deleted as soon as its words are cached: the words are what a
+        re-run needs, and an hour of audio is 20 MB the disk does not."""
+        return self.data / "committees" / "audio"

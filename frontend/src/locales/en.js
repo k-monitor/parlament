@@ -3,7 +3,6 @@ export default {
   app: {
     title: 'Parlamonitor',
     tagline: 'Find out what happens in Parliament',
-    taglineSub: 'Search speeches, see how MPs voted, and follow bills every step of the way.',
     skipToContent: 'Skip to content',
     loading: 'Loading…',
     error: 'Something went wrong while loading data.',
@@ -45,21 +44,112 @@ export default {
            multiHint: 'You can select several cycles.',
            scope: '{cycle} data', scopeAll: 'All-cycles data' },
   home: {
-    searchPlaceholder: 'Search for a phrase in the proceedings…',
+    searchLabel: 'Search the speeches',
+    searchPlaceholder: 'e.g. housing, Paks, budget…',
     searchButton: 'Search',
-    statsLead: 'Browse data on the work of the Hungarian National Assembly since {year}!',
-    statsLeadNoYear: 'Browse data on the work of the Hungarian National Assembly!',
+    since: 'Since {year}:',
+    countsLabel: 'What the database holds',
     stats: { sessions: 'sittings', speeches: 'speeches', sentences: 'sentences', representatives: 'representatives' },
-    exploreSearch: 'Full-text search',
-    exploreSearchDesc: 'Search any phrase and jump straight to the moment it was spoken on video.',
-    exploreReps: 'Representatives & statistics',
-    exploreRepsDesc: 'Browse representatives, their speeches and activity.',
-    exploreSessions: 'Browse sittings',
-    exploreSessionsDesc: 'Read a full sitting transcript, segmented by agenda item.',
-    examplesTitle: 'Example searches',
-    examplesLead: 'Click a topic to open the full search; the chart shows how often the term came up over time.',
+    examplesTitle: 'Example search',
     examplesEmpty: 'No matches in this cycle.',
-    examplesMore: 'View more topics',
+    rotation: { pause: 'Pause rotation', play: 'Resume rotation', prev: 'Previous', next: 'Next' },
+    facts: {
+      title: 'A number from Parliament',
+      empty: 'Nothing to highlight for this cycle yet.',
+      hoursMinutes: '{h} h {m} min',
+      hours: '{h} h',
+      minutes: '{m} min',
+      speakingTime: {
+        name: 'Speaking time',
+        text: 'is how long {name} has spoken, longer than any other MP.',
+        link: 'Speaking-time ranking',
+      },
+      interjections: {
+        name: 'Interjections',
+        text: "times {name} interjected during other members' speeches, more than anyone else.",
+        link: 'Interjection network',
+      },
+      blindSpots: {
+        name: 'Blind spots',
+        text: 'Hungarian settlements were never named on the floor: {pct} of all {total}.',
+        link: 'Map of the unmentioned places',
+      },
+      topTopic: {
+        name: 'Top topic',
+        text: 'of the policy content of speeches went to the most discussed topic: {topic}.',
+        link: 'Topic analysis',
+      },
+      factionShare: {
+        name: 'Factions',
+        text: 'of all speaking time went to the faction that spoke the most: {faction}.',
+        link: 'Speaking time by faction',
+      },
+      questions: {
+        name: 'Questions',
+        text: 'questions and interpellations were answered by the most-questioned ministry: {portfolio}.',
+        link: 'Ministries',
+      },
+    },
+    figures: {
+      title: 'Figures from Parliament',
+      empty: 'No figure to show for this cycle yet.',
+      map: { title: 'Which places come up?', link: 'Full map' },
+      interjections: {
+        title: 'Who interrupts whom?',
+        summary: 'The {n} members most involved · {total} interjections in all',
+        link: 'Full network',
+      },
+      topics: {
+        title: 'What does the House talk about?',
+        summary: 'The {n} most discussed topics (of {total})',
+        link: 'All topics',
+      },
+      speakers: {
+        title: 'Who speaks the most?',
+        legend: 'Factions',
+        link: 'Speaking-time ranking',
+      },
+    },
+  },
+  // "A múlt héten" — the home page's digest of the sitting week just gone.
+  lastWeek: {
+    title: 'Last week',
+    titleEarlier: 'The latest sitting days',
+    allSittings: 'All sittings',
+    stats: { days: 'sitting days', speeches: 'speeches', time: 'in session', votes: 'votes, {adopted} adopted' },
+    waiting: 'Not processed yet',
+    waitingNote: 'The sitting has been held or announced, but parlament.hu has not published its recording and transcript yet. They are added automatically as soon as they appear.',
+    someWaiting: 'One sitting day is still waiting to be processed; the totals cover only the days already published. | {n} sitting days are still waiting to be processed; the totals cover only the days already published.',
+    allWaiting: "The sitting day's recording and transcript have not appeared on parlament.hu yet; they will be summarised here once they arrive. | The sitting days' recordings and transcripts have not appeared on parlament.hu yet; they will be summarised here once they arrive.",
+    somePartial: 'One sitting day is only partly processed: missing transcripts and video clips are still arriving. | Some sitting days are only partly processed: missing transcripts and video clips are still arriving.',
+    topSpeakers: 'Spoke the most',
+    words: 'Words of the week',
+    wordTitle: "{n} occurrences — search the week's speeches",
+    decisions: 'Decisions',
+    categories: {
+      law: 'Laws',
+      resolution: 'Resolutions',
+      personnel: 'Elections and appointments',
+      immunity: 'Immunity cases',
+      discipline: 'Disciplinary cases',
+      interpellation: 'Interpellations',
+    },
+    outcome: {
+      plain: { adopted: 'adopted', rejected: 'rejected' },
+      agenda: { adopted: 'taken onto the agenda', rejected: 'not taken onto the agenda' },
+      immunity: { adopted: 'immunity waived', rejected: 'immunity upheld' },
+      discipline: { adopted: 'upheld', rejected: 'not upheld' },
+      interpellation: { adopted: 'answer accepted', rejected: 'answer rejected' },
+      mixed: '{votes} votes: {adopted} adopted, {rejected} rejected',
+    },
+    tallyTitle: '{yes} yes, {no} no, {abstain} abstained',
+    moreDecisions: '+ {n} more',
+    fewerDecisions: 'Fewer',
+    interpNote: 'The House votes on an interpellation answer only when the MP who asked rejected it.',
+    splits: 'Votes against the faction line',
+    splitDefectors: "1 MP voted against their faction's position: | {n} MPs voted against their faction's position:",
+    allSplits: "The week's votes by cross-voting",
+    thisWeek: 'This week',
   },
   search: {
     title: 'Search the proceedings', placeholder: 'Term or "exact phrase"…', button: 'Search',
@@ -545,6 +635,7 @@ export default {
     sponsors: 'Submitted by',
     more: 'Show {count} more',
     site: 'Committee website',
+    parlament: 'Committee page on parlament.hu',
     email: 'Contact',
     created: 'Created',
     ended: 'Dissolved',
@@ -567,7 +658,15 @@ export default {
       + 'authoritative version. Recordings come from the National Assembly\'s '
       + 'own YouTube channel and are matched to sittings by the date and '
       + 'committee name in the video title; the channel published nothing '
-      + 'before February 2024.',
+      + 'before February 2024. The recording plays here, beside the minutes; '
+      + 'the player loads from YouTube, in its privacy-enhanced mode, only '
+      + 'once it is started. Where the minutes are published too, the '
+      + 'recording\'s sound is transcribed by speech recognition (Whisper) and '
+      + 'that transcript is aligned to the text of the minutes: a click on a '
+      + 'sentence starts the video there, and during playback the sentence '
+      + 'being spoken is highlighted. The highlighted text is always the '
+      + 'minutes\', never the machine transcript; a sentence that could not be '
+      + 'placed in the recording can be read but not played.',
     // The minutes viewer (BIZ-15).
     openMinutes: 'Open the minutes',
     minutesTitle: 'Minutes',
@@ -606,6 +705,11 @@ export default {
     searchInMinutes: 'Search these minutes…',
     noMatch: 'Nothing in these minutes matches.',
     matches: '{count} matches',
+    // One speech's bubble (BIZ-15): its own address, and the mark for the same
+    // speaker carrying on past an agenda heading.
+    speechLink: 'Link to this speech',
+    speechContinued: 'continued',
+    speechContinuedNote: 'The same speaker carrying on under the new agenda point; the minutes do not print the name again here.',
     // Recordings (BIZ-16).
     videos: 'Recordings',
     video: 'Recording',
@@ -618,6 +722,13 @@ export default {
     videoCoverage: 'The National Assembly\'s YouTube channel has recordings '
       + 'from {from} onwards; nothing was broadcast publicly before that.',
     videoUnmatched: 'No meeting in the registry matches this recording.',
+    // The embedded player and its sync with the minutes (BIZ-30).
+    part: 'Part {n}',
+    playRecording: 'Play the recording',
+    playFromHere: 'Play from this speech',
+    playerConsent: 'The player loads from YouTube only once you start it.',
+    playerError: 'This recording cannot be played here — it can be watched on YouTube.',
+    syncNote: 'Click a sentence to play the recording from there; while it plays, the sentence being spoken is highlighted and followed.',
   },
   portfolios: {
     title: 'Portfolios',
@@ -742,11 +853,19 @@ export default {
     constituency: 'Constituency',
     education: 'Highest education', email: 'Email', website: 'Website', committees: 'Committee memberships',
     factionHistory: 'Faction history', wikipedia: 'Wikipedia', kmonitor: 'K-Monitor', cv: 'CV',
+    parlament: 'parlament.hu profile',
     assetDeclarations: 'Asset declarations',
-    assetDeclarationsNote: 'The representative\'s asset declarations as published on parlament.hu; every entry links to the original PDF. The date is when the declared assets were held — the point in time the declaration describes. The list covers every cycle, regardless of the selected one.',
+    assetDeclarationsNote: 'Asset declarations as the National Assembly publishes them; every entry links to the original. For the PDFs published on the parlament.hu profile page, the date is when the declared assets were held, the point in time the declaration describes. For declarations filed in the electronic declaration system from 2026, the date is when the declaration was finalised, and their public contents are shown too, from the system\'s daily data file, as the declarant filed them. The list covers every cycle, regardless of the selected one.',
     assetDeclarationDate: 'assets as of {date}',
     assetDeclarationMissing: 'No published document',
     assetDeclarationDeadline: 'filing deadline: {date}',
+    // EVNYR declarations (REP-18): titled by their type, dated by finalisation.
+    declarationTitle: '{type} declaration',
+    declarationTitleUntyped: 'Asset declaration',
+    declarationTypes: { nyito: 'Opening', eves: 'Annual', zaro: 'Closing' },
+    declarationFinalized: 'finalised {date}',
+    declarationContents: 'Contents of the declaration',
+    declarationSource: 'Source: the National Assembly\'s electronic asset-declaration system, daily data file of {date}. The data is shown as the declarant filed it, unchanged: amounts are neither added up nor converted.',
     // Remuneration (REP-17). THE FIGURE IS OFFICIAL: parlament.hu publishes it
     // monthly. The statute only explains it — divided by the base it yields the
     // rate and the section. The page never says "earns this much": this is the
@@ -849,6 +968,60 @@ export default {
     noVotes: 'No recorded roll-call votes.', viewVote: 'View vote', allVotes: 'View all votes',
   },
   // Comparison (REP-15): speakers side by side, spec-sheet style.
+  // The contents of an EVNYR asset declaration (REP-18), section by section in
+  // the order of the House's own form. Block keys are upstream's paths with the
+  // dots made underscores (message keys cannot hold dots). The values are always
+  // shown as filed, in Hungarian.
+  declaration: {
+    sections: {
+      realEstate: 'Real estate', movables: 'High-value movable property', claims: 'Claims and savings',
+      debts: 'Debts', gifts: 'Protocol gifts', otherNotes: 'Other remarks',
+      income: 'Income declaration', interests: 'Economic interests',
+      unknown: 'Other data',
+    },
+    blocks: {
+      ingatlanok: 'Real estate',
+      nagyErtekuIngosagok_szemelygepjarmuvek: 'Cars',
+      nagyErtekuIngosagok_tehergepjarmuvek: 'Lorries and buses',
+      nagyErtekuIngosagok_motorkerekparok: 'Motorcycles',
+      nagyErtekuIngosagok_viziLegiJarmuvek: 'Boats and aircraft',
+      nagyErtekuIngosagok_vedettMualkotasok: 'Protected works of art',
+      nagyErtekuIngosagok_vedettGyujtemenyek: 'Protected collections',
+      nagyErtekuIngosagok_egyebIngosagok: 'Other high-value movables',
+      kovetelesek_ertekpapirok: 'Securities and investments',
+      kovetelesek_szamlakovetelesek: 'Bank accounts and deposits',
+      kovetelesek_keszpenz: 'Cash',
+      kovetelesek_szerzodesesKovetelesek: 'Contractual claims',
+      tartozasok_koztartozasok: 'Public debts',
+      tartozasok_hitelintezetiTartozasok: 'Debts to credit institutions',
+      tartozasok_maganszemelyiTartozasok: 'Debts to private persons',
+      protokollAjandekok: 'Protocol gifts',
+      egyebKozlendok: 'Other remarks',
+      jovedelemnyilatkozat_korabbiFoglalkozasok: 'Occupations and posts in the previous three years',
+      jovedelemnyilatkozat_jelenlegiTevekenysegek: 'Current income-earning activities',
+      gazdasagiErdekeltseg_tagsagok: 'Memberships and posts in organisations',
+      gazdasagiErdekeltseg_tarsasagiErdekeltsegek: 'Interests in companies',
+      gazdasagiErdekeltseg_egyebErdekek: 'Other interests',
+      gazdasagiErdekeltseg_nyilatkozattetelHelye: 'Place of declaration',
+    },
+    fields: {
+      telepules: 'Settlement', teruletNagysag: 'Plot area', muvelesiAg: 'Land use',
+      epuletJelleg: 'Building type', alapterulet: 'Floor area', jogiJelleg: 'Legal type',
+      jogallas: 'Legal status', tulajdoniHanyad: 'Ownership share', szerzesJogcime: 'Acquired by',
+      jogviszonyKezdete: 'Acquired on', szerzesEllenerteke: 'Consideration paid',
+      jarmuJellege: 'Kind', jarmuTipusa: 'Make and model', szerzesIdeje: 'Acquired on',
+      megnevezes: 'Description', isin: 'ISIN', nevErtek: 'Value',
+      atvaltasiArfolyam: 'Exchange rate', swiftBic: 'SWIFT/BIC', osszeg: 'Amount',
+      szerzodesIdeje: 'Contract date', jelleg: 'Kind', ajandekozoNeve: 'Given by',
+      reszesultDijazasban: 'Was paid', reszesulDijazasban: 'Is paid',
+      haviJovedelem: 'Average monthly income', kifizetoSzemelye: 'Paid by',
+      szervezetNeve: 'Organisation', tagsag: 'Membership or post', tarsasagNeve: 'Company',
+      erdekeltsegFormaja: 'Form of interest', tulajdoniArany: 'Ownership share',
+      leiras: 'Description',
+    },
+    yes: 'yes', no: 'no',
+    empty: 'The public part of this declaration contains no data.',
+  },
   compare: {
     title: 'Compare speakers',
     intro: 'Up to {max} speakers side by side, the same figure on every row.',
@@ -1078,6 +1251,16 @@ export default {
     dragHint: 'The chart can be zoomed and panned, and any member dragged out of the tangle.',
     methodology: 'The shorthand record puts the louder heckling in parentheses, verbatim, inside the speech it interrupted: "(Balla György: Úgy van!)". Parlamonitor lifts those out and joins the two members: the heckler by the name in the parenthesis, the other end by whoever held the floor. A name counts only when it fits exactly one member — where two members of the same House shared a name (two Tóth Istváns, say), the interjection is left unattributed rather than guessed at. The transcript reader applies the same rule when it links a heckler\'s name to their profile, so the chart and the transcript agree.',
     methodologyExclusions: 'Interjections shouted over a chairing speech are not counted: a voting block is one hours-long speech by the presiding officer in the record, so a whole afternoon of heckling would land inside it and the deputy speakers would be the most-interrupted members of the House by a wide margin — the same rule that keeps chairing out of every other representative statistic. Nor are the ones where the record notes the event but not the words ("Gulyás Gergely közbeszól."), or the words but not the heckler ("Közbeszólások a Fidesz padsoraiból: Nem!").',
+    // One sitting day's interjections, in the dialog behind the day page's button.
+    dayButton: 'Interjections',
+    dayButtonTitle: 'Who interjected over whom on this day',
+    dayTitle: 'Interjections on this day',
+    dayClickHint: 'Click an arrow or a member to narrow the list to their interjections.',
+    dayShownShare: 'The chart shows the {n} members most involved: the interjections between them are {share}% of the day\'s.',
+    dayAll: 'All of the day\'s interjections',
+    dayPerson: '{made} made, {received} received',
+    dayShowAll: 'All',
+    dayCycleLink: 'Interjections across the whole term',
     coverage: 'In the selected term {extracted} verbatim interjections were found, {attributed} of them attributable to a single member; {procedural} were shouted over a chairing speech.',
   },
   analyses: {

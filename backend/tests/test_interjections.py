@@ -354,6 +354,18 @@ def test_clicking_an_arrow_lists_the_words_behind_it(heckled_client):
     assert one["target"]["label"] == "Kovács Béla"
 
 
+def test_a_listed_interjection_deep_links_to_its_sentence(heckled_client, heckled_conn):
+    """The viewer opens at ``?s=<ord>`` — the sentence's position within the
+    speech, not its row id — so the row has to carry that position (VIE-5)."""
+    data = heckled_client.get("/api/v1/interjections/list",
+                              params={"period": 43, "speaker": "n002",
+                                      "target": "k001"}).json()
+    for i in data["interjections"]:
+        ord_ = heckled_conn.execute(
+            "SELECT ord FROM sentence WHERE id = ?", (i["sentence_id"],)).fetchone()[0]
+        assert i["sentence_ord"] == ord_
+
+
 def test_clicking_a_person_lists_both_directions(heckled_client):
     """A picked node highlights every arrow touching it, so the list under it has
     to hold every arrow touching it — made and received alike."""
@@ -402,6 +414,58 @@ def test_a_partner_count_matches_the_list_it_opens(heckled_client):
 
 def test_the_list_refuses_an_unfiltered_dump(heckled_client):
     assert heckled_client.get("/api/v1/interjections/list").status_code == 400
+
+
+def _another_day(conn):
+    """A second sitting day of the same cycle, with one heckle of its own, so a
+    day-scoped request has something to leave out."""
+    conn.execute("INSERT INTO session (id, period_number, sitting, date) "
+                 "VALUES ('43003', 43, 3, '2026-05-17')")
+    conn.execute(
+        "INSERT INTO interjection (speech_uid, session_id, period_number, ord, "
+        "speaker_name, speaker_id, target_id, text, procedural) "
+        "VALUES ('x', '43003', 43, 0, 'Szabó Géza', 's003', 'n002', 'Másnap!', 0)")
+    conn.commit()
+
+
+def test_the_graph_draws_one_sitting_day(heckled_client, heckled_conn):
+    """The day page's dialog: only that day's arrows, whatever the cycle scope."""
+    _another_day(heckled_conn)
+    whole = heckled_client.get("/api/v1/interjections/graph",
+                               params={"period": 43}).json()
+    assert whole["total"] == 6
+    data = heckled_client.get("/api/v1/interjections/graph",
+                              params={"session": "43002", "period": 42}).json()
+    edges = {(data["nodes"][l["source"]]["person_id"],
+              data["nodes"][l["target"]]["person_id"]): l["count"]
+             for l in data["links"]}
+    assert edges == {("n002", "k001"): 2, ("s003", "k001"): 1, ("k001", "n002"): 2}
+    assert data["total"] == 5
+    assert data["coverage"] == {"extracted": 6, "attributed": 6, "procedural": 1}
+    # The faction is the one held in the day's own cycle, not the `period` passed.
+    kovacs = next(n for n in data["nodes"] if n["person_id"] == "k001")
+    assert kovacs["faction"]["label"] == "Fidesz"
+
+
+def test_a_day_lists_its_interjections_in_the_order_they_were_shouted(
+        heckled_client, heckled_conn):
+    _another_day(heckled_conn)
+    data = heckled_client.get("/api/v1/interjections/list",
+                              params={"session": "43002"}).json()
+    assert data["total"] == 5
+    assert [i["text"] for i in data["interjections"]] == [
+        "Ez nem igaz!", "Mondja már!", "Elég volt!", "Nem így van!", "Tessék?"]
+    # ...and narrows to one arrow like any other scope.
+    one = heckled_client.get("/api/v1/interjections/list",
+                             params={"session": "43002", "speaker": "k001"}).json()
+    assert [i["text"] for i in one["interjections"]] == ["Nem így van!", "Tessék?"]
+
+
+def test_an_unknown_sitting_day_is_not_found(heckled_client):
+    for path in ("graph", "list"):
+        res = heckled_client.get(f"/api/v1/interjections/{path}",
+                                 params={"session": "99999"})
+        assert res.status_code == 404
 
 
 def test_the_module_is_advertised_in_the_manifest(heckled_client):

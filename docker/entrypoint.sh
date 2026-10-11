@@ -55,6 +55,13 @@
 #   aktualis         read the Aktuális page + the napirend PDF behind it: the
 #                    order paper for the sitting that is coming (NR-1), e.g.
 #                      podman-compose run --rm sync aktualis
+#   asset-declarations
+#                    read every public asset declaration from the House's
+#                    electronic declaration system (EVNYR, REP-18) into /data;
+#                    the first full read (one page per declaration, for the PDF
+#                    links) in one go instead of 60 per sync pass, e.g.
+#                      podman-compose run --rm sync asset-declarations
+#                    (the sync sidecar then keeps it fresh on its own)
 #   officeholders    scrape the office-holder registry (tisztségviselők) — every
 #                    office term with its real dates, MPs and non-MPs alike — into
 #                    /data; the one-off backfill for a corpus scraped before the
@@ -206,6 +213,20 @@ case "${1:-serve}" in
         shift
         cd /app/scraper
         exec python -m parlamonitor aktualis "$DATA_DIR" "$@"
+        ;;
+    asset-declarations)
+        # Read the EVNYR system's daily CSV snapshot (every public asset
+        # declaration, MPs and non-MP officials alike) and each declaration's PDF
+        # link into $DATA_DIR/processed/asset-declarations.json (REP-18). The sync
+        # sidecar refreshes it on its own, reading at most 60 declaration pages a
+        # pass; this reads them all at once:
+        #   podman-compose run --rm sync asset-declarations
+        # Cycle-less. Needs a read-write /data mount plus the scrape egress
+        # config, hence the `sync` service. The DB picks it up on the next
+        # `update`/sync.
+        shift
+        cd /app/scraper
+        exec python -m parlamonitor asset-declarations "$DATA_DIR" "$@"
         ;;
     documents)
         # Mirror the cycle's iromany document files and extract their text

@@ -1018,7 +1018,7 @@ def settlement_mentions(
     rows = db.execute(
         f"""SELECT sm.sentence_id, sm.speech_uid, sm.session_id, sm.surface,
                    sm.char_start, sm.char_end, sm.form,
-                   se.text, se.time_start,
+                   se.ord AS sentence_ord, se.text, se.time_start,
                    ss.date, sp.person_id, sp.speaker_label,
                    p.label AS person_name, ai.title AS agenda_title,
                    f.label AS faction_label, f.color AS faction_color
@@ -1035,7 +1035,8 @@ def settlement_mentions(
     return {
         "total": total, "limit": limit, "offset": offset,
         "mentions": [{
-            "sentence_id": r["sentence_id"], "speech_uid": r["speech_uid"],
+            "sentence_id": r["sentence_id"], "sentence_ord": r["sentence_ord"],
+            "speech_uid": r["speech_uid"],
             "session_id": r["session_id"], "date": r["date"],
             "text": r["text"], "time_start": r["time_start"],
             "surface": r["surface"], "char_start": r["char_start"],

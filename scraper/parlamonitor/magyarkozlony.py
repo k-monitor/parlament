@@ -35,6 +35,9 @@ BASE = "https://magyarkozlony.hu"
 # The schema.org Newspaper item on the listing page carries the canonical PDF
 # viewer URL; both the <meta itemprop="url"> and the visible <a href> use it.
 _DOC_RE = re.compile(r"https://magyarkozlony\.hu/dokumentumok/[0-9a-f]+/megtekintes")
+# What the listing says for an issue the site does not carry — every one before
+# 1998, where its archive starts. Linking that page would be a dead link.
+_EMPTY_LISTING = "Nincs megjeleníthető tartalom"
 _YEAR_RE = re.compile(r"(\d{4})")
 
 
@@ -51,7 +54,8 @@ def resolve(http: HttpClient, mk_number, promulgation_date) -> dict | None:
     ``{"url": <listing page>, "docUrl": <direct PDF viewer or None>}``, or
     ``None`` when there isn't enough to build a link. A failed fetch (or a page
     with no extractable direct link) degrades to the listing URL only — it never
-    raises."""
+    raises — except a listing that says the site has no such issue, which yields
+    ``None``: there is nothing on the other end to link."""
     if not mk_number or not promulgation_date:
         return None
     ym = _YEAR_RE.search(str(promulgation_date))
@@ -67,6 +71,9 @@ def resolve(http: HttpClient, mk_number, promulgation_date) -> dict | None:
         m = _DOC_RE.search(html)
         if m:
             doc_url = m.group(0)
+        elif _EMPTY_LISTING in html:
+            logger.info("magyarkozlony.hu carries no issue at %s; no link", url)
+            return None
         else:
             logger.warning("No Magyar Közlöny doc link found at %s", url)
     except HttpError:

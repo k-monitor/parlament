@@ -663,6 +663,19 @@ def test_a_settlement_page_carries_its_citations_and_its_mp(client, built, vtr):
     assert first["text"][first["char_start"]:first["char_end"]] == first["surface"]
 
 
+def test_a_citation_deep_links_to_its_sentence(client, built, vtr):
+    """The viewer opens at ``?s=<ord>`` — the sentence's position within the
+    speech, not its row id — so each citation has to carry that position (VIE-5)."""
+    cites = client.get("/api/v1/settlements/14/002/mentions",
+                       params={"period": 43}).json()
+    conn = sqlite3.connect(built)
+    for m in cites["mentions"]:
+        ord_ = conn.execute("SELECT ord FROM sentence WHERE id = ?",
+                            (m["sentence_id"],)).fetchone()[0]
+        assert m["sentence_ord"] == ord_
+    conn.close()
+
+
 def test_a_blind_spot_has_a_page_rather_than_a_404(client, built, vtr):
     """It exists, it is simply never named — and that page *is* the finding, so it
     has to be linkable and citable (TEL-8)."""

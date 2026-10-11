@@ -85,6 +85,30 @@ is "changed" for a DB that has never seen it). To backfill without waiting:
 Served by `GET /api/v1/proceedings/upcoming`, advertised as
 `features.upcoming_agenda` in `/api/v1/meta`, and rendered on the home page.
 
+### Asset declarations from the EVNYR system (REP-18)
+
+`processed/asset-declarations.json` (the scraper's `asset-declarations` stage)
+lands in `asset_declaration`, one row per declaration with its contents as JSON.
+A load **replaces the whole set**: the snapshot is the House's complete list of
+public declarations, so one withdrawn upstream disappears here too.
+
+The snapshot names the filer and carries no person id, so `person_id` is a
+**name match**, and it is deliberately narrow, because a wrong match puts one
+person's assets on another's profile (`_link_asset_declarations`). A person is a
+candidate only if the name matches (case and academic titles aside, *ifj.* kept),
+they held the kind of role the filed post names (a seat for an MP's declaration,
+an advocate's seat for an advocate's, a government office term and **no seat on
+the filing date** for a "…képviselői megbízással nem rendelkező politikai
+felsővezető"), and they held it around the filing (started by then, ended at
+most ~13 months before). The link is made only when exactly one person passes;
+otherwise the row stays unlinked and is still listed
+(`/api/v1/representatives/asset-declarations`). It is re-run whenever the people
+change (a registry or a sitting), because a declarant can enter the corpus
+after their declaration does.
+
+The profile serves these declarations in `asset_declarations` beside the
+adatlap's, tagged `source: "evnyr"` and carrying `content`.
+
 ### The shared lemma store
 
 The diversity half and the word cloud both need HuSpaCy lemmas for the *same*

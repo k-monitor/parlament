@@ -30,6 +30,9 @@ def test_speech_viewer_payload(client):
     # The VOD activation endpoint is carried through so the player can ping it.
     assert "playseq.php" in d["session"]["video_playseq"]
     assert d["speech"]["source_page"]                       # VIE-7 source link
+    # The speech's own parlament.hu adatlap; null only because the fixture's
+    # upstream id is a placeholder (test_parlament_links covers real ids).
+    assert "parlament_url" in d["speech"] and d["speech"]["parlament_url"] is None
     assert d["neighbours"]["next"] == "43001-2"             # prev/next nav
 
 
@@ -348,6 +351,9 @@ def test_representative_profile(client):
     # Wikidata/Wikipedia links joined via P4966 (EXT-2) and surfaced on the profile.
     assert d["wikidata_id"] == "Q42"
     assert d["wikipedia_url"] == "https://hu.wikipedia.org/wiki/Kov%C3%A1cs_B%C3%A9la"
+    # Their parlament.hu adatlap, keyed by the kepviseloId that is the person_id.
+    assert d["parlament_url"].startswith(
+        "https://www.parlament.hu/web/guest/kepviselok#page=cv1gzb-")
     # An MP without a Wikidata item simply has null links (no crash).
     assert client.get("/api/v1/representatives/n002").json()["wikipedia_url"] is None
 
@@ -386,7 +392,8 @@ def test_profile_lists_asset_declarations_and_cv(client):
     due but never published keeps its (unlinked) row, since that absence is the
     fact a reader is looking for."""
     d = client.get("/api/v1/representatives/k001").json()
-    decls = d["asset_declarations"]
+    # The adatlap's entries; the EVNYR ones listed among them are REP-18's.
+    decls = [x for x in d["asset_declarations"] if x.get("source") != "evnyr"]
     assert [x["assetDate"] for x in decls] == ["2026-05-09", "2025-12-31"]
     assert decls[0]["url"].endswith("/vagynyil/2026/k001_j0260509k.pdf")
     assert decls[1]["url"] is None and decls[1]["deadline"] == "2026-01-31"
@@ -394,7 +401,7 @@ def test_profile_lists_asset_declarations_and_cv(client):
     # The declarations are biography, not statistics: selecting a cycle must not
     # trim the series (§4A applies to the stats, not to this).
     scoped = client.get("/api/v1/representatives/k001?period=43").json()
-    assert scoped["asset_declarations"] == decls
+    assert scoped["asset_declarations"] == d["asset_declarations"]
     # An MP with neither is served an empty list and a null link, never an error.
     other = client.get("/api/v1/representatives/n002").json()
     assert other["asset_declarations"] == [] and other["cv_url"] is None
@@ -820,3 +827,17 @@ def test_gzip_compression(client):
     small_or_encoded = (r.headers.get("content-encoding") == "gzip"
                         or int(r.headers.get("content-length", "0")) < 1024)
     assert small_or_encoded
+
+
+def test_retired_video_license_is_served_as_the_current_one():
+    """Cycles 41-42 stamped every recording with /jogi-nyilatkozat, now a 404."""
+    from app.modules.proceedings.router import _session_dict
+    cols = ("id", "period_number", "sitting", "date", "date_start", "date_end",
+            "status", "video_uri", "video_playseq", "video_duration",
+            "video_creator", "source", "source_page", "timing_method")
+    row = dict.fromkeys(cols)
+    row["video_license"] = "https://www.parlament.hu/web/guest/jogi-nyilatkozat"
+    assert _session_dict(row)["video_license"] == \
+        "https://www.parlament.hu/web/guest/felhasznalasi-feltetelek"
+    row["video_license"] = "https://lic"
+    assert _session_dict(row)["video_license"] == "https://lic"

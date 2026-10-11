@@ -76,6 +76,10 @@ export const api = {
   // The order paper for the sitting that is coming (NR-5). Cycle-less:
   // there is only ever one next sitting.
   upcomingAgenda: () => get('/proceedings/upcoming'),
+  // The sitting week that has just gone, for the home page's "A múlt héten"
+  // panel. Cycle-less like the order paper: without `date` it is last week, or
+  // the latest earlier week the House sat in.
+  sittingWeek: (date) => get('/proceedings/week', { date }),
   session: (id) => get(`/proceedings/sessions/${id}`),
   sessionWordcloud: (id, limit) => get(`/proceedings/sessions/${id}/wordcloud`, { limit }),
   sessionTopSpeakers: (id) => get(`/proceedings/sessions/${id}/top-speakers`),
@@ -182,14 +186,18 @@ export const api = {
   bill: (id) => get(`/bills/${id}`),
   billFacets: (params) => get('/bills/facets', params),
   billTopicMix: (period) => get('/bills/topics', { period }),
+  // What the House decided between two dates — the week digest's list (HOME-4).
+  billDecisions: (dateFrom, dateTo) =>
+    get('/bills/decisions', { date_from: dateFrom, date_to: dateTo }),
   questionsSankey: (period, includeType = true, expandOther = false) =>
     get('/bills/questions/sankey',
         { period, include_type: includeType, expand_other: expandOther }),
   questionsList: (params) => get('/bills/questions/list', params),
   // Közbeszólások (§6E) — who interjects over whose speech. The graph is one
   // request per (cycle scope, top N); the list is what one clicked arrow holds.
-  interjectionGraph: (period, top, rank) =>
-    get('/interjections/graph', { period, top, rank }),
+  // `session` draws one sitting day instead of the cycle scope (the day page).
+  interjectionGraph: (period, top, rank, session) =>
+    get('/interjections/graph', { period, top, rank, session }),
   interjectionList: (params) => get('/interjections/list', params),
   interjectionPartners: (period, person) =>
     get('/interjections/partners', { period, person }),

@@ -67,6 +67,18 @@ no dropped requests.
   serving colors with plain `podman` so it does not depend on compose features.
   Docker Engine 24+ with `docker compose` also works (`ENGINE`/`COMPOSE` are
   overridable).
+- **SELinux hosts** (Oracle Linux — the Oracle Cloud default image — RHEL,
+  Fedora, Rocky…) work as they are. Every host bind mount (`./data`,
+  `./analytics`, the Caddyfile) carries the shared `z` relabel option, so the
+  first start relabels those paths `container_file_t`. That can take a few
+  seconds on a large `data/`. Hosts without SELinux ignore the option. If an
+  older checkout fails with `PermissionError: [Errno 13] Permission denied:
+  '/data/…'` in `init`, it predates this fix: pull and redeploy, or run
+  `chcon -R -t container_file_t data analytics docker/Caddyfile` once. The
+  one mount without `z` is the optional SSH key (its default source is
+  `/dev/null`, which must never be relabelled). On an SELinux host, relabel
+  the key file yourself (`chcon -t container_file_t <key>`) before enabling
+  the [SSH tunnel](#tunnelling-the-scraper-through-an-ssh-host).
 - Scraper output present under [`data/`](data/):
   - `data/processed/*-session.json`, `data/processed/representatives-*.json`,
     `data/processed/bills-*.json` — **required**, used to build the DB.

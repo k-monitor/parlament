@@ -59,6 +59,8 @@ from .advocates.scrape import fetch_advocates, save_advocates
 from .aktualis.scrape import (fetch_aktualis, load_previous,
                               save_aktualis)
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
+from .declarations.scrape import (fetch_declarations, save_declarations,
+                                  load_previous as load_declarations_file)
 from .config import Paths, session_id, timing_backend as _default_timing_backend
 from .config import documents_compression as _documents_compression
 from .config import documents_max_mb as _documents_max_mb
@@ -79,6 +81,10 @@ from .committees.minutes_scrape import (fetch_minutes, meetings_with_minutes,
                                         save_minutes)
 from .committees.videos import (fetch_videos, save_videos,
                                 load_previous as load_videos_file)
+from .committees.timing import (ALIGN_VERSION as TIMING_ALIGN_VERSION,
+                                block_active as timing_block_active,
+                                build_timing, save_timing,
+                                load_previous as load_timing_file)
 from .votes.scrape import fetch_votes, save_votes
 
 logger = logging.getLogger(__name__)
@@ -99,6 +105,16 @@ UPCOMING_HORIZON_DAYS = 21
 # is still short of 100% is one parlament.hu never finished segmenting, and
 # chasing it forever would cost a request per poll per day for nothing.
 MEDIA_CHASE_DAYS = 30
+
+# The EVNYR asset-declaration snapshot (REP-18) is regenerated once a day, so a
+# home-page check more often than this finds the same file. A run that still has
+# declaration pages to read ignores the cadence until it has read them.
+DECLARATIONS_MAX_AGE = 3 * 3600
+# How many declaration pages (each one PDF link) one sync pass may read. The
+# first pass after the cycle's declarations are filed meets a few hundred; this
+# spreads them over a few passes instead of spending one pass's politeness budget
+# on a backlog that is in no hurry.
+DECLARATION_PAGES_PER_SYNC = 60
 
 
 def _now() -> str:
@@ -593,6 +609,64 @@ def _sync_committee_videos(http, paths: Paths, state: dict, *,
             for k in ("videos", "committee", "plenary")}
 
 
+def _committee_timing_inputs(paths: Paths) -> str:
+    """Signature of everything the committee timing reads: the recordings
+    registry, every cycle's parsed minutes, the cached Whisper words, the model
+    and the alignment version. Taken from file stats, so an idle pass decides
+    "nothing to time" without opening the (large) minutes files. The words are
+    in it so that recordings transcribed on another machine and copied into the
+    cache get aligned on the next pass, even while YouTube is walling this one."""
+    files = [paths.committee_videos_file(),
+             *sorted(paths.processed.glob("committee-minutes-*.json")),
+             *sorted(paths.committee_whisper_cache("_").parent.glob("*.json"))]
+    sig = [[f.name, *(_stat(f) or [])] for f in files]
+    payload = [TIMING_ALIGN_VERSION, whisper_model(), sig]
+    return hashlib.sha256(json.dumps(payload).encode("utf-8")).hexdigest()[:16]
+
+
+def _stat(path: Path) -> list | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return [int(st.st_mtime), st.st_size]
+
+
+def _sync_committee_timing(paths: Paths, state: dict, *, force: bool,
+                           backend: str) -> object:
+    """Time any newly pairable committee sitting against its recording (BIZ-30).
+
+    Last of the committee stages, because it needs both of the records they
+    produce. Skipped outright while its inputs are unchanged. The "done"
+    signature is only recorded after a pass that left nothing behind, so a
+    recording whose download or transcription failed is tried again next time.
+
+    The one exception is YouTube walling this host: a pass is then only worth
+    running when an input moved (new minutes, or words copied in from another
+    machine) — asking YouTube again before the block period is up would only
+    deepen the flag, and ``build_timing`` does not ask."""
+    fp = _committee_timing_inputs(paths)
+    held = state.get("committeeTiming") or {}
+    if not force and held.get("fp") == fp:
+        return False
+    previous = load_timing_file(paths)
+    if not force and held.get("attemptFp") == fp and timing_block_active(previous):
+        return False
+    registry = build_timing(paths, backend=backend, force=force,
+                            previous=previous)
+    counts = registry["meta"]["counts"]
+    save_timing(paths, registry)
+    # After the pass: what it transcribed is in the cache now, and is part of
+    # the inputs the next pass compares against.
+    fp = _committee_timing_inputs(paths)
+    entry = {"attemptFp": fp, "count": registry["meta"]["count"], "at": _now()}
+    if not counts["failed"] and not counts["deferred"]:
+        entry["fp"] = fp
+    state["committeeTiming"] = entry
+    return {k: counts[k] for k in ("sittings", "aligned", "failed", "deferred",
+                                   "timed")}
+
+
 def _sync_representatives(felicitas: FelicitasClient, paths: Paths, cycle: int,
                           state: dict, *, force: bool, with_detail: bool,
                           reps_max_age: float) -> bool:
@@ -603,7 +677,13 @@ def _sync_representatives(felicitas: FelicitasClient, paths: Paths, cycle: int,
     registry = fetch_representatives(felicitas, cycle, details=with_detail)
     # Keep the local portraits (served at /media/photos) without re-downloading:
     # point each record at the file already on disk so the loader keeps the link.
+    # An MP seated since the last full scrape (a successor, a by-election) has no
+    # file yet and nothing else fetches one, so top those up first — one request
+    # per portrait-less MP per refresh. The site never hot-links parlament.hu.
     photos_dir = paths.data / "media" / "photos"
+    fetch_missing_photos(felicitas, photos_dir,
+                         [r.get("personID") for r in registry["data"]],
+                         negative_cache=False)
     for rec in registry["data"]:
         pid = rec.get("personID")
         if pid and (photos_dir / f"{pid}.jpg").exists():
@@ -695,6 +775,54 @@ def _sync_aktualis(paths: Paths, http, *, force: bool) -> bool:
     return True
 
 
+def _sync_asset_declarations(paths: Paths, http, state: dict, *,
+                             force: bool) -> bool:
+    """Refresh the EVNYR asset-declaration registry (REP-18).
+
+    The check is one HTML request (the home page names the current snapshot),
+    made at most every ``DECLARATIONS_MAX_AGE``. A new snapshot costs the CSV and
+    the pages of the declarations that are new or changed, at most
+    ``DECLARATION_PAGES_PER_SYNC`` of them; while some are still unread the
+    cadence is waived so the backlog drains pass by pass. Rewritten only when the
+    contents changed, so an unchanged snapshot leaves the loader nothing to do."""
+    prev = state.get("assetDeclarations") or {}
+    age = _now_ts() - float(prev.get("ts") or 0)
+    if not force and prev and not prev.get("pending") and age < DECLARATIONS_MAX_AGE:
+        return False
+    previous = load_declarations_file(paths)
+    registry = fetch_declarations(http, previous=previous,
+                                  seen_csv_url=prev.get("csvUrl"), force=force,
+                                  page_limit=DECLARATION_PAGES_PER_SYNC)
+    state["assetDeclarations"] = {"ts": _now_ts(), "at": _now(),
+                                  "csvUrl": registry["meta"]["csvUrl"],
+                                  "count": registry["meta"]["count"],
+                                  "pending": registry["meta"]["pdfPending"]}
+    old = (previous or {}).get("data") or []
+    if not registry["data"] and old:
+        # Never write an empty snapshot over one the loader already holds.
+        logger.warning("EVNYR snapshot lists no declarations; the %d on file "
+                       "are kept", len(old))
+        return False
+    # The snapshot just read is recorded in the state above, not only in the
+    # file, so an unchanged one is not rewritten (the loader would copy the whole
+    # DB to reload it) and still is not downloaded again on the next pass.
+    if not force and previous and _declarations_equal(old, registry["data"]):
+        return False
+    save_declarations(paths, registry)
+    return True
+
+
+def _declarations_equal(a: list, b: list) -> bool:
+    """Same declarations, same content, same links. *When* each page was last
+    read does not count (a re-check that found the same PDF changes nothing worth
+    a reload), but *whether* it has been read does: a page read for the first time
+    must be recorded, or it is read again on every pass."""
+    def strip(rows):
+        return [{**{k: v for k, v in r.items() if k != "pdfCheckedAt"},
+                 "pdfChecked": bool(r.get("pdfCheckedAt"))} for r in rows]
+    return strip(a) == strip(b)
+
+
 # --- orchestration ---------------------------------------------------------
 
 def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
@@ -704,6 +832,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
              skip_committees: bool = False,
              skip_reps: bool = False, skip_advocates: bool = False,
              skip_office_holders: bool = False, skip_aktualis: bool = False,
+             skip_asset_declarations: bool = False,
              timing_backend: str | None = None,
              documents: str | None = None,
              documents_compression: str | None = None,
@@ -719,9 +848,9 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
                "sessions": [], "removedSessions": [], "bills": False,
                "votes": False, "committees": False,
                "committeeMinutes": False, "committeeVideos": False,
-               "representatives": False, "advocates": False,
+               "committeeTiming": False, "representatives": False, "advocates": False,
                "officeHolders": False, "documents": False, "aktualis": False,
-               "errors": []}
+               "assetDeclarations": False, "errors": []}
 
     try:
         summary["sessions"], summary["removedSessions"] = _sync_proceedings(
@@ -796,6 +925,15 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
             logger.exception("Committee video sync failed")
             summary["errors"].append(f"committee-videos: {e}")
 
+        # Needs both records above, so it comes last. Transcribing a recording
+        # is the one costly step, and it happens once per video, ever.
+        try:
+            summary["committeeTiming"] = _sync_committee_timing(
+                paths, state, force=force, backend=backend)
+        except Exception as e:
+            logger.exception("Committee timing sync failed")
+            summary["errors"].append(f"committee-timing: {e}")
+
     if not skip_reps:
         try:
             summary["representatives"] = _sync_representatives(
@@ -831,6 +969,16 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
             logger.exception("Aktuális sync failed")
             summary["errors"].append(f"aktualis: {e}")
 
+    if not skip_asset_declarations:
+        # A host of its own (vagyonnyilatkozat-pub), but the same politeness and
+        # transport settings, so it shares the client.
+        try:
+            summary["assetDeclarations"] = _sync_asset_declarations(
+                paths, felicitas.http, state, force=force)
+        except Exception as e:
+            logger.exception("Asset-declaration sync failed")
+            summary["errors"].append(f"asset-declarations: {e}")
+
     state["cycle"] = cycle
     state["lastCheckAt"] = summary["checkedAt"]
     save_state(paths.sync_state, state)
@@ -840,7 +988,9 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
                               or summary["committees"]
                               or summary["committeeMinutes"]
                               or summary["committeeVideos"]
+                              or summary["committeeTiming"]
                               or summary["representatives"]
                               or summary["advocates"]
-                              or summary["aktualis"])
+                              or summary["aktualis"]
+                              or summary["assetDeclarations"])
     return summary

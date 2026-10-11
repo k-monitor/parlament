@@ -258,9 +258,9 @@ $ENGINE run -d \
   --name "$TARGET_CTR" \
   --network "$NET" --network-alias "app_$TARGET" \
   --restart unless-stopped \
-  -v "$ROOT/data:/data:ro" \
+  -v "$ROOT/data:/data:ro,z" \
   -v "$VOL:/db" \
-  -v "$ANALYTICS_DIR:/analytics" \
+  -v "$ANALYTICS_DIR:/analytics:z" \
   "${color_env[@]}" \
   "$IMAGE" serve >/dev/null
 

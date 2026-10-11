@@ -192,9 +192,9 @@ table.data th { color: var(--ink-soft); }
 .avatar.xs { width: 20px; height: 20px; }
 
 /* Entry card — an icon, a title, a sentence and an arrow, linking into a part of
-   the site. Shared by the home page's three "explore" cards and the Elemzések
-   index (§4E), so the two read as one system; `.explore-grid` is the column
-   track they both sit on (one / two / three across). */
+   the site. The Elemzések index (§4E) is built of them (the home page's three
+   "explore" cards used to be too); `.explore-grid` is the column track they sit
+   on (one / two / three across). */
 .explore-grid { grid-template-columns: 1fr; }
 @media (min-width: 520px) { .explore-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (min-width: 780px) { .explore-grid { grid-template-columns: repeat(3, 1fr); } }

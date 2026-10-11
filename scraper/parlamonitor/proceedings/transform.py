@@ -53,41 +53,31 @@ def source_page(cycle: int, sitting: int, sorszam) -> str:
 # lives in a `#page=` fragment: a gzip-compressed, url-safe-base64-encoded JSON
 # blob prefixed with `cv1gzb-`. Rebuilding it here lets the "view on parlament.hu"
 # link (VIE-7) land on the exact day's speech listing rather than a generic page.
+# The state opens the page through its `open` contract with the day's id — the
+# form parlament.hu's own client builds for in-page links; the backend's
+# `app.parlament_links` builds every other adatlap link the same way.
 PLENARY_DAY_BASE = "https://www.parlament.hu/ulesnapok-ulesidok"
+PLENARY_DAY_PAGE = ("plenarisulesexportok/ulesnap-felszolalasai-with-contract/"
+                    "ulesnap-felszolalasai-with-contract")
 _PLENARY_FRAGMENT_PREFIX = "cv1gzb-"
-# The new SPA keys the day on a Felicitas UUID (`pUlesnapId`). The legacy cycle-42
-# backend numbered days with plain integers, which this page can't resolve — those
-# fall back to the generic proceedings portal instead of a dead deep link.
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+# A Felicitas day id: a UUID from the 2026 backend on, a plain integer for every
+# day before it (back to 1990) — both open the page.
+_DAY_ID_RE = re.compile(
+    r"^(?:\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$", re.I)
 
 
 def _plenary_page_fragment(state: dict) -> str:
     payload = json.dumps(state, separators=(",", ":"), ensure_ascii=False)
-    gz = gzip.compress(payload.encode("utf-8"))
+    gz = gzip.compress(payload.encode("utf-8"), mtime=0)
     b64 = base64.b64encode(gz).decode("ascii").translate(str.maketrans("/+", "_-"))
-    return _PLENARY_FRAGMENT_PREFIX + b64
+    return _PLENARY_FRAGMENT_PREFIX + b64.rstrip("=")
 
 
-def plenary_day_page_url(day_uuid: str | None) -> str | None:
+def plenary_day_page_url(day_id: str | None) -> str | None:
     """Deep link to a sitting day's speech listing on parlament.hu (VIE-7)."""
-    if not day_uuid or not _UUID_RE.match(str(day_uuid)):
+    if not day_id or not _DAY_ID_RE.match(str(day_id)):
         return None
-    ds = {"type": "datasource",
-          "content": {"parameters": {"pUlesnapId": day_uuid}, "open": True,
-                      "openPossibleCounts": False, "state": {"page": 0}}}
-    param = {"type": "parameter", "content": {"pUlesnapId": day_uuid}}
-    state = {
-        "page": "plenarisulesexportok/ulesnap-felszolalasai-with-contract/"
-                "ulesnap-felszolalasai-with-contract",
-        "binding": {
-            "felszolalasDao.dataSource": ds,
-            "felszolalasDao.parameter": param,
-            "ulesnapMegnevezesDao.dataSource": ds,
-            "ulesnapMegnevezesDao.parameter": param,
-        },
-        "globals": {},
-    }
+    state = {"page": PLENARY_DAY_PAGE, "hydration": {"open": {"id": str(day_id)}}}
     return f"{PLENARY_DAY_BASE}#page={_plenary_page_fragment(state)}"
 
 
@@ -351,6 +341,8 @@ def transform_day(raw: dict, *, words: list | None = None,
             "dateEnd": date_end,
             "source": raw.get("source", "felicitas-json"),
             "sourcePage": plenary_day_page_url(raw.get("day_uuid")),
+            # parlament.hu's own id for the day, so the site can rebuild the link.
+            "dayId": raw.get("day_uuid"),
             "sourceScrapedAt": raw.get("scraped_at"),
             "dayVideoURI": (day_video or {}).get("m3u8"),
             # The whole-day VOD sometimes needs its `playseq` endpoint pinged

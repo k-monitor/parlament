@@ -672,7 +672,7 @@ watch(() => [route.query.from, route.query.to, route.query.who].join('|'), () =>
                   <span aria-hidden="true"> · </span>
                   <!-- Straight to the moment it was shouted (VIE-3/VIE-5). -->
                   <RouterLink :to="{ name: 'viewer', params: { uid: i.speech_uid },
-                                     hash: '#s=' + i.sentence_id }">
+                                     query: { s: i.sentence_ord } }">
                     {{ $t('interjections.watch') }}
                   </RouterLink>
                 </p>

@@ -752,3 +752,36 @@ def test_video_sync_is_one_request_and_rewrites_only_on_a_change(tmp_path):
     assert sync._sync_committee_videos(http, paths, state, force=False) is False
     assert paths.committee_videos_file().stat().st_mtime_ns == mtime
     assert http.calls["feed"] == 2
+
+
+def test_reps_refresh_fetches_the_portrait_of_a_newly_seated_mp(tmp_path, monkeypatch):
+    """The refresh passes no photos dir to `fetch_representatives` (no re-download
+    of the whole roster), so an MP seated after the first scrape got no portrait
+    at all and the site hot-linked a parlament.hu URL instead. It is topped up
+    now, and an MP whose portrait is not yet published is simply asked again."""
+    paths = Paths(tmp_path)
+    paths.photos.mkdir(parents=True)
+    (paths.photos / "a011.jpg").write_bytes(b"old")
+    roster = [{"personID": "a011"}, {"personID": "006F"}, {"personID": "006E"}]
+    monkeypatch.setattr(sync, "fetch_representatives", lambda f, c, details: {
+        "meta": {"count": len(roster)}, "data": [dict(r) for r in roster]})
+
+    class Fel:
+        calls = []
+
+        def photo(self, pid):
+            self.calls.append(pid)
+            return b"jpeg" if pid == "006F" else None
+
+    fel = Fel()
+    assert sync._sync_representatives(fel, paths, 43, {}, force=True,
+                                      with_detail=False, reps_max_age=0)
+    assert fel.calls == ["006F", "006E"]                 # a011 already on disk
+    reg = json.loads(paths.representatives_file(43).read_text())
+    assert {r["personID"]: r.get("photoFile") for r in reg["data"]} == {
+        "a011": "a011.jpg", "006F": "006F.jpg", "006E": None}
+    assert (paths.photos / "a011.jpg").read_bytes() == b"old"
+    fel.calls.clear()
+    sync._sync_representatives(fel, paths, 43, {}, force=True,
+                               with_detail=False, reps_max_age=0)
+    assert fel.calls == ["006E"]                         # never negative-cached

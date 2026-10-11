@@ -251,6 +251,32 @@ def _fill_gaps(spans: list, start: float, end: float, weights: list[int]) -> Non
         prev = s
 
 
+def _hyp_tokens(words: list) -> tuple[list[str], list[tuple[float, float]]]:
+    """The Whisper words as a token stream, each token carrying its word's time.
+
+    Multi-token whisper "words" are expanded defensively (usually one token
+    each) and implausibly long "words" are clamped (see MAX_WORD_DUR): an
+    absorbed passage keeps only its final MAX_WORD_DUR seconds, so the
+    untranscribed audio before it is freed and later opens an intra-sentence
+    cluster gap."""
+    hyp_tokens: list[str] = []
+    hyp_time: list[tuple[float, float]] = []
+    for w in words or []:
+        if len(w) < 3:
+            continue
+        wt = _norm_tokens(w[2])
+        if not wt:
+            continue
+        ws, we = float(w[0]), float(w[1])
+        if we - ws > MAX_WORD_DUR:
+            ws = we - MAX_WORD_DUR
+        span = (ws, we)
+        for t in wt:
+            hyp_tokens.append(t)
+            hyp_time.append(span)
+    return hyp_tokens, hyp_time
+
+
 def align_speech(sentences: list[dict], words: list, window: tuple[float, float]
                  ) -> tuple[list[tuple[float, float]], float] | None:
     """Align one speech's reference ``sentences`` to its Whisper ``words`` (each
@@ -265,23 +291,7 @@ def align_speech(sentences: list[dict], words: list, window: tuple[float, float]
         return None
     spoken = _spoken_text(sentences)          # parentheticals dropped (not spoken)
     ref_tokens, owner = _flatten_ref(sentences)
-    # Expand multi-token whisper "words" defensively (usually one token each) and
-    # clamp implausibly long "words" (see MAX_WORD_DUR): an absorbed passage keeps
-    # only its final MAX_WORD_DUR seconds, so the untranscribed audio before it is
-    # freed and later opens an intra-sentence cluster gap.
-    hyp_tokens: list[str] = []
-    hyp_time: list[tuple[float, float]] = []
-    for w in words or []:
-        wt = _norm_tokens(w[2])
-        if not wt:
-            continue
-        ws, we = float(w[0]), float(w[1])
-        if we - ws > MAX_WORD_DUR:
-            ws = we - MAX_WORD_DUR
-        span = (ws, we)
-        for t in wt:
-            hyp_tokens.append(t)
-            hyp_time.append(span)
+    hyp_tokens, hyp_time = _hyp_tokens(words)
     if not ref_tokens or not hyp_tokens:
         return None
 
@@ -317,6 +327,169 @@ def align_speech(sentences: list[dict], words: list, window: tuple[float, float]
     weights = [max(len(spoken[i].strip()), 1) for i in range(len(sentences))]
     _fill_gaps(spans, start, end, weights)
     return [(s, e) for s, e in spans], coverage
+
+
+# --- whole-sitting alignment (committee recordings, BIZ-30) ---------------
+# A plenary speech arrives with its own window in the day stream, so it is
+# aligned alone against the few minutes of audio it occupies. A committee
+# sitting has no such thing — the jegyzőkönyv carries no timings at all and the
+# recording is one YouTube video — so the whole record is aligned against the
+# whole recording at once, and each speech finds its own place in it. Two things
+# change with the scale, and both are about not trusting what a window used to
+# guarantee:
+
+# Whether an unmatched run of sentences *fits* the audio between its anchors is
+# judged by pace, in spoken tokens per second — never used to place a matched
+# sentence. In a plenary window the gap is bounded by the window; across a
+# sitting it is not, and a run that "fits" a twenty-minute recess only because
+# nothing else does would be highlighted for twenty minutes while nobody speaks.
+#
+# The usual pace of committee speech: where a run before the first anchor or
+# after the last is set, and how long it is given.
+SITTING_WORDS_PER_SECOND = 2.5
+# Faster than anyone speaks in committee: a run that would have to be said this
+# fast to fit its gap was not said there (text the recording never caught).
+SITTING_MAX_PACE = 5.0
+# Slower than anyone speaks: a gap this roomy holds a pause, not the run.
+SITTING_MIN_PACE = 0.8
+# Slack for a short run, where a second either way is noise: a little on the
+# squeeze side (anchors that nearly touch), more on the stretch side (a
+# sentence said slowly, with a breath either side).
+SITTING_SQUEEZE_SLACK = 3.0
+SITTING_STRETCH_SLACK = 20.0
+
+
+def align_sitting(speeches: list[list[dict]], words: list, end: float
+                  ) -> tuple[list[list[tuple[float, float] | None]], float] | None:
+    """Align a whole sitting — every speech's sentences, in order — to the Whisper
+    ``words`` of its recording, whose timeline runs from 0 to ``end``.
+
+    Returns ``(spans, coverage)``: ``spans[i][j]`` is the ``(timeStart,
+    timeEnd)`` of speech ``i``'s sentence ``j``, or **None where it could not be
+    placed**, and ``coverage`` is the share of the record's spoken tokens that
+    landed in solid matches. Returns ``None`` when the alignment is not trusted
+    (see :data:`MIN_COVERAGE`) — the recording is then served without karaoke.
+
+    It differs from :func:`align_speech` in exactly the two places where a
+    window used to vouch for the result:
+
+    * **only solid matches anchor** (runs of ≥ ``_MIN_RUN`` tokens). Inside one
+      speech's window a lone "hogy" can only be that speech's; across a sitting
+      it could be any of thousands.
+    * **an unmatched run is only spread across the audio it fits.** A run whose
+      spoken length is wildly out of proportion to the gap between its anchors
+      was not said there — text the recording never caught (a stream started
+      late, a part held in camera) or a recess nobody spoke through — and is
+      left unplaced rather than guessed: an honest "not timed" beats a
+      highlight on the wrong minute. A run before the first anchor or after the
+      last one is set against that anchor at a plausible pace instead, since
+      its other side is the edge of the recording, not a sentence.
+
+    Parentheses are tracked per speech: a stray "(" left open by one speech's
+    text must not silence the rest of the sitting.
+    """
+    spoken: list[str] = []
+    owner: list[int] = []
+    ref_tokens: list[str] = []
+    shape: list[int] = []
+    for sentences in speeches:
+        shape.append(len(sentences))
+        for text in _spoken_text(sentences):
+            k = len(spoken)
+            spoken.append(text)
+            for t in _norm_tokens(text):
+                ref_tokens.append(t)
+                owner.append(k)
+    hyp_tokens, hyp_time = _hyp_tokens(words)
+    if not ref_tokens or not hyp_tokens:
+        return None
+
+    per_sent: list[list[tuple[float, float]]] = [[] for _ in spoken]
+    solid = 0
+    sm = SequenceMatcher(a=ref_tokens, b=hyp_tokens, autojunk=False)
+    for a0, b0, size in sm.get_matching_blocks():
+        if size < _MIN_RUN:
+            continue
+        solid += size
+        for k in range(size):
+            per_sent[owner[a0 + k]].append(hyp_time[b0 + k])
+
+    coverage = solid / len(ref_tokens)
+    hyp_coverage = solid / len(hyp_tokens)
+    if max(coverage, hyp_coverage) < MIN_COVERAGE:
+        logger.debug("sitting alignment coverage ref=%.2f hyp=%.2f below %.2f",
+                     coverage, hyp_coverage, MIN_COVERAGE)
+        return None
+
+    spans: list = [list(_cluster_span(t)) if t else None for t in per_sent]
+    tokens = [len(_norm_tokens(t)) for t in spoken]
+    _place_unmatched(spans, tokens, float(end))
+
+    # Clamp inside the recording and keep the spans non-decreasing.
+    prev = 0.0
+    for k, span in enumerate(spans):
+        if span is None:
+            continue
+        s = min(max(span[0], prev), end)
+        e = min(max(span[1], s), end)
+        spans[k] = (round(s, 3), round(e, 3))
+        prev = s
+
+    out: list[list] = []
+    k = 0
+    for n in shape:
+        out.append(spans[k:k + n])
+        k += n
+    return out, coverage
+
+
+def _place_unmatched(spans: list, tokens: list[int], end: float) -> None:
+    """Give an unmatched run of sentences a time where the audio around it can
+    hold it, and leave it None where it cannot (see :func:`align_sitting`).
+    Mutates ``spans`` in place. A sentence with nothing spoken in it (a stage
+    direction on its own, "(Szavazás.)") is never placed: there is nothing to
+    hear, so nothing to highlight."""
+    n = len(spans)
+    i = 0
+    while i < n:
+        if spans[i] is not None:
+            i += 1
+            continue
+        j = i
+        while j < n and spans[j] is None:
+            j += 1
+        lo = spans[i - 1][1] if i > 0 else 0.0
+        hi = spans[j][0] if j < n else end
+        room = max(0.0, hi - lo)
+        total = sum(tokens[i:j])
+        need = total / SITTING_WORDS_PER_SECOND
+        if total:
+            if i > 0 and j < n:
+                fits = (total / SITTING_MAX_PACE - SITTING_SQUEEZE_SLACK <= room
+                        <= total / SITTING_MIN_PACE + SITTING_STRETCH_SLACK)
+                if fits:
+                    _spread(spans, tokens, i, j, lo, hi)
+            elif i == 0 and j < n:
+                # Before the first anchor: said just before it.
+                _spread(spans, tokens, i, j, max(lo, hi - need), hi)
+            elif i > 0:
+                # After the last anchor: said just after it.
+                _spread(spans, tokens, i, j, lo, min(hi, lo + need))
+        for k in range(i, j):
+            if not tokens[k]:
+                spans[k] = None
+        i = j
+
+
+def _spread(spans: list, tokens: list[int], i: int, j: int,
+            lo: float, hi: float) -> None:
+    total = sum(tokens[i:j])
+    scale = (hi - lo) / total if total and hi > lo else 0.0
+    cursor = lo
+    for k in range(i, j):
+        w = tokens[k] * scale
+        spans[k] = [cursor, min(cursor + w, hi)]
+        cursor += w
 
 
 # --- transcription backends -----------------------------------------------
@@ -428,6 +601,21 @@ def transcribe_local(m3u8: str, playseq: str | None, *, model: str,
         audio, language=language, word_timestamps=True, vad_filter=True,
         batch_size=config.whisper_batch_size(_local_device))
     return segments_to_words(segments)
+
+
+def transcribe_local_audio(path, *, model: str, language: str) -> dict:
+    """Transcribe an audio file already on disk (a downloaded committee
+    recording, BIZ-30) with the local ``faster-whisper`` model. Returns
+    ``{words, durationS}`` like the Modal service's ``transcribe_audio``: the
+    duration is the decoded audio's own length, the timeline the words are on."""
+    from faster_whisper import BatchedInferencePipeline     # lazy
+    audio = ffmpeg_decode(str(path), referer=False)
+    pipe = BatchedInferencePipeline(_get_local_model(model))
+    segments, _info = pipe.transcribe(
+        audio, language=language, word_timestamps=True, vad_filter=True,
+        batch_size=config.whisper_batch_size(_local_device))
+    return {"words": segments_to_words(segments),
+            "durationS": round(len(audio) / 16000.0, 3)}
 
 
 def _local_available() -> bool:

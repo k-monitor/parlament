@@ -243,7 +243,7 @@ watch(() => store.cycles.join(','), () => { page.value = 0; load() })
               <span aria-hidden="true"> · </span>
               <!-- Straight to the moment it was said (VIE-3/VIE-5). -->
               <RouterLink :to="{ name: 'viewer', params: { uid: m.speech_uid },
-                                 hash: '#s=' + m.sentence_id }">
+                                 query: { s: m.sentence_ord } }">
                 {{ $t('settlements.watch') }}
               </RouterLink>
             </p>

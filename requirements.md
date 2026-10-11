@@ -734,6 +734,97 @@ section — **Elemzések** — with its own entry in the top bar.
 
 ---
 
+## 4F. Cross-cutting: The Home Page
+
+The home page draws on every module and owns none, so it is specified here rather
+than under any one of them. It answers three questions in order: *where do I
+start* (the search), *what is in here* (a number and a figure about the cycles in
+scope), and *what is the House doing* (last week, then the coming sitting).
+
+- **HOME-1 (SHOULD).** The **search** leads the page but stays **compact**: one
+  row of label, box and button under a one-line welcome, with the corpus size
+  (sentences since the first year held, speeches, sitting days, members) in one
+  line beneath. Beside it, **one example search at a time** shows its popularity
+  histogram (SEA-8) and opens that search; the topics take turns rather than
+  filling a grid.
+- **HOME-2 (SHOULD).** Two panels sit side by side and **take turns** through
+  their items: a **number from Parliament** stated in a sentence (who spoke the
+  longest, who interjected the most, how many settlements were never named, the
+  most discussed topic, the largest faction's share of speaking time, the most
+  questioned ministry), and one of the site's **interactive figures** (the
+  settlement map, the interjection network, the topic mix). Both follow the
+  global cycle scope (§4A) and state it. Every number is the one the linked page
+  shows — read off that page's own endpoint — and every item is **gated on its
+  module or feature** (EXT-6); an item with nothing to say in scope is left out
+  rather than shown as a zero. The facts are neutral superlatives, never scores
+  (§1.2). A click inside a figure opens the full page for exactly what was
+  clicked (the town, the pair, the topic).
+- **HOME-3 (MUST).** Rotation MUST be **stoppable** (WCAG 2.2.2): a pause/play
+  control and a dot per item on every rotating panel. It **holds** while the
+  pointer is over the panel or focus is inside it, and while the tab is hidden;
+  touching an interactive figure **stops** it for good, since nobody wants the map
+  they are panning to turn into another figure. Under `prefers-reduced-motion` it
+  does not start by itself. A rotating figure keeps **one height** whatever it
+  draws, so a turn never moves the page.
+- **HOME-4 (SHOULD).** **"A múlt héten"** summarises the sitting week just gone:
+  its days, their speeches and length, the week's vote count, who spoke the most,
+  and the week's distinctive words. It is read off the calendar, not the cycle.
+  Because a held sitting is published in instalments (SIT-2), **every day of the
+  week is listed whatever its state**, and a day with nothing published yet is
+  marked *"Még nincs feldolgozva"* rather than counted as a quiet day; the totals
+  say when they cover only part of the week. When the House did not sit last week,
+  the panel shows the latest week it did sit in and **retitles itself** ("A
+  legutóbbi ülésnapok"), so a recess never reads as an empty week. It stands
+  above the coming sitting (NR-5): first what the House has done, then what it
+  is about to do.
+  Volume alone ("36 szavazás") says nothing about *what was decided*, so the
+  panel also lists the week's **decisions**, one per iromány: the laws passed or
+  voted down, resolutions, elections, immunity and disciplinary cases, each with
+  its outcome and, where one vote decided it, that vote's tally. An iromány
+  refused onto the agenda is reported as that, never as "voted down"; an
+  election that went both ways says how many votes went each way. The kinds are
+  **tabs** (laws first), so a heavy week costs one list's height rather than
+  five; the interpellation answers the House voted on are the last tab, headed
+  by why they are there at all — it votes on one only when the MP who asked
+  rejected it. Beside them stand the week's
+  votes where a faction **split** — the Assembly's own "frakcióval szemben"
+  count, never a per-MP claim (§6B), and only from three MPs up, since one or
+  two off the line is a mis-press as often as a stance. Each top speaker carries
+  the **office** they spoke in that week, because a minister answering Monday's
+  questions tops the list by office. The distinctive words are shown only when
+  they were actually scored as distinctive; raw frequency is the House's
+  everyday vocabulary and is not presented under that heading. And the current
+  week's days **before today** are listed (not summed) at the foot of the panel:
+  the order paper shows only the days still ahead, so without them a sitting
+  held on Monday would be nowhere on the home page until the week was over.
+
+> **✅ realized.** `views/HomeView.vue` composes `HomeTrendCard`, `HomeFactsCard`,
+> `HomeFigureCard`, `LastWeekPanel` and `UpcomingSitting`; the three feature cards
+> and the example-search grid are gone. Rotation is `lib/rotation.js` (hold vs.
+> stop, resume-where-it-paused so the progress bar and the timer agree) with
+> `RotationControls.vue`. The figures reuse the site's components as they are,
+> plus two opt-in props: `InterjectionGraph`'s `aspect` (a pinned frame) and
+> `SettlementMentionMap`'s `height`/`compact` (the bands stay, the scale sentence
+> goes). HOME-4 is `GET /proceedings/week` (optional `date`), which resolves
+> last week on the Budapest calendar with the recess fallback, reports each day's
+> `status`/`processing` exactly as the sittings list does, ranks speakers on
+> non-procedural speech (STAT-1), and scores the week's pooled word counts by the
+> day cloud's TF·IDF; the vote count comes from `/votes` (adopted + rejected, so
+> quorum calls are not counted as decisions) and only with that module on.
+> The same endpoint carries each speaker's `office` (the `speech.speaker_office`
+> they spoke longest in), `words_measure` (`tfidf` / `frequency`, the panel
+> hiding the latter) and `this_week` (this week's days before today, empty for an
+> explicit `date`). The decisions are `GET /bills/decisions?date_from&date_to`
+> (bills module, ≤ 31 days), read off `bill_vote` because a law's final vote
+> names only the document it was cast on in `vote_subject`; a vote is decisive
+> by its upstream wording (`önálló indítvány …`, `mentelmi jog …`,
+> `…interpellációs választ…`, `…tiszteletdíjának csökkentését…`, and
+> `…tárgysorozat…` as the separate agenda stage), stable since cycle 41, and its
+> outcome is its `result`. The split votes are `/votes?sort=crossvoting_desc`
+> over the week, votes module only. The day cards are `WeekDayCards.vue`.
+
+---
+
 ## 5. Functional Requirements — Module: Proceedings Search & Viewer
 
 ### 5.1 Search
@@ -1801,6 +1892,8 @@ section — **Elemzések** — with its own entry in the top bar.
   - A declaration that was **due but never published** stays in the list as a
     dated, unlinked row. Silently dropping it would hide exactly the fact a reader
     is looking for.
+  - Declarations filed from 2026 in the House's electronic declaration system
+    are listed in the same panel, from that system (REP-18).
   - The profile also links the **CV** (*önéletrajz*) the representative had the
     House publish, when there is one. Publication is the MP's own choice and the
     file is taken down when the mandate ends, so the link MUST only be published
@@ -2012,6 +2105,48 @@ section — **Elemzések** — with its own entry in the top bar.
     **confirmed rather than inferred**: every clean published fee divides by it to
     a statutory rate exactly, which a wrong base could not do. A new entry is due
     each March; past entries are never edited.
+
+- **REP-18 (SHOULD).** **Declarations filed in the electronic declaration system
+  (*Elektronikus Vagyonnyilatkozati Rendszer*, EVNYR).** From 2026 the House no
+  longer publishes declarations only as PDFs on the adatlap (REP-13): they are
+  filed in a system of their own,
+  [`vagyonnyilatkozat-pub.parlament.hu`](https://vagyonnyilatkozat-pub.parlament.hu),
+  which publishes each one as **data**. It holds MPs' declarations and those of
+  the non-MP ministers and state secretaries who file under the same rules. A
+  profile whose declarations moved there and that read only the adatlap would
+  show the newest filing as missing, which is exactly the fact REP-13 must never
+  get wrong.
+  - **Source.** The system's **daily CSV snapshot** of every public declaration,
+    which the House offers for free reuse. The site's search is behind a
+    proof-of-work challenge and is not used. The snapshot is re-read when a new
+    one is published, and every load **replaces the whole set**, so a declaration
+    withdrawn or corrected upstream changes or leaves here with it.
+  - **Linked as REP-13 requires, and shown.** Each declaration links its own page
+    on the system (always) and its PDF (once read). Unlike the adatlap's PDFs, its
+    public **contents** are shown too, section by section as on the House's own
+    form (property, high-value movables, claims and savings, debts, gifts, income,
+    economic interests). That is not the stale mirror REP-13 rules out: the data
+    is replaced from the House's current snapshot on every refresh, and the
+    snapshot's date is stated beside it. Values are shown **as filed**. Amounts are
+    free text upstream ("Aktuális érték: 211448,29 EUR (77083474 HUF)"), so
+    nothing is summed, converted or ranked (TRUST-1). The contents have an
+    editorial switch of their own (`ASSET_DECLARATION_DETAILS_ENABLED`); with it
+    off the declarations are still listed and linked.
+  - **Dated by finalisation**, not by the declared assets' date: the snapshot
+    has no such field, and the entry says which date it shows.
+  - **Matching a declaration to a person.** The snapshot names the filer and
+    their post but carries **no person id**, so this is the one place a person is
+    joined by name (cf. EXT-2), and a wrong match would attribute one person's
+    assets to another. A declaration is linked only when **exactly one** person
+    fits by name (case and academic titles aside; *ifj.* is part of the name), by
+    the kind of role the post names (an MP's seat; an advocate's seat; for an
+    official "without an MP mandate", a government office and no seat on the
+    filing date), and by holding it around the filing date. Anything else stays
+    **unlinked and still listed**: a filer the corpus does not know yet is no
+    reason to hide a declaration the House published. Links are re-derived
+    whenever the people change.
+  - Biography, like REP-13: **not cycle-scoped**, listed with the adatlap's
+    declarations in one list, newest first.
 
 - **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
   representative and faction statistics** (speaking time, speech counts, trends —
@@ -3438,8 +3573,9 @@ this bill" is a question the corpus cannot answer at all.
   (§5.2): the same back link, share control, speaker toplist, agenda outline
   pinned on wide screens, transcript cut into agenda sections, and prev/next
   navigation at the foot. It differs only where the records genuinely do —
-  committee minutes carry **no timings at all**, so nothing is playable and the
-  toplist ranks by **how much was said** rather than for how long. The figure
+  committee minutes carry **no timings of their own**, so the toplist ranks by
+  **how much was said** rather than for how long (a recorded sitting is playable
+  all the same, from timings made off its recording — BIZ-30). The figure
   beside each bar is therefore a word count, not a speech count: the chair takes
   the floor oftenest and says least, so a count there would contradict the bar
   on almost every row.
@@ -3451,7 +3587,7 @@ this bill" is a question the corpus cannot answer at all.
   The recording goes up the same day and the jegyzőkönyv follows weeks later
   (BIZ-22), so on the sittings a reader is most likely to open, the video is all
   there is. That sitting's page is then served from the **meeting row alone**:
-  its cover, the recording (linked, never embedded — LEGAL-1) and the prev/next
+  its cover, the recording (played in place — BIZ-30) and the prev/next
   navigation, with every record-derived block empty and the page saying plainly
   that no jegyzőkönyv has been published yet. There is no second page for it, a
   sitting being one object with two records. A sitting that left **neither** a
@@ -3460,6 +3596,19 @@ this bill" is a question the corpus cannot answer at all.
   that lands on an empty page is worse than one that plainly does not offer to
   go anywhere. A PDF the House published and we have not read yet still leads to
   the committee's own meeting list, where the row offers the PDF itself.
+- **BIZ-29.** Every speech in the minutes viewer is **its own bubble, headed as
+  a sitting day's speech row is** (§5.2): the speaker's portrait and name, a
+  faction chip where the label *is* a faction (a guest's ministry sits in the
+  same column and stays plain text), the role, and a link and share control of
+  its own. A plenary speech's address is its viewer page; a committee speech has
+  no clip and so no viewer, so its address is an anchor on the sitting's page,
+  `#sp-<ord>`. Opening that address brings the speech into view and marks it,
+  clearing any filter that would hide it — the reader followed a link to that
+  speech. The text stays open rather than folded behind a spoiler: here it is
+  the whole record, and the in-page search has to show what it found. A speech
+  the clerk continued past an agenda heading without reprinting the name is
+  marked *folytatás*, so its bubble does not read as the speaker taking the
+  floor again.
 
 ### Recordings (BIZ-16)
 
@@ -3471,7 +3620,8 @@ this bill" is a question the corpus cannot answer at all.
   nothing in a video's metadata names the meeting, so **the title is the whole
   of the join**:
   it carries the date and the body, and both are parsed out of it and matched.
-  Videos are linked, never embedded or mirrored (LEGAL-1).
+  Videos are never mirrored; they are played in YouTube's own embedded player
+  and always linked to the original (LEGAL-1, BIZ-30).
 - **BIZ-22.** Matching is **by name and date, and fails in two independent ways,
   neither of which drops the row**. A video naming a body we do not hold keeps
   its row unlinked (the House streams an eseti bizottság before the registry
@@ -3492,6 +3642,52 @@ this bill" is a question the corpus cannot answer at all.
   site **says so**, in the committee's methodology note, rather than leaving the
   gap unexplained, because an unexplained gap reads as a fault in the site
   rather than a fact about the House.
+
+### Playing the recording against the record (BIZ-30)
+
+- **BIZ-30 (MUST).** A streamed sitting's recording **plays on the sitting's
+  page**, beside its jegyzőkönyv, and where the two have been aligned the page
+  behaves as the proceedings viewer does (§5.2): **clicking a sentence plays
+  the recording from it** (VIE-3), and during playback **the sentence being
+  spoken is highlighted and followed down the page** (VIE-4), with manual
+  scrolling pausing the follow for a few seconds. Each speech also gets a
+  "play from here" control. A sitting that overran into a second stream is one
+  recording to the reader: a part switch, the next part following on when one
+  ends, and a sentence in part 2 opening part 2.
+- **BIZ-31.** The player is **click-to-load** (PRIV-1): until the reader starts
+  it the page shows the video's thumbnail and makes **no request to YouTube**;
+  only then is the IFrame API loaded, in YouTube's privacy-enhanced mode
+  (`youtube-nocookie.com`). A link to the video on YouTube stays beside it
+  (LEGAL-1). On a wide screen the player is docked in the side column above the
+  agenda outline; on a narrow one it leads the page and, once started, is
+  pinned under the site header so it stays in view while the record scrolls.
+- **BIZ-32.** The timings are **made, not published**: the jegyzőkönyv carries
+  none, so the recording's audio is transcribed by Whisper and that transcript
+  is aligned to the minutes' text, as the plenary's are (TIM-1). The highlighted
+  text is always the **minutes'**, never the machine transcript. With no
+  per-speech windows the whole sitting is aligned at once, and so a sentence the
+  alignment cannot place with confidence — one whose text the recording never
+  caught, or that would have to be stretched across a recess — is **left
+  unplaced**: readable, not playable, rather than highlighted on the wrong
+  minute. A sitting whose record and recording do not align at all is served
+  with the player and no karaoke.
+- **BIZ-33.** A stored timing is served only while it **still describes what
+  is served**: every video it was made on must be one the sitting is shown
+  with, and each speech's sentences must still be the text at their stored
+  offsets. A jegyzőkönyv re-parsed since the alignment ran therefore reads as
+  plain text in the speeches that moved, instead of being cut and highlighted in
+  the wrong places.
+
+- **BIZ-34.** A host YouTube **bot-walls** ("Sign in to confirm you're not a
+  bot") is told apart from a failed download and **left alone**: the first
+  refusal ends that pass's downloads, and none is attempted for a block period
+  (12 hours by default), since each refused request deepens a verdict that is
+  about the address, not the video. Cached words are still aligned throughout,
+  so a walled server's sittings can be timed from words transcribed on another
+  machine and copied in; downloads can also be routed through a proxy (or the
+  scraper's own SSH tunnel) or a signed-in session's cookies. A walled host never
+  shows an error on the site — its sittings play without karaoke until words
+  arrive.
 
 > **Shipped 2026-09-21** for cycles 40–43 (the cycles the rest of the corpus is
 > richest for; the API serves 34–43 and the stage takes a `--cycle` like every

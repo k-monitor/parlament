@@ -60,6 +60,15 @@ const props = defineProps({
   // has not been asked for. Ignored while `bins` is 'points'.
   segments: { type: Object, default: null },
   ariaLabel: { type: String, default: '' },
+  // CSS height of the map itself, for a card that has less room than the page
+  // (the home page's figure). Empty keeps the page's own height.
+  height: { type: String, default: '' },
+  // The card-sized map (the home page's figure). Its legend keeps the bands — they
+  // are still the only way to read a mark back into a number — but leaves the
+  // sentence explaining the scale to the full page the card links to. And it is a
+  // figure the reader is scrolling past, so the wheel (and, on a touch screen, one
+  // finger) scrolls the page rather than the map: zoom is on the buttons.
+  compact: { type: Boolean, default: false },
 })
 const emit = defineEmits(['select'])
 
@@ -181,7 +190,11 @@ function drawPoints(L, group) {
         : stepFor(MENTION_STEPS, intensity(mentions, props.max)),
       fillOpacity: blind ? (blindIsFigure ? 0.35 : 0.4) : 0.9,
     })
-    marker.bindTooltip(
+    // Worded when it opens, not here: this loop runs over every settlement in the
+    // country on each draw, and formatting 3 177 tooltips nobody hovers was most of
+    // its time — a blocked second on a slow machine, every time the home page's
+    // figure card turned back to the map.
+    marker.bindTooltip(() =>
       `<strong>${escapeHtml(name)}</strong>${county ? ` · ${escapeHtml(county)}` : ''}`
       + `<br>${fmtNumber(mentions)} ${escapeHtml(t('settlements.mentionsShort'))}`,
       { direction: 'top', className: 'pm-maptip' })
@@ -267,7 +280,8 @@ function drawSegments(L, group) {
     renderer: group.options.renderer,
     style: (feature) => segmentStyle(feature.properties),
     onEachFeature: (feature, sub) => {
-      sub.bindTooltip(segmentTooltip(feature.properties),
+      // Worded when it opens, as for the points (drawPoints).
+      sub.bindTooltip(() => segmentTooltip(feature.properties),
                       { direction: 'top', className: 'pm-maptip', sticky: true })
       // A cell holds many settlements, so opening one of them would be a guess.
       // Clicking drills into the cell instead — where the point map then names the
@@ -294,6 +308,14 @@ function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 }
 
+function coarsePointer() {
+  try {
+    return window.matchMedia('(pointer: coarse)').matches
+  } catch {
+    return false
+  }
+}
+
 async function build() {
   let L
   try {
@@ -305,7 +327,13 @@ async function build() {
   }
   if (!host.value) return
   leaflet.value = L
-  const map = L.map(host.value, { scrollWheelZoom: true, zoomControl: true })
+  const map = L.map(host.value, {
+    scrollWheelZoom: !props.compact,
+    // A pinch still zooms (and moves) the card's map; a single-finger swipe is left
+    // to the page. A mouse drag has nothing to steal, so it still pans.
+    dragging: !(props.compact && coarsePointer()),
+    zoomControl: true,
+  })
   mapInstance.value = map
   L.tileLayer(props.map.tile_url, {
     maxZoom: props.map.max_zoom || 18,
@@ -340,10 +368,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <figure class="mapfig">
+  <figure class="mapfig" :class="{ compact }">
     <p v-if="failed" class="state" role="alert">{{ $t('settlements.mapFailed') }}</p>
     <div
       v-else ref="host" class="mentionmap" role="application"
+      :style="height ? { height } : null"
       :aria-label="ariaLabel || $t('settlements.mapLabel')"
     ></div>
     <!-- The legend is not optional: the mention scale is compressed, so the bands are
@@ -425,6 +454,9 @@ onBeforeUnmount(() => {
 .swatch.empty { background: var(--surface); box-shadow: inset 0 0 0 1px #b9bdc4; }
 .swatch.blind { background: #ffffff; border-color: #8a857b; }
 .lscale { flex: 1 1 100%; }
+.mapfig.compact { margin: 0; }
+.mapfig.compact .legend { gap: .2rem .7rem; margin-top: .4rem; font-size: .75rem; }
+.mapfig.compact .lscale { display: none; }
 </style>
 
 <style>

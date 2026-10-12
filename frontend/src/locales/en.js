@@ -871,6 +871,10 @@ export default {
     // rate and the section. The page never says "earns this much": this is the
     // parliamentary fee, without expense frames or any other public salary.
     salary: 'Remuneration',
+    // The card's title once the declared income (REP-19) is on it too, and the
+    // fee's own heading inside it.
+    income: 'Income',
+    salaryFee: 'Parliamentary fee',
     salaryPerMonth: 'HUF / month (gross)',
     salaryMonth: 'fee for {month}',
     salarySource: 'Source: parlament.hu — the representative\'s published monthly gross fee.',
@@ -1021,6 +1025,29 @@ export default {
     },
     yes: 'yes', no: 'no',
     empty: 'The public part of this declaration contains no data.',
+  },
+  // The income listed in the newest EVNYR declaration (REP-19), on the income
+  // card under the fee: the declarant's own free-text amounts read as numbers,
+  // never added up.
+  income: {
+    title: 'Income stated in the asset declaration',
+    otherTitle: 'Other income stated in the asset declaration',
+    note: 'The income listed from the asset declaration is the declarant\'s own, unverified, taken from their newest declaration in the National Assembly\'s electronic declaration system (daily data file). The "average monthly income" field is free text, and the amount is read from it; where the text says more than a number (a year, "approx.", a range) the original is shown under it, and where no single amount can be read from it, only the original is shown. Gross or net is stated only where the declarant said which. A number written without a currency is taken as forints, since the declaration asks for an exchange rate alongside any amount in another currency. The amounts are neither added up nor converted: they can mix gross and net, monthly and yearly, current and from the three years before.',
+    huf: 'HUF',
+    approx: 'approx.',
+    per: { year: '/ year', week: '/ week', day: '/ day', hour: '/ hour', occasion: '/ occasion', once: 'one-off', month: '/ month' },
+    basis: { gross: 'gross', net: 'net' },
+    rate: 'exchange rate: {rate}',
+    asFiled: 'as filed',
+    notGiven: 'no amount given',
+    noPay: 'unpaid',
+    unnamed: 'unnamed',
+    multiple: 'Several amounts in one field: none is picked, and they are not added up.',
+    unparsed: 'No single amount can be read from this text.',
+    parliamentary: 'This is the parliamentary mandate itself: the official published amount is shown above.',
+    unpaid: 'One unpaid membership or post is not listed. | {n} unpaid memberships or posts are not listed.',
+    empty: 'The public part of the declaration lists no income.',
+    caveat: 'The declarant\'s own, unverified figures. They are not added up: they can mix gross and net, monthly and yearly, current and earlier amounts.',
   },
   compare: {
     title: 'Compare speakers',

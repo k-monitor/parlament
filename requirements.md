@@ -2098,6 +2098,13 @@ scope), and *what is the House doing* (last week, then the coming sitting).
     paid simply has none. The panel is **not cycle-scoped** — it is a fact about
     now, like `is_mp` — and the series currently begins **2026-07-01**, when
     publication started.
+  - **Shown beside the declared income, on declarants' profiles.** Since
+    2026-10-08 the panel appears only on the profile of an MP who has filed a
+    declaration in the EVNYR system (REP-18), and there it leads an **income
+    card** that lists the other income the MP declared under it (REP-19). The fee
+    is then read as one source among those the MP states, not as a bare figure.
+    The API serves `remuneration` for every paid MP either way; which profiles
+    show it is an editorial switch (`REMUNERATION_SCOPE`: off / declarants / all).
   - **The base is a curated, dated constant.** §104(1) states it as a formula
     (1.8× the KSH average gross wage of the preceding year, in force each 1 March),
     but which KSH series the House applies is not pinned down by the text, so the
@@ -2131,7 +2138,9 @@ scope), and *what is the House doing* (last week, then the coming sitting).
     free text upstream ("Aktuális érték: 211448,29 EUR (77083474 HUF)"), so
     nothing is summed, converted or ranked (TRUST-1). The contents have an
     editorial switch of their own (`ASSET_DECLARATION_DETAILS_ENABLED`); with it
-    off the declarations are still listed and linked.
+    off the declarations are still listed and linked. (The income part is *also*
+    read into numbers for the income card, REP-19; the contents panel itself
+    stays as filed.)
   - **Dated by finalisation**, not by the declared assets' date: the snapshot
     has no such field, and the entry says which date it shows.
   - **Matching a declaration to a person.** The snapshot names the filer and
@@ -2147,6 +2156,40 @@ scope), and *what is the House doing* (last week, then the coming sitting).
     whenever the people change.
   - Biography, like REP-13: **not cycle-scoped**, listed with the adatlap's
     declarations in one list, newest first.
+
+- **REP-19 (SHOULD).** **Declared income, as numbers, beside the fee.** "What
+  else does this person earn" is the question the fee (REP-17) raises next, and
+  the EVNYR declaration (REP-18) answers it: four of its lists (current
+  income-earning activities, posts in organisations, company interests, and the
+  occupations of the three years before) give each entry a *havi átlagos
+  jövedelem*. The profile's income card lists those entries under the fee, one
+  row each, with the amount **read out of the declarant's text**.
+  - **Read, not retyped.** The field is free text ("2380000 (2025-ben)",
+    "745 000 HUF", "nettó 3.461.192 Ft"), so the reading is a parser, and it is
+    held to the declarant's words. Dates are never amounts. Dot- or space-grouped
+    digits are thousands ("nettó 1.746 Ft" is 1 746, not 1.7). Net or gross, a
+    period other than the month, and "kb." are reported **only when the text
+    says them**. The one unstated reading is that a bare number is forints,
+    because the form asks for an exchange rate beside any other currency.
+  - **The text stays in sight.** Where it says more than the number (a year, a
+    range, "kb."), it is shown under the figure. Where no single amount can be
+    read (several unrelated amounts in one field, or words only), the text is
+    shown **instead** of a number, never a pick among them.
+  - **Never summed, never converted.** The entries mix gross and net, months
+    and years, now and three years ago, so a total would be a figure nobody
+    declared (TRUST-1). A foreign amount stays in its currency unless the
+    declarant also gave the forints. One income stated twice (gross and net, a
+    month and a year, a foreign amount and its forints) is one row: the gross,
+    or the month, leads.
+  - **The mandate is not counted twice.** An MP who lists the parliamentary
+    mandate among their activities sees it marked as such, with a pointer to the
+    official published fee above it.
+  - Only the **newest** declaration is read. An unpaid post with no amount is a
+    membership, not an income: it is counted ("2 unpaid posts not listed"), not
+    listed. A declaration whose public part lists no income says so.
+  - It is declaration content, so it follows `ASSET_DECLARATION_DETAILS_ENABLED`.
+    For a non-MP official with a declaration and no fee, the card carries the
+    declared income alone.
 
 - **STAT-1 (MUST).** **Procedural/chairing speeches are excluded from all
   representative and faction statistics** (speaking time, speech counts, trends —

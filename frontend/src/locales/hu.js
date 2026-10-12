@@ -968,6 +968,10 @@ export default {
     // A felület sosem mondhatja, hogy „ennyit keres”: ez a képviselői tiszteletdíj,
     // költségtérítés és más közszolgálati illetmény nélkül.
     salary: 'Tiszteletdíj',
+    // The card's title once the declared income (REP-19) is on it too, and the
+    // fee's own heading inside it.
+    income: 'Jövedelmek',
+    salaryFee: 'Képviselői tiszteletdíj',
     salaryPerMonth: 'Ft / hó (bruttó)',
     salaryMonth: '{month} havi tiszteletdíj',
     salarySource: 'Forrás: parlament.hu — a képviselő közzétett havi bruttó tiszteletdíja.',
@@ -1133,6 +1137,29 @@ export default {
     },
     yes: 'igen', no: 'nem',
     empty: 'A nyilatkozat nyilvános része nem tartalmaz adatot.',
+  },
+  // A legutóbbi EVNYR-vagyonnyilatkozatban bevallott jövedelmek (REP-19), a
+  // jövedelmek kártyáján a tiszteletdíj alatt. Az összegek a nyilatkozó saját,
+  // szabad szöveges adatai számmá olvasva; soha nem adjuk össze őket.
+  income: {
+    title: 'A vagyonnyilatkozatban bevallott jövedelmek',
+    otherTitle: 'Egyéb jövedelmek a vagyonnyilatkozat szerint',
+    note: 'A vagyonnyilatkozatban bevallott jövedelmek a nyilatkozó saját adatai: az Országgyűlés Elektronikus Vagyonnyilatkozati Rendszerének napi adatállományából, a legutóbbi nyilatkozatból valók, ellenőrizetlenül. A „havi átlagos jövedelem” mező szabad szöveg, ebből olvassuk ki az összeget; ahol a szöveg többet mond egy számnál (évszám, „kb.”, sáv), az eredeti is ott áll alatta, ahol pedig nem olvasható ki egyetlen összeg, csak az eredeti szöveg. Bruttót vagy nettót csak akkor írunk, ha a nyilatkozó megadta. A pénznem nélkül írt számot forintnak vesszük, mert a nyilatkozat a más pénznemben megadott összeghez külön átváltási árfolyamot kér. Az összegeket nem adjuk össze és nem váltjuk át: a tételek között bruttó és nettó, havi és éves, jelenlegi és az előző három évből származó összeg is lehet.',
+    huf: 'Ft',
+    approx: 'kb.',
+    per: { year: '/ év', week: '/ hét', day: '/ nap', hour: '/ óra', occasion: '/ alkalom', once: 'egyszeri', month: '/ hó' },
+    basis: { gross: 'bruttó', net: 'nettó' },
+    rate: 'átváltási árfolyam: {rate}',
+    asFiled: 'a nyilatkozatban',
+    notGiven: 'összeg nincs megadva',
+    noPay: 'díjazás nélkül',
+    unnamed: 'megnevezés nélkül',
+    multiple: 'Egy mezőben több összeg: nem választunk közülük, és nem adjuk össze őket.',
+    unparsed: 'A szövegből nem olvasható ki egyértelmű összeg.',
+    parliamentary: 'Ez maga a képviselői megbízatás: a hivatalos, közzétett összeg fent látható.',
+    unpaid: 'Egy díjazás nélküli tagság vagy tisztség nem szerepel a listában. | {n} díjazás nélküli tagság vagy tisztség nem szerepel a listában.',
+    empty: 'A nyilatkozat nyilvános része nem sorol fel jövedelmet.',
+    caveat: 'A nyilatkozó saját, ellenőrizetlen adatai. Az összegeket nem adjuk össze: bruttó és nettó, havi és éves, jelenlegi és korábbi összeg is lehet köztük.',
   },
   compare: {
     title: 'Felszólalók összehasonlítása',

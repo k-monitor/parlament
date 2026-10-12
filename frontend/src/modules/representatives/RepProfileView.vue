@@ -17,8 +17,9 @@ import ShareButton from '../../components/ShareButton.vue'
 import EmbedButton from '../../components/EmbedButton.vue'
 import { compareRoute } from '../../lib/compareUrl.js'
 import { signsOf } from '../../lib/zodiac.js'
-import { REMUNERATION_ENABLED, ASSET_DECLARATION_DETAILS_ENABLED } from '../../features.js'
+import { REMUNERATION_SCOPE, ASSET_DECLARATION_DETAILS_ENABLED } from '../../features.js'
 import AssetDeclarationContent from './AssetDeclarationContent.vue'
+import DeclaredIncome from './DeclaredIncome.vue'
 import { usePageTitle } from '../../lib/pageTitle.js'
 
 const props = defineProps({ id: String })
@@ -128,9 +129,20 @@ const showDeclarationContent = (d) => ASSET_DECLARATION_DETAILS_ENABLED
 // Remuneration (REP-17). The amount is parlament.hu's published monthly figure;
 // `basis` is only the arithmetic that explains it against the Ogytv. Null for
 // anyone with no published month, so the panel simply does not exist for them —
-// and null for everyone while REMUNERATION_ENABLED is off, which is the one
-// place the editorial curtain hangs: the whole card keys off this.
-const salary = computed(() => (REMUNERATION_ENABLED ? profile.value?.remuneration || null : null))
+// and null wherever REMUNERATION_SCOPE keeps it off, which is the one place the
+// editorial curtain hangs: the fee half of the card keys off this. Under
+// 'declarants' that is everyone without an EVNYR filing (REP-18).
+const hasEvnyr = computed(() => declarations.value.some(isEvnyr))
+const salary = computed(() => {
+  const r = profile.value?.remuneration || null
+  if (REMUNERATION_SCOPE === 'all') return r
+  return REMUNERATION_SCOPE === 'declarants' && hasEvnyr.value ? r : null
+})
+// The income listed in their newest EVNYR declaration (REP-19), read into
+// numbers by the API. It is the declaration's contents, so it follows their
+// switch; it shows on the card with the fee or, for a non-MP official, alone.
+const declaredIncome = computed(() =>
+  (ASSET_DECLARATION_DETAILS_ENABLED ? profile.value?.declared_income || null : null))
 // Months other than the newest — the fee changes, and this is the only place a
 // reader can see that it did.
 const salaryHistory = computed(() => (salary.value?.history || []).slice(1))
@@ -807,79 +819,88 @@ watch(() => store.cycles.join(','), load)
             </ul>
           </section>
 
-          <!-- Remuneration (REP-17). The figure is the House's own published
-               monthly one — we do not compute it, because computing it gets a
-               fifth of cases wrong (a part-month, a §107 deduction, an office
-               the registry does not hold). What the card adds is the reading of
-               it: divided by the §104(1) base it gives the statutory rate and
-               the section that sets it, which is exact arithmetic on official
-               data. Where the amount is not a clean multiple we say so instead
-               of forcing it onto the nearest rule. -->
-          <section class="card pad salary" v-if="salary">
+          <!-- Income: the parliamentary fee (REP-17) and, under it, the other
+               income the person lists in their EVNYR declaration (REP-19).
+               The fee is the House's own published monthly figure — we do not
+               compute it, because computing it gets a fifth of cases wrong (a
+               part-month, a §107 deduction, an office the registry does not
+               hold). What the card adds is the reading of it: divided by the
+               §104(1) base it gives the statutory rate and the section that
+               sets it, which is exact arithmetic on official data. Where the
+               amount is not a clean multiple we say so instead of forcing it
+               onto the nearest rule. The declared amounts are listed, never
+               added to it or to each other. -->
+          <section class="card pad salary" v-if="salary || declaredIncome">
             <div class="sechead">
-              <h2>{{ $t('profile.salary') }}</h2>
-              <HelpTip :label="$t('profile.salary')">
-                <p>{{ $t('profile.salaryNote') }}</p>
+              <h2>{{ declaredIncome ? $t('profile.income') : $t('profile.salary') }}</h2>
+              <HelpTip :label="declaredIncome ? $t('profile.income') : $t('profile.salary')">
+                <p v-if="salary">{{ $t('profile.salaryNote') }}</p>
+                <p v-if="declaredIncome">{{ $t('income.note') }}</p>
               </HelpTip>
             </div>
-            <p class="amount">
-              <strong>{{ fmtHuf(salary.amount_huf) }}</strong>
-              <span class="muted small unit">{{ $t('profile.salaryPerMonth') }}</span>
-            </p>
-            <p class="small muted month">{{ $t('profile.salaryMonth', { month: fmtMonth(salary.month) }) }}</p>
+            <template v-if="salary">
+              <h3 v-if="declaredIncome" class="feehead">{{ $t('profile.salaryFee') }}</h3>
+              <p class="amount">
+                <strong>{{ fmtHuf(salary.amount_huf) }}</strong>
+                <span class="muted small unit">{{ $t('profile.salaryPerMonth') }}</span>
+              </p>
+              <p class="small muted month">{{ $t('profile.salaryMonth', { month: fmtMonth(salary.month) }) }}</p>
 
-            <!-- The calculation behind the figure. -->
-            <div class="basis" v-if="salary.basis">
-              <template v-if="salary.basis.exact">
-                <p class="small">
-                  {{ $t('profile.salaryBasis', {
-                       section: salary.basis.base_section,
-                       amount: fmtHuf(salary.basis.base_huf),
-                       multiplier: fmtMultiplier(salary.basis.multiplier) }) }}
+              <!-- The calculation behind the figure. -->
+              <div class="basis" v-if="salary.basis">
+                <template v-if="salary.basis.exact">
+                  <p class="small">
+                    {{ $t('profile.salaryBasis', {
+                         section: salary.basis.base_section,
+                         amount: fmtHuf(salary.basis.base_huf),
+                         multiplier: fmtMultiplier(salary.basis.multiplier) }) }}
+                  </p>
+                  <!-- Name the office only where our own record agrees with what was
+                       paid; otherwise list every section that sets this rate, since
+                       the amount alone cannot say which of them applies. -->
+                  <p class="small muted" v-if="salary.basis.role">
+                    {{ $t('profile.salaryBasisRole', {
+                         role: $t(`profile.salaryRole.${salary.basis.role}`),
+                         section: salary.basis.sections[0] }) }}
+                  </p>
+                  <p class="small muted" v-else-if="salary.basis.sections.length">
+                    {{ $t('profile.salaryBasisSections', { sections: salary.basis.sections.join(', ') }) }}
+                  </p>
+                </template>
+                <p class="small" v-else>
+                  {{ $t('profile.salaryBasisInexact', { multiplier: fmtMultiplier(salary.basis.multiplier) }) }}
                 </p>
-                <!-- Name the office only where our own record agrees with what was
-                     paid; otherwise list every section that sets this rate, since
-                     the amount alone cannot say which of them applies. -->
-                <p class="small muted" v-if="salary.basis.role">
-                  {{ $t('profile.salaryBasisRole', {
-                       role: $t(`profile.salaryRole.${salary.basis.role}`),
-                       section: salary.basis.sections[0] }) }}
+                <p class="small muted formula">
+                  {{ $t('profile.salaryBaseFormula', {
+                       formula: salary.basis.base_formula,
+                       date: formatLongDate(salary.basis.base_valid_from, locale) }) }}
                 </p>
-                <p class="small muted" v-else-if="salary.basis.sections.length">
-                  {{ $t('profile.salaryBasisSections', { sections: salary.basis.sections.join(', ') }) }}
-                </p>
+              </div>
+
+              <template v-if="salaryHistory.length">
+                <h3 class="small histhead">{{ $t('profile.salaryHistory') }}</h3>
+                <ul class="plain hist">
+                  <li v-for="h in shown(salaryHistory, 'salary')" :key="h.month" class="small">
+                    <span>{{ fmtMonth(h.month) }}</span>
+                    <span class="histnum">{{ fmtHuf(h.amount_huf) }}</span>
+                  </li>
+                </ul>
+                <button v-if="salaryHistory.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+                  :aria-expanded="expanded.salary" @click="expanded.salary = !expanded.salary">
+                  {{ expanded.salary ? $t('profile.showLess') : $t('profile.showMore') }}
+                </button>
               </template>
-              <p class="small" v-else>
-                {{ $t('profile.salaryBasisInexact', { multiplier: fmtMultiplier(salary.basis.multiplier) }) }}
-              </p>
-              <p class="small muted formula">
-                {{ $t('profile.salaryBaseFormula', {
-                     formula: salary.basis.base_formula,
-                     date: formatLongDate(salary.basis.base_valid_from, locale) }) }}
-              </p>
-            </div>
 
-            <template v-if="salaryHistory.length">
-              <h3 class="small histhead">{{ $t('profile.salaryHistory') }}</h3>
-              <ul class="plain hist">
-                <li v-for="h in shown(salaryHistory, 'salary')" :key="h.month" class="small">
-                  <span>{{ fmtMonth(h.month) }}</span>
-                  <span class="histnum">{{ fmtHuf(h.amount_huf) }}</span>
+              <ul class="plain caveats">
+                <li class="small muted">{{ $t('profile.salarySource') }}</li>
+                <li v-for="c in salary.caveats" :key="c" class="small muted">
+                  {{ $t(`profile.salaryCaveat${c === 'excludes_expenses' ? 'Expenses'
+                        : c === 'government_office' ? 'Government' : 'PartialMonth'}`) }}
                 </li>
               </ul>
-              <button v-if="salaryHistory.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
-                :aria-expanded="expanded.salary" @click="expanded.salary = !expanded.salary">
-                {{ expanded.salary ? $t('profile.showLess') : $t('profile.showMore') }}
-              </button>
             </template>
-
-            <ul class="plain caveats">
-              <li class="small muted">{{ $t('profile.salarySource') }}</li>
-              <li v-for="c in salary.caveats" :key="c" class="small muted">
-                {{ $t(`profile.salaryCaveat${c === 'excludes_expenses' ? 'Expenses'
-                      : c === 'government_office' ? 'Government' : 'PartialMonth'}`) }}
-              </li>
-            </ul>
+            <DeclaredIncome v-if="declaredIncome" :income="declaredIncome" :with-fee="!!salary"
+              :class="{ divided: !!salary }" />
           </section>
 
           <!-- Asset declarations (vagyonnyilatkozatok, REP-13), newest first, each
@@ -1303,4 +1324,8 @@ watch(() => store.cycles.join(','), load)
 .salary .hist li { display: flex; align-items: baseline; gap: .5rem; }
 .salary .hist .histnum { margin-left: auto; font-variant-numeric: tabular-nums; }
 .salary .caveats { margin: .6rem 0 0; display: grid; gap: .35rem; border-top: 1px solid var(--line); padding-top: .5rem; }
+/* With the declared income under it (REP-19), the fee gets a heading of its own
+   and the two halves a rule between them: one card, two sources. */
+.salary .feehead { margin: .1rem 0 0; font-size: .95rem; }
+.salary .divided { margin-top: .9rem; padding-top: .7rem; border-top: 1px solid var(--line); }
 </style>

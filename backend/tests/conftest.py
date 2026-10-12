@@ -231,6 +231,18 @@ def _asset_declarations_registry():
                  "jovedelemnyilatkozat.korabbiFoglalkozasok": [
                      {"megnevezes": "ügyvéd", "reszesultDijazasban": "igen",
                       "haviJovedelem": "900000"}],
+                 # The income the profile's card lists beside the published fee
+                 # (REP-19): the mandate itself as he filed it, a net figure, and
+                 # an unpaid membership, which is counted but not listed.
+                 "jovedelemnyilatkozat.jelenlegiTevekenysegek": [
+                     {"megnevezes": "országgyűlési képviselő",
+                      "kifizetoSzemelye": "Országgyűlés Hivatala",
+                      "haviJovedelem": "bruttó 2 618 986 Ft"},
+                     {"megnevezes": "Ingatlan bérbeadás",
+                      "haviJovedelem": "nettó 180.000 Ft (2025-ben)"}],
+                 "gazdasagiErdekeltseg.tagsagok": [
+                     {"szervezetNeve": "Magyar Ügyvédi Kamara", "tagsag": "tag",
+                      "reszesulDijazasban": "nem"}],
                  "gazdasagiErdekeltseg.nyilatkozattetelHelye": "Budapest"}},
             {"id": "2222bbbb-0000-4000-8000-000000000002", "name": "DR. ISMERETLEN ELEK",
              "organisation": "Országgyűlés Hivatala",

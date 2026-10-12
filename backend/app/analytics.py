@@ -151,6 +151,11 @@ SOURCES: dict[str, dict[str, str]] = {
     # *body*, this one for a *sitting*, and folding them together would make
     # both unreadable. `readable` follows the boolean convention above.
     "committee-meetings": {"committee": "", "readable": "False"},
+    # The committee scope of the site search (SEA-14): full text over what was
+    # said in committee sittings. Its own source, not "proceedings" — the two
+    # scopes rank different corpora, and a regression in one must not hide in
+    # the other's click-through rate.
+    "committee-minutes": {"sort": "relevance", "committee": ""},
 }
 
 # Parameter names a caller may pass that are NOT filters — they are either the

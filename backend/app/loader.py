@@ -1405,6 +1405,48 @@ def _ensure_committee_minutes_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_committee_video_date
             ON committee_video(held_on);
     """)
+    _ensure_committee_speech_fts(conn)
+
+
+def _ensure_committee_speech_fts(conn: sqlite3.Connection) -> None:
+    """The committee full-text index (SEA-14) and the triggers that keep it in
+    step with ``committee_speech``. Mirrors schema.sql.
+
+    A DB whose minutes were loaded before the index existed gets it the next
+    time any minutes file is loaded, and that first pass **backfills** it from
+    the rows already there: the triggers only see writes made after they exist,
+    and an update reloads one cycle's minutes, not all of them, so without the
+    rebuild every other cycle would stay unsearchable until it happened to be
+    re-scraped. One pass over the content table, once."""
+    fresh = not _table_exists(conn, "committee_speech_fts")
+    conn.executescript("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS committee_speech_fts USING fts5(
+            text, content = 'committee_speech', content_rowid = 'id',
+            tokenize = "unicode61 remove_diacritics 2");
+        CREATE TRIGGER IF NOT EXISTS committee_speech_ai
+            AFTER INSERT ON committee_speech BEGIN
+            INSERT INTO committee_speech_fts(rowid, text)
+                VALUES (new.id, new.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS committee_speech_ad
+            AFTER DELETE ON committee_speech BEGIN
+            INSERT INTO committee_speech_fts(committee_speech_fts, rowid, text)
+                VALUES('delete', old.id, old.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS committee_speech_au
+            AFTER UPDATE ON committee_speech BEGIN
+            INSERT INTO committee_speech_fts(committee_speech_fts, rowid, text)
+                VALUES('delete', old.id, old.text);
+            INSERT INTO committee_speech_fts(rowid, text)
+                VALUES (new.id, new.text);
+        END;
+    """)
+    if fresh and conn.execute(
+            "SELECT 1 FROM committee_speech LIMIT 1").fetchone():
+        logger.info("Building the committee full-text index over the "
+                    "minutes already loaded")
+        conn.execute("INSERT INTO committee_speech_fts(committee_speech_fts) "
+                     "VALUES('rebuild')")
 
 
 def _minutes_person_index(conn: sqlite3.Connection):

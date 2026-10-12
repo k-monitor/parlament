@@ -6,7 +6,6 @@ proceedings tables plus the shared core entities (person, faction, session).
 
 from __future__ import annotations
 
-import html
 import json
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -28,7 +27,7 @@ from ...parlament_links import sitting_day_page_url, speech_page_url
 from ...publication import processing_state
 from ...query_cache import cached_aggregate
 from ... import parlacap, readability
-from ...search import build_match
+from ...search import build_match, mark_html as _mark_html
 from ...wordfreq import count_words, tfidf_scores
 
 router = APIRouter(prefix="/proceedings", tags=["proceedings"])
@@ -47,18 +46,6 @@ def _is_estimated(align_method: str | None) -> bool:
 # ---------------------------------------------------------------------------
 # Search (SEA-*)
 # ---------------------------------------------------------------------------
-
-def _mark_html(s: str | None) -> str | None:
-    """Make FTS5 highlight/snippet output safe for the SPA's ``v-html``: the
-    match markers are emitted as control-char sentinels (which cannot occur in
-    transcript text), the sentence text is HTML-escaped, and only then do the
-    sentinels become ``<mark>`` tags — so a transcript containing ``<`` or
-    scraped markup renders literally instead of as HTML (stored-XSS surface)."""
-    if s is None:
-        return None
-    return (html.escape(s, quote=False)
-            .replace("\x02", "<mark>").replace("\x03", "</mark>"))
-
 
 # How many transcript sentences of surrounding context to attach to each search
 # hit on either side (SEA-4). Kept small so the result list stays scannable and

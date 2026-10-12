@@ -44,7 +44,8 @@ export default {
            multiHint: 'You can select several cycles.',
            scope: '{cycle} data', scopeAll: 'All-cycles data' },
   home: {
-    searchLabel: 'Search the speeches',
+    // Screen readers only: the scope dropdown beside the box says what it searches.
+    searchLabel: 'Search term',
     searchPlaceholder: 'e.g. housing, Paks, budget…',
     searchButton: 'Search',
     since: 'Since {year}:',
@@ -177,6 +178,18 @@ export default {
     breakdownSpeakers: 'Matches for “{q}” by representative',
     cycleScope: 'Search is limited to speeches from {cycle}.',
     cycleScopeAll: 'switch to all cycles',
+    // What the search box searches in (SEA-14): plenary and committee text on
+    // this page, the rest on their own list pages.
+    scope: 'Search in',
+    scopes: {
+      plenary: 'Plenary sittings',
+      committee: 'Committee meetings',
+      documents: 'Documents',
+      votes: 'Votes',
+      people: 'People',
+    },
+    openMinutes: 'Open in the minutes',
+    committeeUnavailable: 'Committee minutes cannot be searched on this server yet.',
   },
   viewer: {
     transcript: 'Transcript', noTranscript: 'No transcript text is available for this speech.',

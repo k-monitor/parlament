@@ -18,6 +18,7 @@ characters — the user cannot inject raw FTS syntax.
 
 from __future__ import annotations
 
+import html
 import re
 
 from .config import settings
@@ -48,3 +49,18 @@ def build_match(query: str) -> str | None:
     if not parts:
         return None
     return " ".join(parts)                              # implicit AND
+
+
+def mark_html(s: str | None) -> str | None:
+    """Make FTS5 highlight/snippet output safe for the SPA's ``v-html``: the
+    match markers are emitted as control-char sentinels (which cannot occur in
+    transcript text), the sentence text is HTML-escaped, and only then do the
+    sentinels become ``<mark>`` tags — so a transcript containing ``<`` or
+    scraped markup renders literally instead of as HTML (stored-XSS surface).
+
+    Shared by every full-text index (plenary sentences, committee speeches), so
+    both pass through the one escaping rule."""
+    if s is None:
+        return None
+    return (html.escape(s, quote=False)
+            .replace("\x02", "<mark>").replace("\x03", "</mark>"))

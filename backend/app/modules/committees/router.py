@@ -27,10 +27,12 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...analytics import search_analytics
-from ...db import (get_db, like_contains, period_in_scope, period_key,
-                   period_list, period_sql)
+from ...config import settings
+from ...db import (QueryBudgetExceeded, get_db, like_contains, period_in_scope,
+                   period_key, period_list, period_sql, query_budget)
 from ...parlament_links import committee_page_url
 from ...query_cache import cached_aggregate
+from ...search import build_match, mark_html
 
 router = APIRouter(prefix="/committees", tags=["committees"])
 
@@ -749,6 +751,211 @@ def _adjacent(db: sqlite3.Connection, committee_id: str, held_at: str | None,
     """, (committee_id, held_at)).fetchone()
     return {"meetingId": r["id"], "heldAt": r["held_at"],
             "numberInYear": r["number_in_year"]} if r else None
+
+
+# Whitelisted orderings for the minutes search (cf. SEA-10). The sitting's day
+# is the cover's own date (`held_on`, local) — `held_at` is UTC and puts a
+# sitting called for midnight on the day before — with the timestamp only as a
+# fallback for the handful of covers that could not be read. `cs.id` closes
+# every ordering: it is load order, which within a sitting is speech order.
+_SEARCH_DAY = "COALESCE(mi.held_on, substr(m.held_at, 1, 10))"
+_SEARCH_SORTS = {
+    "relevance": "rank, cs.id",
+    "date_desc": f"{_SEARCH_DAY} DESC, m.held_at DESC, cs.id",
+    "date_asc": f"{_SEARCH_DAY}, m.held_at, cs.id",
+}
+# The opening shown for a speech listed without a term (no snippet to cut).
+_OPENING_CHARS = 280
+
+
+def _opening(text: str | None) -> str | None:
+    """The first lines of a speech, cut at a word boundary, HTML-escaped the
+    same way a snippet is so the SPA renders both through one ``v-html``."""
+    if not text:
+        return None
+    if len(text) > _OPENING_CHARS:
+        cut = text.rfind(" ", 0, _OPENING_CHARS)
+        text = text[:cut if cut > 0 else _OPENING_CHARS].rstrip() + " …"
+    return mark_html(text)
+
+
+@router.get("/search")
+def search_minutes(
+    q: Optional[str] = Query(
+        None, max_length=200,
+        description="Free-text query; \"…\" = exact phrase. Optional when "
+                    "`person_id` is given — the search then lists that "
+                    "person's committee speeches"),
+    period: Optional[List[int]] = Query(None),
+    date_from: Optional[str] = Query(None, description="ISO date lower bound"),
+    date_to: Optional[str] = Query(None, description="ISO date upper bound"),
+    person_id: Optional[str] = None,
+    committee: Optional[str] = Query(None, description="One body's id"),
+    sort: str = Query("relevance", description="relevance | date_desc | date_asc"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Full-text search over what was said in **committee** sittings — the
+    committee scope of the site search (SEA-14), beside the plenary one.
+
+    One hit per *speech*, not per sentence: the minutes are not segmented into
+    sentences, and the finest place a hit can open is the speech's anchor in
+    the jegyzőkönyv. The query is the plenary search's own (`build_match`), over
+    an index with the plenary's tokenizer, so the same words fold and
+    prefix-match the same way in both scopes.
+
+    As on the plenary, a `person_id` with no term lists that person's
+    contributions newest first; any other filter needs a term."""
+    if not _table_exists(db, "committee_speech_fts"):
+        return {"query": q or "", "sort": sort, "total": 0,
+                "totalIsCapped": False, "limit": limit, "offset": offset,
+                "results": [], "tablesReady": False}
+    q = (q or "").strip()
+    match = build_match(q)
+    where: list[str] = []
+    params: dict = {}
+    if match:
+        where.append("committee_speech_fts MATCH :match")
+        params["match"] = match
+    elif not person_id:
+        raise HTTPException(
+            400, "Query contains no searchable terms — give a term, or pick a "
+                 "speaker to list their committee speeches")
+    scope = period_sql(period, "cs.period_number")
+    if scope:
+        where.append(scope)
+    if date_from:
+        where.append(f"{_SEARCH_DAY} >= :date_from")
+        params["date_from"] = date_from
+    if date_to:
+        where.append(f"{_SEARCH_DAY} <= :date_to")
+        params["date_to"] = date_to
+    if person_id:
+        where.append("cs.person_id = :person_id")
+        params["person_id"] = person_id
+    if committee:
+        where.append("cs.committee_id = :committee")
+        params["committee"] = committee
+    # Nothing to rank without a term, so a speaker's list is dated instead.
+    sort_name = sort if sort in _SEARCH_SORTS else "relevance"
+    if not match and sort_name == "relevance":
+        sort_name = "date_desc"
+
+    key = (q, period_key(period), date_from, date_to, person_id, committee,
+           sort_name, limit, offset)
+    try:
+        with query_budget(db, settings.search_timeout):
+            payload = cached_aggregate(
+                "committee-search", key, lambda: _search_minutes_compute(
+                    db, q, match, " AND ".join(where), params, sort_name,
+                    limit, offset))
+    except QueryBudgetExceeded:
+        raise HTTPException(
+            503,
+            "Search took too long and was stopped. Try a longer or more "
+            "specific term, or narrow the cycle/date range.",
+            headers={"Retry-After": "30"})
+
+    # Counted like every other search box (SEA-11), outside the cache: this is
+    # searches people ran, so a repeat served from memory still counts.
+    search_analytics.record(
+        source="committee-minutes", query=q, period=period_list(period),
+        date_from=date_from, date_to=date_to, person_id=person_id,
+        committee=committee, sort=sort_name, results=payload["total"],
+        offset=offset)
+    return payload
+
+
+def _search_minutes_compute(db, q, match, where_sql, params, sort_name,
+                            limit, offset):
+    """One page of the minutes search and its payload (see ``search_minutes``).
+
+    Ranks and pages over the index and the few small tables the filters and
+    sort keys need, then joins the page's survivors for display — the plenary
+    search's rank-first shape. Every table but the index is small here (some
+    130k speeches, 3k sittings), so unlike the plenary the ranking phase does
+    not trim its joins by filter."""
+    source = ("FROM committee_speech_fts "
+              "JOIN committee_speech cs ON cs.id = committee_speech_fts.rowid"
+              if match else "FROM committee_speech cs")
+    source += ("\n JOIN committee_minutes mi ON mi.meeting_id = cs.meeting_id"
+               "\n JOIN committee_meeting m ON m.id = cs.meeting_id")
+    cond = where_sql or "1=1"
+
+    total = db.execute(
+        f"SELECT COUNT(*) AS n FROM (SELECT 1 {source} WHERE {cond} "
+        f"LIMIT {settings.max_search_total + 1})", params).fetchone()["n"]
+    capped = total > settings.max_search_total
+
+    hit_cols = ("snippet(committee_speech_fts, 0, char(2), char(3), '…', 40) "
+                "AS sn, bm25(committee_speech_fts) AS rank"
+                if match else "NULL AS sn")
+    # The page is re-sorted after the display joins, by the same key: the
+    # relevance score travels out of the CTE, and the date keys name aliases
+    # (cs, mi, m) the outer query binds to the same rows.
+    outer_order = ("hits.rank, cs.id" if sort_name == "relevance"
+                   else _SEARCH_SORTS[sort_name])
+    rows = db.execute(f"""
+        WITH hits AS (
+            SELECT cs.id AS sid, {hit_cols}
+            {source}
+            WHERE {cond}
+            ORDER BY {_SEARCH_SORTS[sort_name]}
+            LIMIT :limit OFFSET :offset
+        )
+        SELECT cs.id, cs.meeting_id, cs.ord, cs.committee_id, cs.period_number,
+               cs.person_id, cs.name, cs.faction_name, cs.role, cs.org,
+               cs.chair, cs.text, hits.sn,
+               mi.held_on, m.held_at, m.number_in_year,
+               c.name AS committee_name, c.parent_id,
+               sec.title AS section_title,
+               p.label AS person_label, p.photo_uri,
+               f.color AS faction_color
+          FROM hits
+          JOIN committee_speech cs ON cs.id = hits.sid
+          JOIN committee_minutes mi ON mi.meeting_id = cs.meeting_id
+          JOIN committee_meeting m ON m.id = cs.meeting_id
+          JOIN committee c ON c.id = cs.committee_id
+          LEFT JOIN committee_minutes_section sec
+                 ON sec.meeting_id = cs.meeting_id AND sec.ord = cs.section_ord
+          LEFT JOIN person p ON p.person_id = cs.person_id
+          -- NOCASE and colour-only, as on the minutes page: the column also
+          -- holds a guest's ministry, which has no faction row to match.
+          LEFT JOIN faction f ON f.label = cs.faction_name COLLATE NOCASE
+         ORDER BY {outer_order}
+    """, {**params, "limit": limit, "offset": offset}).fetchall()
+
+    return {
+        "query": q if match else "",
+        "sort": sort_name,
+        "total": min(total, settings.max_search_total),
+        "totalIsCapped": capped,
+        "limit": limit, "offset": offset, "tablesReady": True,
+        "results": [{
+            "id": r["id"],
+            "meetingId": r["meeting_id"],
+            "ord": r["ord"],
+            "committeeId": r["committee_id"],
+            "committeeName": r["committee_name"],
+            "isSubcommittee": r["parent_id"] is not None,
+            "period": r["period_number"],
+            "heldOn": r["held_on"], "heldAt": r["held_at"],
+            "numberInYear": r["number_in_year"],
+            "section": r["section_title"],
+            "personId": r["person_id"],
+            # The register's name where the speaker resolved to a person, the
+            # minutes' own spelling ("DR. SASI-NAGY EDIT") where they did not.
+            "name": r["person_label"] or r["name"],
+            "photoUri": r["photo_uri"],
+            "faction": r["faction_name"], "factionColor": r["faction_color"],
+            "role": r["role"], "org": r["org"],
+            "chair": bool(r["chair"]),
+            # A term's hit is the snippet around it; a speaker's listed speech
+            # is shown by its opening, as the plenary's are (SEA-3).
+            "excerpt": mark_html(r["sn"]) if match else _opening(r["text"]),
+        } for r in rows],
+    }
 
 
 @router.get("/{committee_id}")

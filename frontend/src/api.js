@@ -146,6 +146,10 @@ export const api = {
   // page's second tab lists.
   committeeMeetingsAll: (params) => get('/committees/meetings', params),
   committeeMinutes: (meetingId) => get(`/committees/meetings/${meetingId}/minutes`),
+  // Full text over what was said in committee sittings — the committee scope
+  // of the site search (SEA-14). One hit per speech, opened at its anchor in
+  // the minutes above.
+  committeeSearch: (params) => get('/committees/search', params),
   // Just the agenda headings of one sitting (BIZ-4b), for the hover preview on
   // the meeting lists — `committeeMinutes` above would pull the whole
   // transcript to show five titles.

@@ -8,8 +8,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, setCycles, currentCycleLabel, periodLabel } from '../../store.js'
-import { agendaLabel, formatDate, searchExcerptLines } from '../../format.js'
+import { agendaLabel, formatDate, formatDateLocal, searchExcerptLines } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
+import { scopeFromQuery, scopeTarget, searchesInPlace } from '../../lib/searchScopes.js'
 import { useSpeakerSuggest } from '../../lib/speakerSuggest.js'
 import { onekoForQuery, dismissOneko } from '../../lib/oneko.js'
 import StateBlock from '../../components/StateBlock.vue'
@@ -22,6 +23,7 @@ import TrendChart from '../../components/TrendChart.vue'
 import BarChart from '../../components/BarChart.vue'
 import EmbedButton from '../../components/EmbedButton.vue'
 import DonateCard from '../../components/DonateCard.vue'
+import SearchScopeSelect from '../../components/SearchScopeSelect.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -32,6 +34,14 @@ const AGENDA_TYPES = ['opening', 'procedural', 'regular', 'oath', 'voting',
   'rules_of_procedure', 'questioning_of_the_government', 'qa', 'condolence']
 
 const input = ref(route.query.q || '')
+// What the box searches in (SEA-14). This page runs the two full-text scopes —
+// the plenary transcript and the committee minutes, `?in=committee` — and hands
+// the others to their own list pages (lib/searchScopes.js). The committee
+// minutes have no faction id or agenda type to filter on, so only the speaker
+// and the dates carry over between the two.
+const scope = ref(scopeFromQuery(route.query))
+const isCommittee = computed(() => scope.value === 'committee')
+const PLENARY_ONLY = ['faction_id', 'agenda_type']
 // The electoral cycle is a *global* scope set from the header (store.cycles),
 // not a per-search filter — so it is no longer part of the URL query here.
 const filters = reactive({
@@ -93,20 +103,34 @@ watch(() => store.cycles.join(','), () => { if (searchable.value) runFromRoute()
 // Push the current form state into the URL (this triggers the watcher → fetch).
 function submit(resetPage = true) {
   clearSuggest()
+  // A scope with a list page of its own takes the term there, and only the
+  // term: this page's filters are a transcript's, not a vote's or a bill's.
+  if (!searchesInPlace(scope.value)) {
+    router.push(scopeTarget(scope.value, input.value))
+    return
+  }
   const query = {}
   // A filter can be set before a term is (picking a speaker from the box below
   // is exactly that), and the backend has no query-less search — so an empty `q`
-  // is left out of the URL rather than sent: the filters stay, and the page waits
-  // for the word to search for.
-  const q = input.value.trim()
-  if (q) query.q = q
-  for (const k of ['date_from', 'date_to', 'faction_id', 'agenda_type']) {
-    if (filters[k]) query[k] = filters[k]
+  // is left out of the URL rather than sent (scopeTarget): the filters stay, and
+  // the page waits for the word to search for.
+  for (const k of ['date_from', 'date_to', ...PLENARY_ONLY]) {
+    if (filters[k] && !(isCommittee.value && PLENARY_ONLY.includes(k))) query[k] = filters[k]
   }
   if (speaker.value) query.person_id = speaker.value.person_id
   if (sort.value !== 'relevance') query.sort = sort.value
   if (!resetPage && route.query.offset) query.offset = route.query.offset
-  router.push({ name: 'search', query })
+  router.push(scopeTarget(scope.value, input.value, query))
+}
+
+// Picking a scope searches there at once, as picking a filter does — for a
+// scope with a list page of its own that means going to it. With nothing to
+// search for yet the choice just waits for the term: a list page opened empty
+// is a browse the reader did not ask for.
+function onScope(key) {
+  scope.value = key
+  const runnable = input.value.trim() || (searchesInPlace(key) && speaker.value)
+  if (runnable) submit()
 }
 
 // Re-order the results: a new ordering always returns to the first page.
@@ -194,6 +218,7 @@ let breakdownLoadedSeq = -1
 // Anonymous search-quality signal (SEA-12): which result the reader opens, and
 // how far down the list it sat. Armed by each executed search, fired once.
 const clicks = createSearchClicks('proceedings')
+const committeeClicks = createSearchClicks('committee-minutes')
 
 async function runFromRoute() {
   // The site's one easter egg (SEA-13): a search for cats fetches a cat, and
@@ -208,6 +233,8 @@ async function runFromRoute() {
   }
   const seq = ++reqSeq
   loading.value = true; error.value = false; tooSlow.value = false
+  const offset = Number(route.query.offset) || 0
+  if (scopeFromQuery(route.query) === 'committee') return runCommittee(seq, offset)
   const filterArgs = {
     q: route.query.q,
     period: store.cycles, // global cycle scope (empty = all cycles)
@@ -230,13 +257,12 @@ async function runFromRoute() {
   breakdown.value = null
   breakdownLoadedSeq = -1
   if (showBreakdown.value) loadBreakdown()
-  const offset = Number(route.query.offset) || 0
   // ordering (SEA-10); trend/breakdown are unaffected by it
   const searchArgs = { ...filterArgs, sort: route.query.sort }
   try {
     const res = await api.search({ ...searchArgs, limit: PAGE, offset })
     if (seq === reqSeq) {
-      data.value = res
+      data.value = { ...res, scope: 'plenary' }
       // A query-less search has no relevance to rank by, so the backend answers
       // by date whatever was asked for — follow it, or the sort control would
       // name an ordering the list is not in.
@@ -244,6 +270,36 @@ async function runFromRoute() {
       // Arm the quality ping with the same args the search ran with, so a click
       // is counted onto this search's own aggregate row.
       clicks.arm(searchArgs, offset)
+    }
+  } catch (e) {
+    if (seq === reqSeq) { error.value = true; tooSlow.value = e.status === 503 }
+  } finally {
+    if (seq === reqSeq) loading.value = false
+  }
+}
+
+// The committee scope (SEA-14): the same request cycle over the minutes index,
+// without the plenary's two aggregates — the popularity chart and the
+// who-said-it breakdown are figures of the plenary record. The payload is
+// tagged with its scope so the list never draws one scope's hits with the
+// other's card while a switch is in flight.
+async function runCommittee(seq, offset) {
+  trend.value = null; breakdown.value = null
+  currentArgs = null; breakdownLoadedSeq = -1
+  const args = {
+    q: route.query.q,
+    period: store.cycles,
+    date_from: route.query.date_from,
+    date_to: route.query.date_to,
+    person_id: route.query.person_id,
+    sort: route.query.sort,
+  }
+  try {
+    const res = await api.committeeSearch({ ...args, limit: PAGE, offset })
+    if (seq === reqSeq) {
+      data.value = { ...res, scope: 'committee', total_is_capped: res.totalIsCapped }
+      sort.value = SORTS.includes(res.sort) ? res.sort : sort.value
+      committeeClicks.arm(args, offset)
     }
   } catch (e) {
     if (seq === reqSeq) { error.value = true; tooSlow.value = e.status === 503 }
@@ -278,6 +334,7 @@ function toggleBreakdown() {
 // Keep the form synced when navigating via back/forward, and re-run on any change.
 watch(() => route.query, (q) => {
   input.value = q.q || ''
+  scope.value = scopeFromQuery(q)
   filters.date_from = q.date_from || ''
   filters.date_to = q.date_to || ''
   filters.faction_id = q.faction_id || ''
@@ -300,12 +357,31 @@ function viewerLink(r) {
   return { name: 'viewer', params: { uid: r.speech_uid }, query: { s: r.sentence_ord } }
 }
 
+// A committee hit opens the jegyzőkönyv at the speech (BIZ-29's `#sp-<ord>`):
+// the minutes are one document, and the speech is the finest place in it.
+function minutesLink(r) {
+  return { name: 'committee-minutes', params: { meetingId: r.meetingId }, hash: `#sp-${r.ord}` }
+}
+
+// Who said it, as the minutes page draws a speech: a face and a faction chip
+// for a member, the office and body for a guest. The minutes' faction column
+// also holds a guest's ministry, which only reads as a party when it has a colour.
+function committeeSpeaker(r) {
+  return { person_id: r.personId, label: r.name, photo_uri: r.photoUri }
+}
+function committeeFaction(r) {
+  return r.factionColor ? { label: r.faction, color: r.factionColor } : null
+}
+function committeeRole(r) {
+  return r.factionColor ? '' : [r.role, r.org].filter(Boolean).join(', ')
+}
+
 // Each result rendered as a transcript excerpt (SEA-4): the matched sentence plus
 // its surrounding context, parsed exactly like the sitting-day transcript —
 // speaker label stripped, parenthetical stage directions / heckles lifted out as
 // italic asides, and a change of speaker in the spilled-in context attributed.
 // See searchExcerptLines() in format.js.
-const resultsView = computed(() => (data.value?.results || []).map((r) => ({
+const resultsView = computed(() => (data.value?.scope === 'plenary' ? data.value.results : []).map((r) => ({
   ...r,
   lines: searchExcerptLines(r),
 })))
@@ -382,6 +458,7 @@ function onTrendSelect({ from, to }) {
 
   <form role="search" class="card pad searchform" @submit.prevent="submit()">
     <div class="row" style="gap:.5rem;">
+      <SearchScopeSelect :model-value="scope" @update:model-value="onScope" />
       <div ref="qBox" class="qbox">
         <input
           ref="qInput" v-model="input" type="search" autocomplete="off"
@@ -413,14 +490,14 @@ function onTrendSelect({ from, to }) {
             @update:model-value="onSpeakerFilter"
           />
         </div>
-        <div>
+        <div v-if="!isCommittee">
           <label for="f-faction">{{ $t('search.faction') }}</label>
           <select id="f-faction" v-model="filters.faction_id" @change="submit()">
             <option value="">{{ $t('search.all') }}</option>
             <option v-for="f in factions" :key="f.id" :value="f.id">{{ f.label }}</option>
           </select>
         </div>
-        <div>
+        <div v-if="!isCommittee">
           <label for="f-agenda">{{ $t('search.agendaType') }}</label>
           <select id="f-agenda" v-model="filters.agenda_type" @change="submit()">
             <option value="">{{ $t('search.all') }}</option>
@@ -452,7 +529,7 @@ function onTrendSelect({ from, to }) {
     :error-text="tooSlow ? $t('search.tooSlow') : ''"
     :retryable="!tooSlow"
     :empty="!!data && data.results.length === 0"
-    :empty-text="$t('search.noResults')"
+    :empty-text="data?.tablesReady === false ? $t('search.committeeUnavailable') : $t('search.noResults')"
     @retry="runFromRoute"
   >
     <div v-if="data">
@@ -471,7 +548,7 @@ function onTrendSelect({ from, to }) {
         </label>
       </div>
 
-      <section v-if="trend && trend.buckets.length > 1" class="card pad trendcard">
+      <section v-if="data.scope === 'plenary' && trend && trend.buckets.length > 1" class="card pad trendcard">
         <TrendChart
           :buckets="trend.buckets" :granularity="trend.granularity"
           :start="trend.start" :end="trend.end" :markers="cycleMarkers"
@@ -490,7 +567,7 @@ function onTrendSelect({ from, to }) {
 
       <!-- Only for a keyword search: a query-less list is one speaker's own
            speeches, so both groupings would be a single bar of their own. -->
-      <section v-if="data.results.length && data.query" class="card pad breakdowncard">
+      <section v-if="data.scope === 'plenary' && data.results.length && data.query" class="card pad breakdowncard">
         <button
           class="breakdown-toggle" type="button"
           :aria-expanded="showBreakdown" @click="toggleBreakdown"
@@ -519,7 +596,33 @@ function onTrendSelect({ from, to }) {
         </div>
       </section>
 
-      <ol class="results">
+      <!-- Committee hits (SEA-14): one per speech, opened at its anchor in the
+           jegyzőkönyv. The excerpt is the server's snippet, already escaped
+           with only its <mark>s left as markup, like the plenary's. -->
+      <ol v-if="data.scope === 'committee'" class="results">
+        <li v-for="(r, i) in data.results" :key="r.id" class="card pad result">
+          <div class="result-meta row">
+            <SpeakerLink :speaker="committeeSpeaker(r)" />
+            <FactionBadge :faction="committeeFaction(r)" />
+            <span v-if="committeeRole(r)" class="muted small">{{ committeeRole(r) }}</span>
+            <span class="muted small">{{ r.heldOn ? formatDate(r.heldOn) : formatDateLocal(r.heldAt) }}</span>
+            <router-link :to="{ name: 'committee', params: { id: r.committeeId } }" class="small">
+              {{ r.committeeName }}
+            </router-link>
+          </div>
+          <p v-if="r.section" class="muted small result-section">{{ r.section }}</p>
+          <router-link :to="minutesLink(r)" class="result-excerpt" @click="committeeClicks.hit(i)">
+            <span v-html="r.excerpt"></span>
+          </router-link>
+          <div class="result-actions">
+            <router-link :to="minutesLink(r)" class="btn secondary small" @click="committeeClicks.hit(i)">
+              {{ $t('search.openMinutes') }}
+            </router-link>
+          </div>
+        </li>
+      </ol>
+
+      <ol v-else class="results">
         <li v-for="(r, i) in resultsView" :key="r.sentence_id" class="card pad result">
           <div class="result-meta row">
             <SpeakerLink v-if="r.speaker" :speaker="r.speaker" />
@@ -589,6 +692,7 @@ function onTrendSelect({ from, to }) {
 .excerpt-line.aside { font-style: italic; color: var(--ink-soft); }
 .ctx-speaker { font-weight: 600; color: var(--ink); font-style: normal; }
 .result-meta { gap: .8rem; row-gap: .4rem; }
+.result-section { margin: 0; }
 .result-actions { display: flex; justify-content: flex-end; }
 .pager { display: flex; align-items: center; justify-content: center; gap: 1rem; margin: 1.5rem 0; }
 </style>

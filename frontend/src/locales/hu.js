@@ -90,7 +90,8 @@ export default {
     scopeAll: 'Összes ciklus adatai',
   },
   home: {
-    searchLabel: 'Keress a felszólalásokban',
+    // Csak a felolvasó olvassa: hogy miben keres, azt a mellette álló választó mondja.
+    searchLabel: 'Keresőszó',
     searchPlaceholder: 'pl. lakhatás, Paks, költségvetés…',
     searchButton: 'Keresés',
     since: '{year} óta:',
@@ -243,6 +244,18 @@ export default {
     breakdownSpeakers: 'A(z) „{q}” találatok felszólalónként',
     cycleScope: 'A keresés a(z) {cycle} felszólalásaira szűkül.',
     cycleScopeAll: 'váltás minden ciklusra',
+    // Miben keres a kereső (SEA-14). A plenáris és a bizottsági ülések szövegében
+    // ezen az oldalon, a többiben a saját listaoldalukon.
+    scope: 'Miben keresel?',
+    scopes: {
+      plenary: 'Plenáris ülések',
+      committee: 'Bizottsági ülések',
+      documents: 'Irományok',
+      votes: 'Szavazások',
+      people: 'Személyek',
+    },
+    openMinutes: 'Megnyitás a jegyzőkönyvben',
+    committeeUnavailable: 'A bizottsági jegyzőkönyvekben ezen a kiszolgálón még nem lehet keresni.',
   },
   viewer: {
     transcript: 'Jegyzőkönyv',

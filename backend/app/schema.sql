@@ -786,6 +786,31 @@ CREATE INDEX idx_committee_speech_meeting ON committee_speech(meeting_id);
 CREATE INDEX idx_committee_speech_person ON committee_speech(person_id);
 CREATE INDEX idx_committee_speech_committee ON committee_speech(committee_id);
 
+-- FTS5 over committee speech text (SEA-14), the committee counterpart of
+-- `sentence_fts`: the same tokenizer, so a query folds and prefix-matches
+-- exactly as it does on the plenary. Indexed per SPEECH, not per sentence —
+-- the minutes carry no sentence segmentation, and a hit opens the speech's
+-- anchor in the jegyzőkönyv (`#sp-<ord>`), which is the finest address a
+-- committee record has.
+CREATE VIRTUAL TABLE committee_speech_fts USING fts5(
+    text,
+    content = 'committee_speech',
+    content_rowid = 'id',
+    tokenize = "unicode61 remove_diacritics 2"
+);
+CREATE TRIGGER committee_speech_ai AFTER INSERT ON committee_speech BEGIN
+    INSERT INTO committee_speech_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER committee_speech_ad AFTER DELETE ON committee_speech BEGIN
+    INSERT INTO committee_speech_fts(committee_speech_fts, rowid, text)
+        VALUES('delete', old.id, old.text);
+END;
+CREATE TRIGGER committee_speech_au AFTER UPDATE ON committee_speech BEGIN
+    INSERT INTO committee_speech_fts(committee_speech_fts, rowid, text)
+        VALUES('delete', old.id, old.text);
+    INSERT INTO committee_speech_fts(rowid, text) VALUES (new.id, new.text);
+END;
+
 -- --- Recordings (BIZ-16) ---------------------------------------------------
 -- The House streams committee meetings to its own YouTube channel. There is no
 -- id shared with the committee registry and nothing in a video's metadata names

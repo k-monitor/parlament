@@ -783,3 +783,112 @@ def test_a_recording_only_sitting_has_no_timing(client, conn):
     m = client.get("/api/v1/committees/meetings/ules-2/minutes").json()
     assert m["timing"] is None
 
+
+
+# --- Full-text search over the minutes (SEA-14) -----------------------------
+
+SEARCH = "/api/v1/committees/search"
+
+
+def test_search_finds_a_committee_speech_and_says_where_it_was_said(client):
+    res = client.get(SEARCH, params={"q": "elnok"}).json()
+    assert res["tablesReady"] is True
+    assert res["total"] == 1
+    hit = res["results"][0]
+    # Accent-folded like the plenary: "elnok" finds "elnök".
+    assert "<mark>elnök</mark>" in hit["excerpt"]
+    # Enough to open the speech's anchor in the jegyzőkönyv (`#sp-<ord>`).
+    assert (hit["meetingId"], hit["ord"]) == ("ules-1", 2)
+    assert hit["committeeName"] == "Költségvetési Bizottság"
+    assert hit["heldOn"] == "2026-06-10"
+    assert hit["section"] == "A költségvetésről szóló T/100. számú törvényjavaslat"
+    # Not in the roster: named as the minutes print it, linked nowhere.
+    assert (hit["name"], hit["personId"]) == ("Vendég Viktor", None)
+    assert hit["org"] == "Pénzügyminisztérium"
+
+
+def test_search_prefix_matches_a_suffixed_word(client):
+    """The plenary's query rules: a bare word is a prefix term, so "köszön"
+    reaches both "Köszöntöm" and "Köszönöm"."""
+    res = client.get(SEARCH, params={"q": "köszön"}).json()
+    assert sorted(h["ord"] for h in res["results"]) == [0, 2]
+
+
+def test_search_lists_a_speakers_committee_speeches_without_a_term(client):
+    res = client.get(SEARCH, params={"person_id": "k001"}).json()
+    assert res["query"] == ""
+    # Nothing to rank without a term, so the list is dated instead.
+    assert res["sort"] == "date_desc"
+    assert [h["ord"] for h in res["results"]] == [0, 1]
+    # Shown by its opening, unhighlighted — there is no match to mark.
+    assert res["results"][0]["excerpt"] == "Köszöntöm a bizottság tagjait."
+    assert res["results"][0]["name"] == "Kovács Béla"
+
+
+def test_search_without_a_term_or_a_speaker_is_refused(client):
+    assert client.get(SEARCH, params={"q": "  "}).status_code == 400
+    assert client.get(SEARCH, params={"committee": "biz-1"}).status_code == 400
+
+
+def test_search_filters_combine(client):
+    def total(**params):
+        return client.get(SEARCH, params={"q": "köszön", **params}).json()["total"]
+    assert total(period=43) == 2
+    assert total(period=42) == 0
+    assert total(date_from="2026-06-10", date_to="2026-06-10") == 2
+    assert total(date_to="2026-06-09") == 0
+    assert total(committee="biz-1") == 2
+    assert total(committee="biz-1a") == 0     # its subcommittee
+    assert total(person_id="k001") == 1
+
+
+def test_search_is_not_shadowed_by_the_committee_sheet(client):
+    """`/committees/search` is two segments like `/committees/{id}`; only the
+    registration order keeps "search" from being read as a committee id."""
+    assert "results" in client.get(SEARCH, params={"q": "elnok"}).json()
+
+
+def test_search_excerpt_is_escaped_and_follows_an_edit(conn, client):
+    """The excerpt goes into `v-html`: markup in the minutes renders as text.
+    The edit reaches the index through the update trigger, not a rebuild."""
+    conn.execute("UPDATE committee_speech SET text = 'A <b>zárszámadás</b> "
+                 "kész.' WHERE meeting_id = 'ules-1' AND ord = 2")
+    conn.commit()
+    hit = client.get(SEARCH, params={"q": "zarszamadas"}).json()["results"][0]
+    assert "&lt;b&gt;<mark>zárszámadás</mark>&lt;/b&gt;" in hit["excerpt"]
+    assert client.get(SEARCH, params={"q": "elnok"}).json()["total"] == 0
+
+
+def test_reloading_a_cycles_minutes_keeps_the_index_in_step(conn, data_dir):
+    """A reload deletes the cycle's speeches and inserts them again; the
+    triggers carry both into the index, so no hit is doubled or orphaned."""
+    import json
+    from app import loader
+    registry = json.loads(
+        (data_dir / "processed" / "committee-minutes-43.json").read_text())
+    loader.load_committee_minutes(conn, registry)
+    hits = conn.execute("SELECT rowid FROM committee_speech_fts "
+                        "WHERE committee_speech_fts MATCH 'koszon*'").fetchall()
+    ids = {r[0] for r in conn.execute("SELECT id FROM committee_speech")}
+    assert len(hits) == 2 and {r[0] for r in hits} <= ids
+
+
+def test_an_index_missing_from_an_older_db_is_built_from_its_rows(conn):
+    """A DB loaded before the index existed: the next minutes load creates it
+    and backfills it from the speeches already there (the triggers alone would
+    only index what is written afterwards)."""
+    from app import loader
+    conn.executescript("""
+        DROP TRIGGER committee_speech_ai; DROP TRIGGER committee_speech_ad;
+        DROP TRIGGER committee_speech_au; DROP TABLE committee_speech_fts;""")
+    loader._ensure_committee_minutes_tables(conn)
+    assert conn.execute("SELECT COUNT(*) FROM committee_speech_fts "
+                        "WHERE committee_speech_fts MATCH 'elnok*'"
+                        ).fetchone()[0] == 1
+
+
+def test_search_on_a_db_without_the_index_is_empty_not_an_error(conn, client):
+    conn.execute("DROP TABLE committee_speech_fts")
+    conn.commit()
+    res = client.get(SEARCH, params={"q": "elnok"}).json()
+    assert (res["tablesReady"], res["total"], res["results"]) == (False, 0, [])

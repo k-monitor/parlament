@@ -1959,6 +1959,14 @@ def _delete_session(conn: sqlite3.Connection, sid: str) -> None:
     # before the module existed has no such table (EXT-6).
     if _table_exists(conn, "interjection"):
         conn.execute("DELETE FROM interjection WHERE session_id = ?", (sid,))
+    # The other per-sitting derived tables (metrics, CAP topics, §6D mentions)
+    # hold foreign keys into these speeches/sentences too. Their passes clear and
+    # re-derive the reloaded sittings only AFTER the load, so a sitting that
+    # already carries rows would otherwise block its own reload — and a removed
+    # sitting gets no pass at all. Same EXT-6 guard as above.
+    for table in ("speech_metrics", "speech_topic", "settlement_mention"):
+        if _table_exists(conn, table):
+            conn.execute(f"DELETE FROM {table} WHERE session_id = ?", (sid,))
     conn.execute(
         "DELETE FROM sentence WHERE speech_id IN "
         "(SELECT uid FROM speech WHERE session_id = ?)", (sid,))

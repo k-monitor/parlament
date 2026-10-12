@@ -109,6 +109,21 @@ after their declaration does.
 The profile serves these declarations in `asset_declarations` beside the
 adatlap's, tagged `source: "evnyr"` and carrying `content`.
 
+### Declared income (REP-19)
+
+The profile's `declared_income` is the income listed in the person's newest
+EVNYR declaration, read at request time from that `content`
+(`app/declared_income.py`), so a better reading needs no reload. Four lists carry
+a free-text *havi átlagos jövedelem* (current activities, posts in organisations,
+company interests, the three years before), and `parse_amount` reads each text
+into a number. It keeps the text (`raw`), masks dates first so
+"2380000 (2025-ben)" is one amount, reads dot/space groups as thousands
+("nettó 1.746 Ft" is 1746), and reports net/gross, a non-monthly period and "kb."
+only when the text states them. Two amounts that restate one income (gross and
+net, a month and a year, a foreign amount and its forints) become `amount` plus
+`alt`. Unrelated amounts come back as `multiple`, never picked from or summed.
+Nothing is totalled: the entries mix bases, periods and years.
+
 ### The shared lemma store
 
 The diversity half and the word cloud both need HuSpaCy lemmas for the *same*

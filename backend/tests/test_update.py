@@ -93,6 +93,70 @@ def test_update_reloads_a_changed_sitting(data_dir, db_path):
     assert _count(db_path, "SELECT COUNT(*) FROM session") == 1
 
 
+def _seed_derived_rows(db, sid):
+    """One row per per-sitting derived table that holds a foreign key into the
+    sitting's speeches/sentences. The fixture sitting is too short to measure and
+    has no gazetteer, so a real build leaves these tables empty for it — which is
+    exactly how a reload blocked by them went untested."""
+    c = sqlite3.connect(db)
+    try:
+        uid, sentence_id = c.execute(
+            "SELECT sp.uid, se.id FROM speech sp JOIN sentence se "
+            "ON se.speech_id = sp.uid WHERE sp.session_id = ? LIMIT 1",
+            (sid,)).fetchone()
+        c.execute("INSERT INTO speech_metrics(speech_id, session_id) VALUES (?,?)",
+                  (uid, sid))
+        c.execute("INSERT INTO speech_topic(speech_id, block, session_id, label, "
+                  "score, words) VALUES (?,0,?,'Other',0.5,10)", (uid, sid))
+        c.execute("INSERT OR IGNORE INTO settlement(id, name, name_fold) "
+                  "VALUES ('x/y','Kaposvár','kaposvar')")
+        c.execute("INSERT INTO settlement_mention(settlement_id, sentence_id, "
+                  "speech_uid, session_id, surface) VALUES ('x/y',?,?,?,'Kaposváron')",
+                  (sentence_id, uid, sid))
+        c.commit()
+    finally:
+        c.close()
+
+
+def test_update_reloads_a_sitting_that_carries_derived_rows(data_dir, db_path):
+    """Metrics, topics and settlement mentions are re-derived only after the load,
+    so the reload's own delete must clear them — a FOREIGN KEY failure here halted
+    the production sync loop on every pass."""
+    _seed_derived_rows(db_path, "43001")
+    rec = _session_record()
+    rec["data"][0]["textContents"][0]["textBody"][0]["sentences"][0]["text"] = \
+        "Ez egy teljesen új, sokkal hosszabb mondat a frissítés tesztjéhez."
+    (data_dir / "processed" / "43001-session.json").write_text(
+        json.dumps(rec, ensure_ascii=False))
+
+    assert loader.update_database(data_dir, db_path) is True
+    assert _count(db_path, "SELECT COUNT(*) FROM session") == 1
+    # The seeded rows pointed at the replaced speeches; nothing may dangle.
+    c = sqlite3.connect(db_path)
+    try:
+        assert c.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        c.close()
+
+
+def test_update_removes_a_sitting_that_carries_derived_rows(data_dir, db_path):
+    """A removed sitting gets no per-sitting pass at all, so `_delete_session` is
+    the only thing that can take its derived rows with it."""
+    gone = data_dir / "processed" / "43002-session.json"
+    gone.write_text(json.dumps(_session_record(session="43002", sitting=2,
+                                               date="2026-05-16"),
+                               ensure_ascii=False))
+    assert loader.update_database(data_dir, db_path) is True
+    _seed_derived_rows(db_path, "43002")
+
+    gone.unlink()
+    assert loader.update_database(data_dir, db_path) is True
+    assert _count(db_path, "SELECT COUNT(*) FROM session WHERE id='43002'") == 0
+    for table in ("speech_metrics", "speech_topic", "settlement_mention"):
+        assert _count(db_path, f"SELECT COUNT(*) FROM {table} "
+                               "WHERE session_id='43002'") == 0
+
+
 def test_update_removes_a_sitting_whose_file_is_gone(data_dir, db_path):
     """The only way a sitting leaves: parlament.hu cancels an announced day and the
     scraper deletes its processed file. Loading is otherwise purely additive, so

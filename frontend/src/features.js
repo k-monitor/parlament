@@ -22,13 +22,19 @@
 export const SPEECH_METRICS_ENABLED = true
 
 // Remuneration (REP-17, §6B): the published monthly fee panel on an MP profile,
-// with the §104(1) reading of it.
+// with the §104(1) reading of it. Which profiles carry it:
 //
-// OFF — the panel is built and the data is live (the registry sync stores every
-// published month and the profile API still serves `remuneration`), but the
-// figure is not on the public site yet. Flipping this to `true` restores the
-// card as it stands; nothing else has to change.
-export const REMUNERATION_ENABLED = false
+// * `'off'` — none. The data stays live either way (the registry sync stores
+//   every published month and the profile API still serves `remuneration`).
+// * `'declarants'` — only the profiles of MPs who have filed a declaration in
+//   the House's electronic system (EVNYR, REP-18). There the fee is shown with
+//   the other income they declared listed under it (REP-19), so a reader sees
+//   the parliamentary fee as one source among the ones the MP states, never
+//   as a bare figure on its own.
+// * `'all'` — every MP with a published month, declaration or not.
+//
+// 'declarants' since 2026-10-08 (it had been 'off' since 2026-09-17).
+export const REMUNERATION_SCOPE = 'declarants'
 
 // Asset-declaration contents (REP-18): the itemised public part of a declaration
 // filed in the House's electronic system (properties, vehicles, savings, debts,
@@ -39,5 +45,7 @@ export const REMUNERATION_ENABLED = false
 // correction upstream is never masked by an older copy here. It is still a step
 // beyond linking the PDF, which is why it has a switch of its own: `false` keeps
 // every declaration listed and linked (page and PDF) and only drops the
-// expandable contents. The API serves `content` either way.
+// expandable contents — and with them the declared-income list on the income
+// card (REP-19), which is the same contents read into numbers. The API serves
+// `content` and `declared_income` either way.
 export const ASSET_DECLARATION_DETAILS_ENABLED = true

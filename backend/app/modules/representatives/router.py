@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
+from ... import declared_income
 from ... import salary as salary_rules
 from ... import valasztas
 from ...analytics import search_analytics
@@ -1466,6 +1467,8 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
             })
     offices = _person_offices(db, person_id, _loads(p["offices_json"]))
     office = _current_office(db, person_id, period, offices)
+    declarations = _asset_declarations(
+        db, person_id, _loads(_col(p, "asset_declarations_json")))
     return {
         "person_id": p["person_id"], "label": p["label"],
         "label_full": p["label_full"], "firstname": p["firstname"],
@@ -1496,8 +1499,7 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         # (REP-18, `source: "evnyr"`). Biography, like the office and committee
         # history — deliberately NOT cycle-scoped, so the series stays whole no
         # matter which cycle is selected.
-        "asset_declarations": _asset_declarations(
-            db, person_id, _loads(_col(p, "asset_declarations_json"))),
+        "asset_declarations": declarations,
         "constituency": p["constituency"],
         "seat": p["seat"], "email": p["email"], "website": p["website"],
         "highest_education": p["highest_education"], "active": p["active"],
@@ -1550,6 +1552,12 @@ def get_representative(person_id: str, period: Optional[List[int]] = Query(
         "remuneration": salary_rules.for_person(
             db, person_id, _loads(_col(p, "remuneration_json")),
             _loads(p["committees_json"]), offices),
+        # The income the person lists in their newest EVNYR declaration (REP-19),
+        # entry by entry, each "havi átlagos jövedelem" read into a number beside
+        # the text it was read from. The **declarant's own figures**, unverified
+        # and never summed: they mix gross and net, months and years, now and the
+        # three years before. Null for anyone with no EVNYR declaration.
+        "declared_income": declared_income.for_person(declarations),
     }
 
 

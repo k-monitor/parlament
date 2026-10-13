@@ -3725,7 +3725,12 @@ this bill" is a question the corpus cannot answer at all.
   whichever of them sorted first.
 - **BIZ-23.** The RSS feed carries only the **15 newest** videos, which is ample
   for a daily poll and useless as an archive, so the history is fetched by a
-  separate **backfill** that walks the whole channel. **Its ceiling is the
+  separate **backfill** that walks the whole channel. **The sync runs that walk
+  itself**, on its first pass and then once a day, and does not leave it to an
+  operator: a registry fed only by the feed holds just what the feed showed
+  after its first poll, which is how production went without every committee
+  recording from before 2026-09-09 (the 2026-08-25 Igazságügyi sitting among
+  them) while all of them were still on the channel. **Its ceiling is the
   channel, not the method**: measured on 2026-09-21 the channel holds 166 videos
   in total, back to 2024-02-26, and that is genuinely all of it (the uploads
   playlist is exactly the union of the *videos* and *streams* tabs). So cycles 40

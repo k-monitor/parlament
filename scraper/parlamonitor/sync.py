@@ -110,6 +110,13 @@ MEDIA_CHASE_DAYS = 30
 # home-page check more often than this finds the same file. A run that still has
 # declaration pages to read ignores the cadence until it has read them.
 DECLARATIONS_MAX_AGE = 3 * 3600
+
+# How often the sync re-walks the YouTube channel's whole upload history rather
+# than only its 15-video RSS window (BIZ-16). A listing is one `yt-dlp
+# --flat-playlist` call (~2 s for the channel's ~180 videos), so a daily walk is
+# cheap, and it is what keeps a recording that left the feed's window before a
+# poll saw it from being missed for good.
+VIDEO_BACKFILL_MAX_AGE = 24 * 3600
 # How many declaration pages (each one PDF link) one sync pass may read. The
 # first pass after the cycle's declarations are filed meets a few hundred; this
 # spreads them over a few passes instead of spending one pass's politeness budget
@@ -589,22 +596,35 @@ def _sync_committee_videos(http, paths: Paths, state: dict, *,
                            force: bool) -> object:
     """Re-read the House's YouTube channel (BIZ-16).
 
-    One request in the normal case: the RSS feed carries the newest 15, which is
-    weeks of a channel that posts a handful a week. The backfill is **not** run
-    here — it walks the whole upload history and belongs in the explicit
-    `committee-videos --backfill` command, which is a one-off. If the feed's
-    window is ever overrun (more than 15 posted since the last pass), the gap is
-    closed by running that command, not by making every sync pass expensive.
+    One request in the normal case: the RSS feed carries the newest 15. The
+    whole upload history is walked as well on the first pass and then once every
+    `VIDEO_BACKFILL_MAX_AGE`. Leaving that walk to a manual
+    `committee-videos --backfill` meant a deployment where nobody ran it held
+    only what the feed had shown since its first poll: every recording that
+    had already left the 15-video window was never seen. Production's registry
+    started on 2026-09-22 and was missing every committee recording from before
+    09-09, though all of them were still on the channel and matched a sitting.
+
+    The walk's cadence is kept in the sync state, not in the registry, so a walk
+    that finds nothing new leaves the file (and the stages keyed on it) alone.
+    A failed walk counts as one: it is retried a day later, not on every pass.
     """
-    registry = fetch_videos(http, previous=load_videos_file(paths))
+    prev = state.get("committeeVideos") or {}
+    backfill = force or (
+        _now_ts() - float(prev.get("backfillTs") or 0) >= VIDEO_BACKFILL_MAX_AGE)
+    registry = fetch_videos(http, previous=load_videos_file(paths),
+                            backfill=backfill)
+    walked = ({"backfillTs": _now_ts(), "backfillAt": _now()} if backfill else
+              {k: prev[k] for k in ("backfillTs", "backfillAt") if k in prev})
     fp = hashlib.sha256(json.dumps(
         [v["videoId"] for v in registry["data"]],
         sort_keys=True).encode("utf-8")).hexdigest()[:16]
-    if not force and (state.get("committeeVideos") or {}).get("fp") == fp:
+    if not force and prev.get("fp") == fp:
+        state["committeeVideos"] = {**prev, **walked}
         return False
     save_videos(paths, registry)
     state["committeeVideos"] = {"fp": fp, "count": registry["meta"]["count"],
-                                "at": _now()}
+                                "at": _now(), **walked}
     return {k: registry["meta"]["counts"].get(k)
             for k in ("videos", "committee", "plenary")}
 

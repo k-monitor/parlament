@@ -562,7 +562,7 @@ the recording is up the same day and the meeting listing follows weeks later.
 
 **Two sources, because the cheap one is a window, not an archive.** The RSS feed
 (`/feeds/videos.xml?channel_id=…`) is one unauthenticated request and carries
-only the **15 newest** videos; `--backfill` walks the whole upload history,
+only the **15 newest** videos; `--backfill` (and the sync, once a day) walks the whole upload history,
 preferring `yt-dlp` (no key, no quota) and falling back to the YouTube Data API
 v3 when `PARLAMONITOR_YOUTUBE_API_KEY` is set. With neither available the
 backfill says so rather than quietly doing nothing (SCR-6).
@@ -875,10 +875,14 @@ python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
   after the sitting and in ones and twos, so the cap only ever binds on the
   first pass after a cycle is added.
 - **Committee recordings:** one request (the RSS feed), rewritten only when the
-  channel's video list changed. The **backfill is not run here** — it walks the
-  whole upload history and belongs in the explicit `committee-videos --backfill`
-  command. If the 15-video feed window is ever overrun, that command closes the
-  gap rather than every sync pass paying for it.
+  channel's video list changed. The **whole upload history is walked too**: on
+  the first pass and then once every `VIDEO_BACKFILL_MAX_AGE` (a day). The walk
+  is one `yt-dlp --flat-playlist` call, about 2 s. It used to be left to the
+  manual `committee-videos --backfill`, which production never ran, so its
+  registry held only what the 15-video feed had shown since the first poll. The
+  cadence lives in the sync state, so a walk that finds nothing new rewrites
+  nothing, and a failed walk (no yt-dlp, bot wall) waits a day like a
+  successful one.
 - **Committee timing:** last of the committee stages, since it needs both of
   their records. Skipped outright while the recordings registry and the minutes
   files are unchanged (file stats, so an idle pass opens nothing). Transcribing

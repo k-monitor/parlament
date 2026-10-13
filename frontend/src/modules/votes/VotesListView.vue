@@ -6,10 +6,10 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
-import { formatDateTime } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import Pagination from '../../components/Pagination.vue'
+import VoteCard from '../../components/VoteCard.vue'
 import { ANALYSIS_BY_ROUTE, analysisAvailable } from '../analyses/registry.js'
 
 const route = useRoute()
@@ -18,8 +18,6 @@ const router = useRouter()
 const PAGE = 50
 const SORTS = ['date_desc', 'date_asc', 'attendance_desc', 'attendance_asc',
                'crossvoting_desc', 'crossvoting_asc']
-// How many defecting factions a card names before collapsing the rest into "+N".
-const CROSS_FACTIONS_SHOWN = 4
 
 const data = ref(null)
 const loading = ref(false)
@@ -105,38 +103,6 @@ function clearFilters() {
 
 function gotoPage(p) {
   router.push({ name: 'votes', query: { ...route.query, offset: p * PAGE } })
-}
-
-// Chip colour for an MP's own cast value (matches the roll-call palette); a
-// "nem volt jelen" vote has no record, so it falls through to the neutral class.
-const VOTE_CLASS = { yes: 'yes', no: 'no', abstain: 'abstain', novote: 'novote', absent: 'absent' }
-
-// Attendance (votes cast / seats held) as served by the API — shown on every card
-// so the attendance orderings are readable, and null on a vote with no
-// per-faction breakdown (a list or show-of-hands vote).
-function attendancePct(v) {
-  return v.attendance == null ? '' : Math.round(v.attendance * 100) + '%'
-}
-
-// Cross-voting: the MPs who broke their own faction's line, as served by the API.
-// Null on a vote with no per-faction breakdown and on a presence check (where the
-// figure would not mean dissent), so the chip simply doesn't appear there.
-function crossPct(v) {
-  if (v.defector_share == null) return ''
-  return (100 * v.defector_share).toLocaleString('hu-HU',
-    { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'
-}
-function crossFactions(v) {
-  return (v.defector_factions || []).slice(0, CROSS_FACTIONS_SHOWN)
-}
-function crossFactionsMore(v) {
-  return Math.max(0, (v.defector_factions || []).length - CROSS_FACTIONS_SHOWN)
-}
-
-function voteParts(v) {
-  const yes = v.yes || 0, no = v.no || 0, abstain = v.abstain || 0
-  const total = yes + no + abstain || 1
-  return { yes: (100 * yes) / total, no: (100 * no) / total, abstain: (100 * abstain) / total }
 }
 
 async function loadFacets() {
@@ -301,55 +267,7 @@ onUnmounted(() => clearTimeout(searchTimer))
         </label>
       </div>
       <ul class="votelist">
-        <li v-for="(v, i) in data.votes" :key="v.id" class="card pad votecard">
-          <div class="vhead">
-            <router-link :to="{ name: 'vote', params: { id: v.id } }" class="vdate" @click="clicks.hit(i)">{{ formatDateTime(v.vote_datetime) }}</router-link>
-            <span class="badge" :class="{ ok: v.result === $t('votes.accepted') }">{{ v.result }}</span>
-            <span v-if="v.has_per_mp" class="badge rollcall">{{ $t('votes.rollCall') }}</span>
-            <!-- How this MP voted (only in the person-scoped list). -->
-            <span v-if="person" class="mpvote" :class="VOTE_CLASS[v.person_value_code] || 'notpresent'">
-              {{ v.person_value_code ? $t('votes.' + v.person_value_code) : $t('profile.vbNotPresent') }}
-            </span>
-          </div>
-          <router-link :to="{ name: 'vote', params: { id: v.id } }" class="vsubject" @click="clicks.hit(i)">{{ v.subject }}</router-link>
-          <div v-if="v.subjects.length" class="vbills small">
-            <span class="muted">{{ $t('votes.decidedBills') }}:</span>
-            <span v-for="(s, i) in v.subjects" :key="i" class="vbill">
-              <router-link v-if="s.bill_id" :to="{ name: 'bill', params: { id: s.bill_id } }">
-                <strong>{{ s.bill_number }}</strong><template v-if="s.title"> — {{ s.title }}</template>
-              </router-link>
-              <span v-else><strong>{{ s.bill_number }}</strong><template v-if="s.title"> — {{ s.title }}</template></span>
-            </span>
-          </div>
-          <div class="vbar" role="img"
-               :aria-label="`${$t('votes.yes')} ${v.yes ?? 0}, ${$t('votes.no')} ${v.no ?? 0}, ${$t('votes.abstain')} ${v.abstain ?? 0}`">
-            <span class="seg yes" :style="{ width: voteParts(v).yes + '%' }"></span>
-            <span class="seg no" :style="{ width: voteParts(v).no + '%' }"></span>
-            <span class="seg abstain" :style="{ width: voteParts(v).abstain + '%' }"></span>
-          </div>
-          <div class="vcounts small">
-            <span class="c yes"><b>{{ v.yes ?? 0 }}</b> {{ $t('votes.yes') }}</span>
-            <span class="c no"><b>{{ v.no ?? 0 }}</b> {{ $t('votes.no') }}</span>
-            <span class="c abstain"><b>{{ v.abstain ?? 0 }}</b> {{ $t('votes.abstain') }}</span>
-            <span v-if="v.attendance != null" class="c att"
-                  :title="$t('votes.attendanceTitle', { present: v.present, seats: v.seats })">
-              {{ $t('votes.attendance') }} <b>{{ attendancePct(v) }}</b>
-            </span>
-            <span v-if="v.defectors" class="c cross"
-                  :title="$t('votes.crossVotingTitle', { n: v.defectors, pct: crossPct(v) })">
-              <b>{{ v.defectors }}</b> {{ $t('votes.crossVoting') }} ({{ crossPct(v) }})
-            </span>
-          </div>
-          <!-- Which factions actually split — the cross-voting number broken down,
-               so the ranking is readable without opening the vote. -->
-          <div v-if="v.defectors" class="vcross small muted">
-            <span v-for="fx in crossFactions(v)" :key="fx.name" class="xf">
-              <span class="dot" :style="{ background: fx.color || '#bbb' }" aria-hidden="true"></span>
-              {{ fx.name }} <b>{{ fx.defectors }}</b>
-            </span>
-            <span v-if="crossFactionsMore(v)" class="xf">+{{ crossFactionsMore(v) }}</span>
-          </div>
-        </li>
+        <VoteCard v-for="(v, i) in data.votes" :key="v.id" :vote="v" :person-scoped="!!person" @open="clicks.hit(i)" />
       </ul>
       <Pagination :page="page" :total-pages="totalPages" @goto="gotoPage" />
     </div>
@@ -362,39 +280,5 @@ onUnmounted(() => clearTimeout(searchTimer))
 .personscope { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 1rem 0 .2rem; }
 .personscope .ps-title { margin: 0; font-weight: 600; }
 .personscope .ps-seg { color: var(--accent); }
-/* the MP's own cast value on each card, in the roll-call palette */
-.mpvote { font-size: .72rem; font-weight: 700; line-height: 1.6; padding: 0 .5rem; border-radius: 999px; color: #fff; white-space: nowrap; }
-.mpvote.yes { background: #2e7d32; } .mpvote.no { background: #c62828; }
-.mpvote.abstain { background: #8a8780; } .mpvote.novote { background: #c79a2e; }
-.mpvote.absent { background: #7c8288; } .mpvote.notpresent { background: #3f434a; }
 .votelist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
-.votecard { display: flex; flex-direction: column; gap: .45rem; }
-.vhead { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
-.vdate { font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
-.vsubject { color: var(--ink); font-weight: 600; }
-.vsubject:hover { color: var(--accent); }
-.badge.ok { background: #eef6ee; color: #2e7d32; }
-.badge.rollcall { background: var(--accent-soft); color: var(--accent); }
-.vbills { display: flex; flex-direction: column; gap: .2rem; }
-.vbills .vbill strong { font-variant-numeric: tabular-nums; }
-.vbar { display: flex; height: .7rem; border-radius: 999px; overflow: hidden; background: var(--line); box-shadow: inset 0 0 0 1px rgba(0,0,0,.04); }
-.vbar .seg.yes { background: #2e7d32; }
-.vbar .seg.no { background: #c62828; }
-.vbar .seg.abstain { background: #b9b6ad; }
-.vcounts { display: flex; gap: 1.2rem; }
-.vcounts .c b { font-variant-numeric: tabular-nums; }
-.vcounts .c.yes { color: #2e7d32; }
-.vcounts .c.no { color: #c62828; }
-.vcounts .c.abstain { color: var(--ink-faint); }
-/* attendance and cross-voting sit apart from the yes/no/abstain triplet — they are
-   derived measures, not tallies */
-.vcounts .c.att { color: var(--ink-faint); margin-left: auto; cursor: help; }
-/* cross-voting always follows attendance (a vote only has one if it has the
-   other), so it rides that item's margin-left:auto to the right edge */
-.vcounts .c.cross { color: var(--ink-faint); cursor: help; }
-/* the factions behind the cross-voting number — right-aligned so they sit under
-   it rather than under the yes/no/abstain tallies */
-.vcross { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .15rem .8rem; }
-.vcross .xf { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
-.vcross .dot { width: .5rem; height: .5rem; border-radius: 50%; flex: none; display: inline-block; }
 </style>

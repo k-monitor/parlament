@@ -25,8 +25,9 @@ import { scopeTarget } from '../lib/searchScopes.js'
 
 const router = useRouter()
 const q = ref('')
-// What the box searches in (SEA-14) — the plenary by default, as it always was.
-const scope = ref('plenary')
+// What the box searches in (SEA-14) — one scope or several; the plenary by
+// default, as it always was.
+const scopes = ref(['plenary'])
 const counts = computed(() => (store.meta && store.meta.counts) || {})
 function fmt(n) { return (n ?? 0).toLocaleString('hu-HU') }
 
@@ -43,7 +44,7 @@ const startYear = computed(() => {
   return years.length ? Math.min(...years) : null
 })
 function go() {
-  if (q.value.trim()) router.push(scopeTarget(scope.value, q.value))
+  if (q.value.trim()) router.push(scopeTarget(scopes.value, q.value))
 }
 const showProceedings = computed(() => store.moduleEnabled('proceedings'))
 // The coming sitting's order paper (NR-5). On only where the scrape has
@@ -63,7 +64,7 @@ onMounted(() => { loadMeta().catch(() => {}) })
         <!-- The scope dropdown says what the box searches, so the label that
              used to say it ("in the speeches") is for assistive tech only. -->
         <label for="home-q" class="visually-hidden">{{ $t('home.searchLabel') }}</label>
-        <SearchScopeSelect v-model="scope" />
+        <SearchScopeSelect v-model="scopes" />
         <input
           id="home-q" v-model="q" type="search"
           :placeholder="$t('home.searchPlaceholder')" autofocus

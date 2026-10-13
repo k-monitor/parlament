@@ -268,6 +268,37 @@ def test_list_bills_search_matches_bill_number(client, db_path):
     assert [b["bill_number"] for b in d["bills"]] == ["T/101", "T/1010"]
 
 
+def test_list_bills_date_range_and_oldest_first(client, db_path):
+    """SEA-14: the site search's date filter reaches its documents scope as a
+    submission-date range on local dates, and its oldest-first order as
+    `date_asc`."""
+    def numbers(**params):
+        return [b["bill_number"] for b in
+                client.get("/api/v1/bills", params=params).json()["bills"]]
+
+    # T/100 is filed on 2026-05-10, T/101 on 05-12, I/5 on 06-01; both bounds
+    # are inclusive.
+    assert set(numbers(date_from="2026-05-12")) == {"T/101", "I/5"}
+    assert set(numbers(date_to="2026-05-12")) == {"T/100", "T/101"}
+    assert numbers(date_from="2026-05-11", date_to="2026-05-31") == ["T/101"]
+    assert numbers(sort="date_asc") == ["T/100", "T/101", "I/5"]
+    assert numbers(sort="date") == ["I/5", "T/101", "T/100"]
+
+    # Upstream stores a Budapest midnight as the UTC instant before it, so a
+    # date-prefix comparison would file this one on the 13th.
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("""INSERT INTO bill (id, bill_number, number_sort, period_number,
+                                   title, type, main_type, submitted_date)
+                 VALUES ('bill-uuid-9', 'T/102', 102, 43, 'Éjféli', 'törvényjavaslat',
+                         'T', '2026-05-13T22:00:00Z')""")
+    c.commit(); c.close()
+    assert "T/102" in numbers(date_from="2026-05-14", date_to="2026-05-14")
+    assert "T/102" not in numbers(date_to="2026-05-13")
+
+    assert client.get("/api/v1/bills", params={"date_from": "tegnap"}).status_code == 422
+
+
 def test_bill_facets(client):
     d = client.get("/api/v1/bills/facets").json()
     assert "tárgysorozatban" in d["statuses"]

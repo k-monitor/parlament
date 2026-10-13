@@ -244,9 +244,10 @@ export default {
     breakdownSpeakers: 'A(z) „{q}” találatok felszólalónként',
     cycleScope: 'A keresés a(z) {cycle} felszólalásaira szűkül.',
     cycleScopeAll: 'váltás minden ciklusra',
-    // Miben keres a kereső (SEA-14). A plenáris és a bizottsági ülések szövegében
-    // ezen az oldalon, a többiben a saját listaoldalukon.
+    // Miben keres a kereső (SEA-14): egy vagy több helyen egyszerre, mindegyikben
+    // ezen az oldalon.
     scope: 'Miben keresel?',
+    scopeAll: 'Mindenhol',
     scopes: {
       plenary: 'Plenáris ülések',
       committee: 'Bizottsági ülések',
@@ -254,6 +255,21 @@ export default {
       votes: 'Szavazások',
       people: 'Személyek',
     },
+    // Az oldal címe, ha nem csak felszólalásokban keres, és a ciklusjelzés.
+    titleAny: 'Keresés',
+    cycleScopeAny: 'A keresés a(z) {cycle} adataira szűkül.',
+    // Több helyen keresve: az összesítő sor és a szakaszok „összes találat” linkje.
+    byScope: 'Találatok helyenként',
+    showAll: 'Összes találat ({n})',
+    // Amivel együtt kell olvasni egy hely találatait.
+    notApplied: 'Itt nem érvényes: {filters}.',
+    filterNames: { dates: 'időszak', speaker: 'felszólaló', faction: 'frakció', agenda: 'napirend típusa' },
+    asSponsor: 'Csak {name} által benyújtott irományok.',
+    asVoter: 'Névsoros szavazások, {name} szavazatával.',
+    peopleNeedTerm: 'Személyek kereséséhez írj be egy nevet.',
+    // Egy rekordtípus saját listaoldala, a további szűrőkért és rendezésekért.
+    moreFilters: 'További szűrők és rendezések: {page} →',
+    listPages: { documents: 'Irományok', votes: 'Szavazások', people: 'Felszólalók' },
     openMinutes: 'Megnyitás a jegyzőkönyvben',
     committeeUnavailable: 'A bizottsági jegyzőkönyvekben ezen a kiszolgálón még nem lehet keresni.',
   },

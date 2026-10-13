@@ -178,9 +178,10 @@ export default {
     breakdownSpeakers: 'Matches for “{q}” by representative',
     cycleScope: 'Search is limited to speeches from {cycle}.',
     cycleScopeAll: 'switch to all cycles',
-    // What the search box searches in (SEA-14): plenary and committee text on
-    // this page, the rest on their own list pages.
+    // What the search box searches in (SEA-14): one scope or several, every one
+    // of them searched on this page.
     scope: 'Search in',
+    scopeAll: 'Everywhere',
     scopes: {
       plenary: 'Plenary sittings',
       committee: 'Committee meetings',
@@ -188,6 +189,22 @@ export default {
       votes: 'Votes',
       people: 'People',
     },
+    // The page title once the scopes go beyond the speeches, and the cycle note.
+    titleAny: 'Search',
+    cycleScopeAny: 'Search is limited to {cycle}.',
+    // A search across several scopes: the summary line and each section's way
+    // to all of its results.
+    byScope: 'Results by scope',
+    showAll: 'All results ({n})',
+    // What a scope's results must be read with.
+    notApplied: 'Not applied here: {filters}.',
+    filterNames: { dates: 'date range', speaker: 'speaker', faction: 'faction', agenda: 'agenda type' },
+    asSponsor: 'Only documents submitted by {name}.',
+    asVoter: 'Roll-call votes, with how {name} voted.',
+    peopleNeedTerm: 'Type a name to search for people.',
+    // A record scope's own list page, for the filters this page does not carry.
+    moreFilters: 'More filters and orderings on the {page} page →',
+    listPages: { documents: 'Documents', votes: 'Votes', people: 'Speakers' },
     openMinutes: 'Open in the minutes',
     committeeUnavailable: 'Committee minutes cannot be searched on this server yet.',
   },

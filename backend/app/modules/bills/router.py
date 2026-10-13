@@ -19,8 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ... import parlacap
 from ... import portfolios as portfolio_map
 from ...analytics import search_analytics
-from ...db import (get_db, like_contains, period_and, period_in_scope,
-                   period_key, period_list, period_sql)
+from ...db import (get_db, like_contains, local_instant, period_and,
+                   period_in_scope, period_key, period_list, period_sql)
 from ...media import per_speech_clip
 from ...parlament_links import bill_page_url
 from ...query_cache import cached_aggregate
@@ -365,7 +365,11 @@ def list_bills(
         None, pattern="^(answered|unanswered|oral|written)$",
         description="Question-type irományok by whether and how they were "
                     "answered: at all, not at all, from the floor, or in writing"),
-    sort: str = Query("number", pattern="^(number|date)$"),
+    date_from: Optional[str] = Query(
+        None, description="Submitted on or after this local date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(
+        None, description="Submitted on or before this local date (YYYY-MM-DD)"),
+    sort: str = Query("number", pattern="^(number|date|date_asc)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: sqlite3.Connection = Depends(get_db),
@@ -373,6 +377,19 @@ def list_bills(
     """Browsable, filterable bill list. Filters combine."""
     where = ["1=1"]
     params: dict = {}
+    # The submission date range — the site search's date filter applied to its
+    # documents scope (SEA-14). `submitted_date` is the UTC instant of a Budapest
+    # midnight ("2026-05-09" arrives as "2026-05-08T22:00:00Z"), so the bounds are
+    # compared as instants: a date prefix would file every iromány a day early.
+    try:
+        if date_from:
+            where.append("b.submitted_date >= :df")
+            params["df"] = local_instant(date_from)
+        if date_to:
+            where.append("b.submitted_date <= :dt")
+            params["dt"] = local_instant(date_to, end_of_day=True)
+    except ValueError:
+        raise HTTPException(422, "Invalid date")
     if q:
         # Readers look an iromány up by its number ("T/438") as often as by
         # title, so the free-text filter matches both (BILL-1) — as the votes
@@ -451,7 +468,9 @@ def list_bills(
     # unscoped list pages through the previous cycle's high numbers before any
     # current-cycle bill appears.
     order = {"number": "b.period_number DESC, b.number_sort DESC",
-             "date": "b.submitted_date DESC"}[sort]
+             "date": "b.submitted_date DESC",
+             # SQLite sorts NULL first ascending; an undated iromány is not the oldest.
+             "date_asc": "b.submitted_date IS NULL, b.submitted_date ASC"}[sort]
     if q:
         # A reader who typed a whole iromány number wants *that* iromány first,
         # not the longer numbers it is a prefix of ("T/438" before "T/4388").
@@ -468,7 +487,7 @@ def list_bills(
     # key, so the two stay distinguishable in the aggregates.
     search_analytics.record(
         source="bills", query=q, period=period_list(period), sort=sort,
-        main_type=main_type, main_type_not=main_type_not,
+        date_from=date_from, date_to=date_to, main_type=main_type, main_type_not=main_type_not,
         main_type_in=main_type_in, main_type_not_in=main_type_not_in,
         type=type, status=status, topic=topic, sponsor=sponsor,
         portfolio=portfolio, portfolio_role=portfolio_role,

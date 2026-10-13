@@ -906,7 +906,9 @@ scope), and *what is the House doing* (last week, then the coming sitting).
   into the **anonymous, aggregated search analytics** — keyword + active filters,
   no personal data — see **PRIV-2** (§8.4). The site's **other search boxes**
   (irományok, képviselők, tisztségviselők, szavazások, tárcák, and the committee
-  scope of SEA-14) are counted the same way, each under its own source.
+  scope of SEA-14) are counted the same way, each under its own source — and so
+  is each scope of a site search (SEA-14): a search in several scopes is one
+  counted search per scope, under that scope's source.
 - **SEA-12.** The analytics also record **whether the search worked**: how many
   hits it found, whether the reader had to page past the first page, and the
   **position of the first result they opened** (1 = the top hit). Together these
@@ -929,28 +931,51 @@ scope), and *what is the House doing* (last week, then the coming sitting).
   `prefers-reduced-motion: reduce` or on a coarse pointer. It leaves on the next
   search that isn't about cats, and when the search page is left.
 - **SEA-14 (SHOULD).** The search box — on the search page and on the home page
-  (HOME-1) — carries a **scope dropdown** saying what it searches in:
+  (HOME-1) — carries a **scope picker** saying what it searches in:
   **Plenáris ülések** (the default, everything above), **Bizottsági ülések**,
-  **Irományok**, **Szavazások** and **Személyek**. A scope is offered only while
-  its module is mounted (EXT-6).
-  - The two **text** scopes run on the search page. The committee scope is a
-    full-text search over the committee minutes (BIZ-15) with the plenary's own
-    query rules and tokenizer (SEA-2), so a term folds and prefix-matches alike
-    in both; it travels in the URL as `in=committee` (SEA-6), and a plain
-    `/search?q=` link keeps meaning the plenary. A hit is **one speech**, not a
+  **Irományok**, **Szavazások** and **Személyek**. **Several scopes can be picked
+  at once**, and **Mindenhol** picks every one. A scope is offered only while its
+  module is mounted (EXT-6). Every scope is searched **on the search page
+  itself**.
+  - The scopes travel in the URL as repeated `in` params (`in=all` for every
+    scope; SEA-6). A plain `/search?q=` link names none and keeps meaning the
+    plenary alone, and `in=committee` keeps its first meaning.
+  - **One scope** is a full result list, paged. **Several** are a **section
+    each**, in the picker's order, every one holding that scope's first few hits
+    (five; six people), its hit count, and an **all results** link that narrows
+    the search to that scope. A summary line names each scope with its count and
+    jumps to its section; a scope that found nothing keeps its place, its
+    heading saying so. Each section loads on its own, so a slow scope never holds
+    the others back.
+  - The **committee** scope is a full-text search over the committee minutes
+    (BIZ-15) with the plenary's own query rules and tokenizer (SEA-2), so a term
+    folds and prefix-matches alike in both. A hit is **one speech**, not a
     sentence — the minutes are not sentence-segmented — shown with its
     highlighted snippet, speaker, committee, date and agenda heading, and opens
-    the jegyzőkönyv at that speech (`#sp-<ord>`, BIZ-29). It takes the speaker
-    filter (alone too, as in SEA-3: one person's committee contributions) and
-    the date range, ordered as in SEA-10; faction and agenda type, which the
-    minutes do not record, are not offered, and the two aggregates (SEA-8/9)
-    stay plenary-only.
-  - The three **record** scopes hand the term to the list page that already
-    searches those records — `/documents` (every iromány, BILL-9), `/votes`,
-    and the all-speakers list (REP-1) — as its `q`, rather than drawing a
-    thinner copy of that list on the search page; their filters, facets and
-    sorting live there. Choosing a scope with a term in the box searches at
-    once, as picking a filter does; with an empty box it waits for the term.
+    the jegyzőkönyv at that speech (`#sp-<ord>`, BIZ-29).
+  - The three **record** scopes are answered by the endpoints behind their list
+    pages — every iromány (BILL-9) by title and number, the votes by subject and
+    decided iromány, the speaker register (REP-1, every role) by name — and their
+    hits are drawn with those pages' own cards. Under a single record scope the
+    list ends with a link to its list page, where the filters, facets and
+    orderings that belong to it live.
+  - The page's filters reach each scope that can apply them. The **speaker**
+    filter is the speaker in the two text scopes, the **submitter** of an iromány
+    and the **voter** in the votes (the roll calls they took part in, each card
+    showing how they voted); the **dates** bound the sitting, the submission and
+    the vote; the **faction** narrows the plenary and the people (that
+    faction's MPs); the **agenda type** is the plenary's alone. The panel offers
+    a filter only while a picked scope takes it, and a section whose scope
+    cannot apply an active filter **says so** above its results rather than
+    silently dropping it. Without a term the people scope has nothing to search
+    by and asks for a name.
+  - The ordering (SEA-10) applies to every scope that can be reordered:
+    relevance where there is a term to rank by (plenary, committee, irományok —
+    whose relevance puts an exactly typed number first), newest or oldest first
+    everywhere; people are always listed by time on the floor. The two plenary
+    aggregates (SEA-8/9) are drawn for a plenary-only search.
+  - Choosing scopes with a term in the box searches at once, as picking a filter
+    does; with an empty box it waits for the term.
 
 ### 5.2 Proceedings viewer (sentence ↔ video sync)
 

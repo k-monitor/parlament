@@ -8,11 +8,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, currentCycleLabel } from '../../store.js'
-import { formatDateLocal, formatSpeakingTime } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
-import FactionBadge from '../../components/FactionBadge.vue'
-import SpeakerLink from '../../components/SpeakerLink.vue'
+import PersonCard from '../../components/PersonCard.vue'
 import Pagination from '../../components/Pagination.vue'
 import SpeakerSearchModes from './SpeakerSearchModes.vue'
 
@@ -111,13 +109,6 @@ function clearFilters() {
   f.faction_id = ''
   f.mandate = ''
   apply()
-}
-
-// "megszűnt mandátum · 2024-09-30" — a card must say that a seat was given up,
-// or a former MP reads exactly like a sitting one (REP-14).
-function mandateEndedLabel(m) {
-  const end = formatDateLocal(m && m.end)
-  return end ? `${t('reps.mandateEnded')} · ${end}` : t('reps.mandateEnded')
 }
 
 // Faction and mandate are MP-only notions — neither an advocate nor a non-MP
@@ -322,38 +313,7 @@ onUnmounted(() => clearTimeout(searchTimer))
         </label>
       </div>
       <ul class="replist grid">
-        <li v-for="(r, i) in data.representatives" :key="r.person_id" class="card pad repcard">
-          <SpeakerLink
-            :speaker="{ person_id: r.person_id, label: r.label, photo_uri: r.photo_uri }"
-            @click="clicks.hit(i)"
-          />
-          <div class="repmeta">
-            <FactionBadge :faction="r.faction" link />
-            <!-- An advocate has no faction/constituency; the nationality they
-                 speak for takes that slot (REP-9). The chip shows the bare
-                 nationality (the tab already says these are advocates), but
-                 carries the full phrase for assistive tech. -->
-            <span
-              v-if="r.is_advocate && r.nationality" class="chip"
-              :aria-label="$t('reps.advocateFor', { nationality: r.nationality })"
-            >{{ r.nationality }}</span>
-            <!-- A non-MP speaker has neither faction nor constituency either: the
-                 office they spoke in is what identifies them (REP-2/REP-12), so it
-                 takes the same slot. Scoped to the selected cycle by the API. -->
-            <span v-if="r.office" class="chip office">{{ r.office }}</span>
-            <span v-if="r.constituency" class="muted small">📍 {{ r.constituency }}</span>
-            <!-- A mandate given up before the term ended (REP-14). Marked on the
-                 card, with the date, so a former MP is never listed as if they
-                 were still sitting. Text, not colour, carries it (A11Y-1). -->
-            <span v-if="r.mandate && r.mandate.terminated" class="chip ended"
-                  :title="r.mandate.end_reason || ''">{{ mandateEndedLabel(r.mandate) }}</span>
-          </div>
-          <div class="repstats small muted">
-            <span>{{ r.speech_count }} {{ $t('reps.speeches') }}</span>
-            <span>·</span>
-            <span>{{ formatSpeakingTime(r.speaking_seconds) }}</span>
-          </div>
-        </li>
+        <PersonCard v-for="(r, i) in data.representatives" :key="r.person_id" :person="r" @open="clicks.hit(i)" />
       </ul>
       <Pagination :page="page" :total-pages="totalPages" @goto="gotoPage" />
     </div>
@@ -370,14 +330,5 @@ onUnmounted(() => clearTimeout(searchTimer))
 .rolechips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .7rem; }
 .rolenote { margin: .8rem 0 -.2rem; max-width: 62ch; }
 .replist { list-style: none; padding: 0; margin: 0; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
-.repcard { display: flex; flex-direction: column; gap: .5rem; }
-.repmeta { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
-/* Office titles are long ("Külgazdasági és Külügyminisztérium államtitkára") and
-   the cards are narrow, so this chip wraps instead of stretching the grid. */
-.chip.office { font-weight: 600; line-height: 1.25; }
-/* A terminated mandate reads as a quiet annotation, not an alarm — it is a fact
-   about the seat, not a judgement about the person. */
-.chip.ended { font-size: .8rem; opacity: .85; }
 .hint { margin: .35rem 0 0; max-width: 46ch; }
-.repstats { display: flex; gap: .4rem; }
 </style>

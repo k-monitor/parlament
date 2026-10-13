@@ -19,11 +19,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
-import { formatDate } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
-import FactionBadge from '../../components/FactionBadge.vue'
-import TopicBadge from '../../components/TopicBadge.vue'
+import DocumentCard from '../../components/DocumentCard.vue'
 import MultiSelect from '../../components/MultiSelect.vue'
 import { topicGlyph, topicName } from '../../lib/topics.js'
 import Pagination from '../../components/Pagination.vue'
@@ -44,10 +42,6 @@ const statuses = ref([])
 // driven rather than the model's full 21: a cycle typically uses a subset, and
 // offering topics that match nothing is a dead end dressed as a choice.
 const topics = ref([])
-
-// A committee-tabled iromány names the committee instead of a person (BIZ-28);
-// linked here as on the iromány's own page, while that module is mounted (EXT-6).
-const showCommittees = computed(() => store.moduleEnabled('committees'))
 
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 const totalPages = computed(() => (data.value ? Math.ceil(data.value.total / PAGE) : 0))
@@ -284,41 +278,7 @@ onUnmounted(() => clearTimeout(t))
         </label>
       </div>
       <ul class="billlist">
-        <li v-for="(b, i) in data.bills" :key="b.id" class="card pad billcard">
-          <div class="billhead">
-            <router-link :to="{ name: 'document', params: { id: b.id } }" class="billnum" @click="clicks.hit(i)">{{ b.bill_number }}</router-link>
-            <span class="badge" v-if="b.type">{{ b.type }}</span>
-            <span class="badge status" v-if="b.status">{{ b.status }}</span>
-            <span class="muted small" v-if="b.submitted_date">{{ formatDate(b.submitted_date) }}</span>
-            <!-- Most classified irományok are kérdések and interpellációk, so
-                 this is the list where the topic earns its place (TOPIC-8). -->
-            <TopicBadge :topic="b.topic" kind="bill" compact />
-          </div>
-          <router-link :to="{ name: 'document', params: { id: b.id } }" class="billtitle" @click="clicks.hit(i)">{{ b.title }}</router-link>
-          <div class="sponsors small" v-if="b.sponsors.length || b.responder">
-            <template v-for="(s, i) in b.sponsors" :key="i">
-              <router-link v-if="s.person_id" :to="{ name: 'profile', params: { id: s.person_id } }">{{ s.name }}</router-link>
-              <router-link
-                v-else-if="s.committee && showCommittees"
-                :to="{ name: 'committee', params: { id: s.committee.id } }"
-              >{{ s.name }}</router-link>
-              <span v-else>{{ s.name }}</span>
-              <FactionBadge v-if="s.faction" :faction="s.faction" />
-              <span v-if="i < b.sponsors.length - 1" aria-hidden="true">·</span>
-            </template>
-            <!-- questions: submitter → whoever answered it in plenary -->
-            <template v-if="b.responder">
-              <span class="arrow" aria-hidden="true">→</span>
-              <span class="visually-hidden">{{ $t('documents.answeredBy') }}:</span>
-              <router-link
-                v-if="b.responder.person_id" :title="b.responder.office"
-                :to="{ name: 'profile', params: { id: b.responder.person_id } }"
-              >{{ b.responder.name }}</router-link>
-              <span v-else :title="b.responder.office">{{ b.responder.name }}</span>
-              <FactionBadge v-if="b.responder.faction" :faction="b.responder.faction" />
-            </template>
-          </div>
-        </li>
+        <DocumentCard v-for="(b, i) in data.bills" :key="b.id" :bill="b" @open="clicks.hit(i)" />
       </ul>
       <Pagination :page="page" :total-pages="totalPages" @goto="gotoPage" />
     </div>
@@ -328,16 +288,8 @@ onUnmounted(() => clearTimeout(t))
 <style scoped>
 /* .filters, .filter-grid, .results-head, .sortctl are global (styles.css). */
 .billlist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .6rem; }
-.billcard { display: flex; flex-direction: column; gap: .4rem; }
-.billhead { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
-.billnum { font-weight: 800; color: var(--accent); }
-.billtitle { color: var(--ink); font-weight: 600; }
-.billtitle:hover { color: var(--accent); }
 .hint { margin: .25rem 0 0; }
-.sponsors { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
-.sponsors .arrow { color: var(--ink-soft); }
 /* Submitter-scoped list: the active filter, its profile link and a way out. */
 .sponsorfilter { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; background: var(--accent-soft); }
 .sponsorfilter .clear { margin-left: auto; }
-.badge.status { background: var(--accent-soft); }
 </style>

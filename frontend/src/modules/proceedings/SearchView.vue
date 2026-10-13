@@ -1,47 +1,59 @@
 <script setup>
-// Full-text sentence search (§5.1). Search state lives entirely in the URL query
-// (SEA-6: deep-linkable / citable). Editing filters or paging updates the URL,
-// and a watcher re-runs the query — so the back button and a pasted link both
+// The site search (§5.1). Search state lives entirely in the URL query (SEA-6:
+// deep-linkable / citable). Editing filters or paging updates the URL, and a
+// watcher re-runs the query — so the back button and a pasted link both
 // reproduce the exact result set.
+//
+// It searches in one or several scopes at once (SEA-14): the plenary transcript,
+// the committee minutes, the irományok, the votes and the people. One scope is a
+// full, paged result list; several are a section each, holding that scope's top
+// hits and a way to open all of them. Each scope is answered by its own
+// endpoint, translated from this page's filters in lib/searchScopes.js.
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, setCycles, currentCycleLabel, periodLabel } from '../../store.js'
-import { agendaLabel, formatDate, formatDateLocal, searchExcerptLines } from '../../format.js'
+import { agendaLabel } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
-import { scopeFromQuery, scopeTarget, searchesInPlace } from '../../lib/searchScopes.js'
+import {
+  FILTERS, SEARCH_SCOPES, SCOPE_BY_KEY, scopesFromQuery, scopeTarget, scopesHonour,
+  ignoredFilters, sortOptions, listPageTarget,
+} from '../../lib/searchScopes.js'
 import { useSpeakerSuggest } from '../../lib/speakerSuggest.js'
 import { onekoForQuery, dismissOneko } from '../../lib/oneko.js'
 import StateBlock from '../../components/StateBlock.vue'
-import FactionBadge from '../../components/FactionBadge.vue'
-import SpeakerLink from '../../components/SpeakerLink.vue'
 import SpeakerFilter from '../../components/SpeakerFilter.vue'
 import SpeakerSuggestList from '../../components/SpeakerSuggestList.vue'
-import TimingBadge from '../../components/TimingBadge.vue'
 import TrendChart from '../../components/TrendChart.vue'
 import BarChart from '../../components/BarChart.vue'
 import EmbedButton from '../../components/EmbedButton.vue'
 import DonateCard from '../../components/DonateCard.vue'
 import SearchScopeSelect from '../../components/SearchScopeSelect.vue'
+import SearchResults from './SearchResults.vue'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 
+// A single scope's page size, and how many hits each section of a search across
+// several scopes shows before its "all results" link — people are small grid
+// tiles, so two rows of them.
 const PAGE = 20
+const SECTION_LIMIT = 5
+const SECTION_LIMIT_PEOPLE = 6
 const AGENDA_TYPES = ['opening', 'procedural', 'regular', 'oath', 'voting',
   'rules_of_procedure', 'questioning_of_the_government', 'qa', 'condolence']
 
 const input = ref(route.query.q || '')
-// What the box searches in (SEA-14). This page runs the two full-text scopes —
-// the plenary transcript and the committee minutes, `?in=committee` — and hands
-// the others to their own list pages (lib/searchScopes.js). The committee
-// minutes have no faction id or agenda type to filter on, so only the speaker
-// and the dates carry over between the two.
-const scope = ref(scopeFromQuery(route.query))
-const isCommittee = computed(() => scope.value === 'committee')
-const PLENARY_ONLY = ['faction_id', 'agenda_type']
+// What the box searches in (SEA-14) — one scope or several.
+const scopes = ref(scopesFromQuery(route.query))
+const single = computed(() => (scopes.value.length === 1 ? scopes.value[0] : null))
+// Which filters to offer: those at least one picked scope can apply. A filter
+// set while another scope was picked, and that no picked scope honours, is
+// dropped from the URL by submit() rather than kept on silently.
+const offers = computed(() => Object.fromEntries(Object.keys(FILTERS)
+  .map((group) => [group, scopesHonour(scopes.value, group)])))
 // The electoral cycle is a *global* scope set from the header (store.cycles),
 // not a per-search filter — so it is no longer part of the URL query here.
 const filters = reactive({
@@ -62,24 +74,29 @@ const showFilters = ref(!!(filters.date_from || filters.date_to || filters.facti
 // the URL like the other per-page filters so a sorted view is deep-linkable (CYC-5).
 const SORTS = ['relevance', 'date_desc', 'date_asc']
 const sort = ref(SORTS.includes(route.query.sort) ? route.query.sort : 'relevance')
+// What the sort control offers for the picked scopes, and what it shows: a
+// search with nothing to rank by (no term, or only scopes that cannot rank) is
+// in date order whatever the URL asks for, and the control says so — without
+// writing that back, so picking a scope that does rank still ranks.
+const sorts = computed(() => sortOptions(scopes.value, route.query.q))
+const shownSort = computed(() => (sorts.value.includes(sort.value) ? sort.value : 'date_desc'))
+const SORT_LABELS = {
+  relevance: 'search.sortRelevance', date_desc: 'search.sortNewest', date_asc: 'search.sortOldest',
+}
 
-const data = ref(null)
+// One entry per picked scope, in the picker's order, filled in as each scope's
+// endpoint answers — a slow scope never holds the others back.
+const sections = ref([])
 const trend = ref(null)
 const breakdown = ref(null)
 const breakdownLoading = ref(false)
-const loading = ref(false)
-const error = ref(false)
-// A search the origin refused as too expensive (503) is not a transient fault:
-// re-running it costs the same and fails the same, so the reader is told what to
-// change instead of being offered a retry (see the backend's query budget).
-const tooSlow = ref(false)
 
 const factions = ref([])
 const page = computed(() => Math.floor((Number(route.query.offset) || 0) / PAGE))
 // `total` arrives already capped by the backend (max_search_total), so page
 // straight from it — a second, lower cap here would strand reachable results.
 const totalPages = computed(() =>
-  data.value ? Math.ceil(data.value.total / PAGE) : 0)
+  (single.value && sections.value[0] ? Math.ceil(sections.value[0].total / PAGE) : 0))
 
 onMounted(async () => {
   document.addEventListener('pointerdown', onDocPointerDown)
@@ -87,14 +104,16 @@ onMounted(async () => {
   // the results must not wait on a name that is only shown in the panel.
   syncSpeaker(route.query.person_id || '')
   // Ensure the global cycle is initialised before the first search so results
-  // are scoped to the selected cycle (not briefly to "all").
+  // are scoped to the selected cycle (not briefly to "all") — and the module
+  // list, so a scope this deployment does not run is dropped before it is asked.
   await loadMeta().catch(() => {})
   try { factions.value = (await api.factions()).factions } catch {}
-  if (searchable.value) runFromRoute()
+  runFromRoute()
 })
 
-// What the page can run: a term, or — with no term — a speaker, whose speeches
-// are then listed (SEA-3). Any other filter needs a term to narrow.
+// What the page can run: a term, or — with no term — a speaker, whose speeches,
+// irományok and votes are then listed (SEA-3). Any other filter needs a term to
+// narrow.
 const searchable = computed(() => !!(route.query.q || route.query.person_id))
 
 // Re-run the active search when the global cycle changes.
@@ -103,42 +122,36 @@ watch(() => store.cycles.join(','), () => { if (searchable.value) runFromRoute()
 // Push the current form state into the URL (this triggers the watcher → fetch).
 function submit(resetPage = true) {
   clearSuggest()
-  // A scope with a list page of its own takes the term there, and only the
-  // term: this page's filters are a transcript's, not a vote's or a bill's.
-  if (!searchesInPlace(scope.value)) {
-    router.push(scopeTarget(scope.value, input.value))
-    return
-  }
-  const query = {}
   // A filter can be set before a term is (picking a speaker from the box below
   // is exactly that), and the backend has no query-less search — so an empty `q`
   // is left out of the URL rather than sent (scopeTarget): the filters stay, and
   // the page waits for the word to search for.
-  for (const k of ['date_from', 'date_to', ...PLENARY_ONLY]) {
-    if (filters[k] && !(isCommittee.value && PLENARY_ONLY.includes(k))) query[k] = filters[k]
+  const query = {}
+  for (const [group, params] of Object.entries(FILTERS)) {
+    if (group === 'speaker' || !offers.value[group]) continue
+    for (const k of params) if (filters[k]) query[k] = filters[k]
   }
-  if (speaker.value) query.person_id = speaker.value.person_id
+  if (speaker.value && offers.value.speaker) query.person_id = speaker.value.person_id
   if (sort.value !== 'relevance') query.sort = sort.value
   if (!resetPage && route.query.offset) query.offset = route.query.offset
-  router.push(scopeTarget(scope.value, input.value, query))
+  router.push(scopeTarget(scopes.value, input.value, query))
 }
 
-// Picking a scope searches there at once, as picking a filter does — for a
-// scope with a list page of its own that means going to it. With nothing to
-// search for yet the choice just waits for the term: a list page opened empty
-// is a browse the reader did not ask for.
-function onScope(key) {
-  scope.value = key
-  const runnable = input.value.trim() || (searchesInPlace(key) && speaker.value)
+// Picking scopes searches there at once, as picking a filter does. With nothing
+// to search for yet the choice just waits for the term.
+function onScopes(keys) {
+  scopes.value = keys
+  const runnable = input.value.trim() || (speaker.value && scopesHonour(keys, 'speaker'))
   if (runnable) submit()
 }
 
 // Re-order the results: a new ordering always returns to the first page.
-function changeSort() {
+function changeSort(value) {
+  sort.value = value
   const query = { ...route.query }
   delete query.offset
-  if (sort.value === 'relevance') delete query.sort
-  else query.sort = sort.value
+  if (value === 'relevance') delete query.sort
+  else query.sort = value
   router.push({ name: 'search', query })
 }
 
@@ -151,6 +164,19 @@ function clearFilters() {
 
 function gotoPage(p) {
   router.push({ name: 'search', query: { ...route.query, offset: p * PAGE } })
+}
+
+// The same search narrowed to one of its scopes — a section's way to all of
+// its results. The filters that scope cannot apply are left behind, as a scope
+// change on the page leaves them (submit), so the list it opens is not
+// qualified by a filter its panel no longer shows.
+function onlyScope(key) {
+  const query = { ...route.query }
+  delete query.in; delete query.offset
+  for (const [group, params] of Object.entries(FILTERS)) {
+    if (!SCOPE_BY_KEY[key].filters.includes(group)) for (const k of params) delete query[k]
+  }
+  return scopeTarget([key], query.q, query)
 }
 
 // Bring `speaker` in line with the `person_id` the URL carries. A filter picked
@@ -176,13 +202,18 @@ async function syncSpeaker(id) {
 // there is almost never a useful search *term* — the transcript carries a
 // speaker in its label, not in the sentences the index holds — so what the list
 // offers is the speaker FILTER, and picking one moves the name out of the query
-// box and into the filter it was meant to be.
+// box and into the filter it was meant to be. Not offered when no picked scope
+// takes a speaker: in the people scope alone a typed name IS the search.
 // No loading state is taken from it: under the main box a spinner would fire on
 // every fourth character of an ordinary search term, so the list simply appears
 // when there is somebody to show.
 const { speakers: suggested, ask: askSuggest, clear: clearSuggest } = useSpeakerSuggest()
 const qInput = ref(null)
 const qBox = ref(null)
+function onInput() {
+  if (offers.value.speaker) askSuggest(input.value)
+  else clearSuggest()
+}
 
 // Picked in the filter panel, or dropped from it — either way the search re-runs
 // against the new filter.
@@ -211,31 +242,18 @@ function onDocPointerDown(e) {
 // a newer one's results (and the trend/breakdown could belong to a different
 // query than the list).
 let reqSeq = 0
-// The filters the current result set was fetched with — reused to lazily fetch
-// the breakdown, and the reqSeq that breakdown was last fetched for.
+// The filters the current plenary result set was fetched with — reused to lazily
+// fetch the breakdown, and the reqSeq that breakdown was last fetched for.
 let currentArgs = null
 let breakdownLoadedSeq = -1
 // Anonymous search-quality signal (SEA-12): which result the reader opens, and
-// how far down the list it sat. Armed by each executed search, fired once.
-const clicks = createSearchClicks('proceedings')
-const committeeClicks = createSearchClicks('committee-minutes')
+// how far down its list it sat. One tracker per scope, each counted under that
+// scope's own source — a section's hits are ranked within the section.
+const clicks = Object.fromEntries(SEARCH_SCOPES.map((s) => [s.key, createSearchClicks(s.source)]))
 
-async function runFromRoute() {
-  // The site's one easter egg (SEA-13): a search for cats fetches a cat, and
-  // any other search sends it home again. Called before the early return so an
-  // emptied query dismisses it too.
-  onekoForQuery(route.query.q)
-  if (!searchable.value) {
-    reqSeq++ // orphan any in-flight responses
-    data.value = null; trend.value = null; breakdown.value = null
-    currentArgs = null; breakdownLoadedSeq = -1
-    return
-  }
-  const seq = ++reqSeq
-  loading.value = true; error.value = false; tooSlow.value = false
-  const offset = Number(route.query.offset) || 0
-  if (scopeFromQuery(route.query) === 'committee') return runCommittee(seq, offset)
-  const filterArgs = {
+// The page's search as the scope adapters take it (lib/searchScopes.js).
+function searchState() {
+  return {
     q: route.query.q,
     period: store.cycles, // global cycle scope (empty = all cycles)
     date_from: route.query.date_from,
@@ -243,69 +261,84 @@ async function runFromRoute() {
     person_id: route.query.person_id,
     faction_id: route.query.faction_id,
     agenda_type: route.query.agenda_type,
+    sort: route.query.sort,
   }
-  currentArgs = filterArgs
-  // The over-time popularity chart (SEA-8) is shown by default, so it runs
-  // alongside the results (its failure must never break the list). The who-said-it
+}
+
+function emptySection(key) {
+  return {
+    key, loading: true, error: false, tooSlow: false, unavailable: false,
+    skipped: false, total: 0, capped: false, results: [], query: '',
+  }
+}
+
+function sectionLimit(key) {
+  if (single.value) return PAGE
+  return key === 'people' ? SECTION_LIMIT_PEOPLE : SECTION_LIMIT
+}
+
+async function runFromRoute() {
+  // The site's one easter egg (SEA-13): a search for cats fetches a cat, and
+  // any other search sends it home again. Called before the early return so an
+  // emptied query dismisses it too.
+  onekoForQuery(route.query.q)
+  scopes.value = scopesFromQuery(route.query)
+  trend.value = null; breakdown.value = null
+  currentArgs = null; breakdownLoadedSeq = -1
+  if (!searchable.value) {
+    reqSeq++ // orphan any in-flight responses
+    sections.value = []
+    return
+  }
+  const seq = ++reqSeq
+  const state = searchState()
+  const offset = single.value ? Number(route.query.offset) || 0 : 0
+  sections.value = scopes.value.map(emptySection)
+  // The plenary's two aggregates belong to a plenary search on its own: the
+  // over-time popularity chart (SEA-8) is shown by default, so it runs alongside
+  // the results (its failure must never break the list). The who-said-it
   // breakdown (SEA-9) is collapsed by default AND is the backend's most expensive
   // query (a top-N over the entire match set), so it is deferred until the user
   // actually opens the panel — most searches never pay for it. If the panel is
   // already open (a re-search with it expanded), refresh it for the new query.
-  api.searchTrend(filterArgs)
-    .then((t) => { if (seq === reqSeq) trend.value = t })
-    .catch(() => { if (seq === reqSeq) trend.value = null })
-  breakdown.value = null
-  breakdownLoadedSeq = -1
-  if (showBreakdown.value) loadBreakdown()
-  // ordering (SEA-10); trend/breakdown are unaffected by it
-  const searchArgs = { ...filterArgs, sort: route.query.sort }
+  if (single.value === 'plenary') {
+    const { sort: _ordering, ...filterArgs } = SCOPE_BY_KEY.plenary.args(state)
+    currentArgs = filterArgs
+    api.searchTrend(filterArgs)
+      .then((tr) => { if (seq === reqSeq) trend.value = tr })
+      .catch(() => { if (seq === reqSeq) trend.value = null })
+    if (showBreakdown.value) loadBreakdown()
+  }
+  await Promise.all(sections.value.map((sec) => runSection(sec, seq, state, offset)))
+}
+
+// Fetch one scope's hits into its section. A scope with nothing it can search
+// by (people without a name) is skipped and says why, rather than listing
+// everyone.
+async function runSection(sec, seq, state, offset) {
+  const scope = SCOPE_BY_KEY[sec.key]
+  if (!scope.runnable(state)) { sec.skipped = true; sec.loading = false; return }
+  const args = scope.args(state)
+  sec.loading = true; sec.error = false; sec.tooSlow = false
   try {
-    const res = await api.search({ ...searchArgs, limit: PAGE, offset })
-    if (seq === reqSeq) {
-      data.value = { ...res, scope: 'plenary' }
-      // A query-less search has no relevance to rank by, so the backend answers
-      // by date whatever was asked for — follow it, or the sort control would
-      // name an ordering the list is not in.
-      sort.value = SORTS.includes(res.sort) ? res.sort : sort.value
-      // Arm the quality ping with the same args the search ran with, so a click
-      // is counted onto this search's own aggregate row.
-      clicks.arm(searchArgs, offset)
-    }
+    const res = await scope.fetch({ ...args, limit: sectionLimit(sec.key), offset })
+    if (seq !== reqSeq) return
+    Object.assign(sec, scope.read(res))
+    // Armed with the same args the search ran with, so a click is counted onto
+    // this search's own aggregate row.
+    clicks[sec.key].arm(args, offset)
   } catch (e) {
-    if (seq === reqSeq) { error.value = true; tooSlow.value = e.status === 503 }
+    // A search the origin refused as too expensive (503) is not a transient
+    // fault: re-running it costs the same and fails the same, so the reader is
+    // told what to change instead of being offered a retry.
+    if (seq === reqSeq) { sec.error = true; sec.tooSlow = e.status === 503 }
   } finally {
-    if (seq === reqSeq) loading.value = false
+    if (seq === reqSeq) sec.loading = false
   }
 }
 
-// The committee scope (SEA-14): the same request cycle over the minutes index,
-// without the plenary's two aggregates — the popularity chart and the
-// who-said-it breakdown are figures of the plenary record. The payload is
-// tagged with its scope so the list never draws one scope's hits with the
-// other's card while a switch is in flight.
-async function runCommittee(seq, offset) {
-  trend.value = null; breakdown.value = null
-  currentArgs = null; breakdownLoadedSeq = -1
-  const args = {
-    q: route.query.q,
-    period: store.cycles,
-    date_from: route.query.date_from,
-    date_to: route.query.date_to,
-    person_id: route.query.person_id,
-    sort: route.query.sort,
-  }
-  try {
-    const res = await api.committeeSearch({ ...args, limit: PAGE, offset })
-    if (seq === reqSeq) {
-      data.value = { ...res, scope: 'committee', total_is_capped: res.totalIsCapped }
-      sort.value = SORTS.includes(res.sort) ? res.sort : sort.value
-      committeeClicks.arm(args, offset)
-    }
-  } catch (e) {
-    if (seq === reqSeq) { error.value = true; tooSlow.value = e.status === 503 }
-  } finally {
-    if (seq === reqSeq) loading.value = false
-  }
+function retry(sec) {
+  runSection(sec, reqSeq, searchState(), single.value ? Number(route.query.offset) || 0 : 0)
 }
 
 // Fetch the breakdown for the active search, once, on first expand of its panel
@@ -334,7 +367,6 @@ function toggleBreakdown() {
 // Keep the form synced when navigating via back/forward, and re-run on any change.
 watch(() => route.query, (q) => {
   input.value = q.q || ''
-  scope.value = scopeFromQuery(q)
   filters.date_from = q.date_from || ''
   filters.date_to = q.date_to || ''
   filters.faction_id = q.faction_id || ''
@@ -353,38 +385,65 @@ onUnmounted(() => {
   document.removeEventListener('pointerdown', onDocPointerDown)
 })
 
-function viewerLink(r) {
-  return { name: 'viewer', params: { uid: r.speech_uid }, query: { s: r.sentence_ord } }
+// How many hits a section found, as a sentence fragment and as a bare figure.
+function countText(sec) {
+  return sec.capped
+    ? t('search.resultsCapped', { n: sec.total.toLocaleString('hu-HU') })
+    : `${sec.total.toLocaleString('hu-HU')} ${t('search.results')}`
+}
+function countFigure(sec) {
+  return sec.total.toLocaleString('hu-HU') + (sec.capped ? '+' : '')
+}
+// Whether a section has an answer to count — not still loading, failed, or
+// unable to search at all.
+function found(sec) {
+  return !sec.loading && !sec.error && !sec.skipped && !sec.unavailable
 }
 
-// A committee hit opens the jegyzőkönyv at the speech (BIZ-29's `#sp-<ord>`):
-// the minutes are one document, and the speech is the finest place in it.
-function minutesLink(r) {
-  return { name: 'committee-minutes', params: { meetingId: r.meetingId }, hash: `#sp-${r.ord}` }
+// What a section's results must be read with: the filters it could not apply,
+// and what the speaker filter means where it is not a speaker.
+function scopeNotes(key) {
+  const out = []
+  const ignored = ignoredFilters(key, route.query)
+  if (ignored.length) {
+    out.push(t('search.notApplied', {
+      filters: ignored.map((g) => t(`search.filterNames.${g}`)).join(', '),
+    }))
+  }
+  const name = speaker.value?.label
+  if (route.query.person_id && name) {
+    if (key === 'documents') out.push(t('search.asSponsor', { name }))
+    if (key === 'votes') out.push(t('search.asVoter', { name }))
+  }
+  return out
 }
 
-// Who said it, as the minutes page draws a speech: a face and a faction chip
-// for a member, the office and body for a guest. The minutes' faction column
-// also holds a guest's ministry, which only reads as a party when it has a colour.
-function committeeSpeaker(r) {
-  return { person_id: r.personId, label: r.name, photo_uri: r.photoUri }
-}
-function committeeFaction(r) {
-  return r.factionColor ? { label: r.faction, color: r.factionColor } : null
-}
-function committeeRole(r) {
-  return r.factionColor ? '' : [r.role, r.org].filter(Boolean).join(', ')
+function emptyText(sec) {
+  if (sec.skipped) return t('search.peopleNeedTerm')
+  if (sec.unavailable) return t('search.committeeUnavailable')
+  return t('search.noResults')
 }
 
-// Each result rendered as a transcript excerpt (SEA-4): the matched sentence plus
-// its surrounding context, parsed exactly like the sitting-day transcript —
-// speaker label stripped, parenthetical stage directions / heckles lifted out as
-// italic asides, and a change of speaker in the spilled-in context attributed.
-// See searchExcerptLines() in format.js.
-const resultsView = computed(() => (data.value?.scope === 'plenary' ? data.value.results : []).map((r) => ({
-  ...r,
-  lines: searchExcerptLines(r),
-})))
+// A record scope's own list page, for the filters and orderings the search
+// page does not carry (shown under a single scope's full list).
+const listPage = computed(() => (single.value ? listPageTarget(single.value, searchState()) : null))
+
+// From the summary line to a section: scroll there and move focus to its
+// heading, so a keyboard reader lands where a sighted one looks.
+function jumpTo(key) {
+  const el = document.getElementById(`srh-${key}`)
+  if (!el) return
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  el.focus({ preventScroll: true })
+  el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+}
+
+// The page names what is searched: "the speeches" while every picked scope is
+// a transcript, plain "search" once records are among them — and so does the
+// cycle notice.
+const speechesOnly = computed(() =>
+  scopes.value.every((k) => k === 'plenary' || k === 'committee'))
+const title = computed(() => t(speechesOnly.value ? 'search.title' : 'search.titleAny'))
 
 // SEA-9 breakdown → BarChart rows. Factions keep their colour; each
 // representative links to their profile (REP-1).
@@ -423,18 +482,22 @@ const cycleMarkers = computed(() => {
   return out
 })
 
+// The plenary section of a plenary-only search — what the two aggregates are
+// drawn for.
+const plenary = computed(() => (single.value === 'plenary' ? sections.value[0] : null))
+
 // What the result set is *called* — the keyword in quotes, or, for a query-less
 // search, the speaker whose speeches are listed. The captions read the same way
 // round either way, so they take one name.
-const trendCaption = computed(() => (data.value?.query
-  ? t('search.trendCaption', { q: data.value.query })
+const trendCaption = computed(() => (plenary.value?.query
+  ? t('search.trendCaption', { q: plenary.value.query })
   : t('search.trendCaptionSpeaker', { name: speaker.value?.label || '' })))
 
 // Params carried into the embeddable histogram (EmbedView `search-trend`): the
 // executed query plus the active filters, so the embed shows the same result set.
 // The cycle is added by EmbedButton from the global scope.
 const trendEmbedParams = computed(() => ({
-  q: data.value?.query,
+  q: plenary.value?.query,
   date_from: route.query.date_from,
   date_to: route.query.date_to,
   person_id: route.query.person_id,
@@ -454,16 +517,16 @@ function onTrendSelect({ from, to }) {
 </script>
 
 <template>
-  <h1>{{ $t('search.title') }}</h1>
+  <h1>{{ title }}</h1>
 
   <form role="search" class="card pad searchform" @submit.prevent="submit()">
     <div class="row" style="gap:.5rem;">
-      <SearchScopeSelect :model-value="scope" @update:model-value="onScope" />
+      <SearchScopeSelect :model-value="scopes" @change="onScopes" />
       <div ref="qBox" class="qbox">
         <input
           ref="qInput" v-model="input" type="search" autocomplete="off"
-          :placeholder="$t('search.placeholder')" :aria-label="$t('search.title')"
-          @input="askSuggest(input)" @keydown.esc="clearSuggest()"
+          :placeholder="$t('search.placeholder')" :aria-label="title"
+          @input="onInput" @keydown.esc="clearSuggest()"
         />
         <!-- Who the typed text names (SEA-7). Offered as the speaker filter,
              and silent for the ordinary search terms that match nobody. -->
@@ -484,34 +547,36 @@ function onTrendSelect({ from, to }) {
       <div class="filter-grid">
         <!-- Full width: its suggestions need the room, and it is the filter most
              often reached for after the query itself. -->
-        <div class="wide">
+        <div v-if="offers.speaker" class="wide">
           <SpeakerFilter
             :model-value="speaker" input-id="f-speaker"
             @update:model-value="onSpeakerFilter"
           />
         </div>
-        <div v-if="!isCommittee">
+        <div v-if="offers.faction">
           <label for="f-faction">{{ $t('search.faction') }}</label>
           <select id="f-faction" v-model="filters.faction_id" @change="submit()">
             <option value="">{{ $t('search.all') }}</option>
             <option v-for="f in factions" :key="f.id" :value="f.id">{{ f.label }}</option>
           </select>
         </div>
-        <div v-if="!isCommittee">
+        <div v-if="offers.agenda">
           <label for="f-agenda">{{ $t('search.agendaType') }}</label>
           <select id="f-agenda" v-model="filters.agenda_type" @change="submit()">
             <option value="">{{ $t('search.all') }}</option>
-            <option v-for="t in AGENDA_TYPES" :key="t" :value="t">{{ agendaLabel(t) }}</option>
+            <option v-for="a in AGENDA_TYPES" :key="a" :value="a">{{ agendaLabel(a) }}</option>
           </select>
         </div>
-        <div>
-          <label for="f-from">{{ $t('search.dateFrom') }}</label>
-          <input id="f-from" type="date" v-model="filters.date_from" @change="submit()" />
-        </div>
-        <div>
-          <label for="f-to">{{ $t('search.dateTo') }}</label>
-          <input id="f-to" type="date" v-model="filters.date_to" @change="submit()" />
-        </div>
+        <template v-if="offers.dates">
+          <div>
+            <label for="f-from">{{ $t('search.dateFrom') }}</label>
+            <input id="f-from" type="date" v-model="filters.date_from" @change="submit()" />
+          </div>
+          <div>
+            <label for="f-to">{{ $t('search.dateTo') }}</label>
+            <input id="f-to" type="date" v-model="filters.date_to" @change="submit()" />
+          </div>
+        </template>
       </div>
       <button class="btn secondary small" type="button" style="margin-top:.6rem;" @click="clearFilters">
         {{ $t('search.clearFilters') }}
@@ -520,138 +585,161 @@ function onTrendSelect({ from, to }) {
   </form>
 
   <p v-if="cycleScopeLabel" class="muted small cyclenotice">
-    {{ $t('search.cycleScope', { cycle: cycleScopeLabel }) }}
+    {{ $t(speechesOnly ? 'search.cycleScope' : 'search.cycleScopeAny', { cycle: cycleScopeLabel }) }}
     <a href="#" @click.prevent="setCycles([])">{{ $t('search.cycleScopeAll') }}</a>
   </p>
 
-  <StateBlock
-    :loading="loading" :error="error"
-    :error-text="tooSlow ? $t('search.tooSlow') : ''"
-    :retryable="!tooSlow"
-    :empty="!!data && data.results.length === 0"
-    :empty-text="data?.tablesReady === false ? $t('search.committeeUnavailable') : $t('search.noResults')"
-    @retry="runFromRoute"
-  >
-    <div v-if="data">
-      <div class="results-head">
-        <p class="muted small" aria-live="polite" style="margin:0;">
-          <strong>{{ data.total_is_capped ? $t('search.resultsCapped', { n: data.total }) : data.total.toLocaleString('hu-HU') }}</strong>
-          {{ $t('search.results') }}
-        </p>
-        <label class="sortctl small muted">
-          {{ $t('search.sort') }}
-          <select v-model="sort" @change="changeSort">
-            <option v-if="data.query" value="relevance">{{ $t('search.sortRelevance') }}</option>
-            <option value="date_desc">{{ $t('search.sortNewest') }}</option>
-            <option value="date_asc">{{ $t('search.sortOldest') }}</option>
-          </select>
-        </label>
-      </div>
+  <!-- One scope: its full result list, paged, with the plenary's aggregates. -->
+  <template v-if="single && sections.length">
+    <StateBlock
+      v-for="sec in sections" :key="sec.key"
+      :loading="sec.loading" :error="sec.error"
+      :error-text="sec.tooSlow ? $t('search.tooSlow') : ''"
+      :retryable="!sec.tooSlow"
+      :empty="sec.skipped || sec.results.length === 0"
+      :empty-text="emptyText(sec)"
+      @retry="retry(sec)"
+    >
+      <div>
+        <div class="results-head">
+          <p class="muted small" aria-live="polite" style="margin:0;">
+            <strong>{{ sec.capped ? $t('search.resultsCapped', { n: sec.total }) : sec.total.toLocaleString('hu-HU') }}</strong>{{ sec.capped ? '' : ` ${$t('search.results')}` }}
+          </p>
+          <label v-if="sorts.length" class="sortctl small muted">
+            {{ $t('search.sort') }}
+            <select :value="shownSort" @change="changeSort($event.target.value)">
+              <option v-for="o in sorts" :key="o" :value="o">{{ $t(SORT_LABELS[o]) }}</option>
+            </select>
+          </label>
+        </div>
+        <p v-for="(n, j) in scopeNotes(sec.key)" :key="j" class="muted small scope-note">{{ n }}</p>
 
-      <section v-if="data.scope === 'plenary' && trend && trend.buckets.length > 1" class="card pad trendcard">
-        <TrendChart
-          :buckets="trend.buckets" :granularity="trend.granularity"
-          :start="trend.start" :end="trend.end" :markers="cycleMarkers"
-          :caption="trendCaption"
-          :unit="$t('search.results')"
-          selectable @select="onTrendSelect"
-        />
-        <div class="fig-foot">
-          <p class="small muted trendhint">{{ $t('search.trendHint') }}</p>
-          <EmbedButton
-            kind="search-trend" :params="trendEmbedParams"
-            :title="trendCaption" :height="300"
+        <section v-if="plenary && trend && trend.buckets.length > 1" class="card pad trendcard">
+          <TrendChart
+            :buckets="trend.buckets" :granularity="trend.granularity"
+            :start="trend.start" :end="trend.end" :markers="cycleMarkers"
+            :caption="trendCaption"
+            :unit="$t('search.results')"
+            selectable @select="onTrendSelect"
           />
-        </div>
-      </section>
-
-      <!-- Only for a keyword search: a query-less list is one speaker's own
-           speeches, so both groupings would be a single bar of their own. -->
-      <section v-if="data.scope === 'plenary' && data.results.length && data.query" class="card pad breakdowncard">
-        <button
-          class="breakdown-toggle" type="button"
-          :aria-expanded="showBreakdown" @click="toggleBreakdown"
-        >
-          <span class="chev" :class="{ open: showBreakdown }" aria-hidden="true">▸</span>
-          {{ $t('search.breakdown') }}
-        </button>
-        <div v-show="showBreakdown">
-          <p v-if="breakdownLoading" class="muted small bd-status">{{ $t('app.loading') }}</p>
-          <div v-else-if="hasBreakdown" class="breakdown-grid">
-            <BarChart
-              v-if="factionItems.length"
-              :items="factionItems"
-              :caption="$t('search.breakdownFactions', { q: data.query })"
-              :unit="$t('search.results')"
-              :value-format="(v) => v.toLocaleString('hu-HU')"
-            />
-            <BarChart
-              v-if="speakerItems.length"
-              :items="speakerItems"
-              :caption="$t('search.breakdownSpeakers', { q: data.query })"
-              :unit="$t('search.results')"
-              :value-format="(v) => v.toLocaleString('hu-HU')"
+          <div class="fig-foot">
+            <p class="small muted trendhint">{{ $t('search.trendHint') }}</p>
+            <EmbedButton
+              kind="search-trend" :params="trendEmbedParams"
+              :title="trendCaption" :height="300"
             />
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- Committee hits (SEA-14): one per speech, opened at its anchor in the
-           jegyzőkönyv. The excerpt is the server's snippet, already escaped
-           with only its <mark>s left as markup, like the plenary's. -->
-      <ol v-if="data.scope === 'committee'" class="results">
-        <li v-for="(r, i) in data.results" :key="r.id" class="card pad result">
-          <div class="result-meta row">
-            <SpeakerLink :speaker="committeeSpeaker(r)" />
-            <FactionBadge :faction="committeeFaction(r)" />
-            <span v-if="committeeRole(r)" class="muted small">{{ committeeRole(r) }}</span>
-            <span class="muted small">{{ r.heldOn ? formatDate(r.heldOn) : formatDateLocal(r.heldAt) }}</span>
-            <router-link :to="{ name: 'committee', params: { id: r.committeeId } }" class="small">
-              {{ r.committeeName }}
-            </router-link>
+        <!-- Only for a keyword search: a query-less list is one speaker's own
+             speeches, so both groupings would be a single bar of their own. -->
+        <section v-if="plenary && plenary.query" class="card pad breakdowncard">
+          <button
+            class="breakdown-toggle" type="button"
+            :aria-expanded="showBreakdown" @click="toggleBreakdown"
+          >
+            <span class="chev" :class="{ open: showBreakdown }" aria-hidden="true">▸</span>
+            {{ $t('search.breakdown') }}
+          </button>
+          <div v-show="showBreakdown">
+            <p v-if="breakdownLoading" class="muted small bd-status">{{ $t('app.loading') }}</p>
+            <div v-else-if="hasBreakdown" class="breakdown-grid">
+              <BarChart
+                v-if="factionItems.length"
+                :items="factionItems"
+                :caption="$t('search.breakdownFactions', { q: plenary.query })"
+                :unit="$t('search.results')"
+                :value-format="(v) => v.toLocaleString('hu-HU')"
+              />
+              <BarChart
+                v-if="speakerItems.length"
+                :items="speakerItems"
+                :caption="$t('search.breakdownSpeakers', { q: plenary.query })"
+                :unit="$t('search.results')"
+                :value-format="(v) => v.toLocaleString('hu-HU')"
+              />
+            </div>
           </div>
-          <p v-if="r.section" class="muted small result-section">{{ r.section }}</p>
-          <router-link :to="minutesLink(r)" class="result-excerpt" @click="committeeClicks.hit(i)">
-            <span v-html="r.excerpt"></span>
-          </router-link>
-          <div class="result-actions">
-            <router-link :to="minutesLink(r)" class="btn secondary small" @click="committeeClicks.hit(i)">
-              {{ $t('search.openMinutes') }}
-            </router-link>
-          </div>
-        </li>
-      </ol>
+        </section>
 
-      <ol v-else class="results">
-        <li v-for="(r, i) in resultsView" :key="r.sentence_id" class="card pad result">
-          <div class="result-meta row">
-            <SpeakerLink v-if="r.speaker" :speaker="r.speaker" />
-            <FactionBadge :faction="r.faction" />
-            <span class="muted small">{{ formatDate(r.date) }}</span>
-            <span class="muted small" v-if="r.agenda_title">{{ $t('search.on') }} {{ r.agenda_title }}</span>
-            <TimingBadge :timing="r.timing" />
-          </div>
-          <router-link :to="viewerLink(r)" class="result-excerpt" @click="clicks.hit(i)">
-            <span v-for="(ln, j) in r.lines" :key="j" class="excerpt-line"
-                  :class="{ aside: ln.interjection }">
-              <span v-if="ln.speakerLabel" class="ctx-speaker">{{ ln.speakerLabel }}: </span><span v-html="ln.html"></span>
-            </span>
-          </router-link>
-          <div class="result-actions">
-            <router-link :to="viewerLink(r)" class="btn secondary small watch" @click="clicks.hit(i)">▶ {{ $t('search.watch') }}</router-link>
-          </div>
-        </li>
-      </ol>
+        <SearchResults
+          :scope="sec.key" :results="sec.results"
+          :person-scoped="!!route.query.person_id" @hit="clicks[sec.key].hit($event)"
+        />
 
-      <nav v-if="totalPages > 1" class="pager" :aria-label="$t('search.results')">
-        <button class="btn secondary" :disabled="page === 0" @click="gotoPage(page - 1)">‹</button>
-        <span class="muted small">{{ page + 1 }} / {{ totalPages }}</span>
-        <button class="btn secondary" :disabled="page + 1 >= totalPages" @click="gotoPage(page + 1)">›</button>
+        <nav v-if="totalPages > 1" class="pager" :aria-label="$t('search.results')">
+          <button class="btn secondary" :disabled="page === 0" @click="gotoPage(page - 1)">‹</button>
+          <span class="muted small">{{ page + 1 }} / {{ totalPages }}</span>
+          <button class="btn secondary" :disabled="page + 1 >= totalPages" @click="gotoPage(page + 1)">›</button>
+        </nav>
+
+        <p v-if="listPage" class="small list-handoff">
+          <router-link :to="listPage">{{ $t('search.moreFilters', { page: $t(`search.listPages.${sec.key}`) }) }}</router-link>
+        </p>
+
+        <DonateCard class="search-donate" dismissible storage-key="parlamonitor.donate.search" />
+      </div>
+    </StateBlock>
+  </template>
+
+  <!-- Several scopes: a section each, its top hits and a way to all of them. -->
+  <template v-else-if="sections.length">
+    <div class="results-head">
+      <nav class="scope-jump small" :aria-label="$t('search.byScope')">
+        <template v-for="sec in sections" :key="sec.key">
+          <button v-if="!found(sec) || sec.results.length" type="button" class="jump" @click="jumpTo(sec.key)">
+            {{ $t(`search.scopes.${sec.key}`) }}
+            <b>{{ sec.loading ? '…' : found(sec) ? countFigure(sec) : '–' }}</b>
+          </button>
+          <!-- Nothing there to jump to. -->
+          <span v-else class="jump-none">{{ $t(`search.scopes.${sec.key}`) }} <b>0</b></span>
+        </template>
       </nav>
-
-      <DonateCard class="search-donate" dismissible storage-key="parlamonitor.donate.search" />
+      <label v-if="sorts.length" class="sortctl small muted">
+        {{ $t('search.sort') }}
+        <select :value="shownSort" @change="changeSort($event.target.value)">
+          <option v-for="o in sorts" :key="o" :value="o">{{ $t(SORT_LABELS[o]) }}</option>
+        </select>
+      </label>
     </div>
-  </StateBlock>
+
+    <section
+      v-for="sec in sections" :key="sec.key" class="scope-section"
+      :class="{ nohits: found(sec) && !sec.results.length }"
+      :aria-labelledby="`srh-${sec.key}`"
+    >
+      <div class="scope-head">
+        <h2 :id="`srh-${sec.key}`" tabindex="-1">{{ $t(`search.scopes.${sec.key}`) }}</h2>
+        <span v-if="found(sec)" class="muted small">{{ countText(sec) }}</span>
+      </div>
+      <p v-for="(n, j) in scopeNotes(sec.key)" :key="j" class="muted small scope-note">{{ n }}</p>
+      <!-- A section that found nothing says so in its heading's count; a second
+           "no results" line under it would only repeat that. -->
+      <StateBlock
+        v-if="!found(sec) || sec.results.length"
+        :loading="sec.loading" :error="sec.error"
+        :error-text="sec.tooSlow ? $t('search.tooSlow') : ''"
+        :retryable="!sec.tooSlow"
+        :empty="sec.skipped || sec.results.length === 0"
+        :empty-text="emptyText(sec)"
+        @retry="retry(sec)"
+      >
+        <SearchResults
+          :scope="sec.key" :results="sec.results"
+          :person-scoped="!!route.query.person_id" @hit="clicks[sec.key].hit($event)"
+        />
+        <!-- vue-router matches an active link on its path alone, so every
+             link back into this page would claim to be the current page. -->
+        <p v-if="sec.total > sec.results.length" class="scope-more">
+          <router-link :to="onlyScope(sec.key)" :aria-current-value="null" class="btn secondary small">
+            {{ $t('search.showAll', { n: countFigure(sec) }) }}
+          </router-link>
+        </p>
+      </StateBlock>
+    </section>
+
+    <DonateCard class="search-donate" dismissible storage-key="parlamonitor.donate.search" />
+  </template>
 </template>
 
 <style scoped>
@@ -675,24 +763,39 @@ function onTrendSelect({ from, to }) {
 .breakdown-toggle .chev.open { transform: rotate(90deg); }
 .breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; margin-top: 1rem; }
 .bd-status { margin-top: 1rem; }
-.results { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .7rem; }
-/* Card reads top-to-bottom: speaker/meta header → context around the match →
-   the watch action. A column gap spaces every part uniformly. */
-.result { display: flex; flex-direction: column; gap: .45rem; }
-/* The matched sentence + its surrounding context, read as a transcript excerpt
-   (SEA-4): each parsed line is its own block, the whole excerpt links to the
-   viewer at the match, and the highlighted term stays prominent via <mark>. */
-.result-excerpt { display: block; color: var(--ink); line-height: 1.6; }
-.result-excerpt:hover { text-decoration: none; }
-.result-excerpt:hover :deep(mark) { outline: 2px solid var(--accent-soft); }
-.excerpt-line { display: block; }
-.excerpt-line + .excerpt-line { margin-top: .4em; }
-/* Stage directions / heckles lifted out of the parentheses: italic, in a softer
-   tone so they read as asides, not speech (matches the sitting-day transcript). */
-.excerpt-line.aside { font-style: italic; color: var(--ink-soft); }
-.ctx-speaker { font-weight: 600; color: var(--ink); font-style: normal; }
-.result-meta { gap: .8rem; row-gap: .4rem; }
-.result-section { margin: 0; }
-.result-actions { display: flex; justify-content: flex-end; }
 .pager { display: flex; align-items: center; justify-content: center; gap: 1rem; margin: 1.5rem 0; }
+/* A scope's caveats: the filters it could not apply, and what the speaker
+   filter reads as there. Quiet, but above the results they qualify. */
+.scope-note { margin: -.2rem 0 .6rem; }
+.list-handoff { margin: 1rem 0 0; text-align: center; }
+
+/* The summary line of a search across several scopes: each scope with its hit
+   count, a jump to its section. */
+.scope-jump { display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; }
+.jump {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; color: var(--accent); text-align: left;
+}
+.jump:hover { text-decoration: underline; }
+.jump b, .jump-none b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.jump-none { color: var(--ink-faint); }
+.scope-section { margin-top: 1.6rem; }
+/* A scope that found nothing stays in its place — the sections never reorder
+   as they answer — but recedes. */
+.scope-section.nohits { margin-top: 1.1rem; }
+.scope-section.nohits h2 { color: var(--ink-faint); font-size: 1rem; }
+.scope-head { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; margin-bottom: .6rem; }
+/* Clear of the sticky site header when jumped to. */
+.scope-head h2 { margin: 0; font-size: 1.15rem; scroll-margin-top: 5.5rem; }
+.scope-head h2:focus { outline: none; }
+.scope-head h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A section's own loading / empty / error state is a line, not the page-sized
+   block a whole list gets. */
+.scope-section :deep(.state) { padding: 1rem; }
+.scope-more { margin: .7rem 0 0; display: flex; justify-content: center; }
+/* On a phone the scope picker takes a row of its own, as on the home page,
+   rather than half of one with the box squeezed beneath it. */
+@media (max-width: 560px) {
+  .searchform .scope-select { flex-basis: 100%; width: 100%; }
+}
 </style>

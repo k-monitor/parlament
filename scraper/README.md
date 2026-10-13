@@ -649,8 +649,11 @@ cache changes — which gives three ways to get a walled host's sittings timed:
    the cookies expire. **This did not work on the production server**
    (2026-10-13). With the cookies, YouTube answered every video with *"The page
    needs to be reloaded"*, even on the newest yt-dlp (2026.08.19). That message
-   now counts as a wall too, so it stops the pass. Route 1 is the one that
-   works.
+   now counts as a wall too, so it stops the pass. What did work there is
+   route 2, `PARLAMONITOR_YOUTUBE_PROXY=ssh` through the scraper's existing SSH
+   host. Its first pass transcribed 4 recordings unattended. An occasional
+   `HTTP Error 403` on the media download still happens, and the next pass
+   retries it.
 
 `--force` ignores a recorded block.
 

@@ -994,6 +994,27 @@ export default {
     sessionsCovered: 'sittings covered', noSpeeches: 'No speeches on record.', viewSpeech: 'View',
     speechesDayCount: 'speeches', speechesLoadError: 'Could not load speeches.',
     searchSpeeches: 'Search their speeches',
+    // The committee speeches section (BIZ-35).
+    plenarySpeeches: 'Plenary speeches',
+    committeeSpeeches: 'Committee speeches',
+    committeeSpeechesNote: 'Speeches read out of the committee sittings\' '
+      + 'minutes, by sitting. The minutes record no timings, so the length of '
+      + 'what was said is given in words rather than speaking time, and none of '
+      + 'these speeches count towards the plenary statistics. Speakers are '
+      + 'identified by the name the minutes print, so the odd contribution may '
+      + 'be missing; and minutes are published weeks after a sitting, so the most '
+      + 'recent sittings may not be listed yet.',
+    committeeSpeechesChairNote: 'Turns taken while chairing the sitting are '
+      + 'included, and marked: a committee chair speaks to the substance too, not '
+      + 'only runs the sitting.',
+    committeeSummary: 'at {sittings} committee sittings, {words} words in all',
+    committeeChairTotal: '{n} of these speeches while chairing',
+    committeeChairing: 'chairing',
+    committeeCoverage: 'Committee minutes have only been read for this period: '
+      + '{cycles}. Sittings from the rest of the selected period are therefore '
+      + 'not listed here.',
+    committeeOpenMinutes: 'The full minutes of the sitting',
+    searchCommitteeSpeeches: 'Search their committee speeches',
     showMore: 'Show more', showLess: 'Show less',
     showingFirst: 'Showing the first {n} items.',
     present: 'present',

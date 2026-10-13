@@ -3700,6 +3700,22 @@ this bill" is a question the corpus cannot answer at all.
   the clerk continued past an agenda heading without reprinting the name is
   marked *folytatás*, so its bubble does not read as the speaker taking the
   floor again.
+- **BIZ-35.** A person's **profile lists their committee speeches**, in a
+  section of its own beside the plenary one: the sittings they spoke at, newest
+  first, each naming its body and opening — lazily, as the plenary days do — to
+  their speeches there, every one linking to its anchor in the minutes
+  (BIZ-29) under the agenda heading it was made under. It is a separate list
+  and never part of the plenary figures (BIZ-17), and it is measured in
+  **words**, the minutes carrying no timings (BIZ-25); with it on the page the
+  plenary list is headed *Plenáris felszólalások*, so neither reads as all of
+  them. **Turns taken from the chair are listed and marked, not dropped**: a
+  committee chair speaks to the substance as well as running the sitting, so
+  leaving them out would hide most of a chair's committee work, while counting
+  them unmarked would pass forty procedural turns off as forty contributions —
+  the header gives how many there were. The minutes are read per cycle, so
+  where the scope reaches past them (an "all cycles" profile, typically) the
+  section **says which cycles it covers** rather than presenting a list that
+  merely looks complete.
 
 ### Recordings (BIZ-16)
 

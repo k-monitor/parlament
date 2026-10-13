@@ -117,8 +117,15 @@ export function currentCycleLabel() {
   if (!store.cycles.length) return null
   const periods = (store.meta && store.meta.periods) || []
   if (periods.length && periods.every((p) => store.cycles.includes(p.number))) return null
+  return cyclesLabel(store.cycles)
+}
+
+// Any set of cycles as that same short label — back-to-back cycles merged into
+// the span they cover, newest first.
+export function cyclesLabel(numbers) {
+  const periods = (store.meta && store.meta.periods) || []
   const runs = []
-  for (const n of [...store.cycles].sort((a, b) => a - b)) {
+  for (const n of [...numbers].sort((a, b) => a - b)) {
     const p = periods.find((x) => x.number === n) || { number: n }
     const last = runs[runs.length - 1]
     if (last && last.to.number === n - 1 && touches(last.to, p)) last.to = p

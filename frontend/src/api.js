@@ -159,6 +159,12 @@ export const api = {
   committeeVideos: (id, params) => get(`/committees/${id}/videos`, params),
   // One person's seats, for the block on their profile (BIZ-7).
   repCommittees: (id, period) => get(`/committees/representative/${id}`, { period }),
+  // The committee sittings they spoke at (BIZ-35), and — on expand — what they
+  // said at one of them, as the plenary speech days above are loaded.
+  repCommitteeSittings: (id, period) =>
+    get(`/committees/representative/${id}/speech-sittings`, { period }),
+  repCommitteeSpeeches: (id, meeting) =>
+    get(`/committees/representative/${id}/speeches`, { meeting }),
   // "Who represents me?" (REP-10). Not period-scoped: constituency boundaries are
   // redrawn between elections, so the answer belongs to the cycle the boundary data
   // elects, which the response names.

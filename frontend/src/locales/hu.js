@@ -1099,6 +1099,28 @@ export default {
     // Kilépő link a keresőbe, erre a képviselőre szűrve: a napok szerinti lista
     // böngészhető, de szövegre keresni csak a keresőben lehet.
     searchSpeeches: 'Keresés a felszólalásaiban',
+    // A bizottsági felszólalások szakasza (BIZ-35). Ha megjelenik, a plenáris
+    // lista címe „Plenáris felszólalások” lesz, hogy ne tűnjön az összesnek.
+    plenarySpeeches: 'Plenáris felszólalások',
+    committeeSpeeches: 'Bizottsági felszólalások',
+    committeeSpeechesNote: 'A bizottsági ülések jegyzőkönyveiből kiolvasott '
+      + 'felszólalások, ülésenként. A jegyzőkönyvek nem tartalmaznak időadatot, '
+      + 'ezért itt beszédidő helyett a leírt szöveg hossza (szószám) szerepel, és '
+      + 'ezek a felszólalások a plenáris statisztikákba nem számítanak bele. A '
+      + 'felszólalót a jegyzőkönyvben szereplő név alapján azonosítjuk, így egy-egy '
+      + 'hozzászólás hiányozhat; a jegyzőkönyvek pedig hetekkel az ülés után '
+      + 'jelennek meg, ezért a legutóbbi ülések még nem szerepelhetnek.',
+    committeeSpeechesChairNote: 'Az ülést levezető elnökként tett hozzászólások '
+      + 'is szerepelnek, megjelölve: a bizottsági ülésen az elnök érdemben is '
+      + 'hozzászól, nem csak levezet.',
+    committeeSummary: '{sittings} bizottsági ülésen, összesen {words} szó',
+    committeeChairTotal: 'ebből {n} felszólalás levezető elnökként',
+    committeeChairing: 'levezető elnök',
+    committeeCoverage: 'Bizottsági jegyzőkönyveket csak ebből az időszakból '
+      + 'dolgoztunk fel: {cycles}. A kiválasztott időszak többi ülése ezért nem '
+      + 'szerepel a listában.',
+    committeeOpenMinutes: 'Az ülés teljes jegyzőkönyve',
+    searchCommitteeSpeeches: 'Keresés a bizottsági felszólalásaiban',
     viewSpeech: 'Megtekintés',
     showMore: 'Továbbiak megjelenítése',
     showLess: 'Kevesebb megjelenítése',

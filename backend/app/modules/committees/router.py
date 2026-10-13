@@ -56,6 +56,14 @@ _SORTS = {
 
 _KINDS = ("állandó", "eseti", "vizsgáló", "nemzetiségi", "törvényalkotási")
 
+# One committee speech's length in words — the measure every committee figure
+# is given in, since the minutes carry no timings to give speaking time. Counted
+# as separators + 1, which is exact for this text: the parser rejoins every
+# speech on single spaces and separates its paragraphs with one blank line, so
+# there are no runs to collapse.
+_WORDS = ("(LENGTH(COALESCE(cs.text, '')) - LENGTH(REPLACE(REPLACE("
+          "COALESCE(cs.text, ''), ' ', ''), char(10), '')) + 1)")
+
 # End-of-term "reasons" that say nothing the end date does not already say: the
 # seat ended because the Assembly's term did. They are two thirds of every
 # recorded reason (1 216 of ~1 800 rows), so printed they would drown the ones
@@ -512,18 +520,12 @@ def meeting_minutes(
         "photoUri": r["photo_uri"],
         "chair": bool(r["chair"]), "speeches": r["n"], "chars": r["chars"],
         "words": r["words"],
-    } for r in db.execute("""
+    } for r in db.execute(f"""
         SELECT cs.person_id, cs.name, MAX(cs.faction_name) AS faction,
                MAX(cs.chair) AS chair, COUNT(*) AS n,
                SUM(LENGTH(COALESCE(cs.text, ''))) AS chars,
                -- Words, so the figure beside the bar is one a reader can weigh.
-               -- Counted as separators + 1 per speech, which is exact for this
-               -- text: the parser rejoins every speech on single spaces and
-               -- separates its paragraphs with one blank line, so there are no
-               -- runs to collapse.
-               SUM(LENGTH(COALESCE(cs.text, '')) -
-                   LENGTH(REPLACE(REPLACE(COALESCE(cs.text, ''), ' ', ''),
-                                  char(10), '')) + 1) AS words,
+               SUM({_WORDS}) AS words,
                MAX(p.photo_uri) AS photo_uri
           FROM committee_speech cs
           LEFT JOIN person p ON p.person_id = cs.person_id
@@ -768,15 +770,21 @@ _SEARCH_SORTS = {
 _OPENING_CHARS = 280
 
 
-def _opening(text: str | None) -> str | None:
-    """The first lines of a speech, cut at a word boundary, HTML-escaped the
-    same way a snippet is so the SPA renders both through one ``v-html``."""
+def _opening_text(text: str | None) -> str | None:
+    """The first lines of a speech, cut at a word boundary."""
     if not text:
         return None
     if len(text) > _OPENING_CHARS:
         cut = text.rfind(" ", 0, _OPENING_CHARS)
         text = text[:cut if cut > 0 else _OPENING_CHARS].rstrip() + " …"
-    return mark_html(text)
+    return text
+
+
+def _opening(text: str | None) -> str | None:
+    """``_opening_text``, HTML-escaped the same way a snippet is so the SPA
+    renders both through one ``v-html``."""
+    text = _opening_text(text)
+    return mark_html(text) if text else None
 
 
 @router.get("/search")
@@ -1378,12 +1386,8 @@ def representative_committees(
     # then silently lose every seat before 2014. The caller needs to know that,
     # and cannot tell from an answer that merely looks complete.
     coverage = _coverage(db)
-    asked = period_list(period) or sorted(
-        r["p"] for r in db.execute(
-            "SELECT DISTINCT period_number AS p FROM membership "
-            "WHERE period_number IS NOT NULL") if r["p"] is not None)
     return {"items": current + past, "coverage": coverage,
-            "covers_scope": bool(coverage) and all(p in coverage for p in asked)}
+            "covers_scope": _covers(db, period, coverage)}
 
 
 def _coverage(db: sqlite3.Connection) -> list[int]:
@@ -1392,3 +1396,117 @@ def _coverage(db: sqlite3.Connection) -> list[int]:
         r["p"] for r in db.execute(
             "SELECT DISTINCT period_number AS p FROM committee "
             "WHERE period_number IS NOT NULL") if r["p"] is not None))
+
+
+def _minutes_coverage(db: sqlite3.Connection) -> list[int]:
+    """The cycles whose minutes have been read (BIZ-15) — not the registry's
+    coverage: the two stages run separately, per cycle."""
+    return cached_aggregate("committee-minutes-coverage", (), lambda: sorted(
+        r["p"] for r in db.execute(
+            "SELECT DISTINCT period_number AS p FROM committee_minutes "
+            "WHERE period_number IS NOT NULL") if r["p"] is not None))
+
+
+def _covers(db: sqlite3.Connection, period: Optional[List[int]],
+            coverage: list[int]) -> bool:
+    """Whether ``coverage`` spans every cycle the scope asks about — "all
+    cycles" meaning every cycle anyone held a seat in."""
+    asked = period_list(period) or sorted(
+        r["p"] for r in db.execute(
+            "SELECT DISTINCT period_number AS p FROM membership "
+            "WHERE period_number IS NOT NULL") if r["p"] is not None)
+    return bool(coverage) and all(p in coverage for p in asked)
+
+
+@router.get("/representative/{person_id}/speech-sittings")
+def representative_speech_sittings(
+    person_id: str,
+    db: sqlite3.Connection = Depends(get_db),
+    period: Optional[List[int]] = Query(None),
+):
+    """The committee sittings a person spoke at, newest first, with how much
+    they said at each (BIZ-35) — the committee counterpart of the profile's
+    plenary ``/representatives/{id}/speech-days``. A sitting's speeches are
+    fetched on demand through ``…/speeches?meeting=``.
+
+    Turns taken from the chair are counted with the rest and reported
+    alongside (``chairCount``): a committee chair speaks to the substance as
+    well as running the sitting, so leaving them out would hide most of a
+    chair's committee work, and counting them silently would pass a sitting
+    chaired for its forty turns off as forty contributions.
+
+    Committee speeches are never folded into the plenary figures (BIZ-17) —
+    this is a list of its own, in words because the minutes carry no timings.
+    ``coversScope`` says whether the minutes reach every cycle asked about:
+    they are read per cycle, so "all cycles" usually means a profile whose
+    earlier committee work is simply not here."""
+    empty = {"tablesReady": False, "total": 0, "chairTotal": 0, "words": 0,
+             "sittings": [], "coverage": [], "coversScope": False}
+    if not _table_exists(db, "committee_speech"):
+        return empty
+    scope = period_sql(period, "cs.period_number")
+    rows = db.execute(f"""
+        SELECT cs.meeting_id, cs.committee_id, mi.held_on, m.held_at,
+               m.number_in_year, c.name AS committee_name, c.parent_id,
+               COUNT(*) AS n, SUM(cs.chair) AS chair_n,
+               SUM({_WORDS}) AS words
+          FROM committee_speech cs
+          JOIN committee_minutes mi ON mi.meeting_id = cs.meeting_id
+          JOIN committee_meeting m ON m.id = cs.meeting_id
+          JOIN committee c ON c.id = cs.committee_id
+         WHERE cs.person_id = ?{" AND " + scope if scope else ""}
+         GROUP BY cs.meeting_id
+         ORDER BY {_SEARCH_DAY} DESC, m.held_at DESC, cs.meeting_id
+    """, (person_id,)).fetchall()
+    coverage = _minutes_coverage(db)
+    return {
+        "tablesReady": True,
+        "total": sum(r["n"] for r in rows),
+        "chairTotal": sum(r["chair_n"] or 0 for r in rows),
+        "words": sum(r["words"] or 0 for r in rows),
+        "sittings": [{
+            "meetingId": r["meeting_id"],
+            "committeeId": r["committee_id"],
+            "committeeName": r["committee_name"],
+            "isSubcommittee": r["parent_id"] is not None,
+            # The cover's own (local) date, the UTC timestamp as the fallback.
+            "heldOn": r["held_on"], "heldAt": r["held_at"],
+            "numberInYear": r["number_in_year"],
+            "count": r["n"], "chairCount": r["chair_n"] or 0,
+            "words": r["words"] or 0,
+        } for r in rows],
+        "coverage": coverage,
+        "coversScope": _covers(db, period, coverage),
+    }
+
+
+@router.get("/representative/{person_id}/speeches")
+def representative_committee_speeches(
+    person_id: str,
+    meeting: str = Query(..., description="The sitting (committee_meeting id)"),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """One person's speeches at one committee sitting, in sitting order —
+    what a sitting row of the profile's committee list opens to (BIZ-35).
+    Each carries its ``ord``, which is its address in the minutes viewer
+    (``#sp-<ord>``, BIZ-29), and the agenda heading it was made under."""
+    if not _table_exists(db, "committee_speech"):
+        return {"meetingId": meeting, "speeches": []}
+    rows = db.execute(f"""
+        SELECT cs.ord, cs.chair, cs.continued, cs.text, {_WORDS} AS words,
+               sec.title AS section_title
+          FROM committee_speech cs
+          LEFT JOIN committee_minutes_section sec
+                 ON sec.meeting_id = cs.meeting_id AND sec.ord = cs.section_ord
+         WHERE cs.person_id = ? AND cs.meeting_id = ?
+         ORDER BY cs.ord
+    """, (person_id, meeting)).fetchall()
+    return {"meetingId": meeting, "speeches": [{
+        "ord": r["ord"],
+        "section": r["section_title"],
+        "chair": bool(r["chair"]),
+        "continued": bool(r["continued"]),
+        "words": r["words"],
+        # Plain text: the profile prints it as text, not through `v-html`.
+        "excerpt": _opening_text(r["text"]),
+    } for r in rows]}

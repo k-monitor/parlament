@@ -5,7 +5,7 @@
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
-import { store, loadMeta, cycleLabel } from '../../store.js'
+import { store, loadMeta, cycleLabel, cyclesLabel } from '../../store.js'
 import { formatDate, formatDateLocal, formatLongDate, formatMonth, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -95,6 +95,24 @@ const committeeSeats = computed(() => {
   return c && c.covers_scope ? c.items : []
 })
 
+// What they said in committee (BIZ-35): the sittings they spoke at, newest
+// first, each opening to their own speeches there — lazily, as the plenary
+// days below do. Read out of the minutes PDFs, so it is a list of its own and
+// never part of the plenary figures (BIZ-17), and measured in words, the
+// minutes carrying no timings (BIZ-25).
+const committeeSittings = ref(null)
+const committeeSpeechCache = reactive({})   // meetingId -> { loading, error, list }
+const openCommitteeSittings = reactive({})  // meetingId -> bool
+const hasCommitteeSpeeches = computed(() => !!committeeSittings.value?.total)
+const maxSittingWords = computed(() => Math.max(
+  0, ...(committeeSittings.value?.sittings || []).map((s) => s.words || 0)))
+// The minutes are read per cycle, so a scope reaching past them would show a
+// list that merely looks complete — say which cycles it covers instead.
+const committeeCoverage = computed(() => {
+  const c = committeeSittings.value
+  return c && !c.coversScope && c.coverage.length ? cyclesLabel(c.coverage) : null
+})
+
 // The member's own policy-topic mix (TOPIC-10). Not a module of its own: the
 // proceedings module carries it, but the classification pass needs a GPU, so a
 // deployment can serve every speech on this page with no topic on any of them —
@@ -106,7 +124,7 @@ const topics = ref(null)
 // Long lists (bills, votes, speeches) are collapsed to a preview so the profile
 // stays scannable; a per-section toggle reveals the rest of what's loaded.
 const COLLAPSE_LIMIT = 8
-const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false, declarations: false, salary: false, topics: false })
+const expanded = reactive({ questions: false, lawbills: false, other: false, votes: false, days: false, committee: false, declarations: false, salary: false, topics: false })
 function shown(list, key) {
   return expanded[key] ? list : list.slice(0, COLLAPSE_LIMIT)
 }
@@ -150,7 +168,8 @@ const fmtMonth = (iso) => formatMonth(iso, locale.value)
 // Amounts and the multiplier both follow the reading locale: "1 309 493" and
 // "2,65" in Hungarian, "1,309,493" and "2.65" in English (I18N-1).
 const numLocale = computed(() => (locale.value === 'hu' ? 'hu-HU' : 'en-GB'))
-const fmtHuf = (n) => (n ?? 0).toLocaleString(numLocale.value)
+const fmtNum = (n) => (n ?? 0).toLocaleString(numLocale.value)
+const fmtHuf = fmtNum
 const fmtMultiplier = (n) => Number(n).toLocaleString(numLocale.value)
 
 // The submitted-irományok sections, in display order, dropping any the MP has
@@ -185,6 +204,10 @@ function toggleVoteDay(day) {
   toggleDayWith(openVoteDays, voteDayCache, day.date, (date) =>
     api.repVotes(props.id, { date, period: store.cycles, limit: 200 })
       .then((r) => r.votes))
+}
+function toggleCommitteeSitting(sitting) {
+  toggleDayWith(openCommitteeSittings, committeeSpeechCache, sitting.meetingId, (id) =>
+    api.repCommitteeSpeeches(props.id, id).then((r) => r.speeches))
 }
 
 // Which of the section's person lists this profile came from, as that tab's route
@@ -414,10 +437,12 @@ async function load() {
   store.profileTab = null
   profile.value = stats.value = activity.value = speechDays.value = voteDays.value = null
   questions.value = lawBills.value = otherDocs.value = topics.value = null
-  for (const m of [dayCache, openDays, voteDayCache, openVoteDays])
+  committeeSittings.value = null
+  for (const m of [dayCache, openDays, voteDayCache, openVoteDays,
+                   committeeSpeechCache, openCommitteeSittings])
     for (const k of Object.keys(m)) delete m[k]
   expanded.questions = expanded.lawbills = expanded.other = expanded.votes
-    = expanded.days = expanded.declarations = expanded.salary
+    = expanded.days = expanded.committee = expanded.declarations = expanded.salary
     = expanded.topics = false
   zodiacRevealed.value = false
   try {
@@ -447,12 +472,15 @@ async function load() {
     const committeesReq = showCommittees.value
       ? api.repCommittees(props.id, period).catch(() => null)
       : Promise.resolve(null)
+    const committeeSpeechesReq = showCommittees.value
+      ? api.repCommitteeSittings(props.id, period).catch(() => null)
+      : Promise.resolve(null)
     // A deployment that classified nothing answers this 503 (TOPIC-7); like every
     // other panel here it costs the profile a card, never the page.
     const topicsReq = showTopics.value
       ? api.repTopics(props.id, period).catch(() => null)
       : Promise.resolve(null)
-    const [p, s, act, days, qd, lb, od, v, tel, top, biz] = await Promise.all([
+    const [p, s, act, days, qd, lb, od, v, tel, top, biz, bizSp] = await Promise.all([
       api.representative(props.id, period),
       api.repStatistics(props.id, period),
       activityReq,
@@ -464,12 +492,14 @@ async function load() {
       settlementsReq,
       topicsReq,
       committeesReq,
+      committeeSpeechesReq,
     ])
     if (seq !== loadSeq) return  // superseded by a newer navigation
     profile.value = p; stats.value = s; activity.value = act
     speechDays.value = days; voteDays.value = v
     questions.value = qd; lawBills.value = lb; otherDocs.value = od
     settlements.value = tel; topics.value = top; committees.value = biz
+    committeeSittings.value = bizSp
     // Tell the app shell which person tab this profile belongs under: only the
     // profile response knows which of the four kinds of person this is (one route
     // serves them all), and the sub-tab highlight follows it.
@@ -1076,7 +1106,9 @@ watch(() => store.cycles.join(','), load)
                loads its speeches on first expand (REP-2). -->
           <section class="card pad" ref="speechesSection">
             <div class="sechead">
-              <h2>{{ $t('profile.speeches') }} <span class="muted small" v-if="speechDays">({{ speechDays.total }})</span></h2>
+              <!-- "Plenáris" once the committee list sits beside it: a bare
+                   "Felszólalások" would then read as all of them. -->
+              <h2>{{ $t(hasCommitteeSpeeches ? 'profile.plenarySpeeches' : 'profile.speeches') }} <span class="muted small" v-if="speechDays">({{ speechDays.total }})</span></h2>
               <!-- Out to the search page, pre-filtered to this member (SEA-3):
                    the list below is browsable by day, but "what did they say
                    about X" is a question only the full-text search answers.
@@ -1127,6 +1159,79 @@ watch(() => store.cycles.join(','), load)
             <button v-if="speechDays && speechDays.days.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
               :aria-expanded="expanded.days" @click="expanded.days = !expanded.days">
               {{ expanded.days ? $t('profile.showLess') : $t('profile.showMore') }}
+            </button>
+          </section>
+
+          <!-- Committee speeches (BIZ-35), one spoiler per sitting, lazily
+               loaded like the plenary days above. Each speech opens at its own
+               anchor in the sitting's minutes (BIZ-29). -->
+          <section class="card pad" v-if="showCommittees && hasCommitteeSpeeches">
+            <div class="sechead wraps">
+              <h2>{{ $t('profile.committeeSpeeches') }} <span class="muted small">({{ fmtNum(committeeSittings.total) }})</span></h2>
+              <HelpTip :label="$t('profile.committeeSpeeches')">
+                <p>{{ $t('profile.committeeSpeechesNote') }}</p>
+                <p v-if="committeeSittings.chairTotal">{{ $t('profile.committeeSpeechesChairNote') }}</p>
+              </HelpTip>
+              <router-link class="small seclink"
+                           :to="{ name: 'search', query: { in: 'committee', person_id: id } }">
+                {{ $t('profile.searchCommitteeSpeeches') }} &rarr;
+              </router-link>
+            </div>
+            <p class="small muted cmtsummary">
+              {{ $t('profile.committeeSummary', { sittings: fmtNum(committeeSittings.sittings.length),
+                                                  words: fmtNum(committeeSittings.words) }) }}<template
+                v-if="committeeSittings.chairTotal"> · {{ $t('profile.committeeChairTotal', { n: fmtNum(committeeSittings.chairTotal) }) }}</template>
+            </p>
+            <p v-if="committeeCoverage" class="small muted cmtsummary">ⓘ {{ $t('profile.committeeCoverage', { cycles: committeeCoverage }) }}</p>
+            <ul class="daylist speechdays">
+              <li v-for="s in shown(committeeSittings.sittings, 'committee')" :key="s.meetingId" class="dayitem">
+                <button type="button" class="dayhead sittinghead" :aria-expanded="!!openCommitteeSittings[s.meetingId]"
+                        @click="toggleCommitteeSitting(s)">
+                  <span class="caret" aria-hidden="true">{{ openCommitteeSittings[s.meetingId] ? '▾' : '▸' }}</span>
+                  <strong>{{ s.heldOn ? formatDate(s.heldOn) : formatDateLocal(s.heldAt) }}</strong>
+                  <span class="muted small daycount">{{ s.count }} {{ $t('profile.speechesDayCount') }}</span>
+                  <!-- Sized by words, the figure printed beside it (BIZ-25). -->
+                  <span class="daybar" v-if="maxSittingWords && committeeSittings.sittings.length > 1" aria-hidden="true">
+                    <span class="daybar-fill" :style="{ width: Math.round((s.words / maxSittingWords) * 100) + '%' }"></span>
+                  </span>
+                  <span class="muted small daytime">{{ $t('committees.words', { count: fmtNum(s.words) }) }}</span>
+                  <span class="small sittingname">
+                    {{ s.committeeName }}<span v-if="s.chairCount" class="muted"> · {{ $t('profile.committeeChairing') }}</span>
+                  </span>
+                </button>
+                <div v-if="openCommitteeSittings[s.meetingId]" class="daybody">
+                  <p v-if="committeeSpeechCache[s.meetingId] && committeeSpeechCache[s.meetingId].loading" class="muted small">…</p>
+                  <p v-else-if="committeeSpeechCache[s.meetingId] && committeeSpeechCache[s.meetingId].error" class="muted small">
+                    {{ $t('profile.speechesLoadError') }}
+                  </p>
+                  <template v-else-if="committeeSpeechCache[s.meetingId]">
+                    <ul class="speechlist">
+                      <li v-for="sp in committeeSpeechCache[s.meetingId].list" :key="sp.ord">
+                        <router-link :to="{ name: 'committee-minutes', params: { meetingId: s.meetingId }, hash: '#sp-' + sp.ord }"
+                                     class="speechitem">
+                          <div class="row small" style="gap:.6rem;">
+                            <span class="badge" v-if="sp.chair">{{ $t('profile.committeeChairing') }}</span>
+                            <span class="badge" v-if="sp.continued" :title="$t('committees.speechContinuedNote')">{{ $t('committees.speechContinued') }}</span>
+                            <span class="muted">{{ $t('committees.words', { count: fmtNum(sp.words) }) }}</span>
+                          </div>
+                          <!-- The agenda heading it was made under: the minutes'
+                               counterpart of a plenary speech's agenda badge. -->
+                          <p v-if="sp.section" class="small muted cmtsection">{{ sp.section }}</p>
+                          <p class="excerpt">{{ sp.excerpt }}</p>
+                        </router-link>
+                      </li>
+                    </ul>
+                    <router-link class="small sittinglink"
+                                 :to="{ name: 'committee-minutes', params: { meetingId: s.meetingId } }">
+                      {{ $t('profile.committeeOpenMinutes') }} &rarr;
+                    </router-link>
+                  </template>
+                </div>
+              </li>
+            </ul>
+            <button v-if="committeeSittings.sittings.length > COLLAPSE_LIMIT" type="button" class="btn small showmore"
+              :aria-expanded="expanded.committee" @click="expanded.committee = !expanded.committee">
+              {{ expanded.committee ? $t('profile.showLess') : $t('profile.showMore') }}
             </button>
           </section>
         </div>
@@ -1239,6 +1344,9 @@ watch(() => store.cycles.join(','), load)
 /* The section's exit link sits at the far end of the header row, away from the
    title it belongs to but out of the reading path of the list under it. */
 .seclink { margin-left: auto; white-space: nowrap; }
+/* A longer title + link pair than a phone column holds: the link drops to a
+   line of its own (still right-aligned) instead of widening the page. */
+.sechead.wraps { flex-wrap: wrap; }
 .timeline, .plain { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
 .timeline li { display: flex; gap: .6rem; align-items: center; }
 /* Committee term dates on their own line, so the committee name stays scannable. */
@@ -1280,6 +1388,16 @@ watch(() => store.cycles.join(','), load)
   height: 8px; border-radius: 999px; background: #eceae4; overflow: hidden;
 }
 .daybar-fill { display: block; height: 100%; border-radius: 999px; background: var(--accent); min-width: 3px; }
+/* A committee sitting's row (BIZ-35) also names the body; it takes a line of its
+   own under the date, indented past the caret, since names run long
+   ("…Bizottság Alkotmányvédelmi Albizottsága"). */
+.sittinghead { flex-wrap: wrap; row-gap: .15rem; }
+.sittinghead .sittingname { flex: 1 0 100%; padding-left: 1.2rem; color: var(--ink-soft); }
+.cmtsummary { margin: -.2rem 0 .6rem; }
+/* Clamped rather than `nowrap`: an unbreakable line sets the min-content width
+   of the `1fr` grid column it sits in, and pushes the page wider than a phone. */
+.cmtsection { margin: .3rem 0 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
+.sittinglink { display: inline-block; margin-top: .5rem; }
 .daybody { padding: 0 .7rem .6rem; }
 .daybody .speechlist { margin-top: .2rem; }
 .daybody .speechitem { border-color: var(--line); }

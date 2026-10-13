@@ -892,3 +892,80 @@ def test_search_on_a_db_without_the_index_is_empty_not_an_error(conn, client):
     conn.commit()
     res = client.get(SEARCH, params={"q": "elnok"}).json()
     assert (res["tablesReady"], res["total"], res["results"]) == (False, 0, [])
+
+
+# --- A person's committee speeches, for their profile (BIZ-35) ---------------
+
+def _sittings(client, pid, **params):
+    return client.get(f"/api/v1/committees/representative/{pid}/speech-sittings",
+                      params=params).json()
+
+
+def test_profile_lists_the_sittings_a_person_spoke_at(client):
+    res = _sittings(client, "k001", period=43)
+    assert res["tablesReady"] is True
+    assert [(s["meetingId"], s["committeeName"], s["heldOn"])
+            for s in res["sittings"]] == [
+        ("ules-1", "Költségvetési Bizottság", "2026-06-10")]
+    sitting = res["sittings"][0]
+    # Both of Kovács's turns were taken from the chair: counted, and said so.
+    assert (sitting["count"], sitting["chairCount"]) == (2, 2)
+    # Words, the minutes' own measure: "Köszöntöm a bizottság tagjait." (4) +
+    # "Soron következik az 1. napirendi pont." (6).
+    assert sitting["words"] == 10
+    assert (res["total"], res["chairTotal"], res["words"]) == (2, 2, 10)
+    # The minutes were read for cycle 43, which is the whole of this scope.
+    assert res["coverage"] == [43]
+    assert res["coversScope"] is True
+
+
+def test_profile_committee_sittings_follow_the_cycle_scope(client):
+    res = _sittings(client, "k001", period=42)
+    assert (res["total"], res["sittings"]) == (0, [])
+    # Cycle 42's minutes were never read: an empty list there is not a finding.
+    assert res["coversScope"] is False
+
+
+def test_profile_committee_sittings_count_only_resolved_speakers(conn, client):
+    """A speech links to a profile only through its resolved person; the
+    guest's unresolved speech belongs to nobody's list."""
+    assert _sittings(client, "n002")["total"] == 0
+    conn.execute("UPDATE committee_speech SET person_id = 'n002' "
+                 "WHERE meeting_id = 'ules-1' AND ord = 2")
+    conn.commit()
+    sitting = _sittings(client, "n002")["sittings"][0]
+    assert (sitting["count"], sitting["chairCount"]) == (1, 0)
+
+
+def test_profile_opens_a_sitting_to_the_persons_own_speeches(conn, client):
+    res = client.get("/api/v1/committees/representative/k001/speeches",
+                     params={"meeting": "ules-1"}).json()
+    speeches = res["speeches"]
+    # Their speeches only, in sitting order, each addressable as `#sp-<ord>`.
+    assert [s["ord"] for s in speeches] == [0, 1]
+    assert [s["section"] for s in speeches] == [
+        "Az ülés megnyitása",
+        "A költségvetésről szóló T/100. számú törvényjavaslat"]
+    assert [(s["chair"], s["continued"]) for s in speeches] == [
+        (True, False), (True, True)]
+    assert [s["words"] for s in speeches] == [4, 6]
+    assert speeches[0]["excerpt"] == "Köszöntöm a bizottság tagjait."
+    # Plain text, not markup: the profile prints it as text, so an escaped
+    # entity would show up literally.
+    conn.execute("UPDATE committee_speech SET text = 'A <b>zárszámadás</b>.' "
+                 "WHERE meeting_id = 'ules-1' AND ord = 0")
+    conn.commit()
+    first = client.get("/api/v1/committees/representative/k001/speeches",
+                       params={"meeting": "ules-1"}).json()["speeches"][0]
+    assert first["excerpt"] == "A <b>zárszámadás</b>."
+    assert client.get("/api/v1/committees/representative/k001/speeches"
+                      ).status_code == 422
+
+
+def test_profile_committee_speeches_on_a_db_without_minutes(conn, client):
+    conn.executescript("DROP TABLE committee_speech_fts; "
+                       "DROP TABLE committee_speech;")
+    res = _sittings(client, "k001")
+    assert (res["tablesReady"], res["total"], res["sittings"]) == (False, 0, [])
+    assert client.get("/api/v1/committees/representative/k001/speeches",
+                      params={"meeting": "ules-1"}).json()["speeches"] == []

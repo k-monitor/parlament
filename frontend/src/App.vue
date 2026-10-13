@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { store, loadMeta } from './store.js'
 import { setLocale } from './i18n.js'
@@ -197,6 +197,60 @@ const dataUpdatedAt = computed(() => {
 // closes the panel so it never lingers over the new page.
 const menuOpen = ref(false)
 watch(() => route.fullPath, () => { menuOpen.value = false })
+
+// The top row has to hold the brand, the section links and the controls side by
+// side, and how wide they come out is not ours to fix: the reader's system font
+// (whatever "Segoe UI" resolves to), the language and the cycle chooser's label
+// ("Összes" or "2010–2014") all move it, so no fixed allowance of slack holds
+// everywhere — and a link wrapping onto a second row under the others reads as
+// broken. So the bar measures itself: when the links would wrap, it first drops
+// the wordmark (the logo stays, and still goes home), and when that is not
+// enough either, folds them behind the hamburger as on a phone. The trial states
+// are set on the element and read back in the same frame, so none is painted.
+const PHONE = '(max-width: 760px)'
+const barRef = ref(null)
+const navRef = ref(null)
+function navWraps(nav) {
+  const links = nav.children
+  if (links.length < 2) return false
+  const first = links[0]
+  return links[links.length - 1].offsetTop >= first.offsetTop + first.offsetHeight / 2
+}
+function fitHeader() {
+  const bar = barRef.value
+  const nav = navRef.value
+  if (!bar || !nav) return
+  let fit = 'collapsed'
+  if (!window.matchMedia(PHONE).matches) {
+    for (const f of ['full', 'compact']) {
+      bar.dataset.fit = f
+      if (!navWraps(nav)) { fit = f; break }
+    }
+  }
+  bar.dataset.fit = fit
+  if (fit !== 'collapsed') menuOpen.value = false
+}
+// The window moves the bar's width, the controls' own width moves with the cycle
+// label, and the links come with the manifest and change with the language. The
+// controls are observed rather than the bar, whose height the fit itself changes
+// — an observer re-fired by its own callback is a ResizeObserver loop error.
+let fitObserver = null
+watch(barRef, (bar) => {
+  fitObserver?.disconnect()
+  fitObserver = null
+  if (!bar) return
+  fitHeader()
+  if (typeof ResizeObserver !== 'undefined') {
+    fitObserver = new ResizeObserver(fitHeader)
+    fitObserver.observe(bar.querySelector('.header-controls'))
+  }
+}, { flush: 'post' })
+watch([locale, () => store.meta], fitHeader, { flush: 'post' })
+onMounted(() => window.addEventListener('resize', fitHeader))
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', fitHeader)
+  fitObserver?.disconnect()
+})
 </script>
 
 <template>
@@ -205,7 +259,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
        scrolling never leaves the page without its active-cycle context. -->
   <div v-if="!isEmbed" class="site-top">
   <header class="site-header">
-    <div class="container header-bar">
+    <div ref="barRef" class="container header-bar">
       <router-link :to="{ name: 'home' }" class="brand" aria-label="Parlamonitor">
         <img class="brand-mark" src="/parlamonitor.png" alt="" aria-hidden="true" />
         <span class="brand-text">Parlamonitor</span>
@@ -216,7 +270,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
       >
         <span class="navtoggle-bars" aria-hidden="true"><span></span><span></span><span></span></span>
       </button>
-      <nav class="mainnav" :class="{ open: menuOpen }" :aria-label="$t('nav.menu')">
+      <nav ref="navRef" class="mainnav" :class="{ open: menuOpen }" :aria-label="$t('nav.menu')">
         <router-link v-if="showProceedings" :to="{ name: 'search' }">{{ $t('nav.search') }}</router-link>
         <router-link v-if="showProceedings" :to="{ name: 'sessions' }">{{ $t('nav.sessions') }}</router-link>
         <router-link v-if="showReps" :to="{ name: 'representatives' }"
@@ -381,9 +435,9 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
   background: var(--accent); color: var(--accent-ink);
 }
 .site-header .container { padding-top: .6rem; padding-bottom: .6rem; }
-/* Three zones: brand (left), nav (flexes + wraps), controls (pinned right). The
-   bar itself never wraps, so the cycle/lang controls stay in the top-right
-   corner even when the nav links wrap onto a second line. */
+/* Three zones: brand (left), nav (flexes), controls (pinned right). The bar
+   itself never wraps, so the cycle/lang controls stay in the top-right corner;
+   the nav could, but `fitHeader` never lets it show wrapped. */
 .header-bar { display: flex; align-items: center; gap: .75rem; flex-wrap: nowrap; position: relative; }
 .brand { display: inline-flex; align-items: center; gap: .5rem; color: #fff; font-weight: 800; font-size: 1.15rem; flex-shrink: 0; }
 .brand:hover { text-decoration: none; }
@@ -395,9 +449,9 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
    wrapped onto a second row and made the sticky header a third taller on every
    page. The row has to hold under whatever the reader's system resolves
    "Segoe UI" to, and the widest of those (Adwaita Sans) needs ~40 px more than
-   the narrowest, so the fit is left with that much slack rather than a few
-   pixels; the phone layout below overrides both, so its tap targets are
-   unaffected. */
+   the narrowest — sizes alone cannot promise that, so where they fall short
+   `fitHeader` folds the row instead; the folded panel overrides both, so its
+   tap targets are unaffected. */
 .mainnav a {
   color: #f6dcd7; padding: .4rem .5rem; border-radius: 8px; font-weight: 600; font-size: .92rem;
 }
@@ -510,8 +564,8 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 }
 .donate-link:hover, .donate-link:focus-visible { background: #f4d8d3; text-decoration: none; }
 
-/* Hamburger toggle: hidden on desktop, revealed at the mobile breakpoint where
-   the five nav links no longer fit on one row. */
+/* Hamburger toggle: hidden while the nav links fit on the bar's one row — on a
+   phone, always (see `fitHeader`). */
 .navtoggle {
   display: none; box-sizing: border-box; height: 34px; width: 38px; flex-shrink: 0;
   align-items: center; justify-content: center; cursor: pointer;
@@ -533,35 +587,41 @@ watch(() => route.fullPath, () => { menuOpen.value = false })
 .navtoggle.open .navtoggle-bars span:nth-child(3) { top: 6px; transform: rotate(-45deg); }
 @media (prefers-reduced-motion: reduce) { .navtoggle-bars span { transition: none; } }
 
+/* Short of room (`fitHeader` decides, from what the row measures): first the
+   wordmark goes, then the links. Folded, the wordmark has room again — on a
+   desktop, that is; a phone drops it for good below. */
+.header-bar[data-fit="compact"] .brand-text { display: none; }
+.header-bar[data-fit="collapsed"] .navtoggle { display: inline-flex; order: 3; }
+.header-bar[data-fit="collapsed"] .header-controls { order: 2; }
+/* The nav drops out of the bar into a full-width panel beneath the header,
+   toggled by the hamburger. The bar itself stays a single tidy row. */
+.header-bar[data-fit="collapsed"] .mainnav {
+  display: none; position: absolute; top: 100%;
+  left: calc(-1 * var(--gutter)); right: calc(-1 * var(--gutter));
+  flex-direction: column; align-items: stretch; gap: .15rem;
+  background: var(--accent); padding: .5rem var(--gutter) .75rem;
+  box-shadow: 0 8px 16px rgba(0,0,0,.18); border-top: 1px solid rgba(255,255,255,.18);
+}
+.header-bar[data-fit="collapsed"] .mainnav.open { display: flex; }
+.header-bar[data-fit="collapsed"] .mainnav a { padding: .65rem .75rem; font-size: 1rem; }
+/* In the panel the entries are full-width rows, where a chip would look like a
+   stray button — the same separation is a rule and a little air above it. */
+.header-bar[data-fit="collapsed"] .mainnav a.nav-analyses {
+  border: 0; border-top: 1px solid rgba(255,255,255,.25);
+  margin: .4rem 0 0; padding: .9rem .75rem .65rem;
+}
+.header-bar[data-fit="collapsed"] .mainnav a.nav-analyses.router-link-active { border-top-color: transparent; }
+
 @media (max-width: 760px) {
   .brand-text { display: none; }
-  .navtoggle { display: inline-flex; order: 3; }
   /* Tight on a phone: pull the spacing in, and let the control cluster be the
      part that gives when the row still doesn't fit — everything in it holds its
      size except the cycle chooser, which ellipsises (see CycleSelect). Without
      this the hamburger, as the only shrinkable item left, got squashed to a
      sliver at the screen edge. */
   .header-bar { gap: .5rem; }
-  .header-controls { order: 2; gap: .3rem; flex-shrink: 1; min-width: 0; }
+  .header-controls { gap: .3rem; flex-shrink: 1; min-width: 0; }
   .infolink, .lang { flex-shrink: 0; }
-  /* The nav drops out of the bar into a full-width panel beneath the header,
-     toggled by the hamburger. The bar itself stays a single tidy row. */
-  .mainnav {
-    display: none; position: absolute; top: 100%;
-    left: calc(-1 * var(--gutter)); right: calc(-1 * var(--gutter));
-    flex-direction: column; align-items: stretch; gap: .15rem;
-    background: var(--accent); padding: .5rem var(--gutter) .75rem;
-    box-shadow: 0 8px 16px rgba(0,0,0,.18); border-top: 1px solid rgba(255,255,255,.18);
-  }
-  .mainnav.open { display: flex; }
-  .mainnav a { padding: .65rem .75rem; font-size: 1rem; }
-  /* In the panel the entries are full-width rows, where a chip would look like a
-     stray button — the same separation is a rule and a little air above it. */
-  .mainnav a.nav-analyses {
-    border: 0; border-top: 1px solid rgba(255,255,255,.25);
-    margin: .4rem 0 0; padding: .9rem .75rem .65rem;
-  }
-  .mainnav a.nav-analyses.router-link-active { border-top-color: transparent; }
 }
 
 /* Smallest phones (≈320 px): claw back a couple of dozen pixels from the icon

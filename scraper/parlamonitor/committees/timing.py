@@ -310,8 +310,15 @@ class YouTubeBlocked(RuntimeError):
 
 # What yt-dlp prints when the refusal is about the host rather than the video.
 # The apostrophe is a curly one in the live message, hence the wildcard.
+# "The page needs to be reloaded" is what the bot-walled server got on
+# 2026-10-13 once a signed-in session's cookies were sent: it is refused for
+# every video, and the newest yt-dlp (2026.08.19) does not get past it either.
+# Treated as a per-video failure, it would retry three times per recording and
+# then all of them again on every sync pass, with the account's cookies
+# attached each time.
 _BOT_WALL_RE = re.compile(
-    r"confirm you.{1,3}re not a bot|sign in to confirm|rate-limited by youtube",
+    r"confirm you.{1,3}re not a bot|sign in to confirm|rate-limited by youtube"
+    r"|the page needs to be reloaded",
     re.I)
 
 

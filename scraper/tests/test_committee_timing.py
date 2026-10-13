@@ -376,6 +376,27 @@ def test_the_bot_wall_is_raised_at_once_not_retried(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
+def test_a_refused_cookie_session_is_a_wall_too(tmp_path, monkeypatch):
+    """What the walled server got with cookies (2026-10-13): refused for every
+    video alike, so it must stop the pass, not retry each recording."""
+    calls = []
+
+    def run(cmd, **_kw):
+        calls.append(cmd)
+        return _completed("ERROR: [youtube] lIUIlTnXqcE: The page needs to be "
+                          "reloaded.")
+
+    monkeypatch.setattr(timing.subprocess, "run", run)
+    monkeypatch.setattr(timing, "_yt_dlp_cmd", lambda: ["yt-dlp"])
+    try:
+        timing.download_audio("lIUIlTnXqcE", tmp_path)
+    except timing.YouTubeBlocked as e:
+        assert "reloaded" in str(e)
+    else:
+        raise AssertionError("expected YouTubeBlocked")
+    assert len(calls) == 1
+
+
 def _two_sittings(tmp_path):
     """Two recordings on two days, each with its own sitting."""
     paths = _data_dir(tmp_path, videos=[_video("v1", "2026-06-10"),

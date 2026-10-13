@@ -270,9 +270,14 @@ const speakerFactions = computed(() => {
 <style scoped>
 .figcard { --fig-h: 300px; display: flex; flex-direction: column; min-width: 0; }
 @media (max-width: 560px) { .figcard { --fig-h: 260px; } }
-.figcard__head { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; margin-bottom: .6rem; }
+/* The title keeps its line; a scope too long to sit beside it wraps under it,
+   right-aligned, rather than squeezing the title or running out of the card. */
+.figcard__head {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  gap: .2rem .6rem; margin-bottom: .6rem;
+}
 .figcard__title { margin: 0; font-size: 1.1rem; }
-.figcard__scope { font-size: .78rem; color: var(--ink-faint); text-align: right; flex: none; }
+.figcard__scope { font-size: .78rem; color: var(--ink-faint); text-align: right; margin-left: auto; min-width: 0; }
 .figcard__stage { position: relative; min-height: var(--fig-h); }
 .figcard__figure { min-width: 0; }
 /* The topic mix is a list, not a picture: it keeps to the stage, top-aligned. */

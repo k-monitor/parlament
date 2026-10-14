@@ -47,6 +47,23 @@ function setTab(name) {
   agenda.value?.close()
   router.push({ name: 'sessions',
                 query: { ...route.query, tab: name === 'plenary' ? undefined : name,
+                         // The filter belongs to the committee list; a plenary
+                         // URL carrying it would only be a duplicate address.
+                         available: name === 'committees' ? route.query.available : undefined,
+                         offset: undefined } })
+}
+
+// "Only with video or minutes": hides the inert cards — the sittings that left
+// neither a jegyzőkönyv nor a recording. A recent week is mostly those (the
+// record follows weeks later and not every room is filmed), so without it the
+// few sittings there are to open drown among the ones there are not. URL state
+// like the tab, and filtered server-side because the list is paged.
+const onlyAvailable = computed(() => route.query.available === '1')
+
+function setOnlyAvailable(on) {
+  agenda.value?.close()
+  router.push({ name: 'sessions',
+                query: { ...route.query, available: on ? '1' : undefined,
                          offset: undefined } })
 }
 
@@ -88,7 +105,8 @@ async function load() {
   const params = { period: store.cycles, limit: PAGE, offset: route.query.offset || 0 }
   try {
     const res = tab.value === 'committees'
-      ? await api.committeeMeetingsAll(params)
+      ? await api.committeeMeetingsAll(
+          { ...params, available: onlyAvailable.value || undefined })
       : await api.sessions(params)
     if (seq === loadSeq) data.value = res
   } catch {
@@ -99,10 +117,12 @@ async function load() {
 }
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
 watch(() => route.query, load)
-// Changing the cycle resets to the first page; the offset reset triggers load via the query watcher.
+// Changing the cycle resets to the first page — keeping the tab and the filter;
+// the offset reset triggers load via the query watcher.
 watch(() => store.cycles.join(','), () => {
-  if (route.query.offset) router.push({ name: 'sessions', query: {} })
-  else load()
+  if (route.query.offset) {
+    router.push({ name: 'sessions', query: { ...route.query, offset: undefined } })
+  } else load()
 })
 
 // Word-cloud hover preview (SESS-HOVER): hovering a sitting-day card previews the
@@ -225,13 +245,22 @@ onBeforeUnmount(() => {
     </div>
   </div>
 
+  <!-- Outside the StateBlock so it stays reachable while loading and, above
+       all, when the filter itself emptied the list. -->
+  <label v-if="tab === 'committees'" class="small onlyavail">
+    <input type="checkbox" :checked="onlyAvailable"
+           @change="setOnlyAvailable($event.target.checked)" />
+    {{ $t('sessions.onlyAvailable') }}
+  </label>
+
   <!-- `empty` is keyed on the TOTAL, not on this page being empty: paging past
        the end (only reachable by editing the URL) would otherwise claim the
        cycle held no committee sittings at all. -->
   <StateBlock
     :loading="loading" :error="error"
     :empty="!!data && tab === 'committees' && !data.total"
-    :empty-text="$t('sessions.noCommitteeMeetings')"
+    :empty-text="$t(onlyAvailable ? 'sessions.noAvailableCommitteeMeetings'
+                                  : 'sessions.noCommitteeMeetings')"
     @retry="load"
   >
     <!-- Committee sittings. Same card as a sitting day, saying the things a
@@ -339,6 +368,10 @@ onBeforeUnmount(() => {
 .titlebar h1 { margin-bottom: 0; }
 .tabs { display: flex; flex-wrap: wrap; gap: .4rem; }
 .tabs .on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.onlyavail { display: flex; align-items: center; gap: .35rem; width: fit-content;
+  margin: -.25rem 0 1rem auto; }
+/* Once the tabs drop under the title they line up on the left; so does this. */
+@media (max-width: 720px) { .onlyavail { margin-left: 0; } }
 .sgrid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
 /* A committee's name is the card's subject and runs long, so it wraps rather
    than being clipped — unlike a plenary day, where the line is "12. ülésnap". */

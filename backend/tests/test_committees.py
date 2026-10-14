@@ -690,6 +690,35 @@ def test_meetings_list_filters(client):
     assert client.get(base, params={"q": "nincs ilyen"}).json()["total"] == 0
 
 
+def test_meetings_list_available_keeps_any_record_or_recording(client, conn):
+    """The sittings page's "only with video or minutes" toggle: anything that
+    gives the card somewhere to go counts, not just a record we have read."""
+    base = "/api/v1/committees/meetings"
+
+    def ids():
+        return [m["id"] for m in
+                client.get(base, params={"available": True}).json()["meetings"]]
+
+    # `ules-2` left nothing behind, so it is the one card hidden.
+    assert ids() == ["ules-1"]
+    # A blank URL is no record — the card treats it as none too.
+    conn.execute("UPDATE committee_meeting SET minutes_url = '' WHERE id = 'ules-2'")
+    conn.commit()
+    assert ids() == ["ules-1"]
+    # A published PDF nobody has read yet is kept…
+    conn.execute("UPDATE committee_meeting SET minutes_url = 'https://x/2.pdf' "
+                 "WHERE id = 'ules-2'")
+    conn.commit()
+    assert ids() == ["ules-1", "ules-2"]
+    # …though `readable` still asks the narrower question.
+    assert client.get(base, params={"readable": True}).json()["total"] == 1
+    # And so is a sitting we only hold a recording of.
+    conn.execute("UPDATE committee_meeting SET minutes_url = NULL WHERE id = 'ules-2'")
+    conn.commit()
+    _record_a_video(conn)
+    assert ids() == ["ules-1", "ules-2"]
+
+
 def test_meetings_list_is_not_shadowed_by_the_committee_sheet(client):
     """`/committees/meetings` and `/committees/{id}` are both two segments, so
     only the registration order keeps "meetings" from being read as an id."""

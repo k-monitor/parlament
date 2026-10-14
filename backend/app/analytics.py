@@ -150,8 +150,10 @@ SOURCES: dict[str, dict[str, str]] = {
     # The committee-sittings list (BIZ-24) — the committee half of the sittings
     # page. A separate box from "committees" above: that one searches for a
     # *body*, this one for a *sitting*, and folding them together would make
-    # both unreadable. `readable` follows the boolean convention above.
-    "committee-meetings": {"committee": "", "readable": "False"},
+    # both unreadable. `readable` and `available` follow the boolean
+    # convention above.
+    "committee-meetings": {"committee": "", "readable": "False",
+                           "available": "False"},
     # The committee scope of the site search (SEA-14): full text over what was
     # said in committee sittings. Its own source, not "proceedings" — the two
     # scopes rank different corpora, and a regression in one must not hide in

@@ -449,6 +449,8 @@ export default {
     tabPlenary: 'Plenary sitting days',
     tabCommittees: 'Committee sittings',
     noCommitteeMeetings: 'No committee sitting recorded for this cycle.',
+    onlyAvailable: 'Only with video or minutes',
+    noAvailableCommitteeMeetings: 'No committee sitting with a video or minutes in this cycle.',
     speechesCount: '{count} contributions',
     minutesNotRead: 'Minutes (PDF)',
     committeeSitting: 'committee sitting',

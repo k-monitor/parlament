@@ -525,6 +525,8 @@ export default {
     tabPlenary: 'Plenáris ülésnapok',
     tabCommittees: 'Bizottsági ülések',
     noCommitteeMeetings: 'Ebben a ciklusban nincs rögzített bizottsági ülés.',
+    onlyAvailable: 'Csak videóval vagy jegyzőkönyvvel',
+    noAvailableCommitteeMeetings: 'Ebben a ciklusban nincs videóval vagy jegyzőkönyvvel rendelkező bizottsági ülés.',
     speechesCount: '{count} felszólalás',
     minutesNotRead: 'Jegyzőkönyv (PDF)',
     committeeSitting: 'bizottsági ülés',

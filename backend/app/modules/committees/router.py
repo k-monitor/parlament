@@ -279,6 +279,7 @@ def list_meetings(
     q: Optional[str] = Query(None, max_length=200),
     committee: Optional[str] = Query(None),
     readable: bool = Query(False),
+    available: bool = Query(False),
     limit: int = Query(60, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -298,6 +299,11 @@ def list_meetings(
 
     `readable` narrows to the sittings whose minutes this deployment has
     actually read — the ones with something to open.
+
+    `available` is the wider cut the sittings page offers as a toggle: a
+    sitting that left *anything* behind — a published jegyzőkönyv, read or
+    not, or a recording. It is exactly the set of cards that link somewhere;
+    what it hides are the inert ones, the sittings that left nothing.
     """
     if not _tables_present(db):
         return {"total": 0, "limit": limit, "offset": offset, "meetings": [],
@@ -316,6 +322,16 @@ def list_meetings(
     has_minutes = _table_exists(db, "committee_minutes")
     if readable and has_minutes:
         where.append("cm.speeches > 0")
+    if available:
+        # Mirrors the page's `meetingTarget`: a blank URL is no record, so it
+        # is tested as the card tests it rather than as `IS NOT NULL`.
+        any_of = ["COALESCE(m.minutes_url, '') <> ''"]
+        if has_minutes:
+            any_of.append("cm.speeches > 0")
+        if _table_exists(db, "committee_video"):
+            any_of.append("EXISTS (SELECT 1 FROM committee_video v"
+                          " WHERE v.meeting_id = m.id)")
+        where.append(f"({' OR '.join(any_of)})")
     cond = " AND ".join(where)
     join = (" LEFT JOIN committee_minutes cm ON cm.meeting_id = m.id"
             if has_minutes else "")
@@ -327,7 +343,8 @@ def list_meetings(
              WHERE {cond}""", params).fetchone()["n"]
 
     search_analytics.record(source="committee-meetings", query=q, period=period,
-                            readable=readable, results=total, offset=offset)
+                            readable=readable, available=available,
+                            results=total, offset=offset)
 
     rows = db.execute(f"""
         SELECT m.*, c.name AS committee_name, c.parent_id{cols}

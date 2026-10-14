@@ -706,6 +706,10 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
     if period is not None:
         conn.execute("INSERT INTO electoral_period(number) VALUES (?) "
                      "ON CONFLICT(number) DO NOTHING", (period,))
+    # A pre-existing DB predates the motion-number index the vote subjects resolve
+    # through (schema.sql); it lands with the next bills load, no rebuild needed.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bill_motion_number "
+                 "ON bill_motion(bill_number)")
 
     # Replace this cycle's bills (delete children first for the FK). Every
     # per-bill child table is cleared so a re-ingest is fully idempotent.

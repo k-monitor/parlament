@@ -1345,6 +1345,31 @@ def _motions_for(db: sqlite3.Connection, bill_id: str) -> list[dict]:
     return motions
 
 
+def _vote_motions(db: sqlite3.Connection, bill_id: str,
+                  vote_ids: list[str]) -> dict[str, list]:
+    """Which of the bill's own motions each of its votes decided, by vote id.
+
+    The bill's vote tally only says "összegző módosító javaslat elfogadva"; the
+    vote's subjects (Votes module) name the motion — by number alone ("779/4"), as
+    the bill's motion list numbers it. Matching within this bill's motions keeps
+    the lookup on idx_bill_motion_bill. A vote the Votes module hasn't ingested
+    has no subjects, so it simply names no motion."""
+    if not vote_ids:
+        return {}
+    ph = ",".join("?" * len(vote_ids))
+    rows = db.execute(
+        f"""SELECT vs.vote_id, bm.bill_number, bm.type
+            FROM vote_subject vs
+            JOIN bill_motion bm ON bm.bill_id = ? AND bm.bill_number = vs.bill_number
+            WHERE vs.vote_id IN ({ph})
+            ORDER BY vs.vote_id, vs.ord""", [bill_id, *vote_ids]).fetchall()
+    out: dict[str, list] = {}
+    for r in rows:
+        out.setdefault(r["vote_id"], []).append(
+            {"bill_number": r["bill_number"], "type": r["type"]})
+    return out
+
+
 def _debate_speeches(db: sqlite3.Connection, start: sqlite3.Row,
                      end: sqlite3.Row, session_ids: list[str]) -> list[dict]:
     """The plenary speeches from the debate-opening anchor through the closing
@@ -1496,7 +1521,7 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     Each vote carries the same derived figures the Votes list shows on its cards:
     attendance (`present` / `seats` / `attendance`) and cross-voting (`defectors`,
     `defector_share`, `defector_factions`), for the votes the Votes module has
-    ingested (`vote_ref`)."""
+    ingested (`vote_ref`), and the bill's own motions it decided (`motions`)."""
     b = db.execute("SELECT * FROM bill WHERE id = ?", (bill_id,)).fetchone()
     # An iromány of a cycle this deployment does not serve (CYC-7) is not found here.
     if not b or not period_in_scope(b["period_number"]):
@@ -1539,9 +1564,11 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     _ingested = [v["vote_ref"] for v in votes if v["vote_ref"]]
     _attendance = attendance_for(db, _ingested)
     _crossvoting = crossvoting_for(db, _ingested)
+    _motions = _vote_motions(db, bill_id, _ingested)
     for v in votes:
         v.update(_attendance.get(v["vote_ref"], NO_ATTENDANCE))
         v.update(_crossvoting.get(v["vote_ref"], NO_CROSSVOTING))
+        v["motions"] = _motions.get(v["vote_ref"], [])
     deadlines = _rows(db,
         "SELECT name, deadline, reference, remark FROM bill_deadline "
         "WHERE bill_id = ? ORDER BY ord", bill_id)

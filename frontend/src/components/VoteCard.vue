@@ -7,6 +7,7 @@
 // vote carries that MP's own cast value and the card shows it as a chip.
 // Emits `open` when the reader follows the card to the vote (SEA-12).
 import { formatDateTime } from '../format.js'
+import { motionLocation } from '../lib/motionLink.js'
 
 defineProps({
   vote: { type: Object, required: true },
@@ -67,6 +68,11 @@ function voteParts(v) {
       <span v-for="(s, i) in vote.subjects" :key="i" class="vbill">
         <router-link v-if="s.bill_id" :to="{ name: 'bill', params: { id: s.bill_id } }">
           <strong>{{ s.bill_number }}</strong><template v-if="s.title"> — {{ s.title }}</template>
+        </router-link>
+        <!-- A motion (amendment, consolidated text) links to its entry on its
+             bill's page, where its text is. -->
+        <router-link v-else-if="s.motion" :to="motionLocation(s.motion.bill_id, s.bill_number)">
+          <strong>{{ s.bill_number }}</strong> {{ s.motion.type }}<template v-if="s.title"> — {{ s.title }}</template>
         </router-link>
         <span v-else><strong>{{ s.bill_number }}</strong><template v-if="s.title"> — {{ s.title }}</template></span>
       </span>

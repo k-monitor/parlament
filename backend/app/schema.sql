@@ -435,6 +435,9 @@ CREATE TABLE bill_motion (           -- "Nem önálló irományok" — the indiv
     note         TEXT
 );
 CREATE INDEX idx_bill_motion_bill ON bill_motion(bill_id);
+-- A vote on a motion names it only by number ("779/4"), so the votes module
+-- finds the motion — and the bill it belongs to — by that number.
+CREATE INDEX idx_bill_motion_number ON bill_motion(bill_number);
 
 CREATE TABLE bill_motion_sponsor (   -- submitters of a non-self-standing motion
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -476,8 +479,11 @@ CREATE INDEX idx_vote_datetime ON vote(vote_datetime);
 -- plus its motions). `iromany_id` is the upstream iromanyId; it is resolved to a
 -- held bill at query time (LEFT JOIN bill ON bill.id = iromany_id) rather than by
 -- a hard FK, so the two modules stay decoupled (EXT-1: re-ingesting bills must
--- not break votes). For iromány types we don't hold (resolutions, motions) the
--- join yields no bill and the number/title are kept as a label (SCR-5).
+-- not break votes). A motion (módosító javaslat, egységes javaslat, …) comes with
+-- no iromanyId, only its number ("779/4"), and is resolved the same late way to
+-- the bill_motion row of that number in the vote's cycle. For iromány types we
+-- don't hold (resolutions) neither join matches and the number/title are kept
+-- as a label (SCR-5).
 CREATE TABLE vote_subject (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     vote_id     TEXT NOT NULL REFERENCES vote(id),

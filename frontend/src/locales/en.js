@@ -1724,6 +1724,24 @@ export default {
       secret_vote: 'secret ballot',
     },
   },
+  // The irományok on the coming sitting's order paper, one per iromány (HOME-5).
+  upcomingBills: {
+    title: 'Bills on the agenda',
+    groups: { vote: 'Up for a vote', debate: 'Up for debate' },
+    kinds: {
+      vote: 'Vote',
+      finalVote: 'Final vote',
+      debate: 'Debate',
+      procedure: 'Procedural decision',
+      other: 'Consideration',
+    },
+    today: 'today',
+    tomorrow: 'tomorrow',
+    stageAria: 'Legislative stage {n} of {total}: {label}',
+    showMore: '+{n} more',
+    showLess: 'Show less',
+    statusTip: 'Status on its parlament.hu record: {status}',
+  },
   agendaTypes: {
     opening: 'Opening', procedural: 'Procedural', regular: 'Debate', oath: 'Oath', voting: 'Voting',
     rules_of_procedure: 'Rules of procedure', questioning_of_the_government: 'Interpellation',

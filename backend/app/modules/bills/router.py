@@ -10,6 +10,7 @@ back to its parlament.hu source text (LEGAL-1).
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import date
 from typing import List, Optional
@@ -1142,6 +1143,165 @@ def bill_decisions(
         return {"date_from": date_from, "date_to": date_to, "decisions": decisions}
 
     return cached_aggregate("bill_decisions", (date_from, date_to), compute)
+
+
+# ---------------------------------------------------------------------------
+# What the House is about to vote on and debate: the home page's bills (HOME-5)
+# ---------------------------------------------------------------------------
+
+# A motion is numbered after its iromány ("T/816/2" is the urgency motion on
+# T/816). The order paper's procedural decisions name the motion; the reader wants
+# the bill it is about.
+_MOTION_CODE_RE = re.compile(r"^([A-ZÁÉÍÓÖŐÚÜŰ]/\d+)/\d+$")
+# Now and then the number stays at the head of an item's title instead of in the
+# gutter it is printed in ("T/668/10 A köztársasági elnök által …").
+_TITLE_CODE_RE = re.compile(r"^([A-ZÁÉÍÓÖŐÚÜŰ]/\d+)(?:/\d+)?\.?\s")
+_DEBATE_RE = re.compile(r"\bvit[aá]")
+# The order paper's flags that say how the *iromány* is handled, in the order a
+# reader weighs them. The rest describe the item's slot on the day ("quorum
+# needed", "nationality agenda item") and stay on the order paper's own card.
+_BILL_FLAGS = ("exceptional", "urgent", "derogation", "two_thirds", "four_fifths",
+               "cardinal", "secret_vote")
+
+
+def _agenda_step_kind(stage: Optional[str], section: Optional[str]) -> tuple[str, bool]:
+    """What an order-paper item will do to its iromány: ``vote``, ``debate``,
+    ``procedure`` (a decision on how it is handled — urgency, exceptional
+    procedure, a late addition to the agenda) or ``other``; and whether the vote
+    is the final one.
+
+    Read off the stage line the napirend prints ("Általános vita a lezárásig",
+    "Döntés az összegző módosító javaslatról és a zárószavazás"), or, where it
+    prints none, off the heading the item stands under."""
+    s = (stage or "").strip().lower()
+    sec = (section or "").strip().lower()
+    if "zárószavazás" in s:
+        return "vote", True
+    if s.startswith(("döntés", "határozathozatal", "a határozathozatal",
+                     "tárgyalás és döntés")):
+        return "vote", False
+    if _DEBATE_RE.search(s):
+        return "debate", False
+    if not s:
+        if sec.startswith("döntések"):      # "Döntések, határozathozatalok"
+            return "vote", False
+        if sec.startswith("döntés"):        # "Döntés sürgős tárgyalásról", …
+            return "procedure", False
+        if _DEBATE_RE.search(sec):          # "Az általános viták a lezárásig"
+            return "debate", False
+    return "other", False
+
+
+@router.get("/upcoming")
+def upcoming_bills(db: sqlite3.Connection = Depends(get_db)):
+    """The irományok the coming sitting's order paper will vote on or debate, one
+    entry per iromány, each with where it stands — the home page's highlight of
+    what the House is about to decide (HOME-5).
+
+    The order paper (NR-5) lists *items* per day; this turns them round to the
+    bills: every item that names an iromány we hold becomes a ``step`` of that
+    iromány (its date, what it will do — ``vote`` / ``debate`` / ``procedure`` /
+    ``other`` — and the stage as the napirend prints it), and the iromány brings
+    its upstream status and stage diagram (BILL-4). A procedural decision names
+    the motion it is taken on (``T/816/2``), so it is counted to the bill that
+    motion belongs to.
+
+    Like the order paper this is a **plan**, so the response carries the document
+    and the moment it was issued. It serves the whole document: the caller drops
+    the days already behind it, on its own calendar, as the order paper's card
+    does — which keeps this cacheable across midnight."""
+    empty = {"agenda": None, "bills": []}
+
+    def compute():
+        try:
+            agenda = db.execute(
+                """SELECT slug, url, label, status_label, status_at, first_date,
+                          last_date
+                     FROM agenda_doc WHERE kind = 'agenda'
+                    ORDER BY ord LIMIT 1""").fetchone()
+        except sqlite3.OperationalError:     # a DB built before the order paper
+            return empty
+        if not agenda:
+            return empty
+        items = db.execute(
+            """SELECT i.id, i.day_ord, i.ordinal, i.bill_code, i.bill_id,
+                      i.section, i.title, i.stage, i.flags,
+                      COALESCE(d.date, i.date) AS date, d.weekday
+                 FROM agenda_doc_item i
+                 LEFT JOIN agenda_doc_day d
+                   ON d.doc_slug = i.doc_slug AND d.ord = i.day_ord
+                WHERE i.doc_slug = ?
+                ORDER BY i.day_ord, i.id""", (agenda["slug"],)).fetchall()
+
+        # The number each unlinked item is really about: its motion's bill, or a
+        # number its title starts with. Resolved like the loader resolves the
+        # linked ones — the latest cycle holding that number.
+        def wanted(r) -> Optional[str]:
+            if r["bill_id"]:
+                return None
+            code = (r["bill_code"] or "").strip()
+            m = _MOTION_CODE_RE.match(code) if code else _TITLE_CODE_RE.match(r["title"] or "")
+            return m.group(1) if m else None
+
+        codes = {c for r in items if (c := wanted(r))}
+        by_code: dict[str, str] = {}
+        if codes:
+            ph = ",".join("?" * len(codes))
+            for r in db.execute(
+                    f"""SELECT bill_number, id FROM bill WHERE bill_number IN ({ph})
+                         ORDER BY period_number""", sorted(codes)):
+                by_code[r["bill_number"]] = r["id"]     # the latest cycle wins
+
+        steps_by_bill: dict[str, list] = {}
+        flags_by_bill: dict[str, set] = {}
+        for r in items:
+            bill_id = r["bill_id"] or by_code.get(wanted(r) or "")
+            if not bill_id:
+                continue
+            kind, final = _agenda_step_kind(r["stage"], r["section"])
+            label = ((r["stage"] or "").strip() if kind in ("vote", "debate")
+                     else (r["section"] or "").strip() if kind == "procedure"
+                     else "") or None
+            steps = steps_by_bill.setdefault(bill_id, [])
+            step = {"date": r["date"], "weekday": r["weekday"],
+                    "ordinal": r["ordinal"], "kind": kind, "final": final,
+                    "label": label, "code": r["bill_code"]}
+            # One item continued under a second heading is still one step.
+            if not any((s["date"], s["kind"], s["label"])
+                       == (step["date"], kind, label) for s in steps):
+                steps.append(step)
+            flags_by_bill.setdefault(bill_id, set()).update(
+                f for f in (r["flags"] or "").split(",") if f)
+
+        ids = list(steps_by_bill)               # in order of their first step
+        if not ids:
+            return {"agenda": _agenda_ref(agenda), "bills": []}
+        ph = ",".join("?" * len(ids))
+        rows = {r["id"]: r for r in db.execute(
+            f"""SELECT id, bill_number, title, type, main_type, status,
+                       stages_json
+                  FROM bill WHERE id IN ({ph})""", ids)}
+        sponsors = _sponsors_for(db, ids)
+        topics = _topics_for(db, ids)
+        bills = [{
+            "bill_id": bid, "bill_number": r["bill_number"], "title": r["title"],
+            "type": r["type"], "main_type": r["main_type"],
+            "category": _decision_category(r["main_type"], r["type"]),
+            "status": r["status"], "stages": _stages(r["stages_json"]),
+            "topic": topics.get(bid), "sponsors": sponsors.get(bid, []),
+            "flags": [f for f in _BILL_FLAGS if f in flags_by_bill.get(bid, ())],
+            "steps": steps_by_bill[bid],
+        } for bid in ids if (r := rows.get(bid))]
+        return {"agenda": _agenda_ref(agenda), "bills": bills}
+
+    return cached_aggregate("bills_upcoming", (), compute)
+
+
+def _agenda_ref(agenda: sqlite3.Row) -> dict:
+    """The order paper a claim about the coming sitting was read off (TRUST-1)."""
+    return {"slug": agenda["slug"], "url": agenda["url"], "label": agenda["label"],
+            "status_label": agenda["status_label"], "status_at": agenda["status_at"],
+            "first_date": agenda["first_date"], "last_date": agenda["last_date"]}
 
 
 def _rows(db: sqlite3.Connection, sql: str, bill_id: str) -> list[dict]:

@@ -739,7 +739,8 @@ section — **Elemzések** — with its own entry in the top bar.
 The home page draws on every module and owns none, so it is specified here rather
 than under any one of them. It answers three questions in order: *where do I
 start* (the search), *what is in here* (a number and a figure about the cycles in
-scope), and *what is the House doing* (last week, then the coming sitting).
+scope), and *what is the House doing* (last week, then the bills it is about
+to decide and the coming sitting).
 
 - **HOME-1 (SHOULD).** The **search** leads the page but stays **compact**: one
   row of label, box and button under a one-line welcome, with the corpus size
@@ -799,7 +800,7 @@ scope), and *what is the House doing* (last week, then the coming sitting).
   held on Monday would be nowhere on the home page until the week was over.
 
 > **✅ realized.** `views/HomeView.vue` composes `HomeTrendCard`, `HomeFactsCard`,
-> `HomeFigureCard`, `LastWeekPanel` and `UpcomingSitting`; the three feature cards
+> `HomeFigureCard`, `UpcomingBills` (HOME-5), `LastWeekPanel` and `UpcomingSitting`; the three feature cards
 > and the example-search grid are gone. Rotation is `lib/rotation.js` (hold vs.
 > stop, resume-where-it-paused so the progress bar and the timer agree) with
 > `RotationControls.vue`. The figures reuse the site's components as they are,
@@ -822,6 +823,42 @@ scope), and *what is the House doing* (last week, then the coming sitting).
 > `…tárgysorozat…` as the separate agenda stage), stable since cycle 41, and its
 > outcome is its `result`. The split votes are `/votes?sort=crossvoting_desc`
 > over the week, votes module only. The day cards are `WeekDayCards.vue`.
+
+- **HOME-5 (SHOULD).** The **irományok the House is about to vote on or debate**
+  are highlighted, each with **where it stands**. The order paper (NR-5) answers
+  "what happens on which day"; a reader following a bill asks the other way
+  round, so the same napirend is turned to the bills: **one entry per iromány**
+  we hold, under *"Szavazásra kerül"* when a vote on it is still ahead and
+  *"Vitára kerül"* otherwise. A procedural decision (urgency, exceptional
+  procedure, a late addition to the agenda) is listed but never puts a bill under
+  the votes on its own — it decides how the bill is handled, not the bill — and
+  it is counted to the bill its motion belongs to (`T/816/2` is T/816's).
+  It is a **digest** and stays **compact** — two lines a bill, a few bills a
+  group with a "+N" control — because the week digest and the order paper
+  below it matter as much: the number and title, then the steps that put the
+  bill in its group (each with its day, a final vote marked as such) beside its
+  standing on the upstream **stage diagram** (BILL-4), one segment per stage in
+  its own state (an exceptional procedure skips stages, so it is not a bar
+  filled up to the current one). parlament.hu's own **status** line and the
+  stage as the napirend prints it are in the tooltips; a bill with no diagram
+  (a personnel motion) shows its status instead. Submitters, flags and topics
+  are left to the bill page and the order paper's card. It is still a **plan**,
+  so it carries the same provenance line as NR-5, drops the days behind it by
+  the same rule, and renders nothing once nothing is ahead. It stands **between**
+  the week digest and the order paper it summarises.
+
+> **✅ realized.** `GET /bills/upcoming` (bills module) reads the current
+> `agenda_doc` and returns the irományok in order of their first step, each with
+> `steps` (`date`, `kind` = `vote` / `debate` / `procedure` / `other`, `final`,
+> `label`, `code`), `status`, `stages`, `topic`, `sponsors` and `flags`, plus the
+> `agenda` it was read off (`topic`, `sponsors` and `flags` are served but not
+> shown). The step kind is `_agenda_step_kind` over the printed stage, falling
+> back to the section heading; an unlinked item resolves through
+> its motion's parent number, or a number left at the head of its title
+> (`T/668/10 A köztársasági elnök által …`). It serves the whole document so it
+> caches across midnight; `UpcomingBills.vue` on `HomeView` drops the past days,
+> groups, and shows four per group (three on a phone; a group one over the limit
+> is shown whole). Gated on the bills module and `features.upcoming_agenda`.
 
 ---
 

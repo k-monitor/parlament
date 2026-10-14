@@ -1896,6 +1896,25 @@ export default {
       secret_vote: 'titkos szavazás',
     },
   },
+  // A következő ülés napirendjén lévő irományok, irományonként (HOME-5): amiről
+  // szavaz vagy vitázik a Ház, és hogy hol tart most. Terv, mint a napirend.
+  upcomingBills: {
+    title: 'Napirenden lévő javaslatok',
+    groups: { vote: 'Szavazásra kerül', debate: 'Vitára kerül' },
+    kinds: {
+      vote: 'Szavazás',
+      finalVote: 'Zárószavazás',
+      debate: 'Vita',
+      procedure: 'Eljárási döntés',
+      other: 'Tárgyalás',
+    },
+    today: 'ma',
+    tomorrow: 'holnap',
+    stageAria: 'Jogalkotási szakasz ({n}/{total}): {label}',
+    showMore: '+{n} további',
+    showLess: 'Kevesebb',
+    statusTip: 'Állapota a parlament.hu adatlapja szerint: {status}',
+  },
   agendaTypes: {
     opening: 'Ülésnap megnyitása',
     procedural: 'Ügyrendi',

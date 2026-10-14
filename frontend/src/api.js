@@ -199,6 +199,8 @@ export const api = {
   // What the House decided between two dates — the week digest's list (HOME-4).
   billDecisions: (dateFrom, dateTo) =>
     get('/bills/decisions', { date_from: dateFrom, date_to: dateTo }),
+  // The irományok the coming sitting will vote on or debate (HOME-5).
+  upcomingBills: () => get('/bills/upcoming'),
   questionsSankey: (period, includeType = true, expandOther = false) =>
     get('/bills/questions/sankey',
         { period, include_type: includeType, expand_other: expandOther }),

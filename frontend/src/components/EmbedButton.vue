@@ -46,7 +46,13 @@ const embedUrl = computed(() => {
   url.searchParams.set('cycle', cycleValue.value)
   for (const [k, v] of Object.entries(props.params || {})) {
     if (v === undefined || v === null || v === '') continue
-    url.searchParams.set(k, v)
+    // A list-valued filter (the search's topics) travels as repeated params,
+    // as it does in the page's own URL.
+    if (Array.isArray(v)) {
+      for (const item of v) if (item != null && item !== '') url.searchParams.append(k, item)
+    } else {
+      url.searchParams.set(k, v)
+    }
   }
   if (locale.value && locale.value !== 'hu') url.searchParams.set('lang', locale.value)
   return url.toString()

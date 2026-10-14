@@ -12,6 +12,7 @@ import { formatDate, formatDateLocal, searchExcerptLines } from '../../format.js
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import TimingBadge from '../../components/TimingBadge.vue'
+import TopicBadge from '../../components/TopicBadge.vue'
 import DocumentCard from '../../components/DocumentCard.vue'
 import VoteCard from '../../components/VoteCard.vue'
 import PersonCard from '../../components/PersonCard.vue'
@@ -63,6 +64,9 @@ function committeeRole(r) {
       <div class="result-meta row">
         <SpeakerLink v-if="r.speaker" :speaker="r.speaker" />
         <FactionBadge :faction="r.faction" />
+        <!-- The speech's policy topic (TOPIC-1) — what the topic filter selects
+             by. Not `compact`: this row wraps freely, so the name can stay. -->
+        <TopicBadge :topic="r.topic" />
         <span class="muted small">{{ formatDate(r.date) }}</span>
         <span class="muted small" v-if="r.agenda_title">{{ $t('search.on') }} {{ r.agenda_title }}</span>
         <TimingBadge :timing="r.timing" />

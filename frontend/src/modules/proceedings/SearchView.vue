@@ -18,8 +18,9 @@ import { agendaLabel } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
 import {
   FILTERS, SEARCH_SCOPES, SCOPE_BY_KEY, scopesFromQuery, scopeTarget, scopesHonour,
-  ignoredFilters, sortOptions, listPageTarget,
+  honours, scopeState, ignoredFilters, sortOptions, listPageTarget, queryList,
 } from '../../lib/searchScopes.js'
+import { topicGlyph, topicName } from '../../lib/topics.js'
 import { useSpeakerSuggest } from '../../lib/speakerSuggest.js'
 import { onekoForQuery, dismissOneko } from '../../lib/oneko.js'
 import StateBlock from '../../components/StateBlock.vue'
@@ -30,11 +31,12 @@ import BarChart from '../../components/BarChart.vue'
 import EmbedButton from '../../components/EmbedButton.vue'
 import DonateCard from '../../components/DonateCard.vue'
 import SearchScopeSelect from '../../components/SearchScopeSelect.vue'
+import MultiSelect from '../../components/MultiSelect.vue'
 import SearchResults from './SearchResults.vue'
 
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
+const { t, te, locale } = useI18n()
 
 // A single scope's page size, and how many hits each section of a search across
 // several scopes shows before its "all results" link — people are small grid
@@ -61,6 +63,7 @@ const filters = reactive({
   date_to: route.query.date_to || '',
   faction_id: route.query.faction_id || '',
   agenda_type: route.query.agenda_type || '',
+  topic: queryList(route.query.topic),
 })
 // The speaker filter (SEA-3) is URL state like the others, but it travels as an
 // opaque `person_id` while the panel has to show a *name* — so the page keeps the
@@ -69,7 +72,25 @@ const speaker = ref(null)
 // Open the filter panel on load when a filter is already active (e.g. a shared
 // or deep-linked query), so its filters are visible rather than hidden.
 const showFilters = ref(!!(filters.date_from || filters.date_to || filters.faction_id
-  || filters.agenda_type || route.query.person_id))
+  || filters.agenda_type || filters.topic.length || route.query.person_id))
+
+// The CAP policy topics (TOPIC-2) as picker rows, with the glyph and name their
+// chip shows, alphabetical in the reader's language. Every policy topic is
+// offered rather than a facet of the current results: here the topic narrows a
+// search, as the faction does, and counting each one's hits for every term
+// would cost a breakdown-sized aggregate per keystroke. "Other" is never a
+// subject (TOPIC-4), so it cannot be filtered on.
+const topicOptions = computed(() => {
+  const labels = store.meta?.speech_topics?.labels || store.meta?.bill_topics?.labels || []
+  return labels.filter((l) => l !== 'Other')
+    .map((l) => ({ value: l, name: topicName(l, t, te) }))
+    .sort((a, b) => a.name.localeCompare(b.name, locale.value))
+    .map((o) => ({ value: o.value, label: `${topicGlyph(o.value)} ${o.name}` }))
+})
+// The picked topics by name, for the captions that say what a list without a
+// keyword is a list of.
+const topicNames = computed(() =>
+  queryList(route.query.topic).map((l) => topicName(l, t, te)).join(', '))
 // Result ordering (SEA-10): relevance (default) | date_desc | date_asc. Kept in
 // the URL like the other per-page filters so a sorted view is deep-linkable (CYC-5).
 const SORTS = ['relevance', 'date_desc', 'date_asc']
@@ -112,9 +133,10 @@ onMounted(async () => {
 })
 
 // What the page can run: a term, or — with no term — a speaker, whose speeches,
-// irományok and votes are then listed (SEA-3). Any other filter needs a term to
-// narrow.
-const searchable = computed(() => !!(route.query.q || route.query.person_id))
+// irományok and votes are then listed, or a topic, whose speeches and irományok
+// are (SEA-3). Any other filter needs a term to narrow.
+const searchable = computed(() =>
+  !!(route.query.q || route.query.person_id || queryList(route.query.topic).length))
 
 // Re-run the active search when the global cycle changes.
 watch(() => store.cycles.join(','), () => { if (searchable.value) runFromRoute() })
@@ -129,7 +151,10 @@ function submit(resetPage = true) {
   const query = {}
   for (const [group, params] of Object.entries(FILTERS)) {
     if (group === 'speaker' || !offers.value[group]) continue
-    for (const k of params) if (filters[k]) query[k] = filters[k]
+    for (const k of params) {
+      const v = filters[k]
+      if (Array.isArray(v) ? v.length : v) query[k] = v
+    }
   }
   if (speaker.value && offers.value.speaker) query.person_id = speaker.value.person_id
   if (sort.value !== 'relevance') query.sort = sort.value
@@ -142,6 +167,7 @@ function submit(resetPage = true) {
 function onScopes(keys) {
   scopes.value = keys
   const runnable = input.value.trim() || (speaker.value && scopesHonour(keys, 'speaker'))
+    || (filters.topic.length && scopesHonour(keys, 'topic'))
   if (runnable) submit()
 }
 
@@ -158,6 +184,7 @@ function changeSort(value) {
 function clearFilters() {
   filters.date_from = filters.date_to = ''
   filters.faction_id = filters.agenda_type = ''
+  filters.topic = []
   speaker.value = null
   submit()
 }
@@ -174,7 +201,7 @@ function onlyScope(key) {
   const query = { ...route.query }
   delete query.in; delete query.offset
   for (const [group, params] of Object.entries(FILTERS)) {
-    if (!SCOPE_BY_KEY[key].filters.includes(group)) for (const k of params) delete query[k]
+    if (!honours(key, group)) for (const k of params) delete query[k]
   }
   return scopeTarget([key], query.q, query)
 }
@@ -261,6 +288,7 @@ function searchState() {
     person_id: route.query.person_id,
     faction_id: route.query.faction_id,
     agenda_type: route.query.agenda_type,
+    topic: queryList(route.query.topic),
     sort: route.query.sort,
   }
 }
@@ -301,8 +329,9 @@ async function runFromRoute() {
   // query (a top-N over the entire match set), so it is deferred until the user
   // actually opens the panel — most searches never pay for it. If the panel is
   // already open (a re-search with it expanded), refresh it for the new query.
-  if (single.value === 'plenary') {
-    const { sort: _ordering, ...filterArgs } = SCOPE_BY_KEY.plenary.args(state)
+  const plenaryState = scopeState('plenary', state)
+  if (single.value === 'plenary' && SCOPE_BY_KEY.plenary.runnable(plenaryState)) {
+    const { sort: _ordering, ...filterArgs } = SCOPE_BY_KEY.plenary.args(plenaryState)
     currentArgs = filterArgs
     api.searchTrend(filterArgs)
       .then((tr) => { if (seq === reqSeq) trend.value = tr })
@@ -317,8 +346,9 @@ async function runFromRoute() {
 // everyone.
 async function runSection(sec, seq, state, offset) {
   const scope = SCOPE_BY_KEY[sec.key]
-  if (!scope.runnable(state)) { sec.skipped = true; sec.loading = false; return }
-  const args = scope.args(state)
+  const own = scopeState(sec.key, state)
+  if (!scope.runnable(own)) { sec.skipped = true; sec.loading = false; return }
+  const args = scope.args(own)
   sec.loading = true; sec.error = false; sec.tooSlow = false
   try {
     const res = await scope.fetch({ ...args, limit: sectionLimit(sec.key), offset })
@@ -371,6 +401,7 @@ watch(() => route.query, (q) => {
   filters.date_to = q.date_to || ''
   filters.faction_id = q.faction_id || ''
   filters.agenda_type = q.agenda_type || ''
+  filters.topic = queryList(q.topic)
   syncSpeaker(q.person_id || '')
   sort.value = SORTS.includes(q.sort) ? q.sort : 'relevance'
   runFromRoute()
@@ -419,7 +450,7 @@ function scopeNotes(key) {
 }
 
 function emptyText(sec) {
-  if (sec.skipped) return t('search.peopleNeedTerm')
+  if (sec.skipped) return t(sec.key === 'people' ? 'search.peopleNeedTerm' : 'search.needsTerm')
   if (sec.unavailable) return t('search.committeeUnavailable')
   return t('search.noResults')
 }
@@ -489,9 +520,16 @@ const plenary = computed(() => (single.value === 'plenary' ? sections.value[0] :
 // What the result set is *called* — the keyword in quotes, or, for a query-less
 // search, the speaker whose speeches are listed. The captions read the same way
 // round either way, so they take one name.
-const trendCaption = computed(() => (plenary.value?.query
-  ? t('search.trendCaption', { q: plenary.value.query })
-  : t('search.trendCaptionSpeaker', { name: speaker.value?.label || '' })))
+const trendCaption = computed(() => {
+  if (plenary.value?.query) return t('search.trendCaption', { q: plenary.value.query })
+  const name = route.query.person_id ? speaker.value?.label || '' : ''
+  if (topicNames.value) {
+    return name
+      ? t('search.trendCaptionSpeakerTopic', { name, topics: topicNames.value })
+      : t('search.trendCaptionTopic', { topics: topicNames.value })
+  }
+  return t('search.trendCaptionSpeaker', { name })
+})
 
 // Params carried into the embeddable histogram (EmbedView `search-trend`): the
 // executed query plus the active filters, so the embed shows the same result set.
@@ -503,6 +541,7 @@ const trendEmbedParams = computed(() => ({
   person_id: route.query.person_id,
   faction_id: route.query.faction_id,
   agenda_type: route.query.agenda_type,
+  topic: queryList(route.query.topic),
 }))
 
 // Drill the search into a clicked histogram bucket's timeframe by applying its
@@ -566,6 +605,17 @@ function onTrendSelect({ from, to }) {
             <option value="">{{ $t('search.all') }}</option>
             <option v-for="a in AGENDA_TYPES" :key="a" :value="a">{{ agendaLabel(a) }}</option>
           </select>
+        </div>
+        <!-- The machine-read policy topic (TOPIC-1/8): of the speech in the
+             plenary, of the iromány among the documents. It selects exactly what
+             carries that chip — the dominant topic, at the same threshold — and
+             is offered only where a picked scope was classified at all. -->
+        <div v-if="offers.topic && topicOptions.length" class="topic-cell">
+          <label for="f-topic">{{ $t('search.topic') }}</label>
+          <MultiSelect
+            id="f-topic" v-model="filters.topic" :options="topicOptions"
+            :label="$t('search.topic')" @change="submit()"
+          />
         </div>
         <template v-if="offers.dates">
           <div>
@@ -749,6 +799,13 @@ function onTrendSelect({ from, to }) {
 .qbox { position: relative; flex: 1; min-width: 200px; }
 /* A filter whose control carries a dropdown takes the whole grid row. */
 .filter-grid .wide { grid-column: 1 / -1; }
+/* Topic names run long ("Belkereskedelem és bankügy"), and the picker's panel is
+   as wide as its trigger: in one 150px track the trigger truncates the name and
+   every row of the panel wraps. Two tracks wherever the grid has two — never on
+   a phone, whose one-track grid would sprout an implicit second column. */
+@media (min-width: 480px) {
+  .filter-grid .topic-cell { grid-column: span 2; }
+}
 .search-donate { margin-top: 1.2rem; }
 .trendcard { margin: 0 0 .9rem; }
 /* In the figure footer row the hint sits left, pushing the embed button right. */

@@ -419,8 +419,9 @@ onBeforeUnmount(() => {
 .ex-row { display: flex; align-items: center; gap: .5rem; }
 .ex-rl { min-width: 2.6rem; font-size: .85rem; color: var(--muted); }
 .ex-row select {
-  flex: 1; min-width: 0; padding: .4rem .5rem; border: 1px solid var(--line);
-  border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; font-size: .88rem;
+  flex: 1; min-width: 0; padding: .4rem calc(.9rem + 12px) .4rem .5rem; border: 1px solid var(--line);
+  border-radius: 8px; background-color: var(--bg); background-position: right .5rem center;
+  color: var(--ink); font: inherit; font-size: .88rem;
 }
 
 /* Subtitle mode tiles */

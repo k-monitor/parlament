@@ -1399,3 +1399,122 @@ def test_a_db_with_no_topics_says_so_for_a_member_too(floor_client, conn):
     conn.commit()
     assert floor_client.get(
         "/api/v1/proceedings/topics/representative/k001").status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# the search's topic filter (SEA-3)
+# ---------------------------------------------------------------------------
+# The same promise the iromány list makes: a topic filter selects exactly the
+# speeches whose chip carries the label, by the dominant-topic rule at the
+# read-time threshold — never a speech that merely has a block of it. The floor
+# corpus above is built for exactly that: its contested 2026 speech says
+# EGESZSEG with confidence, but spends more words on ENERGIA.
+
+def _search(client, path="", **params):
+    from urllib.parse import urlencode
+    params.setdefault("period", 43)
+    r = client.get(f"/api/v1/proceedings/search{path}?"
+                   + urlencode(params, doseq=True))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _who(body):
+    return {(h["session_id"], h["speaker"]["person_id"]) for h in body["results"]}
+
+
+def test_search_topic_selects_the_speeches_whose_chip_says_so(floor_client):
+    everything = _search(floor_client, q="EGESZSEG")
+    assert _who(everything) == {("43002", "k001"), ("43002", "n002"),
+                                ("43003", "n002")}
+    body = _search(floor_client, q="EGESZSEG", topic="Health")
+    # The contested speech mentions health with confidence, but it is about
+    # energy — so it is the one hit the filter has to drop.
+    assert _who(body) == {("43002", "n002"), ("43003", "n002")}
+    assert body["total"] == 2
+    assert all(h["topic"]["label"] == "Health" for h in body["results"])
+
+
+def test_search_topic_takes_several_topics(floor_client):
+    body = _search(floor_client, q="EGESZSEG", topic=["Health", "Energy"])
+    assert body["total"] == 3
+
+
+def test_every_hit_carries_its_speech_topic(floor_client):
+    """The chip on a hit is the speech's topic, not the sentence's: the matched
+    sentence of the contested speech is a Health block, and its chip still says
+    Energy — which is what a topic filter beside it selects by."""
+    hits = {(h["session_id"], h["speaker"]["person_id"]): h
+            for h in _search(floor_client, q="EGESZSEG")["results"]}
+    assert hits[("43002", "k001")]["topic"]["label"] == "Energy"
+    assert hits[("43002", "n002")]["topic"]["label"] == "Health"
+
+
+def test_a_topic_alone_lists_its_speeches(floor_client):
+    """Like a speaker, a topic is a set of speeches rather than a read of the
+    corpus, so it can stand without a term — one result per speech, newest
+    first, each shown by its opening."""
+    body = _search(floor_client, topic="Health")
+    assert body["query"] == ""
+    assert [h["session_id"] for h in body["results"]] == ["43003", "43002"]
+    assert all(h["sentence_ord"] == 0 for h in body["results"])
+    # The chair spoke loudest about transport in 2026 and is never classified
+    # (STAT-1), so only the 2027 speech is listed.
+    assert _who(_search(floor_client, topic="Transportation")) == {("43003", "k001")}
+
+
+def test_a_topic_narrows_a_speakers_speeches(floor_client):
+    assert _search(floor_client, topic="Health", person_id="k001")["total"] == 0
+    assert _search(floor_client, topic="Health", person_id="n002")["total"] == 2
+
+
+def test_search_topic_respects_the_dates(floor_client):
+    """The dates are pushed into the dominant-topic scan as well as applied to the
+    hits; either way a speech outside them must not be listed."""
+    body = _search(floor_client, topic="Health", date_from="2027-01-01")
+    assert _who(body) == {("43003", "n002")}
+
+
+def test_search_topic_tracks_the_read_time_threshold(floor_client, monkeypatch):
+    """Raising the threshold past Energy's confidence makes the contested speech
+    a Health speech — in the filter and on its chip at once (TOPIC-6). Asked
+    before *and* after, so a cached page keyed without the threshold would fail."""
+    assert _search(floor_client, q="EGESZSEG", topic="Health")["total"] == 2
+    for instance in _live_settings():
+        monkeypatch.setattr(instance, "parlacap_threshold", 0.95)
+    body = _search(floor_client, q="EGESZSEG", topic="Health")
+    assert body["total"] == 3
+    assert all(h["topic"]["label"] == "Health" for h in body["results"])
+    assert _search(floor_client, topic="Energy")["total"] == 0
+
+
+def test_the_aggregates_describe_the_same_topic_filtered_set(floor_client):
+    """The trend (SEA-8) and the breakdown (SEA-9) are the result list's own
+    aggregates, so they must apply the topic filter too."""
+    trend = _search(floor_client, "/trend", q="EGESZSEG", topic="Health")
+    assert sum(b["hits"] for b in trend["buckets"]) == 2
+    breakdown = _search(floor_client, "/breakdown", q="EGESZSEG", topic="Health")
+    assert {s["person_id"] for s in breakdown["speakers"]} == {"n002"}
+    # …and a topic alone draws the speeches on it over time.
+    trend = _search(floor_client, "/trend", topic="Health")
+    assert {b["period"][:4]: b["hits"] for b in trend["buckets"]} == {
+        "2026": 1, "2027": 1}
+
+
+def test_an_unknown_topic_selects_nothing(floor_client):
+    assert _search(floor_client, q="EGESZSEG", topic="Astrology")["total"] == 0
+
+
+def test_an_unhonourable_search_topic_returns_nothing_not_everything(floor_client,
+                                                                    conn):
+    """With no topic table the filter cannot be applied, and dropping it would
+    show the reader every hit under one label. A topic-only search is still a
+    valid search with nothing in it, not a malformed one."""
+    conn.execute("DROP TABLE speech_topic")
+    conn.commit()
+    assert _search(floor_client, q="EGESZSEG", topic="Health")["total"] == 0
+    assert _search(floor_client, topic="Health")["total"] == 0
+    # …while the unfiltered search is unaffected, its hits merely chip-less
+    body = _search(floor_client, q="EGESZSEG")
+    assert body["total"] == 3
+    assert all(h["topic"] is None for h in body["results"])

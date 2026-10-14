@@ -159,6 +159,8 @@ export default {
     hint: 'Tip: use quotes for an exact phrase, e.g. "tisztelt ház".',
     filters: 'Filters', clearFilters: 'Clear filters', period: 'Term', dateFrom: 'From', dateTo: 'To',
     speaker: 'Speaker', faction: 'Faction', agendaType: 'Agenda type', all: 'All', watch: 'Watch', on: '·',
+    // The policy topic (CAP) of a speech or a document.
+    topic: 'Topic',
     // The speaker filter (SEA-3) and the suggestions that feed it (SEA-7).
     speakerPlaceholder: 'Name…',
     speakerHint: 'Start typing a name.',
@@ -168,6 +170,9 @@ export default {
     speakerSuggest: 'Filter to a speaker:',
     // With no term and only a speaker filter, the results are their speeches.
     trendCaptionSpeaker: '{name}: speeches over time',
+    // With no term and a topic filter (and perhaps a speaker).
+    trendCaptionTopic: 'Speeches on {topics} over time',
+    trendCaptionSpeakerTopic: '{name}: speeches on {topics} over time',
     // Multi-value filter (MultiSelect): the trigger's label and the panel's hint.
     selectedCount: '{n} selected', multiHint: 'You can pick several values.',
     sort: 'Sort:', sortRelevance: 'Relevance', sortNewest: 'Newest first', sortOldest: 'Oldest first',
@@ -198,10 +203,15 @@ export default {
     showAll: 'All results ({n})',
     // What a scope's results must be read with.
     notApplied: 'Not applied here: {filters}.',
-    filterNames: { dates: 'date range', speaker: 'speaker', faction: 'faction', agenda: 'agenda type' },
+    filterNames: {
+      dates: 'date range', speaker: 'speaker', faction: 'faction', agenda: 'agenda type',
+      topic: 'topic',
+    },
     asSponsor: 'Only documents submitted by {name}.',
     asVoter: 'Roll-call votes, with how {name} voted.',
     peopleNeedTerm: 'Type a name to search for people.',
+    // Where a topic alone is not a search (committee meetings, votes).
+    needsTerm: 'Type a term or pick a speaker to search here.',
     // A record scope's own list page, for the filters this page does not carry.
     moreFilters: 'More filters and orderings on the {page} page →',
     listPages: { documents: 'Documents', votes: 'Votes', people: 'Speakers' },

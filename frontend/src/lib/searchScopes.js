@@ -17,13 +17,24 @@ import { api } from '../api.js'
 import { store } from '../store.js'
 
 // The search page's filters, as named in its own URL (SEA-6), grouped the way
-// the page offers and reports them.
+// the page offers and reports them. The topic is the one that holds several
+// values at once, as on the iromány lists.
 export const FILTERS = {
   dates: ['date_from', 'date_to'],
   speaker: ['person_id'],
   faction: ['faction_id'],
   agenda: ['agenda_type'],
+  topic: ['topic'],
 }
+
+/** A repeated URL param as a list: vue-router hands back one value bare. */
+export function queryList(v) {
+  if (v === undefined || v === null || v === '') return []
+  return (Array.isArray(v) ? v : [v]).filter((x) => x !== null && x !== '')
+}
+
+// Whether a filter param is set — an empty list of topics is not.
+const isSet = (v) => (Array.isArray(v) ? v.length > 0 : !!v)
 
 // The search page's orderings (SEA-10). Every scope ranks by date both ways;
 // `ranks` marks the ones that can also put the best match first.
@@ -31,14 +42,18 @@ export const SORTS = ['relevance', 'date_desc', 'date_asc']
 
 export const SEARCH_SCOPES = [
   {
+    // `topics` names the /meta feature that says this deployment classified the
+    // scope's texts (TOPIC-7/8): without it the topic filter is not offered.
     key: 'plenary', module: 'proceedings', source: 'proceedings',
-    filters: ['dates', 'speaker', 'faction', 'agenda'], ranks: true,
-    // A query-less search is one speaker's speeches (SEA-3).
-    runnable: (s) => !!(s.q || s.person_id),
+    filters: ['dates', 'speaker', 'faction', 'agenda', 'topic'], ranks: true,
+    topics: 'speech_topics',
+    // A query-less search is one speaker's speeches, or the speeches on a
+    // topic (SEA-3).
+    runnable: (s) => !!(s.q || s.person_id || s.topic?.length),
     args: (s) => ({
       q: s.q, period: s.period, date_from: s.date_from, date_to: s.date_to,
       person_id: s.person_id, faction_id: s.faction_id, agenda_type: s.agenda_type,
-      sort: s.sort,
+      topic: s.topic, sort: s.sort,
     }),
     fetch: (a) => api.search(a),
     read: (r) => ({
@@ -65,20 +80,21 @@ export const SEARCH_SCOPES = [
     // Every iromány (BILL-9), matched on its title and number. The speaker
     // filter reads as its submitter — the person's own documents — and the
     // dates as its submission date. "Relevance" is the list's own order, which
-    // puts an exactly typed number first.
+    // puts an exactly typed number first. The topic is the iromány's own, the
+    // one its chip shows (TOPIC-8), so a topic alone lists them too.
     key: 'documents', module: 'bills', source: 'bills', route: 'documents',
-    filters: ['dates', 'speaker'], ranks: true,
-    runnable: (s) => !!(s.q || s.person_id),
+    filters: ['dates', 'speaker', 'topic'], ranks: true, topics: 'bill_topics',
+    runnable: (s) => !!(s.q || s.person_id || s.topic?.length),
     args: (s) => ({
       q: s.q, period: s.period, date_from: s.date_from, date_to: s.date_to,
-      sponsor: s.person_id,
+      sponsor: s.person_id, topic: s.topic,
       sort: { date_desc: 'date', date_asc: 'date_asc' }[s.sort] || 'number',
     }),
     fetch: (a) => api.bills(a),
     read: (r) => ({ results: r.bills, total: r.total }),
-    // The list page carries on with the filters it has: the term and the
-    // submitter (it has no date range).
-    list: (s) => ({ q: s.q, sponsor: s.person_id }),
+    // The list page carries on with the filters it has: the term, the
+    // submitter and the topic (it has no date range).
+    list: (s) => ({ q: s.q, sponsor: s.person_id, topic: s.topic }),
   },
   {
     // The votes, matched on their subject and the irományok they decided. The
@@ -164,14 +180,38 @@ export function scopeTarget(keys, q, extra = {}) {
 export function listPageTarget(key, state) {
   const scope = SCOPE_BY_KEY[key]
   if (!scope?.list) return null
-  const query = Object.fromEntries(Object.entries(scope.list(state))
-    .filter(([, v]) => v !== undefined && v !== null && v !== ''))
+  const query = Object.fromEntries(Object.entries(scope.list(scopeState(key, state)))
+    .filter(([, v]) => isSet(v)))
   return { name: scope.route, query }
 }
 
-/** Whether any of `keys` honours the filter group `group` (FILTERS). */
+/**
+ * Whether the scope `key` applies the filter group `group` (FILTERS). A topic
+ * filter is only as real as the classification behind it, so a scope whose
+ * texts this deployment never classified does not take one — it would match
+ * nothing, and the page says so instead.
+ */
+export function honours(key, group) {
+  const scope = SCOPE_BY_KEY[key]
+  if (!scope?.filters.includes(group)) return false
+  return group !== 'topic' || store.featureEnabled(scope.topics)
+}
+
+/** Whether any of `keys` honours the filter group `group`. */
 export function scopesHonour(keys, group) {
-  return keys.some((k) => SCOPE_BY_KEY[k]?.filters.includes(group))
+  return keys.some((k) => honours(k, group))
+}
+
+/**
+ * The page's search as the scope `key` is asked it: the filters it cannot
+ * apply left out, so its endpoint is never sent one its section says it ignores.
+ */
+export function scopeState(key, state) {
+  const out = { ...state }
+  for (const [group, params] of Object.entries(FILTERS)) {
+    if (!honours(key, group)) for (const p of params) delete out[p]
+  }
+  return out
 }
 
 /**
@@ -179,9 +219,8 @@ export function scopesHonour(keys, group) {
  * cannot apply — what its results have to be read without.
  */
 export function ignoredFilters(key, state) {
-  const scope = SCOPE_BY_KEY[key]
   return Object.entries(FILTERS)
-    .filter(([group, params]) => params.some((p) => state[p]) && !scope.filters.includes(group))
+    .filter(([group, params]) => params.some((p) => isSet(state[p])) && !honours(key, group))
     .map(([group]) => group)
 }
 

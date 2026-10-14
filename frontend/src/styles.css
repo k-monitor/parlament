@@ -92,6 +92,17 @@ input[type="text"], input[type="search"], input[type="date"], select {
   font: inherit; padding: .5rem .6rem; border: 1px solid #c7c4bc;
   border-radius: 8px; background: var(--surface); color: var(--ink); width: 100%;
 }
+/* A native <select> drops the platform's arrow for the chevron, hover border and
+   line height of the checkbox dropdowns (MultiSelect), so a filter grid mixing
+   the two reads as one row of identical boxes. The chevron is MultiSelect's SVG
+   in --ink-soft; a rule that resets `background` must restore it. */
+select {
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+  line-height: inherit; padding-right: calc(1rem + 12px);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2356524a' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right .6rem center; background-size: 12px 12px;
+}
+select:hover { border-color: var(--ink-soft); }
 label { font-weight: 600; font-size: .85rem; color: var(--ink-soft); display: block; margin-bottom: .25rem; }
 
 .card {
@@ -162,7 +173,7 @@ mark { background: var(--mark); color: var(--mark-ink); padding: 0 .1em; border-
 .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .7rem; }
 .results-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: 1rem 0 .5rem; }
 .sortctl { display: inline-flex; align-items: center; gap: .4rem; }
-.sortctl select { width: auto; padding: .3rem .5rem; }
+.sortctl select { width: auto; padding: .3rem calc(.9rem + 12px) .3rem .5rem; background-position: right .5rem center; }
 
 /* spinner / states */
 .state { padding: 3rem 1rem; text-align: center; color: var(--ink-faint); }

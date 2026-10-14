@@ -20,10 +20,12 @@ import InterjectionGraph from '../components/InterjectionGraph.vue'
 import PieChart from '../components/PieChart.vue'
 import CohesionPanel from '../modules/votes/CohesionPanel.vue'
 import TopicMixChart from '../components/TopicMixChart.vue'
+import { topicName } from '../lib/topics.js'
+import { queryList } from '../lib/searchScopes.js'
 
 const props = defineProps({ kind: String })
 const route = useRoute()
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 // The cycle scope carried in the URL: `all` (or absent) → [] (all cycles), else
 // the comma-separated electoral-period numbers. This — not store.cycles — scopes
@@ -74,7 +76,7 @@ function fetchForKind() {
       const trend = api.searchTrend({
         q: q.q, period: period.value, date_from: q.date_from,
         date_to: q.date_to, person_id: q.person_id, faction_id: q.faction_id,
-        agenda_type: q.agenda_type,
+        agenda_type: q.agenda_type, topic: queryList(q.topic),
       })
       // A query-less trend is one speaker's speeches over time (SEA-3), and the
       // chart is titled by their name — which only the id in the URL identifies,
@@ -122,6 +124,9 @@ function fetchForKind() {
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
 
 // ---- search-trend ---------------------------------------------------------
+// The topics a query-less trend is drawn for, by name (the caption below).
+const embedTopics = computed(() =>
+  queryList(route.query.topic).map((l) => topicName(l, t, te)).join(', '))
 // Whenever the axis spans more than one cycle, mark each cycle's start/end
 // (mirrors the search page). Empty for a single cycle — the axis is then just
 // that cycle.
@@ -203,6 +208,13 @@ const title = computed(() => {
   switch (props.kind) {
     case 'search-trend':
       if (data.value?.query) return t('search.trendCaption', { q: data.value.query })
+      // A query-less trend is a speaker's speeches, the speeches on a topic, or
+      // both — titled as the search page titles it.
+      if (embedTopics.value) {
+        return data.value?.speaker
+          ? t('search.trendCaptionSpeakerTopic', { name: data.value.speaker, topics: embedTopics.value })
+          : t('search.trendCaptionTopic', { topics: embedTopics.value })
+      }
       return data.value?.speaker
         ? t('search.trendCaptionSpeaker', { name: data.value.speaker })
         : t('nav.search')

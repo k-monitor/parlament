@@ -225,8 +225,13 @@ export default {
     speakerSuggest: 'Szűrés felszólalóra:',
     // Keresőszó nélkül, csak felszólalóra szűrve a találatok a felszólalásai.
     trendCaptionSpeaker: '{name} felszólalásai az időben',
+    // Keresőszó nélkül, témára (és esetleg felszólalóra) szűrve.
+    trendCaptionTopic: '{topics} témájú felszólalások az időben',
+    trendCaptionSpeakerTopic: '{name} {topics} témájú felszólalásai az időben',
     faction: 'Frakció',
     agendaType: 'Napirend típusa',
+    // A felszólalás vagy az irományok közpolitikai témája (CAP) szerinti szűrő.
+    topic: 'Téma',
     all: 'Mind',
     // Több értéket is felvevő szűrő (MultiSelect): a gomb felirata és a panel súgója.
     selectedCount: '{n} kiválasztva',
@@ -263,10 +268,15 @@ export default {
     showAll: 'Összes találat ({n})',
     // Amivel együtt kell olvasni egy hely találatait.
     notApplied: 'Itt nem érvényes: {filters}.',
-    filterNames: { dates: 'időszak', speaker: 'felszólaló', faction: 'frakció', agenda: 'napirend típusa' },
+    filterNames: {
+      dates: 'időszak', speaker: 'felszólaló', faction: 'frakció', agenda: 'napirend típusa',
+      topic: 'téma',
+    },
     asSponsor: 'Csak {name} által benyújtott irományok.',
     asVoter: 'Névsoros szavazások, {name} szavazatával.',
     peopleNeedTerm: 'Személyek kereséséhez írj be egy nevet.',
+    // Ahol a téma önmagában nem keresés (bizottsági ülések, szavazások).
+    needsTerm: 'Itt kereséshez írj be egy kifejezést, vagy válassz felszólalót.',
     // Egy rekordtípus saját listaoldala, a további szűrőkért és rendezésekért.
     moreFilters: 'További szűrők és rendezések: {page} →',
     listPages: { documents: 'Irományok', votes: 'Szavazások', people: 'Felszólalók' },

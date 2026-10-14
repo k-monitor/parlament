@@ -872,15 +872,31 @@ to decide and the coming sitting).
   handles Hungarian morphology at least via prefix/stemming-friendly tokenization;
   exact-phrase ("…") supported.
 - **SEA-3.** Filters: by **date range**, **speaker**, **faction**,
-  **agenda-item type**. Filters are combinable. The **electoral period** is set
-  by the global cycle selector (§4A), not a per-search filter. The **speaker**
-  filter can also stand on its own: with no search term the page lists that
-  speaker's speeches — one result per **speech**, shown by its opening rather
-  than by a matched sentence, newest first (there is no relevance to rank by) —
-  so "everything they said" is reachable from the search page itself, still
-  combinable with the date/faction/agenda filters and the cycle scope. No other
-  filter searches without a term: a bare faction or agenda-type filter is a read
-  of the whole corpus, and is refused.
+  **agenda-item type** and **policy topic** (TOPIC-1). Filters are combinable.
+  The **electoral period** is set by the global cycle selector (§4A), not a
+  per-search filter. The **speaker** filter can also stand on its own: with no
+  search term the page lists that speaker's speeches — one result per
+  **speech**, shown by its opening rather than by a matched sentence, newest
+  first (there is no relevance to rank by) — so "everything they said" is
+  reachable from the search page itself, still combinable with the
+  date/faction/agenda filters and the cycle scope. The **topic** filter stands
+  on its own the same way — "every speech on this topic" — and with the speaker
+  it is one member's speeches on it. No other filter searches without a term: a
+  bare faction or agenda-type filter is a read of the whole corpus, and is
+  refused, where a speaker or a topic is a bounded set of speeches.
+  - The topic filter keeps the iromány filter's promise (TOPIC-8): it matches a
+    speech's **dominant** topic — the one its chip shows, by the same rule at the
+    same read-time threshold — never a topic the speech merely touches, and a
+    filter the deployment cannot honour returns **nothing**, never the
+    unfiltered list. Several topics can be picked at once (`topic` repeated in
+    the URL, SEA-6), and every hit carries its speech's chip, so a filtered list
+    shows what it was filtered on. The popularity chart (SEA-8) and the
+    breakdown (SEA-9) honour it like every other filter.
+  - Unlike the iromány lists' picker, it offers **every policy topic, without
+    counts**: here a topic narrows a search, as the faction does, and a count per
+    topic for every term would be a breakdown-sized aggregate per search. "Other"
+    is never offered — it is never a subject (TOPIC-4) — and where nothing was
+    classified the control is absent rather than dead.
 - **SEA-4.** Each result shows: matched sentence with **highlighted** terms,
   **surrounding transcript context** — a few sentences immediately before and
   after the match so the moment reads in context without opening the viewer,
@@ -1001,7 +1017,12 @@ to decide and the coming sitting).
     and the **voter** in the votes (the roll calls they took part in, each card
     showing how they voted); the **dates** bound the sitting, the submission and
     the vote; the **faction** narrows the plenary and the people (that
-    faction's MPs); the **agenda type** is the plenary's alone. The panel offers
+    faction's MPs); the **agenda type** is the plenary's alone; the **topic** is
+    the speech's own in the plenary and the iromány's own among the irományok —
+    each the label its chip shows — and reaches a scope only where that scope's
+    texts were classified (TOPIC-7/8). A topic alone runs those two scopes; the
+    committee minutes and the votes, which carry no topic, ask for a term or a
+    speaker, as the people scope asks for a name. The panel offers
     a filter only while a picked scope takes it, and a section whose scope
     cannot apply an active filter **says so** above its results rather than
     silently dropping it. Without a term the people scope has nothing to search
@@ -1525,11 +1546,18 @@ to decide and the coming sitting).
   left to the threshold. The parameters are **configurable, not hard-coded**
   (OPS-4) and **published in the site manifest**, the threshold in force included,
   so every label can state how it was produced (TRUST-1 / REP-5).
-  > **Not yet built (§10):** topic facets in search. The stored unit is
-  > deliberately the block, and the label is indexed, so it is a query against
-  > what already exists rather than a reclassification — which is how the other
-  > two arrived: the **per-representative topic profile** is now TOPIC-10 below,
-  > and topic classification of **irományok** is TOPIC-8.
+  > **✅ realized (topic filter in search, SEA-3).** The stored unit is
+  > deliberately the block, and the label is indexed, so it was a query against
+  > what already existed rather than a reclassification — as were the other two:
+  > the **per-representative topic profile** (TOPIC-10) and topic classification
+  > of **irományok** (TOPIC-8). `/proceedings/search` (+ `/trend`, `/breakdown`)
+  > takes `?topic=` (repeatable) and resolves it through
+  > `parlacap.dominant_topic_sql` with the threshold in the cache key; the scan is
+  > pruned to the speeches that have a block of a wanted label at all (the label
+  > index) and to the cycle, dates and speaker, none of which can change a
+  > winner. Each hit carries `topic`, drawn by the shared `TopicBadge.vue`. On a
+  > synthetic classification of all ten cycles (1.7M blocks): 0.1–0.9 s within
+  > one cycle, 0.4–2.6 s across all of them, uncached.
 - **TOPIC-8 (SHOULD).** The same labels are carried by **irományok**, wherever one
   appears as an item the reader can act on: the bills list, the *Kérdések* list
   (BILL-13), the *Minden iromány* list (BILL-9), the iromány detail view and the
@@ -1635,11 +1663,10 @@ to decide and the coming sitting).
   > (`speech_topics` in `/meta`), which the router honours as a 404 — the first
   > analysis whose data can be missing while its module is mounted.
   >
-  > **Still not built (§10):** a topic filter in the proceedings search. The page
-  > links out to the iromány list (which does filter by topic) and to a speaker's
-  > profile — which now answers the mirror-image question itself (TOPIC-10) — but
-  > there is still no "every speech on this topic" list to link to, so none is
-  > offered.
+  > The "every speech on this topic" list now exists — the search with a topic
+  > and no term (SEA-3, `/search?topic=<label>`) — but the page does **not yet
+  > link to it**: it links out to the iromány list and to a speaker's profile
+  > (TOPIC-10) only.
 
 - **TOPIC-10 (SHOULD).** The same mix is read **one member at a time**, as a
   figure on their representative profile: how their own speeches divide between
@@ -1666,8 +1693,9 @@ to decide and the coming sitting).
     rest stays under the threshold. The ranked list shows its head and opens to
     all of it — "the topics they speak about" and "their eight commonest" are
     different claims, and the shorter one is never made silently.
-  - Rows are **not controls**. There is no per-member topic list to open them into
-    (§10), so the way on is the Témák analysis, linked from the panel. The figure
+  - Rows are **not controls**. The way on is the Témák analysis, linked from the
+    panel. (The per-member topic list they could open into now exists — the
+    search by speaker and topic, SEA-3 — but the rows do not link to it yet.) The figure
     is **embeddable** (§4C), and on a deployment that classified nothing the panel
     is **absent rather than empty** — gated on the same capability flag as the
     analysis, not on a module switch.

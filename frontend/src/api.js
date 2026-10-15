@@ -194,6 +194,11 @@ export const api = {
   // bills
   bills: (params) => get('/bills', params),
   bill: (id) => get(`/bills/${id}`),
+  // What a bill changes (BILL-14..16): the law diff, the bill's evolution and
+  // its amendments; `law` narrows it to one amended law's provisions.
+  billChanges: (id, law) => get(`/bills/${id}/changes`, { law }),
+  billEvolution: (id) => get(`/bills/${id}/changes`, { part: 'evolution' }),
+  billAmendment: (id, number) => get(`/bills/${id}/amendments`, { number }),
   billFacets: (params) => get('/bills/facets', params),
   billTopicMix: (period) => get('/bills/topics', { period }),
   // What the House decided between two dates — the week digest's list (HOME-4).

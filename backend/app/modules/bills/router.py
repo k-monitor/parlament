@@ -25,6 +25,7 @@ from ...db import (get_db, like_contains, local_instant, period_and,
 from ...media import per_speech_clip
 from ...parlament_links import bill_page_url
 from ...query_cache import cached_aggregate
+from ...textdiff import word_diff
 from ...vote_stats import (NO_ATTENDANCE, NO_CROSSVOTING, attendance_for,
                            crossvoting_for)
 
@@ -1340,8 +1341,20 @@ def _motions_for(db: sqlite3.Connection, bill_id: str) -> list[dict]:
             "faction": {"id": r["faction_id"], "label": r["faction_label"],
                         "color": r["faction_color"]} if r["faction_label"] else None,
         })
+    # Which motions can be shown as a diff of the bill (BILL-16).
+    try:
+        amend = {r["motion_number"]: r for r in db.execute(
+            """SELECT ad.motion_number, ad.scan,
+                      (SELECT COUNT(*) FROM amendment_point ap
+                       WHERE ap.amendment_id = ad.id) AS points
+               FROM amendment_doc ad WHERE ad.bill_id = ?""", (bill_id,))}
+    except sqlite3.OperationalError:
+        amend = {}
     for m in motions:
         m.pop("id", None)
+        a = amend.get(m["bill_number"])
+        m["amendment"] = ({"points": a["points"], "scan": bool(a["scan"])}
+                          if a else None)
     return motions
 
 
@@ -1513,6 +1526,206 @@ def _video_answer(db: sqlite3.Connection, bill_id: str) -> Optional[dict]:
     }
 
 
+# ---------------------------------------------------------------------------
+# What a bill changes (BILL-14..16)
+# ---------------------------------------------------------------------------
+
+# How many changed provisions one /changes response carries with their diffs.
+# An omnibus bill (a renaming across 176 laws) runs to well over a thousand; the
+# laws past this budget come back as counts, and the page fetches each one's
+# provisions (`?law=`) when the reader opens it.
+_CHANGE_BUDGET = 120
+# How many of the bill's changed sections (BILL-15) the first response carries;
+# the rest come with `?part=evolution` when the reader asks for all of them.
+# An omnibus bill's consolidated text differs from the bill in well over a
+# hundred sections, each of them a whole § on both sides.
+_EVOLUTION_HEAD = 8
+
+
+def _law_change_head(db: sqlite3.Connection, bill_id: str) -> Optional[sqlite3.Row]:
+    try:
+        return db.execute("SELECT * FROM law_change_bill WHERE bill_id = ?",
+                          (bill_id,)).fetchone()
+    except sqlite3.OperationalError:     # a DB built before the feature
+        return None
+
+
+def _law_change_summary(db: sqlite3.Connection, bill_id: str) -> Optional[dict]:
+    """The counts the bill page needs to decide which sections to show, or None
+    when there is nothing to show at all."""
+    head = _law_change_head(db, bill_id)
+    if not head:
+        return None
+    one = lambda sql: db.execute(sql, (bill_id,)).fetchone()[0]  # noqa: E731
+    laws = one("SELECT COUNT(*) FROM law_change_law WHERE bill_id = ?")
+    changes = one("SELECT COUNT(*) FROM law_change WHERE bill_id = ?")
+    unresolved = one("SELECT COUNT(*) FROM law_change_unresolved WHERE bill_id = ?")
+    evolution = one("SELECT COUNT(*) FROM bill_evolution WHERE bill_id = ?")
+    points = one("SELECT COUNT(*) FROM amendment_point ap JOIN amendment_doc ad "
+                 "ON ad.id = ap.amendment_id WHERE ad.bill_id = ?")
+    if not (laws or unresolved or evolution or points):
+        return None
+    methods = [r[0] for r in db.execute(
+        "SELECT DISTINCT method FROM law_change_law WHERE bill_id = ?", (bill_id,))]
+    return {"laws": laws, "changes": changes, "unresolved": unresolved,
+            "evolution": evolution, "amendment_points": points,
+            "method": methods[0] if len(methods) == 1 else ("mixed" if methods else None),
+            "act": head["act_label"], "scan": bool(head["scan"])}
+
+
+def _change_kind(before: Optional[str], after: Optional[str]) -> str:
+    if not before:
+        return "new"
+    if not after:
+        return "repealed"
+    return "modified"
+
+
+def _law_rows(db: sqlite3.Connection, bill_id: str, law: Optional[str]) -> list[dict]:
+    sql = "SELECT * FROM law_change_law WHERE bill_id = ?"
+    args: list = [bill_id]
+    if law:
+        sql += " AND doc_id = ?"
+        args.append(law)
+    laws = []
+    for r in db.execute(sql + " ORDER BY ord", args):
+        laws.append({
+            "id": r["id"], "doc_id": r["doc_id"], "title": r["title"], "abbr": r["abbr"],
+            "url": r["url"], "method": r["method"],
+            "base": {"version": r["base_version"], "from": r["base_from"],
+                     "to": r["base_to"]} if r["base_version"] is not None else None,
+            "target": {"version": r["target_version"], "from": r["target_from"],
+                       "to": r["target_to"]} if r["target_version"] is not None else None,
+        })
+    return laws
+
+
+def _changes_of(db: sqlite3.Connection, law_id: int) -> list[dict]:
+    out = []
+    for c in db.execute("SELECT * FROM law_change WHERE law_id = ? ORDER BY ord", (law_id,)):
+        out.append({"jh": c["jh"], "ref": c["ref"],
+                    "ops": [o for o in (c["ops"] or "").split(",") if o],
+                    "provisions": json.loads(c["provisions"] or "[]"),
+                    "kind": _change_kind(c["before_text"], c["after_text"]),
+                    "url": c["url"], "diff": word_diff(c["before_text"], c["after_text"])})
+    return out
+
+
+def _evolution(db: sqlite3.Connection, head: sqlite3.Row, bill_id: str,
+               limit: Optional[int]) -> Optional[dict]:
+    if not head["evolution_to"]:
+        return None
+    total = db.execute("SELECT COUNT(*) FROM bill_evolution WHERE bill_id = ?",
+                       (bill_id,)).fetchone()[0]
+    sql = ("SELECT provision, before_text, after_text FROM bill_evolution "
+           "WHERE bill_id = ? ORDER BY ord")
+    rows = db.execute(sql + (f" LIMIT {int(limit)}" if limit else ""), (bill_id,)).fetchall()
+    return {
+        "from": {"number": head["evolution_from"], "url": head["evolution_from_url"]},
+        "to": {"number": head["evolution_to"], "url": head["evolution_to_url"]},
+        "unchanged": head["evolution_unchanged"], "total": total,
+        "provisions": [{"provision": r["provision"],
+                        "kind": _change_kind(r["before_text"], r["after_text"]),
+                        "diff": word_diff(r["before_text"], r["after_text"])}
+                       for r in rows]}
+
+
+@router.get("/{bill_id}/changes")
+def bill_changes(bill_id: str, law: Optional[str] = Query(
+                     None, description="one amended law (njt id) — its provisions only"),
+                 part: Optional[str] = Query(
+                     None, description="`evolution`: every changed section of the bill"),
+                 db: sqlite3.Connection = Depends(get_db)):
+    """What a bill changes (BILL-14..16).
+
+    * `laws` — each law the bill amends, with every changed provision as a word
+      diff. `method` says where the new text comes from: `njt` (the bill became
+      law and njt.hu's own time states are compared, exact) or `computed` (the
+      bill's amending instructions applied to njt's newest state). Past
+      `_CHANGE_BUDGET` provisions, a law comes back with `changes: null` and
+      `truncated: true`; ask for it with `?law=<doc_id>`.
+    * `unresolved` — instructions that could not be applied, in the bill's words.
+    * `evolution` — the bill as submitted against its egységes javaslat: the
+      first `_EVOLUTION_HEAD` changed sections and their `total`; all of them
+      with `?part=evolution`.
+    * `amendments` — the bill's módosító javaslatok and how many points each has
+      (the points themselves: `/amendments?number=`)."""
+    b = db.execute("SELECT id, period_number FROM bill WHERE id = ?", (bill_id,)).fetchone()
+    if not b or not period_in_scope(b["period_number"]):
+        raise HTTPException(404, "Bill not found")
+    head = _law_change_head(db, bill_id)
+    if not head:
+        return {"available": False}
+    if part == "evolution":
+        return {"available": True, "evolution": _evolution(db, head, bill_id, None)}
+    laws = _law_rows(db, bill_id, law)
+    counts = {r[0]: r[1] for r in db.execute(
+        "SELECT law_id, COUNT(*) FROM law_change WHERE bill_id = ? GROUP BY law_id",
+        (bill_id,))}
+    spent = 0
+    for item in laws:
+        n = counts.get(item["id"], 0)
+        item["count"] = n
+        if law or spent + n <= _CHANGE_BUDGET or spent == 0:
+            item["changes"] = _changes_of(db, item["id"])
+            item["truncated"] = False
+            spent += n
+        else:
+            item["changes"] = None
+            item["truncated"] = True
+        item.pop("id")
+    if law:
+        return {"available": True, "laws": laws}
+
+    unresolved = [dict(r) for r in db.execute(
+        """SELECT provision, doc_id, reason, text FROM law_change_unresolved
+           WHERE bill_id = ? ORDER BY ord""", (bill_id,))]
+    evolution = _evolution(db, head, bill_id, _EVOLUTION_HEAD)
+    amendments = [dict(r) | {"scan": bool(r["scan"]), "marked": bool(r["marked"])}
+                  for r in db.execute(
+        """SELECT ad.motion_number AS number, ad.type, ad.url, ad.scan, ad.marked,
+                  ad.error, (SELECT COUNT(*) FROM amendment_point ap
+                             WHERE ap.amendment_id = ad.id) AS points
+           FROM amendment_doc ad WHERE ad.bill_id = ? ORDER BY ad.ord""", (bill_id,))]
+    stats = json.loads(head["stats_json"]) if head["stats_json"] else {}
+    return {
+        "available": True,
+        "source": {"number": head["source_number"], "url": head["source_url"],
+                   "kind": head["source_kind"]} if head["source_number"] else None,
+        "scan": bool(head["scan"]),
+        "act": {"label": head["act_label"], "doc_id": head["act_doc"],
+                "url": head["act_url"]} if head["act_label"] else None,
+        "computed_at": head["computed_at"], "stats": stats,
+        "laws": laws, "unresolved": unresolved, "evolution": evolution,
+        "amendments": amendments,
+    }
+
+
+@router.get("/{bill_id}/amendments")
+def bill_amendment(bill_id: str,
+                   number: str = Query(..., description='the motion number, e.g. "438/2"'),
+                   db: sqlite3.Connection = Depends(get_db)):
+    """One módosító javaslat of a bill, point by point, each point the bill
+    provision it changes with its insertions and deletions (BILL-16)."""
+    b = db.execute("SELECT id, period_number FROM bill WHERE id = ?", (bill_id,)).fetchone()
+    if not b or not period_in_scope(b["period_number"]):
+        raise HTTPException(404, "Bill not found")
+    try:
+        doc = db.execute("SELECT * FROM amendment_doc WHERE bill_id = ? AND motion_number = ?",
+                         (bill_id, number)).fetchone()
+    except sqlite3.OperationalError:
+        doc = None
+    if not doc:
+        raise HTTPException(404, "Amendment not found")
+    points = [{"point": p["point"], "target": p["target"], "kind": p["kind"],
+               "segments": json.loads(p["segments_json"] or "[]")}
+              for p in db.execute("SELECT * FROM amendment_point WHERE amendment_id = ? "
+                                  "ORDER BY ord", (doc["id"],))]
+    return {"number": doc["motion_number"], "type": doc["type"], "url": doc["url"],
+            "scan": bool(doc["scan"]), "marked": bool(doc["marked"]),
+            "error": doc["error"], "points": points}
+
+
 @router.get("/{bill_id}")
 def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     """A single bill with its full sponsor list and detail sections (events,
@@ -1609,4 +1822,6 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "deadlines": deadlines, "committees": committees, "documents": documents,
         "motion_summary": motion_summary, "motions": motions,
         "debates": debates, "video_answer": video_answer,
+        # What it changes (BILL-14..16): counts only; the diffs are /changes.
+        "law_changes": _law_change_summary(db, bill_id),
     }

@@ -16,6 +16,9 @@ import SpeakerLink from '../../components/SpeakerLink.vue'
 import HlsPlayer from '../../components/HlsPlayer.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import TopicBadge from '../../components/TopicBadge.vue'
+import LawChanges from './LawChanges.vue'
+import BillEvolution from './BillEvolution.vue'
+import AmendmentPoints from './AmendmentPoints.vue'
 import { usePageTitle } from '../../lib/pageTitle.js'
 import { motionAnchor, motionLocation } from '../../lib/motionLink.js'
 
@@ -45,6 +48,20 @@ const docRevealed = ref(false)
 // main bill: a motion's <iframe> only exists once its toggle is clicked.
 const motionOpen = reactive({})
 function toggleMotion(i) { motionOpen[i] = !motionOpen[i] }
+// A módosító javaslat's points as a diff of the bill (BILL-16), per motion,
+// fetched when opened — a separate toggle from the PDF beside it.
+const amendOpen = reactive({})
+function toggleAmend(i) { amendOpen[i] = !amendOpen[i] }
+
+// What the bill changes (BILL-14/15). The bill carries only the counts
+// (`law_changes`); the diffs come from their own request once the bill is in,
+// so the rest of the page never waits for them.
+const changes = ref(null)
+const showChanges = computed(() => store.featureEnabled('law_changes'))
+const hasLawChanges = computed(() => {
+  const c = changes.value
+  return !!(c && c.available && (c.laws?.length || c.unresolved?.length))
+})
 
 // Long lists (a debate's speeches, the non-self-standing motions) are collapsed
 // to a preview so the page stays scannable; a toggle reveals the rest.
@@ -135,7 +152,9 @@ let loadSeq = 0
 async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false; bill.value = null; docRevealed.value = false
+  changes.value = null
   Object.keys(motionOpen).forEach((k) => delete motionOpen[k])
+  Object.keys(amendOpen).forEach((k) => delete amendOpen[k])
   Object.keys(debateOpen).forEach((k) => delete debateOpen[k])
   motionsExpanded.value = false
   try {
@@ -147,6 +166,12 @@ async function load() {
     if (seq === loadSeq) loading.value = false
   }
   if (seq === loadSeq) nextTick(() => revealMotion(false))
+  if (seq === loadSeq && bill.value?.law_changes && showChanges.value) {
+    try {
+      const res = await api.billChanges(props.id)
+      if (seq === loadSeq) changes.value = res
+    } catch { /* the sections simply stay away; the page is complete without them */ }
+  }
 }
 onMounted(load)
 watch(() => props.id, load)
@@ -244,6 +269,11 @@ watch(() => route.hash, () => revealMotion(true))
           </li>
         </ol>
       </section>
+
+      <!-- What the bill changes in the law, and how it changed itself on the way
+           (BILL-14/15) — the reason most readers open a bill at all. -->
+      <LawChanges v-if="hasLawChanges" :bill-id="bill.id" :changes="changes" />
+      <BillEvolution v-if="changes?.evolution" :bill-id="bill.id" :evolution="changes.evolution" />
 
       <section class="card pad">
         <h2>{{ $t('bills.submitters') }}</h2>
@@ -482,12 +512,19 @@ watch(() => route.hash, () => revealMotion(true))
               </span>
             </div>
             <div v-if="m.text_url" class="docbar">
-              <button type="button" class="btn small" :aria-expanded="!!motionOpen[i]" @click="toggleMotion(i)">
+              <button v-if="m.amendment?.points && showChanges" type="button" class="btn small"
+                      :aria-expanded="!!amendOpen[i]" @click="toggleAmend(i)">
+                {{ amendOpen[i] ? $t('amendment.hide') : $t('amendment.show', { n: m.amendment.points }) }}
+              </button>
+              <button type="button" class="btn small"
+                      :class="{ secondary: m.amendment?.points && showChanges }"
+                      :aria-expanded="!!motionOpen[i]" @click="toggleMotion(i)">
                 {{ motionOpen[i] ? $t('bills.hideDocument') : $t('bills.showDocument') }}
               </button>
               <a :href="m.text_url" target="_blank" rel="noopener" class="small">↗ {{ $t('bills.openInNewTab') }}</a>
             </div>
             <p v-else class="muted small">{{ $t('bills.noText') }}</p>
+            <AmendmentPoints v-if="amendOpen[i]" :bill-id="bill.id" :number="m.bill_number" />
             <!-- iframe (and thus the PDF fetch) only exists once revealed -->
             <div v-if="motionOpen[i] && m.text_url" class="docframe">
               <iframe :src="m.text_url" :title="m.text_caption || m.bill_number" loading="lazy"></iframe>

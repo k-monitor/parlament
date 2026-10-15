@@ -9,7 +9,7 @@ committees, …) can be added as self-contained modules.
 This document specifies **what** the system must do and the constraints it must
 respect. Concrete technology choices are recommended where useful but are not
 binding unless marked **MUST**.
-
+`
 ---
 
 ## 1. Goals & Non-Goals
@@ -2574,6 +2574,73 @@ iromány type together**, those two included, is browsable on a third page
     a duplicate of the other. Part of the Bills module's vertical slice
     (BILL-5): it disappears with the module (EXT-6), and its tárca filter
     disappears with the §6C module on its own.
+
+### What a bill changes (BILL-14..16)
+
+A bill's title says which law it amends ("A szakképzésről szóló 2019. évi LXXX.
+törvény módosításáról"), never what it does to it, and its text is a list of
+instructions ("a 26. § (4) bekezdése helyébe a következő rendelkezés lép…") that
+cannot be read without the law beside it. These three answer the questions a
+reader actually brings to a bill page.
+
+- **BILL-14 (SHOULD).** A törvényjavaslat's detail view shows **what it changes
+  in the law**: each law it amends, and each changed provision as it reads
+  against how it would read, as a word diff (insertions and deletions marked, a
+  long unchanged stretch folded), each provision linking to its place on
+  **njt.hu** (the Nemzeti Jogszabálytár, the official consolidated law) and
+  naming the provision of the bill that changes it.
+  - **Where the new text comes from MUST be said, and it differs by stage**
+    (TRUST-1). For a bill that **became law**, it is njt's own: the law's time
+    state in force on the promulgation day against its newest one, keeping the
+    provisions whose njt footnote names the new act — official, and exact by
+    construction. For a bill **still in Parliament** no such state exists, so
+    the bill's amending instructions are applied by machine to njt's newest
+    state — from the egységes javaslat once there is one (it is what the House
+    votes on), from the bill as submitted before that — and the view says that
+    this is a projection that may be wrong and that the bill may still change.
+    Between promulgation and njt publishing the amended text (it has three
+    working days) an adopted bill is computed the same way, and says so.
+  - **Nothing is dropped silently.** An instruction that cannot be applied — an
+    annex replaced wholesale, a decree repealed, a target the law does not have —
+    is listed in the bill's own words with the reason, rather than leaving the
+    diff to look complete.
+  - A bill filed **on paper** (a scan) is not parsed (its text is OCR quality)
+    and the view says why there is no diff.
+- **BILL-15 (SHOULD).** The detail view shows **how the bill changed on its way
+  through the House**: the text as submitted against the latest egységes
+  javaslat — Parliament's own consolidation of the bill with the adopted
+  összegző módosító javaslat — section by section, listing only what differs
+  and how many sections did not. It is a diff of two official texts, so it
+  needs no amendment to be applied by machine.
+- **BILL-16 (SHOULD).** Each **módosító javaslat** of a bill (an MP's, a
+  committee's részletes vitát lezáró, the TAB's összegző) can be opened in the
+  motion list **as a diff of the bill**: point by point, the provision it names
+  with the proposed insertions and deletions. These are read off the document's
+  own markup (the Parlex template prints deletions in bold inside brackets and
+  insertions underlined), so what is shown is what the submitter marked; a
+  scanned paper filing has lost that markup and says so.
+- The work is a scraper stage like any other (SCR-2/SCR-4/SCR-5): incremental
+  (each document read once, each njt state fetched once, each bill's result
+  fingerprinted by its inputs), paced per sync pass, and degrading — no PDF
+  library, no njt page, a scan — to keeping what it had.
+  > **✅ realized.** Scraper `parlamonitor/lawdiff/` (`njt.py` time states as
+  > units — incl. the truncated-page `njtGetBlock` fetch and the footnote
+  > provenance; `pdftext.py` PyMuPDF layout + markup; `novella.py` instructions
+  > parsed and applied, and njt attribution; `motions.py` amendment points;
+  > `scrape.py` the per-bill stage) → `processed/law-changes-<cycle>.json`;
+  > `python -m parlamonitor law-changes --cycle N [--bill T/438]`, and a
+  > `_sync_law_changes` pass after bills (`PARLAMONITOR_LAW_CHANGES`,
+  > `…_PER_SYNC` default 80 requests, `--skip-law-changes`). Loader
+  > `load_law_changes` → `law_change_bill/law/law_change/law_change_unresolved/
+  > bill_evolution/amendment_doc/amendment_point` (no foreign key to `bill`, so
+  > a bills reload does not cascade). API `GET /bills/{id}/changes[?law=]`,
+  > `GET /bills/{id}/amendments?number=`, a `law_changes` summary on the bill
+  > detail and an `amendment` flag on each motion; word diffs made when served
+  > (`app/textdiff.py`); `features.law_changes` on /meta. UI `LawChanges.vue`,
+  > `BillEvolution.vue`, `AmendmentPoints.vue`, `DiffText.vue`. Validated over
+  > the 41 born-digital cycle-43 bills that became law: 98% of instructions
+  > parse; 90% of the changed provisions come out exactly as njt has them when
+  > computed from the egységes javaslat.
 
 ---
 

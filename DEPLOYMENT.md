@@ -347,6 +347,35 @@ docs={'fetched': 25, 'reused': 140, 'pending': 696, 'errors': 0, 'bytesStored': 
 stage by hand (`--documents text`, no budget) — or `--documents-per-pass 0` /
 `PARLAMONITOR_DOCUMENTS_PER_SYNC=0` to uncap the sync itself.
 
+#### What a bill changes (`PARLAMONITOR_LAW_CHANGES`)
+
+The bill page's law diff, the bill's evolution into its egységes javaslat and
+each amendment as a diff (BILL-14..16) come from the sync's `law-changes` pass.
+Unlike the document mirror it is **on by default**, and it needs no setting:
+
+```ini
+# PARLAMONITOR_LAW_CHANGES=off            # keep the last output, fetch nothing
+# PARLAMONITOR_LAW_CHANGES_PER_SYNC=80    # requests one pass may spend (0 = no cap)
+```
+
+It reads the iromány PDFs (with PyMuPDF, a `scraper/requirements.txt`
+dependency) and the amended laws' time states from **njt.hu** — a second host,
+reached the way the rest of the scraper reaches parlament.hu (through the SSH
+tunnel when one is configured). Its caches live in `data/lawdiff/` (~90 MB for
+cycle 43, nearly all of it njt.hu states; deleting them only costs refetching). A first pass over a cycle meets
+several hundred njt pages — the omnibus bills amend over a hundred laws each —
+so with the default budget it drains over a few hours of polls; to fill it in
+one go, run it by hand:
+
+```bash
+podman-compose run --rm --no-deps sync law-changes --cycle 43
+```
+
+The sync log's `lawChanges` entry reports `pending` counting down to 0. Nothing
+reaches the site until the loader's `--update` picks up
+`processed/law-changes-<cycle>.json`, which it does on its own (the file is a new
+processed glob; the tables are created in place).
+
 #### Classifying irományok
 
 The iromány half of the pass (TOPIC-8) runs inside the same

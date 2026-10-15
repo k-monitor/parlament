@@ -273,6 +273,14 @@ services:
       # lock, and the DB reconcile behind it) for a ~15-minute download run.
       # 0 = no cap. Inert while PARLAMONITOR_DOCUMENTS=off.
       PARLAMONITOR_DOCUMENTS_PER_SYNC: ${PARLAMONITOR_DOCUMENTS_PER_SYNC:-25}
+      # What each bill changes (BILL-14..16): the law diff against njt.hu, the
+      # bill's evolution into its egységes javaslat, each amendment as a diff.
+      # On by default — it is a feature the site shows — and paced: a pass spends
+      # at most _PER_SYNC requests (iromány PDFs + njt.hu pages), so the first
+      # passes over a cycle drain its backlog and the later ones fetch only what
+      # is new. `off` keeps the last output and fetches nothing.
+      PARLAMONITOR_LAW_CHANGES: ${PARLAMONITOR_LAW_CHANGES:-on}
+      PARLAMONITOR_LAW_CHANGES_PER_SYNC: ${PARLAMONITOR_LAW_CHANGES_PER_SYNC:-80}
     volumes:
       # Read-write here: the sync writes fresh scraper output + portraits.
       - ./data:/data:z

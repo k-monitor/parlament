@@ -426,6 +426,63 @@ skipped, and a repeat pass over cycle 43 costs no requests at all. A 404 or an
 over-cap document is *settled* and not asked about again; only a genuine fetch
 error is retried next run. `--force` re-fetches everything.
 
+### What a bill changes (`law-changes`, BILL-14..16)
+
+For every törvényjavaslat of a cycle: what it changes in each law it amends, how
+the bill itself changed through its motions, and each amendment as a diff.
+
+```bash
+python -m parlamonitor law-changes --cycle 43 ./data
+python -m parlamonitor law-changes --cycle 43 --bill T/438 ./data   # one bill
+```
+
+It writes `processed/law-changes-<cycle>.json` from three sources:
+
+* **The law diff** compares each amended law's text on **njt.hu**, unit by unit
+  (njt addresses every §, paragraph and point: `SZ26@BE4@POA`). For a bill that
+  became law it is njt's own work: the time state in force on the promulgation
+  day against the newest one, keeping exactly the units whose njt footnote names
+  the new act (`method: njt` — exact, and final once read). For a bill still in
+  Parliament, its amending instructions — `… helyébe a következő rendelkezés lép`,
+  `… a következő (4a) bekezdéssel egészül ki`, `… az „X” szövegrész helyébe az
+  „Y” szöveg lép`, `Hatályát veszti …` — are parsed and applied to njt's newest
+  state (`method: computed`). Over the 41 born-digital bills of cycle 43 that
+  became law, 98% of the instructions parse and 90% of the provisions they
+  change come out exactly as njt has them. What cannot be applied (an annex
+  replaced wholesale, a decree repealed) is listed in the bill's own words.
+* **The bill's evolution** diffs the bill as submitted against the latest
+  *egységes javaslat* — Parliament's own consolidation of the bill with the
+  adopted összegző módosító javaslat — section by section.
+* **Each amendment** (módosító javaslat, részletes vitát lezáró bizottsági /
+  összegző módosító javaslat) is read point by point. The Parlex template
+  reprints the affected provision with deletions in **bold [brackets]** and
+  insertions **underlined** — a drawn line, invisible to `pdftotext` — so the
+  PDFs are read with PyMuPDF (`pymupdf`), which sees both.
+
+**Caches.** Each PDF is downloaded once; its extraction is kept in
+`lawdiff/<cycle>/docs/` (the PDF is not), so a parser change re-runs from disk.
+njt.hu states are kept in `lawdiff/njt/<law>/` (a time state never changes; the
+version list is re-checked daily). Each bill's record is fingerprinted by
+everything it was computed from, so an unchanged bill costs nothing on the next
+run. For cycle 43 that is ~90 MB, almost all of it the njt states of the 327
+laws its bills amend (the pages and their parses, xz-compressed); the PDF
+extractions are ~3 MB.
+
+**Pacing.** The hand-run command is uncapped unless `--limit` is given; `sync`
+runs the stage after `bills`, spending at most `PARLAMONITOR_LAW_CHANGES_PER_SYNC`
+requests per pass (default 80, `0` = no cap; `--law-changes-per-pass`), bills
+still in Parliament first. `PARLAMONITOR_LAW_CHANGES=off` (or
+`--skip-law-changes`) turns it off. A first pass over a cycle reads several
+hundred njt pages — the omnibus bills amend over a hundred laws each — so it
+drains over a few hours of polls.
+
+**What it cannot read.** About one legislative document in seven is a paper
+filing scanned to PDF (the first weeks of a new Parliament, table-heavy budget
+bills, some committee texts of urgent bills): no markup survives and the text is
+OCR quality, so it is recorded as `scan` and not parsed. njt.hu now and then
+serves a page without its text; the stage retries once and otherwise leaves the
+bill for the next pass, never caching the empty page.
+
 ### Committees (§6F)
 
 The committee registry is nine Felicitas queries behind five portal pages
@@ -963,6 +1020,12 @@ parlamonitor/
   documents/
     scrape.py          the iromány document FILES + extracted text
                        → documents/<cycle>/ (optional; off by default)
+  lawdiff/
+    njt.py             njt.hu time states, read as addressable units
+    pdftext.py         iromány PDFs with layout + insert/delete markup (PyMuPDF)
+    novella.py         amending instructions: parsed, applied to a law
+    motions.py         a módosító javaslat's points as diffs of the bill
+    scrape.py          per bill → law-changes-<cycle>.json
   aktualis/
     page.py            the Aktuális portal page: its documents + the House
                        Committee's next meeting
@@ -982,6 +1045,8 @@ tests/
   test_officeholders.py offline tests: office-term grouping + open-ended terms
   test_documents.py    offline tests: the document mirror — retention, the
                        incremental index, graceful degradation
+  test_lawdiff.py      offline tests: njt markup, instruction parsing/applying,
+                       njt attribution, amendment markup, the per-bill stage
 ```
 
 ## Tests

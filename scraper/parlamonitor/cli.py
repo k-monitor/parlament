@@ -48,6 +48,11 @@ politeness/transport knobs come from the environment or flags, never hard-coded
 
     # Asset declarations filed in the EVNYR system (vagyonnyilatkozat-pub)
     python -m parlamonitor asset-declarations ./data
+
+    # What each törvényjavaslat changes in the law (against njt.hu), how the
+    # bill changed through its motions, and each amendment as a diff
+    python -m parlamonitor law-changes --cycle 43 ./data
+    python -m parlamonitor law-changes --cycle 43 --bill T/438 ./data
 """
 
 from __future__ import annotations
@@ -61,7 +66,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import whisper_align
-from .config import (DEFAULT_DOCUMENTS_PER_SYNC, DOCUMENT_RETENTIONS, Paths,
+from .config import (DEFAULT_DOCUMENTS_PER_SYNC, DEFAULT_LAW_CHANGES_PER_SYNC,
+                     DOCUMENT_RETENTIONS, Paths,
                      RuntimeConfig, documents_compression, documents_max_mb,
                      documents_retention, session_cycle, timing_backend,
                      whisper_language, whisper_model)
@@ -73,6 +79,7 @@ from .aktualis.scrape import fetch_aktualis, load_previous, save_aktualis
 from .bills.legacy import CYCLE as ARCHIVE_CYCLE
 from .bills.legacy import faction_ids_from_registries, fetch_legacy_bills
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
+from .lawdiff.scrape import fetch_law_changes, save_law_changes
 from .committees.scrape import (fetch_committees, save_committees,
                                 load_previous as load_committees_file)
 from .committees.minutes_scrape import (fetch_minutes, meetings_with_minutes,
@@ -470,6 +477,36 @@ def cmd_documents(args) -> None:
                        **meta})
 
 
+def cmd_law_changes(args) -> None:
+    """What each törvényjavaslat changes (BILL-14..16).
+
+    Reads the documents out of the saved ``bills-<cycle>.json``, so it is run
+    *after* ``bills``. Not capped unless ``--limit`` is given (a sync pass is);
+    every document and njt.hu state it reads is cached, so a re-run fetches only
+    what is new, and ``--bill`` recomputes just the bills named."""
+    paths = Paths(args.data_dir)
+    paths.ensure()
+    registry = load_registry(paths, args.cycle)
+    http = HttpClient(RuntimeConfig.from_env(
+        sleep=args.sleep, retry_count=args.retry_count, proxy=args.proxy,
+        captcha_retries=args.captcha_retries, ssh_host=args.ssh_host,
+        ssh_port=args.ssh_port, ssh_user=args.ssh_user, ssh_key=args.ssh_key,
+        ssh_known_hosts=args.ssh_known_hosts))
+    try:
+        with acquire(paths.lockfile, force=args.force_lock):
+            result = fetch_law_changes(http, paths, args.cycle, registry,
+                                       limit=args.limit, force=args.force,
+                                       only=set(args.bill) if args.bill else None)
+            save_law_changes(paths, args.cycle, result)
+    finally:
+        http.close()
+
+    _write_log(paths, {"command": "law-changes", "cycle": args.cycle,
+                       "ranAt": datetime.now(timezone.utc).isoformat(
+                           timespec="seconds"),
+                       **(result["meta"].get("counts") or {})})
+
+
 def cmd_aktualis(args) -> None:
     """Read the Aktuális page and the napirend PDF behind it (NR-1).
 
@@ -763,7 +800,9 @@ def cmd_sync(args) -> None:
                 documents=args.documents,
                 documents_compression=args.documents_compression,
                 documents_max_mb=args.documents_max_mb,
-                documents_limit=args.documents_per_pass)
+                documents_limit=args.documents_per_pass,
+                skip_law_changes=args.skip_law_changes,
+                law_changes_limit=args.law_changes_per_pass)
             # Top up portraits for non-roster speakers of this cycle (ministers /
             # nationality advocates who aren't in the MP roster). Cheap on an idle
             # poll: already-downloaded ids are skipped and 404s are negative-cached,
@@ -1015,6 +1054,20 @@ def build_parser() -> argparse.ArgumentParser:
                          "(smoke run)")
     sp.set_defaults(func=cmd_documents)
 
+    sp = sub.add_parser("law-changes",
+                        help="what each törvényjavaslat changes in the law "
+                             "(njt.hu), how it changed through its motions, and "
+                             "each amendment as a diff")
+    _common(sp)
+    sp.add_argument("--bill", action="append", default=None, metavar="T/438",
+                    help="only (re)compute this bill; repeatable")
+    sp.add_argument("--limit", type=int, default=None,
+                    help="stop after this many requests (default: no cap)")
+    sp.add_argument("--force", action="store_true",
+                    help="re-read every document and recompute every bill, "
+                         "ignoring the caches")
+    sp.set_defaults(func=cmd_law_changes)
+
     sp = sub.add_parser("votes", help="scrape the cycle's roll-call votes (szavazások)")
     _common(sp)
     sp.add_argument("--from", dest="date_from", default=None,
@@ -1126,6 +1179,13 @@ def build_parser() -> argparse.ArgumentParser:
                          f"(default {DEFAULT_DOCUMENTS_PER_SYNC}, 0 = no cap); "
                          "the rest is picked up by the passes after it. Env: "
                          "PARLAMONITOR_DOCUMENTS_PER_SYNC")
+    sp.add_argument("--skip-law-changes", action="store_true",
+                    help="skip the law-changes pass (BILL-14..16). Env: "
+                         "PARLAMONITOR_LAW_CHANGES=off")
+    sp.add_argument("--law-changes-per-pass", type=int, default=None,
+                    help="cap the requests ONE sync pass spends on law changes "
+                         f"(default {DEFAULT_LAW_CHANGES_PER_SYNC}, 0 = no cap). "
+                         "Env: PARLAMONITOR_LAW_CHANGES_PER_SYNC")
     sp.set_defaults(func=cmd_sync)
 
     sp = sub.add_parser("speaker-photos",

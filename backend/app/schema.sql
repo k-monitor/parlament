@@ -450,6 +450,119 @@ CREATE TABLE bill_motion_sponsor (   -- submitters of a non-self-standing motion
 CREATE INDEX idx_bill_motion_sponsor_motion ON bill_motion_sponsor(motion_id);
 
 -- ---------------------------------------------------------------------------
+-- What a bill changes (BILL-14..16), from processed/law-changes-<cycle>.json
+-- (the scraper's `law-changes` stage): the law diff against njt.hu, the bill's
+-- own evolution into its egységes javaslat, and each amendment as a diff.
+--
+-- Keyed by bill id WITHOUT a foreign key to `bill`: a bills reload deletes and
+-- re-inserts that cycle's rows, and these come from a file of their own that
+-- reloads on its own schedule — a foreign key would make every bills refresh
+-- cascade into them. Every table carries `period_number` so a reload replaces
+-- one cycle. Texts are stored whole on both sides; the word diff is computed
+-- when served (app/textdiff.py), so a better diff never needs a reload.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE law_change_bill (
+    bill_id        TEXT PRIMARY KEY,
+    period_number  INTEGER,
+    source_number  TEXT,               -- document the instructions were read from ("438/11")
+    source_url     TEXT,
+    source_kind    TEXT,               -- 'consolidated' (egységes javaslat) | 'bill'
+    scan           INTEGER DEFAULT 0,  -- the bill text is a scanned paper filing
+    act_label      TEXT,               -- "2026. évi LV. törvény" once promulgated
+    act_doc        TEXT,               -- its njt id
+    act_url        TEXT,
+    final          INTEGER DEFAULT 0,  -- read off njt for good (an adopted bill)
+    computed_at    TEXT,
+    stats_json     TEXT,
+    evolution_from     TEXT,           -- bill vs egységes javaslat: the two numbers…
+    evolution_from_url TEXT,
+    evolution_to       TEXT,
+    evolution_to_url   TEXT,
+    evolution_unchanged INTEGER        -- …and how many provisions did not change
+);
+CREATE INDEX idx_law_change_bill_period ON law_change_bill(period_number);
+
+CREATE TABLE law_change_law (           -- one amended law of a bill
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    bill_id        TEXT NOT NULL,
+    period_number  INTEGER,
+    ord            INTEGER,
+    doc_id         TEXT NOT NULL,       -- njt id, e.g. "2019-80-00-00"
+    title          TEXT,                -- "2019. évi LXXX. törvény a szakképzésről"
+    abbr           TEXT,                -- the bill's abbreviation for it ("Szkt.")
+    url            TEXT,
+    method         TEXT,                -- 'njt' (official time states) | 'computed'
+    base_version   INTEGER, base_from TEXT, base_to TEXT,        -- the state compared from
+    target_version INTEGER, target_from TEXT, target_to TEXT     -- njt: the state compared to
+);
+CREATE INDEX idx_law_change_law_bill ON law_change_law(bill_id);
+-- "Which bills change this law?" — the way in from a law rather than a bill.
+CREATE INDEX idx_law_change_law_doc ON law_change_law(doc_id);
+
+CREATE TABLE law_change (               -- one changed provision of that law
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    law_id        INTEGER NOT NULL REFERENCES law_change_law(id),
+    bill_id       TEXT NOT NULL,
+    period_number INTEGER,
+    ord           INTEGER,
+    jh            TEXT,                 -- njt unit id ("SZ26@BE4")
+    ref           TEXT,                 -- "26. § (4) bekezdés"
+    ops           TEXT,                 -- what was done, comma-joined (replace, insert, …)
+    provisions    TEXT,                 -- JSON: the bill/act provisions that did it
+    before_text   TEXT,
+    after_text    TEXT,
+    url           TEXT                  -- the unit on njt.hu
+);
+CREATE INDEX idx_law_change_law ON law_change(law_id);
+CREATE INDEX idx_law_change_bill_id ON law_change(bill_id);
+
+CREATE TABLE law_change_unresolved (    -- instructions that could not be applied
+    bill_id       TEXT NOT NULL,
+    period_number INTEGER,
+    ord           INTEGER NOT NULL,
+    provision     TEXT,                 -- the bill's own provision ("5. § c)")
+    doc_id        TEXT,
+    reason        TEXT,
+    text          TEXT,                 -- the bill's wording
+    PRIMARY KEY (bill_id, ord)
+);
+
+CREATE TABLE bill_evolution (           -- provisions that differ between the bill
+    bill_id       TEXT NOT NULL,        -- and its egységes javaslat (BILL-15)
+    period_number INTEGER,
+    ord           INTEGER NOT NULL,
+    provision     TEXT,                 -- "3. §", or "cím" for title + preamble
+    before_text   TEXT,
+    after_text    TEXT,
+    PRIMARY KEY (bill_id, ord)
+);
+
+CREATE TABLE amendment_doc (            -- one módosító javaslat of a bill (BILL-16)
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    bill_id       TEXT NOT NULL,
+    period_number INTEGER,
+    ord           INTEGER,
+    motion_number TEXT,                 -- "438/2", as bill_motion.bill_number
+    type          TEXT,
+    url           TEXT,
+    scan          INTEGER DEFAULT 0,    -- a paper filing: no markup to read
+    marked        INTEGER DEFAULT 0,    -- carried insert/delete marking
+    error         TEXT
+);
+CREATE INDEX idx_amendment_doc_bill ON amendment_doc(bill_id);
+
+CREATE TABLE amendment_point (          -- one módosítópont, as diff segments
+    amendment_id  INTEGER NOT NULL REFERENCES amendment_doc(id),
+    ord           INTEGER NOT NULL,
+    point         TEXT,                 -- "1"
+    target        TEXT,                 -- "2. § (2) bekezdés - Szkt. 26. § (4a) bekezdés"
+    kind          TEXT,                 -- "módosítás" / "kiegészítés" / "elhagyás"
+    segments_json TEXT,                 -- [[op, text], …], op eq|ins|del
+    PRIMARY KEY (amendment_id, ord)
+);
+
+-- ---------------------------------------------------------------------------
 -- Votes module (szavazások) — a self-contained vertical slice (EXT-1). It owns
 -- these tables and references the shared person/faction/bill core entities for
 -- the roll call, faction breakdown and the bill(s) decided, rather than

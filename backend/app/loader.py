@@ -900,6 +900,115 @@ def _load_bill_detail(conn: sqlite3.Connection, bill_id: str, detail: dict,
 
 
 # ---------------------------------------------------------------------------
+# What a bill changes (BILL-14..16)
+# ---------------------------------------------------------------------------
+
+_LAW_CHANGE_TABLES = ("amendment_point", "amendment_doc", "bill_evolution",
+                      "law_change_unresolved", "law_change", "law_change_law",
+                      "law_change_bill")
+
+
+def _ensure_law_change_tables(conn: sqlite3.Connection) -> None:
+    """Create the law-change tables in place if missing, so the feature also
+    lands through the incremental ``--update`` path (which snapshots the live DB
+    instead of re-running schema.sql). The DDL is read out of schema.sql's own
+    law-change block rather than copied here, so the two cannot drift."""
+    if _table_exists(conn, "law_change_bill"):
+        return
+    schema = SCHEMA_PATH.read_text(encoding="utf-8")
+    start = schema.index("CREATE TABLE law_change_bill")
+    end = schema.index("-- Votes module (szavazások)")
+    block = schema[start:end].rsplit("-- ----", 1)[0]
+    conn.executescript(block.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")
+                       .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS "))
+
+
+def load_law_changes(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load one cycle's law changes (``processed/law-changes-<cycle>.json``),
+    replacing that cycle's rows. Bills are referenced by id only (no foreign
+    key, see schema.sql), so this neither needs the bills loaded first nor is
+    disturbed by their reload."""
+    _ensure_law_change_tables(conn)
+    period = (registry.get("meta") or {}).get("cycle")
+    conn.execute("DELETE FROM amendment_point WHERE amendment_id IN "
+                 "(SELECT id FROM amendment_doc WHERE period_number IS ?)", (period,))
+    conn.execute("DELETE FROM law_change WHERE period_number IS ?", (period,))
+    for tbl in ("amendment_doc", "bill_evolution", "law_change_unresolved",
+                "law_change_law", "law_change_bill"):
+        conn.execute(f"DELETE FROM {tbl} WHERE period_number IS ?", (period,))
+
+    n = 0
+    for rec in registry.get("data") or []:
+        bid = rec.get("billId")
+        if not bid:
+            continue
+        n += 1
+        src = rec.get("source") or {}
+        act = rec.get("act") or {}
+        ev = rec.get("evolution") or {}
+        conn.execute(
+            """INSERT OR REPLACE INTO law_change_bill(bill_id, period_number,
+                   source_number, source_url, source_kind, scan, act_label, act_doc,
+                   act_url, final, computed_at, stats_json, evolution_from,
+                   evolution_from_url, evolution_to, evolution_to_url,
+                   evolution_unchanged)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (bid, period, src.get("number"), src.get("url"), src.get("kind"),
+             1 if rec.get("scan") else 0, act.get("label"), act.get("docId"),
+             act.get("url"), 1 if rec.get("final") else 0, rec.get("computedAt"),
+             _json_or_none(rec.get("stats")),
+             (ev.get("from") or {}).get("number"), (ev.get("from") or {}).get("url"),
+             (ev.get("to") or {}).get("number"), (ev.get("to") or {}).get("url"),
+             ev.get("unchanged")))
+        for i, law in enumerate(rec.get("laws") or []):
+            base, target = law.get("base") or {}, law.get("target") or {}
+            cur = conn.execute(
+                """INSERT INTO law_change_law(bill_id, period_number, ord, doc_id,
+                       title, abbr, url, method, base_version, base_from, base_to,
+                       target_version, target_from, target_to)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (bid, period, i, law.get("docId"), law.get("title"), law.get("abbr"),
+                 law.get("url"), law.get("method"), base.get("version"),
+                 base.get("from"), base.get("to"), target.get("version"),
+                 target.get("from"), target.get("to")))
+            law_id = cur.lastrowid
+            conn.executemany(
+                """INSERT INTO law_change(law_id, bill_id, period_number, ord, jh, ref,
+                       ops, provisions, before_text, after_text, url)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                [(law_id, bid, period, j, c.get("jh"), c.get("ref"),
+                  ",".join(c.get("ops") or []),
+                  json.dumps(c.get("provisions") or [], ensure_ascii=False),
+                  c.get("before"), c.get("after"), c.get("url"))
+                 for j, c in enumerate(law.get("changes") or [])])
+        conn.executemany(
+            """INSERT INTO law_change_unresolved(bill_id, period_number, ord, provision,
+                   doc_id, reason, text) VALUES (?,?,?,?,?,?,?)""",
+            [(bid, period, i, u.get("provision"), u.get("docId"), u.get("reason"),
+              u.get("text")) for i, u in enumerate(rec.get("unresolved") or [])])
+        conn.executemany(
+            """INSERT INTO bill_evolution(bill_id, period_number, ord, provision,
+                   before_text, after_text) VALUES (?,?,?,?,?,?)""",
+            [(bid, period, i, p.get("key"), p.get("before"), p.get("after"))
+             for i, p in enumerate(ev.get("provisions") or [])])
+        for i, a in enumerate(rec.get("amendments") or []):
+            cur = conn.execute(
+                """INSERT INTO amendment_doc(bill_id, period_number, ord, motion_number,
+                       type, url, scan, marked, error) VALUES (?,?,?,?,?,?,?,?,?)""",
+                (bid, period, i, a.get("number"), a.get("type"), a.get("url"),
+                 1 if a.get("scan") else 0, 1 if a.get("marked") else 0, a.get("error")))
+            conn.executemany(
+                """INSERT INTO amendment_point(amendment_id, ord, point, target, kind,
+                       segments_json) VALUES (?,?,?,?,?,?)""",
+                [(cur.lastrowid, j, p.get("n"), p.get("target"), p.get("kind"),
+                  json.dumps(p.get("segments") or [], ensure_ascii=False))
+                 for j, p in enumerate(a.get("points") or [])])
+    conn.commit()
+    logger.info("Loaded law changes for %d bills (cycle %s)", n, period)
+    return n
+
+
+# ---------------------------------------------------------------------------
 # Votes (szavazások) registry
 # ---------------------------------------------------------------------------
 
@@ -5618,6 +5727,11 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         for bp in sorted((data_dir / "processed").glob("bills-*.json")):
             load_bills(conn, json.loads(bp.read_text()))
 
+        # What each bill changes (BILL-14..16). Keyed by bill id only, so its
+        # place in the order is a matter of reading order, not of links.
+        for lp in sorted((data_dir / "processed").glob("law-changes-*.json")):
+            load_law_changes(conn, json.loads(lp.read_text()))
+
         # Votes load after bills so a vote's subject links to a held bill and its
         # roll call / faction breakdown to loaded persons/factions (EXT-2).
         for vp in sorted((data_dir / "processed").glob("votes-*.json")):
@@ -5736,7 +5850,7 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
 # load_state yet), which is exactly how a new domain lands on an already-built
 # deployment through the incremental path alone.
 _PROCESSED_GLOBS = ("representatives-*.json", "advocates-*.json", "bills-*.json",
-                    "votes-*.json", "committees-*.json",
+                    "law-changes-*.json", "votes-*.json", "committees-*.json",
                     "committee-minutes-*.json", "committee-videos.json",
                     "committee-timing.json", "*-session.json", "officeholders.json", "aktualis.json",
                     "asset-declarations.json")
@@ -5948,6 +6062,10 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             cycle = (registry.get("meta") or {}).get("cycle")
             if cycle is not None:
                 reloaded_bill_periods.add(int(cycle))
+        # Its own file, its own schedule: a bills reload leaves these rows alone
+        # (no foreign key), so only a change to the file itself reloads them.
+        for p in changed["law-changes-*.json"]:
+            load_law_changes(conn, json.loads(p.read_text()))
         for p in changed["votes-*.json"]:
             load_votes(conn, json.loads(p.read_text()))
         reloaded_committee_periods: set[int] = set()

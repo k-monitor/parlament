@@ -83,6 +83,8 @@
 #                    EXISTING DB in place and rebuild the aggregates — needed
 #                    after changing DEFAULT_PROCEDURAL_SPEECH_TYPES, which a
 #                    `sync`/`update` never revisits for already-loaded speeches
+#   law-changes      what each bill changes (BILL-14..16), uncapped; the sync
+#                    runs the same stage paced on its own
 #   <anything else>  exec'd verbatim (e.g. `pytest`, `sh`)
 set -e
 
@@ -243,6 +245,18 @@ case "${1:-serve}" in
         shift
         cd /app/scraper
         exec python -m parlamonitor documents "$DATA_DIR" "$@"
+        ;;
+    law-changes)
+        # What each bill changes (BILL-14..16) → $DATA_DIR/processed/
+        # law-changes-<cycle>.json, uncapped: the sync runs the same stage paced
+        # (PARLAMONITOR_LAW_CHANGES_PER_SYNC), so this is how a first pass over a
+        # cycle is done in one go, or one bill recomputed (`--bill T/438`):
+        #   podman-compose run --rm --no-deps sync law-changes --cycle 43
+        # Needs a read-write /data mount and the scrape egress config, hence the
+        # `sync` service.
+        shift
+        cd /app/scraper
+        exec python -m parlamonitor law-changes "$DATA_DIR" "$@"
         ;;
     speaker-photos)
         # Download portraits for non-roster speakers (ministers / nationality

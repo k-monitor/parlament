@@ -728,7 +728,15 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
     # is derived from the printed iromány number, so it is re-resolved below
     # rather than being something this delete may not step on.
     _unlink_agenda_bills(conn, period)
-    child_tables = ("bill_sponsor", "bill_event", "bill_committee_event",
+    # The iromány topic labels (TOPIC-8) key on these bills as well. They are
+    # derived too: an update that reloads a cycle's bills re-runs
+    # rebuild_bill_topics for exactly that cycle right after, so clear them here
+    # rather than let them block the delete. A DB from before TOPIC-8 has none.
+    if _table_exists(conn, "bill_topic"):
+        conn.execute(
+            "DELETE FROM bill_topic WHERE bill_id IN "
+            "(SELECT id FROM bill WHERE period_number IS ?)", (period,))
+    child_tables =("bill_sponsor", "bill_event", "bill_committee_event",
                     "bill_vote", "bill_deadline", "bill_committee",
                     "bill_document", "bill_motion_summary", "bill_motion")
     for tbl in child_tables:

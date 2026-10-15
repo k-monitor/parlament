@@ -627,6 +627,23 @@ def test_cache_replays_on_a_host_with_no_document_mirror(conn, tmp_path, data_di
     assert conn.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0] == expected
 
 
+def test_bills_reload_is_not_blocked_by_their_topic_rows(db_path, tmp_path, data_dir,
+                                                         bill_topics_on):
+    """An incremental update reloads a cycle's bills *before* re-deriving their
+    topics, so the bills delete must clear the labels it would otherwise trip
+    over on the foreign key — the update that brings in a new iromány is the
+    one that has to rebuild them anyway."""
+    from tests.conftest import _bills_registry
+    c = loader.connect(db_path)                    # foreign keys ON, as in an update
+    _mirror(data_dir, {_T100: _DOC_TEXT})
+    loader.rebuild_bill_topics(c, tmp_path, data_dir=data_dir)
+    assert c.execute("SELECT COUNT(*) FROM bill_topic").fetchone()[0] > 0
+
+    loader.load_bills(c, _bills_registry())
+    assert c.execute("SELECT COUNT(*) FROM bill").fetchone()[0] == 3
+    c.close()
+
+
 def test_no_mirror_and_no_cache_leaves_irományok_unlabelled(conn, tmp_path,
                                                             bill_topics_on, monkeypatch):
     monkeypatch.setattr(parlacap, "backend", lambda **kw: None)

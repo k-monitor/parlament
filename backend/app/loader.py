@@ -36,6 +36,7 @@ import os
 import re
 import sqlite3
 import unicodedata
+import zlib
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -916,19 +917,27 @@ _LAW_CHANGE_TABLES = ("amendment_point", "amendment_doc", "bill_evolution",
                       "law_change_bill")
 
 
+# Columns added to a law-change table after it first shipped: a DB that has the
+# table from before gets them in place.
+_LAW_CHANGE_ADDED_COLUMNS = (("law_change", "after_units", "TEXT"),
+                             ("law_change", "anchor", "TEXT"))
+
+
 def _ensure_law_change_tables(conn: sqlite3.Connection) -> None:
     """Create the law-change tables in place if missing, so the feature also
     lands through the incremental ``--update`` path (which snapshots the live DB
     instead of re-running schema.sql). The DDL is read out of schema.sql's own
     law-change block rather than copied here, so the two cannot drift."""
-    if _table_exists(conn, "law_change_bill"):
-        return
-    schema = SCHEMA_PATH.read_text(encoding="utf-8")
-    start = schema.index("CREATE TABLE law_change_bill")
-    end = schema.index("-- Votes module (szavazások)")
-    block = schema[start:end].rsplit("-- ----", 1)[0]
-    conn.executescript(block.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")
-                       .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS "))
+    if not _table_exists(conn, "law_text"):
+        schema = SCHEMA_PATH.read_text(encoding="utf-8")
+        start = schema.index("CREATE TABLE law_change_bill")
+        end = schema.index("-- Votes module (szavazások)")
+        block = schema[start:end].rsplit("-- ----", 1)[0]
+        conn.executescript(block.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")
+                           .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS "))
+    for table, column, decl in _LAW_CHANGE_ADDED_COLUMNS:
+        if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 def load_law_changes(conn: sqlite3.Connection, registry: dict) -> int:
@@ -982,12 +991,16 @@ def load_law_changes(conn: sqlite3.Connection, registry: dict) -> int:
             law_id = cur.lastrowid
             conn.executemany(
                 """INSERT INTO law_change(law_id, bill_id, period_number, ord, jh, ref,
-                       ops, provisions, before_text, after_text, url)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                       ops, provisions, before_text, after_text, url, after_units,
+                       anchor)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 [(law_id, bid, period, j, c.get("jh"), c.get("ref"),
                   ",".join(c.get("ops") or []),
                   json.dumps(c.get("provisions") or [], ensure_ascii=False),
-                  c.get("before"), c.get("after"), c.get("url"))
+                  c.get("before"), c.get("after"), c.get("url"),
+                  # [] is an answer (the unit is gone), not a missing one
+                  json.dumps(c["afterUnits"], ensure_ascii=False)
+                  if c.get("afterUnits") is not None else None, c.get("anchor"))
                  for j, c in enumerate(law.get("changes") or [])])
         conn.executemany(
             """INSERT INTO law_change_unresolved(bill_id, period_number, ord, provision,
@@ -1013,6 +1026,35 @@ def load_law_changes(conn: sqlite3.Connection, registry: dict) -> int:
                  for j, p in enumerate(a.get("points") or [])])
     conn.commit()
     logger.info("Loaded law changes for %d bills (cycle %s)", n, period)
+    return n
+
+
+def load_law_texts(conn: sqlite3.Connection, path: Path) -> int:
+    """Load one cycle's law texts (``processed/law-texts-<cycle>.jsonl.gz``):
+    the njt states its law diffs were read against, whole, for the full-law
+    view. Read a line — one law — at a time, since the file holds a hundred-odd
+    megabytes of text; each state is stored zlib-compressed (a fifth of its
+    size), as it is only ever served whole."""
+    _ensure_law_change_tables(conn)
+    n = 0
+    period = None
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        for i, line in enumerate(fh):
+            row = json.loads(line)
+            if i == 0:
+                period = (row.get("meta") or {}).get("cycle")
+                conn.execute("DELETE FROM law_text WHERE period_number IS ?", (period,))
+                continue
+            units = json.dumps(row.get("units") or [], ensure_ascii=False,
+                               separators=(",", ":"))
+            conn.execute(
+                "INSERT OR REPLACE INTO law_text(period_number, doc_id, version, title, units) "
+                "VALUES (?,?,?,?,?)",
+                (period, row["docId"], row["version"], row.get("title"),
+                 zlib.compress(units.encode("utf-8"), 6)))
+            n += 1
+    conn.commit()
+    logger.info("Loaded %d law text(s) (cycle %s)", n, period)
     return n
 
 
@@ -5739,6 +5781,8 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         # place in the order is a matter of reading order, not of links.
         for lp in sorted((data_dir / "processed").glob("law-changes-*.json")):
             load_law_changes(conn, json.loads(lp.read_text()))
+        for lp in sorted((data_dir / "processed").glob("law-texts-*.jsonl.gz")):
+            load_law_texts(conn, lp)
 
         # Votes load after bills so a vote's subject links to a held bill and its
         # roll call / faction breakdown to loaded persons/factions (EXT-2).
@@ -5858,7 +5902,8 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
 # load_state yet), which is exactly how a new domain lands on an already-built
 # deployment through the incremental path alone.
 _PROCESSED_GLOBS = ("representatives-*.json", "advocates-*.json", "bills-*.json",
-                    "law-changes-*.json", "votes-*.json", "committees-*.json",
+                    "law-changes-*.json", "law-texts-*.jsonl.gz", "votes-*.json",
+                    "committees-*.json",
                     "committee-minutes-*.json", "committee-videos.json",
                     "committee-timing.json", "*-session.json", "officeholders.json", "aktualis.json",
                     "asset-declarations.json")
@@ -6074,6 +6119,8 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
         # (no foreign key), so only a change to the file itself reloads them.
         for p in changed["law-changes-*.json"]:
             load_law_changes(conn, json.loads(p.read_text()))
+        for p in changed["law-texts-*.jsonl.gz"]:
+            load_law_texts(conn, p)
         for p in changed["votes-*.json"]:
             load_votes(conn, json.loads(p.read_text()))
         reloaded_committee_periods: set[int] = set()

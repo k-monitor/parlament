@@ -12,12 +12,13 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import zlib
 from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ... import parlacap
+from ... import lawtext, parlacap
 from ... import portfolios as portfolio_map
 from ...analytics import search_analytics
 from ...db import (get_db, like_contains, local_instant, period_and,
@@ -1600,6 +1601,31 @@ def _law_rows(db: sqlite3.Connection, bill_id: str, law: Optional[str]) -> list[
     return laws
 
 
+def _law_text_row(db: sqlite3.Connection, doc_id: str,
+                  version: Optional[int]) -> Optional[sqlite3.Row]:
+    """The njt state a law's changes were read against, whole — when the
+    loader has it (a DB built before the full-law view has no table)."""
+    if version is None:
+        return None
+    try:
+        return db.execute("SELECT title, units FROM law_text WHERE doc_id = ? AND version = ? "
+                          "ORDER BY period_number DESC LIMIT 1", (doc_id, version)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+
+
+def _with_full_text(db: sqlite3.Connection, laws: list[dict]) -> None:
+    """Mark the laws whose whole text can be shown with the changes in place."""
+    try:
+        have = {(r[0], r[1]) for r in db.execute(
+            "SELECT doc_id, version FROM law_text WHERE doc_id IN (%s)"
+            % ",".join("?" * len(laws)), [l["doc_id"] for l in laws])} if laws else set()
+    except sqlite3.OperationalError:
+        have = set()
+    for item in laws:
+        item["full_text"] = (item["doc_id"], (item["base"] or {}).get("version")) in have
+
+
 def _changes_of(db: sqlite3.Connection, law_id: int) -> list[dict]:
     out = []
     for c in db.execute("SELECT * FROM law_change WHERE law_id = ? ORDER BY ord", (law_id,)):
@@ -1674,6 +1700,7 @@ def bill_changes(bill_id: str, law: Optional[str] = Query(
             item["changes"] = None
             item["truncated"] = True
         item.pop("id")
+    _with_full_text(db, laws)
     if law:
         return {"available": True, "laws": laws}
 
@@ -1699,6 +1726,45 @@ def bill_changes(bill_id: str, law: Optional[str] = Query(
         "laws": laws, "unresolved": unresolved, "evolution": evolution,
         "amendments": amendments,
     }
+
+
+@router.get("/{bill_id}/changes/full")
+def bill_law_full(bill_id: str,
+                  law: str = Query(..., description="the amended law (njt id)"),
+                  db: sqlite3.Connection = Depends(get_db)):
+    """One law a bill amends, whole, with the bill's changes in place (BILL-14).
+
+    `blocks` is the law in reading order: `{unit}` for text the bill leaves
+    alone (`jh`, `cls`, `label`, `text`), `{change, units}` for the bill's
+    `change`-th change of this law (as `changes` lists them, each as in
+    `/changes`), its units each `eq` / `mod` / `ins` / `del` with its text as
+    diff segments. The text is the njt state the changes were read against
+    (`law.base`); `available: false` when the site does not hold it."""
+    b = db.execute("SELECT id, period_number FROM bill WHERE id = ?", (bill_id,)).fetchone()
+    if not b or not period_in_scope(b["period_number"]):
+        raise HTTPException(404, "Bill not found")
+    if not _law_change_head(db, bill_id):
+        raise HTTPException(404, "Law not found")
+    laws = _law_rows(db, bill_id, law)
+    if not laws:
+        raise HTTPException(404, "Law not found")
+    item = laws[0]
+    text = _law_text_row(db, item["doc_id"], (item["base"] or {}).get("version"))
+    rows = db.execute("SELECT * FROM law_change WHERE law_id = ? ORDER BY ord",
+                      (item.pop("id"),)).fetchall()
+    if not text:
+        return {"available": False, "law": item}
+    changes = [{"jh": r["jh"], "before_text": r["before_text"], "after_text": r["after_text"],
+                "after_units": json.loads(r["after_units"]) if r["after_units"] else None,
+                "anchor": r["anchor"]} for r in rows]
+    blocks = lawtext.merge(json.loads(zlib.decompress(text["units"])), changes)
+    return {"available": True, "law": item,
+            "changes": [{"jh": r["jh"], "ref": r["ref"],
+                         "ops": [o for o in (r["ops"] or "").split(",") if o],
+                         "provisions": json.loads(r["provisions"] or "[]"),
+                         "kind": _change_kind(r["before_text"], r["after_text"]),
+                         "url": r["url"]} for r in rows],
+            "blocks": blocks}
 
 
 @router.get("/{bill_id}/amendments")

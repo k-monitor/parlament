@@ -2606,6 +2606,15 @@ reader actually brings to a bill page.
     diff to look complete.
   - A bill filed **on paper** (a scan) is not parsed (its text is OCR quality)
     and the view says why there is no diff.
+  - **The full law (MAY).** Each amended law, and each changed provision, can
+    be opened **whole in a dialog** with the bill's changes standing in place in
+    the law's own layout (chapters, §, paragraphs, points), so a reader sees what
+    a new paragraph sits between and what the rest of the § says. The dialog
+    opens at the change it was opened from, steps from change to change, and can
+    fold the text away from the changes (each fold opening on click). The text
+    is the njt state the changes were read against. A provision the machine
+    rebuilt from a pending bill's own wording has no layout to show, so it reads
+    as one run of text and says so (TRUST-1).
 - **BILL-15 (SHOULD).** The detail view shows **how the bill changed on its way
   through the House**: the text as submitted against the latest egységes
   javaslat — Parliament's own consolidation of the bill with the adopted
@@ -2641,6 +2650,19 @@ reader actually brings to a bill page.
   > the 41 born-digital cycle-43 bills that became law: 98% of instructions
   > parse; 90% of the changed provisions come out exactly as njt has them when
   > computed from the egységes javaslat.
+  >
+  > **The full law ✅ realized 2026-10-15.** Each change now carries its units as
+  > they would read (`afterUnits`, omitted for an applier-built flat unit) and, if
+  > new to the law, the base unit it follows (`anchor`); `scrape.RECORD_VERSION`
+  > redoes every record once. `save_law_texts` writes the base njt states, whole,
+  > from the njt cache only (no request) to `processed/law-texts-<cycle>.jsonl.gz`
+  > (one state per line; rewritten only when the set of states changes; 470
+  > states = 27 MB for cycle 43). Loader `load_law_texts` → `law_text` (zlib
+  > blobs), plus `law_change.after_units/anchor` added in place on an existing DB.
+  > API `GET /bills/{id}/changes/full?law=` (merge in `app/lawtext.py`) and a
+  > `full_text` flag per law on `/changes`; UI `LawFullDialog.vue`. Checked
+  > over all 656 cycle-43 law entries: every change placed once, the base text
+  > covered once, and every structured block flattens back to the stored diff.
 
 ---
 

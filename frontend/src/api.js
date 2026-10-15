@@ -198,6 +198,7 @@ export const api = {
   // its amendments; `law` narrows it to one amended law's provisions.
   billChanges: (id, law) => get(`/bills/${id}/changes`, { law }),
   billEvolution: (id) => get(`/bills/${id}/changes`, { part: 'evolution' }),
+  billLawFull: (id, law) => get(`/bills/${id}/changes/full`, { law }),
   billAmendment: (id, number) => get(`/bills/${id}/amendments`, { number }),
   billFacets: (params) => get('/bills/facets', params),
   billTopicMix: (period) => get('/bills/topics', { period }),

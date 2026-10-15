@@ -13,6 +13,8 @@ import { computed, ref } from 'vue'
 const props = defineProps({
   segments: { type: Array, default: () => [] },
   context: { type: Number, default: 0 },
+  // `span` to sit inside a line of its own markup (the full-law view's units).
+  tag: { type: String, default: 'p' },
 })
 
 const expanded = ref(false)
@@ -42,7 +44,7 @@ const parts = computed(() => {
 </script>
 
 <template>
-  <p class="difftext">
+  <component :is="tag" class="difftext">
     <template v-for="(p, i) in parts" :key="i">
       <ins v-if="p.op === 'ins'"><span class="visually-hidden">{{ $t('diff.inserted') }} </span>{{ p.text }}</ins>
       <del v-else-if="p.op === 'del'"><span class="visually-hidden">{{ $t('diff.deleted') }} </span>{{ p.text }}</del>
@@ -53,7 +55,7 @@ const parts = computed(() => {
     <button v-if="expanded && context" type="button" class="fold less" @click="expanded = false">
       {{ $t('diff.collapse') }}
     </button>
-  </p>
+  </component>
 </template>
 
 <style scoped>

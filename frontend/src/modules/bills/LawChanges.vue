@@ -7,11 +7,16 @@
 // official text before and after the act; for a bill still in Parliament it is
 // the bill's amending instructions applied by machine to njt's newest text — a
 // projection that can be wrong and that the House may still change.
-import { computed, reactive, ref } from 'vue'
+//
+// A law whose text the site holds also opens whole in a dialog, the changes
+// standing in place (LawFullDialog) — from the law, or from one change.
+import { computed, defineAsyncComponent, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
-import { formatDate } from '../../format.js'
 import DiffText from '../../components/DiffText.vue'
+import { byLine, stateLine } from './lawChangeText.js'
+
+const LawFullDialog = defineAsyncComponent(() => import('./LawFullDialog.vue'))
 
 const props = defineProps({
   billId: { type: String, required: true },
@@ -55,24 +60,9 @@ function toggle(law) {
 }
 const changesOf = (law) => law.changes || extra[law.doc_id] || null
 
-// "a 2026. évi LV. törvény 2. § (1) bekezdése" for an adopted bill (njt names
-// the act's provision); "a javaslat 2. § (1)" for a computed one.
-function byLine(law, c) {
-  if (!c.provisions?.length) return ''
-  const list = c.provisions.join(', ')
-  return law.method === 'njt' && props.changes.act
-    ? t('lawChanges.byAct', { act: props.changes.act.label, provisions: list })
-    : t('lawChanges.byBill', { provisions: list })
-}
-
-function stateLine(law) {
-  if (law.method === 'njt' && law.base && law.target) {
-    return t('lawChanges.statesNjt', {
-      from: formatDate(law.base.from) || '—', to: formatDate(law.target.from) || '—' })
-  }
-  if (law.base?.from) return t('lawChanges.stateComputed', { from: formatDate(law.base.from) })
-  return ''
-}
+// The law open in the full-text dialog, and the change it opened at.
+const full = ref(null)
+const openFull = (law, start = 0) => { full.value = { law, start } }
 
 const sourceLabel = computed(() => {
   const s = props.changes.source
@@ -121,8 +111,10 @@ const sourceLabel = computed(() => {
         </button>
         <div v-if="isOpen(law)" class="lawbody">
           <p class="muted small statebar">
-            {{ stateLine(law) }}
+            {{ stateLine(t, law) }}
             <a :href="law.url" target="_blank" rel="noopener">↗ {{ $t('lawChanges.openNjt') }}</a>
+            <button v-if="law.full_text" type="button" class="linkish"
+                    @click="openFull(law)">⤢ {{ $t('lawFull.open') }}</button>
           </p>
           <p v-if="loadingLaw[law.doc_id]" class="muted small">{{ $t('lawChanges.loading') }}</p>
           <p v-else-if="failedLaw[law.doc_id]" class="muted small">{{ $t('lawChanges.loadFailed') }}</p>
@@ -132,7 +124,13 @@ const sourceLabel = computed(() => {
                 <a :href="c.url" target="_blank" rel="noopener" class="cref"
                    :title="$t('lawChanges.openUnit')">{{ c.ref || c.jh }}</a>
                 <span class="kind" :class="c.kind">{{ $t('lawChanges.kind.' + c.kind) }}</span>
-                <span v-if="byLine(law, c)" class="muted small by">{{ byLine(law, c) }}</span>
+                <span v-if="byLine(t, law, changes.act, c)" class="muted small by">
+                  {{ byLine(t, law, changes.act, c) }}
+                </span>
+                <button v-if="law.full_text" type="button" class="linkish small inlaw"
+                        :title="$t('lawFull.openAtTitle')" @click="openFull(law, j)">
+                  ⤢ {{ $t('lawFull.openAt') }}
+                </button>
               </div>
               <DiffText :segments="c.diff" :context="160" />
             </li>
@@ -158,6 +156,9 @@ const sourceLabel = computed(() => {
         </ol>
       </div>
     </div>
+
+    <LawFullDialog v-if="full" :bill-id="billId" :law="full.law" :act="changes.act"
+                   :start="full.start" @close="full = null" />
   </section>
 </template>
 
@@ -207,6 +208,13 @@ section > h2::before {
 .kind.new { background: #dcefdc; color: #1d4d20; }
 .kind.repealed { background: #f9dcd8; color: #7a1c10; }
 .by { overflow-wrap: anywhere; }
+/* Buttons that read as the links beside them. */
+.linkish {
+  border: 0; background: none; padding: 0; font: inherit; color: var(--accent);
+  cursor: pointer; white-space: nowrap;
+}
+.linkish:hover { text-decoration: underline; }
+.inlaw { margin-left: auto; }
 .unresolved { margin-top: 1rem; }
 .ulist { display: flex; flex-direction: column; gap: .6rem; margin-top: .5rem; }
 .utext { margin: .2rem 0 0; color: var(--ink-soft); overflow-wrap: anywhere; }

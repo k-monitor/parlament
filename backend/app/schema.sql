@@ -512,10 +512,23 @@ CREATE TABLE law_change (               -- one changed provision of that law
     provisions    TEXT,                 -- JSON: the bill/act provisions that did it
     before_text   TEXT,
     after_text    TEXT,
-    url           TEXT                  -- the unit on njt.hu
+    url           TEXT,                 -- the unit on njt.hu
+    after_units   TEXT,                 -- JSON [[jh, cls, label, text], …]: the unit and
+                                        -- everything under it as it would read
+    anchor        TEXT                  -- a unit new to the law: the unit of the base
+                                        -- text it follows ("" = before the first)
 );
 CREATE INDEX idx_law_change_law ON law_change(law_id);
 CREATE INDEX idx_law_change_bill_id ON law_change(bill_id);
+
+CREATE TABLE law_text (                 -- an njt time state a diff was read against,
+    period_number INTEGER NOT NULL,     -- whole: the full-law view (BILL-14)
+    doc_id        TEXT NOT NULL,
+    version       INTEGER NOT NULL,
+    title         TEXT,
+    units         BLOB,                 -- zlib JSON [[jh, cls, label, text], …]
+    PRIMARY KEY (period_number, doc_id, version)
+);
 
 CREATE TABLE law_change_unresolved (    -- instructions that could not be applied
     bill_id       TEXT NOT NULL,

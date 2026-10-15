@@ -422,6 +422,67 @@ def test_adopted_bill_is_read_off_njt_and_final():
     assert store.calls == calls
 
 
+def test_changes_carry_what_the_full_law_view_needs():
+    """Each change keeps its units as they would read — unless the applier
+    rebuilt them from the bill's wording, which is one flat run of text with
+    the labels inline — and a unit new to the law names the unit of the
+    current text it follows."""
+    units = njt.parse(PAGE)["units"]
+    docs = _Docs({"https://x/00438.pdf": {"scan": False, "lines": BILL}})
+    rec = stage.build_record(_registry_record(), docs, _Store(units, units), None)
+    by = {c["jh"]: c for c in rec["laws"][0]["changes"]}
+    # a word replaced in place: the paragraph as it would read, structured
+    (para,) = by["SZ26@BE3"]["afterUnits"]
+    assert para[:3] == ["SZ26@BE3", "bekezdesNyito", "(3)"] and "szakmai főigazgató-" in para[3]
+    assert "anchor" not in by["SZ26@BE3"]
+    # its point replaced with the bill's text: nothing structured to show
+    assert "afterUnits" not in by["SZ26@BE4"]
+    # new paragraphs follow the last unit of the (4) they come after
+    assert by["SZ26@BE4A"]["anchor"] == by["SZ26@BE4B"]["anchor"] == "SZ26@BE4@ZARO"
+    # a repealed paragraph keeps its bare number
+    assert by["SZ27@BE1"]["afterUnits"] == [["SZ27@BE1", "bekezdesNyito", "(1)", ""]]
+
+
+def _cache_state(root, doc, version, page=PAGE, blocks=BLOCKS):
+    import lzma
+    d = root / doc
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"v{version}.html.xz").write_bytes(lzma.compress(page.encode("utf-8")))
+    (d / f"v{version}.blocks.html.xz").write_bytes(lzma.compress(blocks.encode("utf-8")))
+
+
+def test_law_texts_come_from_the_cache_and_are_rewritten_only_on_change(tmp_path):
+    import gzip
+    import json
+
+    from parlamonitor.config import Paths
+
+    paths = Paths(tmp_path)
+    doc = "2019-80-00-00"
+    _cache_state(paths.njt_dir(), doc, 33)
+    reg = {"data": [{"laws": [{"docId": doc, "base": {"version": 33}}]},
+                    {"laws": [{"docId": doc, "base": {"version": 33}},
+                              # a state never fetched: skipped, never requested
+                              {"docId": doc, "base": {"version": 34}}]}]}
+    assert stage.save_law_texts(paths, 43, reg)
+    with gzip.open(paths.law_texts_file(43), "rt", encoding="utf-8") as fh:
+        meta, *states = [json.loads(line) for line in fh]
+    assert meta["meta"]["cycle"] == 43
+    (state,) = states
+    assert (state["docId"], state["version"]) == (doc, 33)
+    assert state["title"] == "2019. évi LXXX. törvény a szakképzésről"
+    # the deferred block is in, labels and text apart
+    assert ["SZ28@BE0", "bekezdesNyito", "", "Rövid szöveg."] in state["units"]
+    assert ["SZ26@BE4@ZARO", "bekezdesZaro", "", "felel 2026. december 31-éig."] in state["units"]
+    # nothing moved: not rewritten
+    assert not stage.save_law_texts(paths, 43, reg)
+    # the missing state turns up in the cache: rewritten with it
+    _cache_state(paths.njt_dir(), doc, 34)
+    assert stage.save_law_texts(paths, 43, reg)
+    with gzip.open(paths.law_texts_file(43), "rt", encoding="utf-8") as fh:
+        assert len(fh.readlines()) == 3
+
+
 def test_scanned_bill_is_recorded_as_such():
     docs = _Docs({"https://x/00438.pdf": {"scan": True, "lines": []}})
     rec = stage.build_record(_registry_record(), docs, _Store([], []), None)

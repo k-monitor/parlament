@@ -433,8 +433,12 @@ class NjtStore:
         tmp.replace(f)
         return data
 
-    def law(self, doc: str, version: int) -> dict:
-        """One time state, parsed: ``{docId, version, title, units}``."""
+    def law(self, doc: str, version: int, *, offline: bool = False) -> dict | None:
+        """One time state, parsed: ``{docId, version, title, units}``.
+
+        ``offline`` reads the disk cache only — a state never fetched is None
+        rather than a request — and does not keep the state in memory (a bulk
+        read of many laws, one at a time)."""
         key = (doc, int(version))
         if key in self._mem:
             return self._mem[key]
@@ -444,11 +448,15 @@ class NjtStore:
             try:
                 cached = json.loads(lzma.decompress(parsed_f.read_bytes()))
                 if cached.get("parseVersion") == PARSE_VERSION:
-                    self._mem[key] = cached
+                    if not offline:
+                        self._mem[key] = cached
                     return cached
             except (OSError, ValueError, lzma.LZMAError):
                 pass
-        page, blocks = self._page(doc, int(version))
+        got = self._page(doc, int(version), offline=offline)
+        if got is None:
+            return None
+        page, blocks = got
         parsed = {"docId": doc, "version": int(version), "parseVersion": PARSE_VERSION,
                   **parse(page, blocks)}
         d.mkdir(parents=True, exist_ok=True)
@@ -456,15 +464,19 @@ class NjtStore:
         tmp.write_bytes(lzma.compress(json.dumps(parsed, ensure_ascii=False)
                                       .encode("utf-8")))
         tmp.replace(parsed_f)
-        self._mem[key] = parsed
+        if not offline:
+            self._mem[key] = parsed
         return parsed
 
-    def _page(self, doc: str, version: int) -> tuple[str, str]:
+    def _page(self, doc: str, version: int, *,
+              offline: bool = False) -> tuple[str, str] | None:
         d = self._dir(doc)
         page_f = d / f"v{version}.html.xz"
         blocks_f = d / f"v{version}.blocks.html.xz"
         if page_f.exists():
             page = lzma.decompress(page_f.read_bytes()).decode("utf-8")
+        elif offline:
+            return None
         else:
             page = ""
             for attempt in range(2):
@@ -485,6 +497,8 @@ class NjtStore:
             return page, ""
         if blocks_f.exists():
             return page, lzma.decompress(blocks_f.read_bytes()).decode("utf-8")
+        if offline:
+            return None
         self.budget.spend()
         blocks = self.http.post_text(
             f"{BASE}/ajax/njtGetBlock.json",

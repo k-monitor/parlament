@@ -35,6 +35,7 @@ fetch or parse costs that bill's record, never the pass.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import logging
@@ -62,6 +63,12 @@ _SHOWN_UNPARSED = {"rendelet", "melléklet", "hatályon kívül helyezés",
 # quote, and the whole entry.
 _QUOTE_LIMIT = 600
 _TEXT_LIMIT = 900
+# Bumped whenever a record gains or changes a field, so every bill is redone
+# once instead of keeping the old shape until its documents move.
+# 2: each change carries its units as they would read (`afterUnits`) and, when
+#    new to the law, the unit of the current text it follows (`anchor`).
+# 3: no `afterUnits` for a unit rebuilt from the bill's wording (it is flat).
+RECORD_VERSION = 3
 
 
 def _now_iso() -> str:
@@ -180,12 +187,44 @@ def _unresolved_entry(ins: dict, quotes: list[str], why: str) -> dict:
     return {"provision": ins["at"], "docId": ins.get("doc"), "reason": why, "text": text}
 
 
+def _unit_row(u: dict) -> list:
+    return [u["jh"], u["cls"], u["label"], u["text"]]
+
+
+def _placed(c: dict, base_jhs: set[str], after: list[dict], pos: dict[str, int]) -> dict:
+    """What the full-law view needs of a change besides its flattened text: its
+    units as they would read (structured, so a replaced § still shows its
+    paragraphs and points apart), and for a unit new to the law the unit of the
+    current text it follows (``anchor``; "" before the first one).
+
+    A unit the applier rebuilt from the bill's own wording is one run of text
+    with its labels inline (the PDF's layout is not kept), so there is no
+    structure to show: no ``afterUnits``, and the view shows the flattened diff."""
+    jh = c["jh"]
+    sub = njt.subtree(after, jh) if jh else []
+    out = dict(c)
+    if not any(u["cls"] == "new" for u in sub):
+        out["afterUnits"] = [_unit_row(u) for u in sub]
+    if jh and jh not in base_jhs:
+        anchor = ""
+        for u in reversed(after[:pos.get(jh, 0)]):
+            if u["jh"] in base_jhs:
+                anchor = u["jh"]
+                break
+        out["anchor"] = anchor
+    return out
+
+
 def _law_entry(doc: str, title: str | None, abbr: str | None, method: str,
-               base: dict | None, target: dict | None, changes: list[dict]) -> dict:
+               base: dict | None, target: dict | None, changes: list[dict],
+               base_units: list[dict], after_units: list[dict]) -> dict:
     ver = (target or base or {}).get("version")
+    base_jhs = {u["jh"] for u in base_units if u["jh"]}
+    pos = {u["jh"]: i for i, u in enumerate(after_units) if u["jh"]}
     return {"docId": doc, "title": title, "abbr": abbr, "url": njt.law_url(doc),
             "method": method, "base": base, "target": target,
-            "changes": [{**c, "url": njt.law_url(doc, ver, c["jh"])} for c in changes]}
+            "changes": [{**_placed(c, base_jhs, after_units, pos),
+                         "url": njt.law_url(doc, ver, c["jh"])} for c in changes]}
 
 
 def _plan(store: njt.NjtStore, parsed: dict, act: dict | None) -> list[dict]:
@@ -233,12 +272,13 @@ def _law_changes(store: njt.NjtStore, parsed: dict, act: dict | None,
             # The whole law is repealed: one change, named by the law's title
             # rather than every one of its provisions shown struck through.
             base_v = p["before"] if act else latest
-            title = store.law(doc, base_v["version"])["title"]
+            base = store.law(doc, base_v["version"])
+            title = base["title"]
             laws.append(_law_entry(doc, title, doc_abbr.get(doc), "computed",
                                    _version_info(base_v), None,
                                    [{"jh": "", "ref": "a törvény egésze", "before": title or doc,
                                      "after": "", "provisions": [i["at"] for i in whole],
-                                     "ops": ["repeal_law"]}]))
+                                     "ops": ["repeal_law"]}], base["units"], []))
             continue
         if act:
             before = store.law(doc, p["before"]["version"])
@@ -247,7 +287,7 @@ def _law_changes(store: njt.NjtStore, parsed: dict, act: dict | None,
             if found:
                 laws.append(_law_entry(doc, after["title"] or before["title"], doc_abbr.get(doc),
                                        "njt", _version_info(p["before"]), _version_info(latest),
-                                       found))
+                                       found, before["units"], after["units"]))
                 continue
             # njt has not caught up with the act yet (it has three working days):
             # apply the final text to the state it amended, until it does.
@@ -261,7 +301,8 @@ def _law_changes(store: njt.NjtStore, parsed: dict, act: dict | None,
                        if not res["ok"] and res["ins"]["op"] not in ("none", "unparsed")]
         if changes:
             laws.append(_law_entry(doc, base["title"], doc_abbr.get(doc), "computed",
-                                   _version_info(base_v), None, changes))
+                                   _version_info(base_v), None, changes,
+                                   base["units"], pred))
     # Where njt itself shows what the act changed in a law, what our parser
     # could not read of the same law is beside the point.
     official = {law["docId"] for law in laws if law["method"] == "njt"}
@@ -309,7 +350,8 @@ def build_record(rec: dict, docs: DocCache, store: njt.NjtStore, previous: dict 
     amends = _amendments(rec)
     doc_key = [rec.get("textUrl"), egys_m and egys_m.get("textUrl"),
                [m["textUrl"] for m in amends], rec.get("status"), act]
-    versions = [novella.PARSER_VERSION, pdftext.EXTRACT_VERSION, njt.PARSE_VERSION]
+    versions = [novella.PARSER_VERSION, pdftext.EXTRACT_VERSION, njt.PARSE_VERSION,
+                RECORD_VERSION]
     # An adopted bill read off njt is final: same documents, same code → reuse.
     if not force and previous and previous.get("final") \
             and previous.get("docKey") == _fingerprint(doc_key, versions):
@@ -482,6 +524,64 @@ def load_previous(paths: Paths, cycle: int) -> dict | None:
     except (OSError, ValueError) as e:
         logger.warning("Could not read %s (%s)", f, e)
         return None
+
+
+# --- the laws' own text (the full-law view) ---------------------------------------
+
+def _texts_meta(f: Path) -> dict | None:
+    """The first line of a law-texts file — its meta — without reading the rest."""
+    try:
+        with gzip.open(f, "rt", encoding="utf-8") as fh:
+            return json.loads(fh.readline()).get("meta")
+    except (OSError, ValueError, EOFError):
+        return None
+
+
+def save_law_texts(paths: Paths, cycle: int, registry: dict) -> bool:
+    """Every njt state a law diff of this cycle was read against, whole, so the
+    site can show a change inside the law it amends (BILL-14 full view).
+
+    ``processed/law-texts-<cycle>.jsonl.gz``: a meta line, then one state per
+    line as ``{docId, version, title, units: [[jh, cls, label, text], …]}``. One
+    line per state lets the loader stream a file of a hundred-odd megabytes of
+    text. The states are read from the njt cache only (never a request: a state
+    a diff was computed against is on disk), and the file is rewritten only
+    when the set of states — or how they are parsed — changed, since a pass
+    usually moves neither. Returns whether it was written."""
+    wanted = sorted({(law["docId"], law["base"]["version"])
+                     for r in registry.get("data") or []
+                     for law in r.get("laws") or []
+                     if (law.get("base") or {}).get("version") is not None})
+    out = paths.law_texts_file(cycle)
+    root = paths.njt_dir()
+    # A state is on disk when its page is: the parse is redone from it if need be.
+    cached = [(doc, ver) for doc, ver in wanted if (root / doc / f"v{ver}.html.xz").exists()]
+    fp = _fingerprint(cached, njt.PARSE_VERSION)
+    if out.exists() and (_texts_meta(out) or {}).get("fingerprint") == fp:
+        return False
+    store = njt.NjtStore(None, root, budget=njt.Budget(None))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    n = 0
+    with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=6) as fh:
+        fh.write(json.dumps({"meta": {"cycle": cycle, "source": SOURCE, "fingerprint": fp,
+                                      "writtenAt": _now_iso()}}) + "\n")
+        for doc, ver in cached:
+            try:
+                law = store.law(doc, ver, offline=True)
+            except (OSError, ValueError, lzma.LZMAError) as e:
+                logger.warning("njt %s.%s unreadable from the cache (%s)", doc, ver, e)
+                continue
+            if law is None:
+                continue
+            fh.write(json.dumps({"docId": doc, "version": ver, "title": law["title"],
+                                 "units": [_unit_row(u) for u in law["units"]]},
+                                ensure_ascii=False) + "\n")
+            n += 1
+    tmp.replace(out)
+    logger.info("Wrote %s (%d law state(s); %d not in the njt cache)",
+                out, n, len(wanted) - n)
+    return True
 
 
 def save_law_changes(paths: Paths, cycle: int, registry: dict) -> None:

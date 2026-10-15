@@ -69,7 +69,7 @@ from .config import documents_retention, whisper_language, whisper_model
 from .documents.scrape import fetch_documents, load_registry
 from .config import law_changes_enabled, law_changes_per_sync
 from .lawdiff.scrape import (content_fingerprint as law_changes_fingerprint,
-                             fetch_law_changes, save_law_changes)
+                             fetch_law_changes, save_law_changes, save_law_texts)
 from .felicitas import FelicitasClient
 from .officeholders.scrape import fetch_office_holders, save_office_holders
 from .proceedings.scrape import (_write_json, bill_titles, cycle_days,
@@ -509,16 +509,18 @@ def _sync_law_changes(http, paths: Paths, cycle: int, state: dict, *,
     re-reads only caches; what costs requests is a new document, the daily
     version check of the laws a pending bill amends, and the backlog of a first
     run — which ``limit`` paces over several passes (SCR-4). The file is
-    rewritten only when a record changed."""
+    rewritten only when a record changed; the laws' own text beside it only
+    when the states the records were read against did."""
     if not law_changes_enabled():
         return False
     registry = load_registry(paths, cycle)
     result = fetch_law_changes(http, paths, cycle, registry, limit=limit or None,
                                force=force)
+    texts = save_law_texts(paths, cycle, result)
     fp = law_changes_fingerprint(result)
     if not force and paths.law_changes_file(cycle).exists() \
             and (state.get("lawChanges") or {}).get("fp") == fp:
-        return False
+        return {"lawTexts": True} if texts else False
     save_law_changes(paths, cycle, result)
     counts = result["meta"].get("counts") or {}
     state["lawChanges"] = {"fp": fp, "at": _now(), "bills": counts.get("bills")}

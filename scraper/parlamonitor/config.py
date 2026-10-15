@@ -12,6 +12,7 @@ reference pipeline so its outputs stay comparable:
         advocates-<cycle>.json                    # the nationality-advocate registry
         committees-<cycle>.json                   # the committee registry for a cycle
         law-changes-<cycle>.json                  # what each bill changes (BILL-14..16)
+        law-texts-<cycle>.jsonl.gz                # the laws those changes were read against
       documents/
         <cycle>/
           text/<docid>.txt.xz                     # extracted document text (DOC-1)
@@ -475,6 +476,11 @@ class Paths:
 
     def law_changes_file(self, cycle: int) -> Path:
         return self.processed / f"law-changes-{int(cycle)}.json"
+
+    def law_texts_file(self, cycle: int) -> Path:
+        """The njt states those changes were read against, whole (gzip JSON
+        lines: the full-law view of a diff)."""
+        return self.processed / f"law-texts-{int(cycle)}.jsonl.gz"
 
     def lawdiff_docs_dir(self, cycle: int) -> Path:
         return self.data / "lawdiff" / str(int(cycle)) / "docs"

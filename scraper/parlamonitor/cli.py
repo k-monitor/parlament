@@ -79,7 +79,7 @@ from .aktualis.scrape import fetch_aktualis, load_previous, save_aktualis
 from .bills.legacy import CYCLE as ARCHIVE_CYCLE
 from .bills.legacy import faction_ids_from_registries, fetch_legacy_bills
 from .bills.scrape import DEFAULT_MAIN_TYPES, fetch_bills, save_bills
-from .lawdiff.scrape import fetch_law_changes, save_law_changes
+from .lawdiff.scrape import fetch_law_changes, save_law_changes, save_law_texts
 from .committees.scrape import (fetch_committees, save_committees,
                                 load_previous as load_committees_file)
 from .committees.minutes_scrape import (fetch_minutes, meetings_with_minutes,
@@ -498,6 +498,7 @@ def cmd_law_changes(args) -> None:
                                        limit=args.limit, force=args.force,
                                        only=set(args.bill) if args.bill else None)
             save_law_changes(paths, args.cycle, result)
+            save_law_texts(paths, args.cycle, result)
     finally:
         http.close()
 

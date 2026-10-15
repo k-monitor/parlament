@@ -575,3 +575,68 @@ def test_bill_subtitles_and_self_references_are_not_instructions():
     assert first["op"] == "replace_text" and first["new"] == "és az igazgató"
     assert "módosítása" not in first["src"]
     assert second["op"] == "none"
+
+
+def test_a_law_named_inside_another_acts_title_is_not_the_one_amended():
+    """T/571 12. § repeals provisions of an amending act whose title names the
+    law it amended; T/791 4. § amends such an act too. The act is the outer one
+    — unless the next law is a second one of an enumeration (it has an article)."""
+    lines = _lines(
+        ("2026. évi ..... törvény", 244),
+        ("1. §", 289),
+        ("Hatályát veszti az egyes állami és önkormányzati ingatlanok ingyenes tulajdonba adásáról, valamint", 57),
+        ("a hitelszerződésből eredő kötelezettségeiknek eleget tenni nem tudó természetes személyek", 57),
+        ("lakhatásának biztosításáról szóló 2011. évi CLXX. törvény módosításáról szóló 2013. évi CXVIII.", 57),
+        ("törvény", 57),
+        ("a) 10. § (2) bekezdése,", 57),
+        ("b) 10/A. §-a.", 57),
+        ("2. §", 289),
+        ("A sportról szóló 2004. évi I. törvény és egyéb törvények sporttal kapcsolatos módosításáról", 57),
+        ("szóló 2025. évi CXXXVI. törvény 39. § (4) bekezdésében az „x” szövegrész helyébe az „y” szöveg lép.", 57),
+        ("3. §", 289),
+        ("Hatályát veszti a szakképzésről szóló 2019. évi LXXX. törvény és a felnőttképzésről szóló 2013. évi", 57),
+        ("LXXVII. törvény.", 57),
+    )
+    a, b, c, d = novella.parse_bill(lines)["instructions"]
+    assert (a["op"], a["doc"], a["refs"]) == ("repeal", "2013-118-00-00", ["SZ10@BE2"])
+    assert (b["op"], b["doc"], b["refs"]) == ("repeal", "2013-118-00-00", ["SZ10A"])
+    # the quoted item names the act it is about, not the law inside its title
+    assert b["src"].endswith("2013. évi CXVIII. törvény b) 10/A. §-a")
+    assert (c["op"], c["doc"], c["refs"]) == ("replace_text", "2025-136-00-00", ["SZ39@BE4"])
+    assert d["doc"] == "2019-80-00-00"
+
+
+ANNEXED = _lines(
+    ("2026. évi ..... törvény", 244),
+    ("1. §", 289),
+    ("Nem lép hatályba az Alkotmánybírósággal összefüggő egyes törvények módosításáról szóló 2025.", 57),
+    ("évi CXI. törvény 14. § a) pontja.", 57),
+    ("1. melléklet a 2026. évi ..... törvényhez", 353),
+    ("1. Az egyes ingatlanok fővárosi önkormányzat részére történő átadásáról szóló 2012. évi CXC. törvény 1.", 57),
+    ("mellékletében foglalt táblázat a következő 14. sorral egészül ki:", 57),
+    ("„", 57),
+    ("14. 232045/5 Magyar Állam", 57),
+    ("”", 57),
+    ("2. Az általános forgalmi adóról szóló 2007. évi CXXVII. törvény 3/B. mellékletében foglalt táblázat", 57),
+    ("a következő 2. sorral egészül ki:", 57),
+    ("„2. Gyógyszerek”", 57),
+)
+
+
+def test_the_bills_own_annex_is_not_part_of_its_last_section():
+    """T/571: the centred annex title was dropped as a heading, so the annex read
+    as part of 27. § — one "ismeretlen szerkezet" for both. Each is its own now:
+    the call-off of a provision, and an annex point per amended annex."""
+    ins = novella.parse_bill(ANNEXED)["instructions"]
+    assert [(i["at"], i["op"], i.get("why"), i["doc"]) for i in ins] == [
+        ("1. §", "unparsed", "hatálybalépés elmarad", "2025-111-00-00"),
+        ("1. melléklet 1. pont", "unparsed", "melléklet", "2012-190-00-00"),
+        ("1. melléklet 2. pont", "unparsed", "melléklet", "2007-127-00-00")]
+    assert "melléklet" not in ins[0]["src"]
+
+    units = njt.parse(PAGE)["units"]
+    docs = _Docs({"https://x/00438.pdf": {"scan": False, "lines": ANNEXED}})
+    rec = stage.build_record(_registry_record(), docs, _Store(units, units), None)
+    assert [(u["provision"], u["reason"]) for u in rec["unresolved"]] == [
+        ("1. §", "hatálybalépés elmarad"), ("1. melléklet 1. pont", "melléklet"),
+        ("1. melléklet 2. pont", "melléklet")]

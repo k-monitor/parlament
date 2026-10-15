@@ -58,7 +58,8 @@ _REFERER = {"Referer": "https://www.parlament.hu/"}
 # they plainly name another kind of act; the rest are not amendments of a law
 # (a bill's references to its own provisions, a treaty's text).
 _SHOWN_UNPARSED = {"rendelet", "melléklet", "hatályon kívül helyezés",
-                   "módosított szöveggel hatályba lépés", "ismeretlen szerkezet"}
+                   "módosított szöveggel hatályba lépés", "hatálybalépés elmarad",
+                   "ismeretlen szerkezet"}
 # How much of the bill's own wording an unresolved instruction quotes: each
 # quote, and the whole entry.
 _QUOTE_LIMIT = 600

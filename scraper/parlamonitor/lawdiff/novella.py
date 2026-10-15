@@ -31,7 +31,7 @@ import re
 from . import njt
 
 # Bumped whenever parsing/applying changes, so cached per-bill results are redone.
-PARSER_VERSION = 10
+PARSER_VERSION = 11
 
 _ROMAN = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
 
@@ -55,6 +55,10 @@ _TITLE_LINE = re.compile(r"^\d{4}\. évi [.…]+ ?törvény")
 _END_LINE = re.compile(r"^(Általános indokolás|Indokolás|INDOKOLÁS|Részletes indokolás|"
                        r"ÁLTALÁNOS INDOKOLÁS|RÉSZLETES INDOKOLÁS)$")
 _OWN_SECTION_LINE = re.compile(r"^\d+(?:/[A-Z])?\. §$")
+# The bill's own annex ("1. melléklet a 2026. évi ….. törvényhez" — the act has
+# no number yet); an annex of an amended law names a real one, in a quote.
+_OWN_ANNEX = r"(\d+)\. (?:számú )?melléklet a \d{4}\. évi [.…]+ ?törvényhez"
+_OWN_ANNEX_LINE = re.compile(rf"^{_OWN_ANNEX}$")
 
 
 def body(lines: list[dict]) -> list[dict]:
@@ -97,7 +101,8 @@ def tokenize(lines: list[dict]) -> list[tuple[str, str]]:
     Quotes are „…”; nested ones are »…« in Hungarian, so a „ inside a quote is
     still counted, in case a source nests them anyway. Centred lines outside a
     quote are the bill's own headings (``3. Záró rendelkezések``) and are
-    dropped; the bill's own ``N. §`` lines are kept. A line ending in a real
+    dropped; the bill's own ``N. §`` and annex title lines are kept, or the
+    annexes would read as part of the last section. A line ending in a real
     hyphen joins the next one without a space."""
     headings = _heading_lines(lines)
     segs: list[tuple[str, str]] = []
@@ -106,7 +111,9 @@ def tokenize(lines: list[dict]) -> list[tuple[str, str]]:
     for i, r in enumerate(lines):
         t = r["text"]
         if depth == 0 and (i in headings or (r.get("x", 0) > 110
-                                             and not _OWN_SECTION_LINE.match(t) and "„" not in t)):
+                                             and not _OWN_SECTION_LINE.match(t)
+                                             and not _OWN_ANNEX_LINE.match(t)
+                                             and "„" not in t)):
             continue
         joiner = "" if re.search(r"[\w§)]-$", t) else "\n"
         for ch in t + joiner:
@@ -152,26 +159,38 @@ def restore(text: str, quotes: list[str], limit: int = 0) -> str:
     return re.sub(r"⟦(\d+)⟧", sub, text)
 
 
-_SEC_RE = re.compile(r"(?m)^(\d+(?:/[A-Z])?)\. §\s*$")
+_SEC_RE = re.compile(rf"(?m)^(?:(\d+(?:/[A-Z])?)\. §|{_OWN_ANNEX})\s*$")
 _PAR_RE = re.compile(r"(?m)^\((\d+[a-z]?)\) (?!bekezdés)")
+# An annex's own points: "1. Az Ftv. 1. mellékletében foglalt táblázat …"
+_ANNEX_POINT_RE = re.compile(r"(?m)^(\d+)\. (?=[A-ZÁÉÍÓÖŐÚÜŰ])")
 
 
 def own_sections(tmpl: str) -> list[tuple[str, str]]:
-    """The bill's own sections as ``("1. §", text)``; text before the first one
-    (the title and preamble) as ``("", text)``."""
+    """The bill's own sections as ``("1. §", text)`` and its annexes as
+    ``("1. melléklet", text)``; text before the first one (the title and
+    preamble) as ``("", text)``."""
     marks = list(_SEC_RE.finditer(tmpl))
     out = [("", tmpl[:marks[0].start()] if marks else tmpl)]
     for i, m in enumerate(marks):
-        out.append((f"{m.group(1)}. §",
-                    tmpl[m.end(): marks[i + 1].start() if i + 1 < len(marks) else len(tmpl)]))
+        key = f"{m.group(1)}. §" if m.group(1) else f"{m.group(2)}. melléklet"
+        out.append((key, tmpl[m.end(): marks[i + 1].start() if i + 1 < len(marks) else len(tmpl)]))
     return out
 
 
 def own_provisions(tmpl: str) -> list[tuple[str, str]]:
     """The bill's own paragraphs: ``("2. § (1)", text)`` — or the whole section
-    where it has no numbered paragraphs."""
+    where it has no numbered paragraphs. An annex amending a law does so in
+    numbered points, one instruction each: ``("1. melléklet 2. pont", text)``."""
     out = []
     for sec, text in own_sections(tmpl)[1:]:
+        if sec.endswith("melléklet"):
+            pts = list(_ANNEX_POINT_RE.finditer(text))
+            if not pts:
+                out.append((sec, text.strip()))
+            for j, p in enumerate(pts):
+                out.append((f"{sec} {p.group(1)}. pont",
+                            text[p.end(): pts[j + 1].start() if j + 1 < len(pts) else len(text)].strip()))
+            continue
         pars = list(_PAR_RE.finditer(text))
         if not pars:
             out.append((sec, text.strip()))
@@ -187,7 +206,7 @@ def own_provisions(tmpl: str) -> list[tuple[str, str]]:
 _TOKEN_RE = re.compile(
     r"(?P<fe>[IVXLCDM]+)\. Fejezet|"
     r"(?P<ac>\d+(?:/[A-Z])?)\. alcím|"
-    r"(?P<mel>\d+)\. (?:számú )?melléklet|"
+    r"(?P<mel>\d+(?:/[A-Z])?)\. (?:számú )?melléklet|"
     r"(?P<sz>\d+(?:/[A-Z])?\.?(?:\s*(?:,|és|–|-)\s*\d+(?:/[A-Z])?\.?)*) ?§|"
     r"(?P<be>\(\d+[a-z]?\)(?:\s*(?:,|és|–|-)\s*\(\d+[a-z]?\))*)\s*bekezdés|"
     r"(?P<ap>[a-z]{2}\)(?:\s*(?:,|és|–|-)\s*[a-z]{2}\))*)\s*alpont|"
@@ -242,7 +261,7 @@ def parse_ref(text: str) -> tuple[list[str], str | None]:
         elif k == "ac":
             paths = [p + [f"AC{m.group('ac').replace('/', '')}"] for p in paths]
         elif k == "mel":
-            paths = [p + [f"MEL{m.group('mel')}"] for p in paths]
+            paths = [p + [f"MEL{m.group('mel').replace('/', '')}"] for p in paths]
         elif k == "sz":
             paths = [[f"SZ{n}"] for n in _sections(m.group("sz"))]
         elif k == "be":
@@ -296,8 +315,17 @@ def split_units(text: str, jhs: list[str]) -> list[str]:
 
 _ABBR_RE = re.compile(r"(\d{4})\. évi ([IVXLCDM]+)\. törvény\w*\s*\(a továbbiakban: ([^)]+?)\)")
 _CIT_RE = re.compile(r"(\d{4})\. évi ([IVXLCDM]+)\. törvény")
-_AMEND_HINT = re.compile(r"helyébe|egészül ki|[Hh]atályát veszti|szövegrész|nem lép hatályba")
+_AMEND_HINT = re.compile(r"helyébe|egészül ki|[Hh]atályát veszti|szövegrész|[Nn]em lép hatályba")
 _ENUM_SPLIT = re.compile(r"(?:(?<=^)|(?<=[\s,]))([a-z]{1,2})\) (?=\d|[IVXLCDM]+\. |⟦)")
+# A law named inside another act's title is not the one amended: "a … szóló
+# 2011. évi CLXX. törvény módosításáról szóló 2013. évi CXVIII. törvény
+# 10/A. §-a" is about the 2013 act. The title runs on from the inner mention
+# without an article up to the outer act's "szóló YYYY. évi N. törvény"; the
+# next law of an enumeration ("… törvény és a … szóló …") starts with one, and
+# a reference (§, a quote, a list item) is past the title.
+_OUTER_RE = re.compile(r"(?=\s)(?!\s*(?:(?:és|valamint|illetve|továbbá)\s+)?az?\s)"
+                       r"[^§⟦()]{0,250}?\sszóló (\d{4})\. évi ([IVXLCDM]+)\. törvény\w*")
+_TAIL_RE = re.compile(r"\w*\s*\(a továbbiakban: [^)]+\)")
 
 
 def abbreviations(tmpl: str) -> dict[str, str]:
@@ -309,7 +337,8 @@ def abbreviations(tmpl: str) -> dict[str, str]:
 
 
 def _law_of(text: str, abbr: dict[str, str]) -> tuple[str | None, int | None]:
-    """The amended law named first in an instruction, and where its mention ends."""
+    """The amended law named first in an instruction, and where its mention
+    ends — the outermost act when the first one named is inside its title."""
     best = None
     for ab, doc in abbr.items():
         m = re.search(r"(?<![\w.])" + re.escape(ab) + r"(?!\w)", text)
@@ -318,11 +347,16 @@ def _law_of(text: str, abbr: dict[str, str]) -> tuple[str | None, int | None]:
     m = _CIT_RE.search(text)
     if m and (best is None or m.start() < best[1]):
         end = m.end()
-        tail = re.match(r"\w*\s*\(a továbbiakban: [^)]+\)", text[end:])
-        if tail:
-            end += tail.end()
-        best = (njt.doc_id(m.group(1), roman(m.group(2))), m.start(), end)
-    return (best[0], best[2]) if best else (None, None)
+        tail = _TAIL_RE.match(text, end)
+        best = (njt.doc_id(m.group(1), roman(m.group(2))), m.start(), tail.end() if tail else end)
+    if not best:
+        return None, None
+    doc, end = best[0], best[2]
+    while m := _OUTER_RE.match(text, end):
+        doc = njt.doc_id(m.group(1), roman(m.group(2)))
+        tail = _TAIL_RE.match(text, m.end())
+        end = tail.end() if tail else m.end()
+    return doc, end
 
 
 def _items(text: str) -> list[tuple[str | None, str]]:
@@ -364,6 +398,13 @@ def parse_instruction(tmpl: str, quotes: list[str], abbr: dict[str, str],
         """What to quote of an enumerated instruction: its own item, with the
         law named — not the whole enumeration again for every item."""
         return f"{law_mention} {label}) {item.strip()}" if label else t
+
+    # "Nem lép hatályba a … 2025. évi CXI. törvény 14. § a) pontja": a provision
+    # not yet in force — nearly always of an amending act — is called off. What
+    # that leaves out is in the law the provision would have amended, which the
+    # bill does not name, so it is shown rather than applied.
+    if re.match(r"^Nem lép hatályba", t) or re.search(r"nem lép hatályba\.?$", rest):
+        return [{**base, "op": "unparsed", "why": "hatálybalépés elmarad", "doc": doc}]
 
     # repeal (whole units, or a fragment of one)
     if re.match(r"^Hatályát veszti", t) or re.search(r"hatályát veszti\.?$", rest):
@@ -410,6 +451,9 @@ def parse_instruction(tmpl: str, quotes: list[str], abbr: dict[str, str],
             if re.search(r"mondattal|mondatokkal", what):
                 return [{**base, "op": "append_sentence", "doc": doc, "refs": parent,
                          "part": part, "new": new}]
+            if any("MEL" in p for p in parent):
+                # an annex is a table on njt, not read as units (yet)
+                return [{**base, "op": "unparsed", "why": "melléklet", "doc": doc}]
             newrefs, _ = parse_ref(what)
             if not newrefs and re.search(r"alcímm|fejezett|címmel|résszel", what, re.I):
                 # A new subtitle or chapter: what enters the law is the
@@ -451,6 +495,9 @@ def parse_instruction(tmpl: str, quotes: list[str], abbr: dict[str, str],
         return out
     if "helyett" in rest and "szöveggel" in rest:
         why = "módosított szöveggel hatályba lépés"
+    elif re.search(r"\d+(?:/[A-Z])?\. (?:számú )?mellékle", rest.split("⟦", 1)[0]):
+        # "… 1. mellékletében foglalt táblázat a következő 14. sorral egészül ki"
+        why = "melléklet"
     else:
         why = "ismeretlen szerkezet"
     return [{**base, "op": "unparsed", "why": why, "doc": doc}]

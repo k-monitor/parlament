@@ -1405,6 +1405,9 @@ export default {
     none: 'Az egységes javaslat szövege megegyezik a benyújtott szöveggel.',
     showAll: 'Mind a(z) {n} változás megjelenítése',
     titlePart: 'Cím és bevezető',
+    was: '(a benyújtott szövegben: {n})',
+    // a section of the bill itself: added by the consolidation, or left out of it
+    kind: { new: 'új', repealed: 'kimaradt' },
   },
   amendment: {
     show: 'Változtatások ({n} pont)',

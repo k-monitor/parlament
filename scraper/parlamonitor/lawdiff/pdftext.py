@@ -27,8 +27,12 @@ import re
 
 logger = logging.getLogger(__name__)
 
-# Bumped when an extractor changes its output, so cached extractions are redone.
-EXTRACT_VERSION = 2
+# Bumped when an extractor changes its output, so cached extractions are redone
+# (the document is fetched again: the PDF itself is not kept) — per extractor,
+# so a change to one does not refetch what only the other reads.
+# marked 3: a table's rules are not underlines.
+EXTRACT_VERSIONS = {"lines": 2, "marked": 3}
+EXTRACT_VERSION = EXTRACT_VERSIONS["lines"]
 
 
 def available() -> bool:
@@ -115,16 +119,31 @@ def lines(pdf: bytes) -> list[dict]:
 # --- marked lines (módosító javaslatok) ----------------------------------------
 
 def _underlines(page) -> list[tuple[float, float, float]]:
-    segs = []
+    """The horizontal strokes that underline text — not the rules of a table
+    (a nyelvhelyességi módosítás is a table of corrections): a table's
+    horizontal rules meet its vertical ones at their ends, an underline stands
+    alone."""
+    segs, verticals = [], []
     for d in page.get_drawings():
         for it in d["items"]:
             if it[0] == "l" and abs(it[1].y - it[2].y) < 0.6:
                 x0, x1 = sorted((it[1].x, it[2].x))
                 segs.append((x0, x1, it[1].y))
+            elif it[0] == "l" and abs(it[1].x - it[2].x) < 0.6:
+                y0, y1 = sorted((it[1].y, it[2].y))
+                verticals.append((it[1].x, y0, y1))
             elif it[0] == "re" and it[1].height < 1.5 and it[1].width > 2:
                 r = it[1]
                 segs.append((r.x0, r.x1, (r.y0 + r.y1) / 2))
-    return segs
+            elif it[0] == "re" and it[1].width < 1.5 and it[1].height > 2:
+                r = it[1]
+                verticals.append(((r.x0 + r.x1) / 2, r.y0, r.y1))
+
+    def ruled(x0, x1, y):
+        return any((abs(vx - x0) < 1.5 or abs(vx - x1) < 1.5) and vy0 - 1.5 <= y <= vy1 + 1.5
+                   for vx, vy0, vy1 in verticals)
+
+    return [s for s in segs if not ruled(*s)]
 
 
 def marked_lines(pdf: bytes) -> list[dict]:

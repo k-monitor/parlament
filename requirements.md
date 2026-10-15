@@ -2613,13 +2613,17 @@ reader actually brings to a bill page.
     opens at the change it was opened from, steps from change to change, and can
     fold the text away from the changes (each fold opening on click). The text
     is the njt state the changes were read against. A provision the machine
-    rebuilt from a pending bill's own wording has no layout to show, so it reads
-    as one run of text and says so (TRUST-1).
+    rebuilt from a pending bill's own wording whole (a § or a paragraph with
+    points of its own) has no layout to show, so it reads as one run of text
+    and says so (TRUST-1); a single paragraph, point or title reworded keeps
+    its place and label.
 - **BILL-15 (SHOULD).** The detail view shows **how the bill changed on its way
   through the House**: the text as submitted against the latest egységes
   javaslat — Parliament's own consolidation of the bill with the adopted
   összegző módosító javaslat — section by section, listing only what differs
-  and how many sections did not. It is a diff of two official texts, so it
+  and how many sections did not. Sections are matched by content, not by
+  number: one the consolidation renumbered is set against its own earlier text
+  and shows its number in the bill as submitted. It is a diff of two official texts, so it
   needs no amendment to be applied by machine.
 - **BILL-16 (SHOULD).** Each **módosító javaslat** of a bill (an MP's, a
   committee's részletes vitát lezáró, the TAB's összegző) can be opened in the

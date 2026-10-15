@@ -1643,14 +1643,14 @@ def _evolution(db: sqlite3.Connection, head: sqlite3.Row, bill_id: str,
         return None
     total = db.execute("SELECT COUNT(*) FROM bill_evolution WHERE bill_id = ?",
                        (bill_id,)).fetchone()[0]
-    sql = ("SELECT provision, before_text, after_text FROM bill_evolution "
+    sql = ("SELECT provision, provision_from, before_text, after_text FROM bill_evolution "
            "WHERE bill_id = ? ORDER BY ord")
     rows = db.execute(sql + (f" LIMIT {int(limit)}" if limit else ""), (bill_id,)).fetchall()
     return {
         "from": {"number": head["evolution_from"], "url": head["evolution_from_url"]},
         "to": {"number": head["evolution_to"], "url": head["evolution_to_url"]},
         "unchanged": head["evolution_unchanged"], "total": total,
-        "provisions": [{"provision": r["provision"],
+        "provisions": [{"provision": r["provision"], "from": r["provision_from"],
                         "kind": _change_kind(r["before_text"], r["after_text"]),
                         "diff": word_diff(r["before_text"], r["after_text"])}
                        for r in rows]}

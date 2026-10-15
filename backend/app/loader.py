@@ -920,7 +920,8 @@ _LAW_CHANGE_TABLES = ("amendment_point", "amendment_doc", "bill_evolution",
 # Columns added to a law-change table after it first shipped: a DB that has the
 # table from before gets them in place.
 _LAW_CHANGE_ADDED_COLUMNS = (("law_change", "after_units", "TEXT"),
-                             ("law_change", "anchor", "TEXT"))
+                             ("law_change", "anchor", "TEXT"),
+                             ("bill_evolution", "provision_from", "TEXT"))
 
 
 def _ensure_law_change_tables(conn: sqlite3.Connection) -> None:
@@ -1009,8 +1010,8 @@ def load_law_changes(conn: sqlite3.Connection, registry: dict) -> int:
               u.get("text")) for i, u in enumerate(rec.get("unresolved") or [])])
         conn.executemany(
             """INSERT INTO bill_evolution(bill_id, period_number, ord, provision,
-                   before_text, after_text) VALUES (?,?,?,?,?,?)""",
-            [(bid, period, i, p.get("key"), p.get("before"), p.get("after"))
+                   provision_from, before_text, after_text) VALUES (?,?,?,?,?,?,?)""",
+            [(bid, period, i, p.get("key"), p.get("from"), p.get("before"), p.get("after"))
              for i, p in enumerate(ev.get("provisions") or [])])
         for i, a in enumerate(rec.get("amendments") or []):
             cur = conn.execute(

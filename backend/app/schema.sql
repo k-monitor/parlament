@@ -546,6 +546,7 @@ CREATE TABLE bill_evolution (           -- provisions that differ between the bi
     period_number INTEGER,
     ord           INTEGER NOT NULL,
     provision     TEXT,                 -- "3. §", or "cím" for title + preamble
+    provision_from TEXT,                -- its number in the bill as submitted, when renumbered
     before_text   TEXT,
     after_text    TEXT,
     PRIMARY KEY (bill_id, ord)

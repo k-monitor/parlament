@@ -1264,6 +1264,9 @@ export default {
     none: 'The consolidated text is the same as the bill as submitted.',
     showAll: 'Show all {n} changes',
     titlePart: 'Title and preamble',
+    was: '({n} in the bill as submitted)',
+    // a section of the bill itself: added by the consolidation, or left out of it
+    kind: { new: 'new', repealed: 'dropped' },
   },
   amendment: {
     show: 'Changes ({n} points)',

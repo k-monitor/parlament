@@ -57,7 +57,10 @@ def _law_changes_registry():
             "evolution": {"from": {"number": "T/100", "url": "u1"},
                           "to": {"number": "T/100/9", "url": "u2", "type": "Egységes javaslat"},
                           "provisions": [{"key": "2. §", "before": "Hatályba lép 2026. szeptember 1-jén.",
-                                          "after": "Hatályba lép a kihirdetését követő napon."}],
+                                          "after": "Hatályba lép a kihirdetését követő napon."},
+                                         # renumbered by a § the consolidation inserted
+                                         {"key": "4. §", "from": "3. §", "before": "Régi.",
+                                          "after": "Új."}],
                           "unchanged": 3},
             "amendments": [{"number": "T/100/3", "type": "Módosító javaslat",
                             "url": "https://www.parlament.hu/irom43/00100/00100-0003.pdf",
@@ -132,7 +135,8 @@ def test_loader_writes_every_part(lc_db):
     assert [r[0] for r in _q(lc_db, "SELECT ref FROM law_change ORDER BY ord")] == [
         "26. § (4) bekezdés", "26. § (4a) bekezdés"]
     assert _q(lc_db, "SELECT reason FROM law_change_unresolved") == [("melléklet",)]
-    assert _q(lc_db, "SELECT provision FROM bill_evolution") == [("2. §",)]
+    assert _q(lc_db, "SELECT provision, provision_from FROM bill_evolution ORDER BY ord") == [
+        ("2. §", None), ("4. §", "3. §")]
     assert _q(lc_db, "SELECT COUNT(*) FROM amendment_point")[0][0] == 1
 
 
@@ -202,7 +206,7 @@ def test_bill_detail_carries_the_summary_and_motion_flag(lc_client):
     b = lc_client.get("/api/v1/bills/bill-uuid-1").json()
     s = b["law_changes"]
     assert s["laws"] == 1 and s["changes"] == 2 and s["unresolved"] == 1
-    assert s["evolution"] == 1 and s["amendment_points"] == 1 and s["method"] == "computed"
+    assert s["evolution"] == 2 and s["amendment_points"] == 1 and s["method"] == "computed"
     by_number = {m["bill_number"]: m for m in b["motions"]}
     assert by_number["T/100/3"]["amendment"] == {"points": 1, "scan": False}
     assert by_number["T/100/1"]["amendment"] is None
@@ -228,6 +232,7 @@ def test_changes_endpoint_serves_word_diffs(lc_client):
     evo = r["evolution"]
     assert evo["to"]["number"] == "T/100/9" and evo["unchanged"] == 3
     assert any(op == "del" for op, _ in evo["provisions"][0]["diff"])
+    assert [(p["provision"], p["from"]) for p in evo["provisions"]] == [("2. §", None), ("4. §", "3. §")]
     assert r["amendments"] == [{"number": "T/100/3", "type": "Módosító javaslat",
                                 "url": "https://www.parlament.hu/irom43/00100/00100-0003.pdf",
                                 "scan": False, "marked": True, "error": None, "points": 1}]
@@ -285,11 +290,13 @@ def test_evolution_head_and_the_rest_on_request(lc_client, monkeypatch):
     monkeypatch.setattr(router, "_EVOLUTION_HEAD", 0)
     head = lc_client.get("/api/v1/bills/bill-uuid-1/changes").json()["evolution"]
     # 0 = no limit in the helper; a real head is a positive number
-    assert head["total"] == 1
+    assert head["total"] == 2
     monkeypatch.setattr(router, "_EVOLUTION_HEAD", 1)
+    head = lc_client.get("/api/v1/bills/bill-uuid-1/changes").json()["evolution"]
+    assert head["total"] == 2 and len(head["provisions"]) == 1
     full = lc_client.get("/api/v1/bills/bill-uuid-1/changes",
                          params={"part": "evolution"}).json()["evolution"]
-    assert full["total"] == 1 and len(full["provisions"]) == 1
+    assert full["total"] == 2 and len(full["provisions"]) == 2
     assert full["provisions"][0]["provision"] == "2. §"
 
 

@@ -446,25 +446,37 @@ It writes `processed/law-changes-<cycle>.json` from three sources:
   Parliament, its amending instructions — `… helyébe a következő rendelkezés lép`,
   `… a következő (4a) bekezdéssel egészül ki`, `… az „X” szövegrész helyébe az
   „Y” szöveg lép`, `Hatályát veszti …` — are parsed and applied to njt's newest
-  state (`method: computed`). Over the 41 born-digital bills of cycle 43 that
-  became law, 98% of the instructions parse and 90% of the provisions they
-  change come out exactly as njt has them. What cannot be applied (an annex
-  replaced wholesale, a decree repealed) is listed in the bill's own words.
+  state (`method: computed`). Checked against njt on cycle 43's adopted bills
+  (`python -m parlamonitor.lawdiff.evaluate ./data --cycle 43`, cache only — run
+  it before and after a parser change): of the 3,445 amending instructions of
+  the 35 bills whose text read is the one adopted, 87% are applied exactly as
+  njt has them, 7% are known failures listed as such (mostly annexes, which njt
+  keeps as tables), 0.3% come out different without saying so, and the rest
+  cannot be judged (another act changed the same provision, or the law is not
+  cached). What cannot be applied is listed in the bill's own words.
 * **The bill's evolution** diffs the bill as submitted against the latest
   *egységes javaslat* — Parliament's own consolidation of the bill with the
-  adopted összegző módosító javaslat — section by section.
+  adopted összegző módosító javaslat — section by section, pairing sections by
+  what they say (a § inserted early renumbers every one after it; a
+  renumbered section says its old number).
 * **Each amendment** (módosító javaslat, részletes vitát lezáró bizottsági /
   összegző módosító javaslat) is read point by point. The Parlex template
   reprints the affected provision with deletions in **bold [brackets]** and
   insertions **underlined** — a drawn line, invisible to `pdftotext` — so the
-  PDFs are read with PyMuPDF (`pymupdf`), which sees both.
+  PDFs are read with PyMuPDF (`pymupdf`), which sees both. A table's rules (a
+  *nyelvhelyességi módosítás* is a table of corrections) meet its vertical
+  rules and are not taken for underlines.
 
 **Caches.** Each PDF is downloaded once; its extraction is kept in
 `lawdiff/<cycle>/docs/` (the PDF is not), so a parser change re-runs from disk.
-njt.hu states are kept in `lawdiff/njt/<law>/` (a time state never changes; the
-version list is re-checked daily). Each bill's record is fingerprinted by
-everything it was computed from, so an unchanged bill costs nothing on the next
-run. For cycle 43 that is ~90 MB, almost all of it the njt states of the 327
+njt.hu states are kept in `lawdiff/njt/<law>/`; the version list is re-checked
+daily. A state already in force when fetched never changes, but njt regenerates
+a *future* state in place, under the same number, when a later act amends the
+law — so each page keeps the version ids listed when it was fetched
+(`v<n>.meta.json`), and a future state's page is fetched again once the law
+gains a state. Each bill's record is fingerprinted by everything it was
+computed from (the amended laws' version lists included), so an unchanged bill
+costs nothing on the next run. For cycle 43 that is ~90 MB, almost all of it the njt states of the 327
 laws its bills amend (the pages and their parses, xz-compressed); the PDF
 extractions are ~3 MB.
 
@@ -1026,6 +1038,7 @@ parlamonitor/
     novella.py         amending instructions: parsed, applied to a law
     motions.py         a módosító javaslat's points as diffs of the bill
     scrape.py          per bill → law-changes-<cycle>.json
+    evaluate.py        the applier checked against njt for adopted bills (cache only)
   aktualis/
     page.py            the Aktuális portal page: its documents + the House
                        Committee's next meeting

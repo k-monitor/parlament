@@ -6,4 +6,5 @@ evolution through its egységes javaslat, and each amendment as a diff.
 * :mod:`.novella` — amending instructions parsed and applied to a law
 * :mod:`.motions` — a módosító javaslat's points as diffs of the bill
 * :mod:`.scrape` — the stage that ties them together per bill
+* :mod:`.evaluate` — the applier measured against njt on adopted bills
 """

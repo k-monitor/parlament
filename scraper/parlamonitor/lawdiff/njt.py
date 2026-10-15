@@ -55,14 +55,23 @@ EMPTY_RETRY_WAIT = 10.0
 
 # Bumped whenever `parse` changes what it extracts, so cached parses are redone
 # from the stored page instead of being trusted.
-PARSE_VERSION = 5
+# 11: sub-points of a numbered point (``betusAlPont``), provisions set as
+#    slices (``szelet`` with a § id) and unnumbered subtitles (``tagoloCim``)
+#    are units; a § body njt
+#    numbers internally ("886") is addressed as the §'s ``@BE0``, a chapter's
+#    title as the chapter's ``@CIM``; ids are canonical (``canonical``).
+PARSE_VERSION = 11
 
 NODE_CLASSES = frozenset({
     "szakasz", "bekezdesNyito", "betusPontNyito", "szamosPontNyito",
-    "ketbetusAlPont", "bekezdesZaro", "pontZaro", "alcim", "fejezet",
+    "ketbetusAlPont", "betusAlPont", "bekezdesZaro", "pontZaro", "alcim", "fejezet",
+    "tagoloCim", "tagolo", "focim", "focimCim", "konyv", "konyvcim",
     "fejezetCim", "resz", "reszcim", "preambulum"})
 _POINT_CLASSES = frozenset({"bekezdesNyito", "betusPontNyito", "szamosPontNyito"})
-_UNTITLED_SECTION = re.compile(r"^(\d+(?:/[A-Z])?\. §)\s*(.*)$")
+# A heading's title is the unit after it, with no id of its own.
+_TITLE_OF = {"fejezetCim": "fejezet", "reszcim": "resz", "focimCim": "focim",
+             "konyvcim": "konyv"}
+_UNTITLED_SECTION = re.compile(r"^((?:\d+:)?\d+(?:/[A-Z])?\. §)\s*(.*)$")
 
 
 class BudgetExhausted(Exception):
@@ -181,9 +190,13 @@ class _LawParser(HTMLParser):
         elif tag == "div":
             ident = a.get("id") or ""
             unit_cls = cls & NODE_CLASSES
+            if not unit_cls and "szelet" in cls and (self._pending_jh or "").startswith("SZ"):
+                # some laws set their provisions as "slices" (Mttv. 203. §);
+                # an annex's slices have numbers or "RR…" ids and stay out
+                unit_cls = {_slice_class(self._pending_jh)}
             if unit_cls and ident.startswith("sc"):
                 self._unit = {"jh": self._pending_jh, "cls": next(iter(unit_cls)),
-                              "text": [], "label": [], "fn": []}
+                              "text": [], "label": [], "fn": [], "sc": ident}
                 self._pending_jh = None
                 self._divs = 0
                 self._label_done = False
@@ -233,6 +246,18 @@ class _LawParser(HTMLParser):
         sink["text"].append(data)
         if self._unit is not None and any(self._spans):
             self._unit["label"].append(data)
+
+
+def _slice_class(jh: str) -> str:
+    """The class a provision set as a ``szelet`` would have, from its id."""
+    last = jh.split("@")[-1]
+    if last.startswith("BE"):
+        return "bekezdesNyito"
+    if last.startswith("AP"):
+        return "ketbetusAlPont"
+    if last.startswith("PO"):
+        return "szamosPontNyito" if last[2:3].isdigit() else "betusPontNyito"
+    return "szakasz" if "@" not in jh else "bekezdesNyito"
 
 
 def _note(raw: dict) -> dict:
@@ -287,8 +312,26 @@ def parse(page: str, blocks: str = "") -> dict:
             jh = (last_jh or "").split(cut)[0] + "@ZARO"
         else:
             jh = r["jh"]
+            prev = units[-1] if units else None
+            if jh == "TA":
+                # an unnumbered subtitle njt left without its number: named
+                # after its element, as njt names the others ("TA739")
+                jh = "TA" + r["sc"].rsplit("-", 1)[-1]
+            if jh and jh.isdigit():
+                # njt's internal number, not an address: the body of a §
+                # without numbered paragraphs (its "@BE0"), or a chapter's title
+                jh = None
+                if prev and prev["jh"] and prev["cls"] == "szakasz":
+                    jh = f"{prev['jh']}@BE0"
+                elif prev and prev["jh"] and prev["cls"] in ("fejezet", "resz"):
+                    jh = f"{prev['jh']}@CIM"
+            elif not jh and cls in _TITLE_OF and prev and prev["jh"] \
+                    and prev["cls"] == _TITLE_OF[cls]:
+                jh = f"{prev['jh']}@CIM"    # "II. Fejezet" is one unit, its title the next
             if cls == "szakasz" or (cls in _POINT_CLASSES and jh and "@" in jh):
                 last_jh = jh
+        raw_jh = r["jh"]
+        jh = canonical(jh)
         # An untitled § carries its number inside its first paragraph's label
         # ("145. § (1)"); it belongs to the section.
         m = _UNTITLED_SECTION.match(label)
@@ -298,9 +341,25 @@ def parse(page: str, blocks: str = "") -> dict:
                     prev["label"] = prev["label"] or m.group(1)
                     break
             label = m.group(2)
-        units.append({"jh": jh, "cls": cls, "label": label, "text": text,
-                      "fn": [main.notes[f] for f in r["fn"] if f in main.notes]})
+        unit = {"jh": jh, "cls": cls, "label": label, "text": text,
+                "fn": [main.notes[f] for f in r["fn"] if f in main.notes]}
+        if raw_jh and raw_jh != jh:
+            unit["anchor"] = raw_jh      # what the page itself calls it
+        units.append(unit)
     return {"title": main.title, "units": units}
+
+
+def canonical(jh: str | None) -> str | None:
+    """One id per unit. njt files the points of a § without numbered
+    paragraphs under ``SZ4@BE0@POF`` or ``SZ4@POF`` — both, now and then
+    within one § — and a bill cites them as ``4. § f) pont``, so the ``@BE0``
+    is dropped below the §'s own opening text (which stays ``SZ4@BE0``). A
+    stray dot or bracket some ids carry ("…@AP24.", "…@APZSI)") goes too, and
+    so does the slash of a "28/b." point."""
+    if not jh:
+        return jh
+    jh = re.sub(r"[.)]+(?=@|$)", "", re.sub(r"^([^@]+)@BE0@", r"\1@", jh))
+    return re.sub(r"@PO(\d+)/([A-Z])", r"@PO\1\2", jh)     # "PO28/B" as the bill cites it
 
 
 def deferred_blocks(page: str) -> list[dict]:
@@ -328,14 +387,16 @@ def flatten(units: list[dict], jh: str) -> str:
     nothing but labels left reads as empty: a repealed § is gone, and one
     whose number is refilled is new."""
     sub = subtree(units, jh)
-    if not any(u["text"] for u in sub):
+    # a chapter's number is its text ("III. Fejezet"): it stays when the
+    # chapter is repealed, as a § keeps its bare number
+    if not any(u["text"] for u in sub if u["cls"] != "fejezet"):
         return ""
     parts = [f"{u['label']} {u['text']}".strip() for u in sub
              if u["text"] or (u["cls"] == "szakasz" and u["label"])]
     return re.sub(r"\s+", " ", " ".join(parts)).strip()
 
 
-_LABEL_PARTS = re.compile(r"^(SZ|BE|PO|AP|FE|AC|RE)(\d*)([A-Z]*)$")
+_LABEL_PARTS = re.compile(r"^(SZ|BE|PO|AP|FE|AC|RE)((?:\d+:)?\d*)([A-Z]*)$")
 
 
 def unit_label(jh: str) -> str:
@@ -344,6 +405,24 @@ def unit_label(jh: str) -> str:
     for part in (jh or "").split("@"):
         if part == "ZARO":
             out.append("záró szövegrész")
+            continue
+        if part == "CIM":
+            out.append("címe")
+            continue
+        if part == "PR":
+            out.append("preambulum")
+            continue
+        if re.fullmatch(r"TA\d+", part):      # a subtitle without a number
+            out.append("alcím")
+            continue
+        if re.fullmatch(r"FC\d+", part):
+            out.append(f"{part[2:]}. Cím")
+            continue
+        if part.startswith("KO") and part[2:].isalpha():
+            out.append(f"{part[2:].capitalize()} Könyv")
+            continue
+        if part.startswith("RE") and part[2:].isalpha() and not re.fullmatch(r"[IVXLCDM]+", part[2:]):
+            out.append(f"{part[2:].capitalize()} Rész")
             continue
         m = _LABEL_PARTS.match(part)
         if not m:
@@ -357,7 +436,7 @@ def unit_label(jh: str) -> str:
         elif kind == "PO":
             out.append(f"{num}{let.lower()}. pont" if num else f"{let.lower()}) pont")
         elif kind == "AP":
-            out.append(f"{let.lower()}) alpont")
+            out.append(f"{num}. alpont" if num else f"{let.lower()}) alpont")
         elif kind == "FE":
             out.append(f"{let}. Fejezet")
         elif kind == "AC":
@@ -380,12 +459,19 @@ def _iso(ts: float) -> str:
 class NjtStore:
     """Fetches njt time states on demand and keeps them on disk.
 
-    A time state is immutable once published, so its page is fetched once and
-    kept (xz-compressed — a long law's page is over a megabyte, its xz a tenth
-    of that); the parse is cached beside it under ``PARSE_VERSION`` so a parser
-    change re-parses from disk instead of refetching. Only the version *list*
-    goes stale — a newly promulgated amendment adds a state — so it is refetched
-    once it is older than ``versions_ttl`` seconds."""
+    A state that was in force (or past) when fetched never changes, so its page
+    is fetched once and kept (xz-compressed — a long law's page is over a
+    megabyte, its xz a tenth of that); the parse is cached beside it under
+    ``PARSE_VERSION`` so a parser change re-parses from disk instead of
+    refetching. The version *list* goes stale — a newly promulgated amendment
+    adds a state — so it is refetched once older than ``versions_ttl`` seconds.
+
+    A **future** state is not final: njt regenerates it in place, under the
+    same version number, when a later act amends the law before it starts (the
+    Szja's state from 2027-01-01, an old id, cites a mid-2026 act). So each
+    page is kept with the version ids njt listed when it was fetched
+    (``v<n>.meta.json``), and a page of a state that was still to come is
+    fetched again once the law's list holds an id it did not."""
 
     def __init__(self, http: HttpClient, root: Path, *, budget: Budget,
                  versions_ttl: float = 24 * 3600):
@@ -437,14 +523,15 @@ class NjtStore:
         """One time state, parsed: ``{docId, version, title, units}``.
 
         ``offline`` reads the disk cache only — a state never fetched is None
-        rather than a request — and does not keep the state in memory (a bulk
-        read of many laws, one at a time)."""
+        rather than a request, and a cached one is taken as it is — and does not
+        keep the state in memory (a bulk read of many laws, one at a time)."""
         key = (doc, int(version))
         if key in self._mem:
             return self._mem[key]
         d = self._dir(doc)
         parsed_f = d / f"v{int(version)}.parsed.json.xz"
-        if parsed_f.exists():
+        refresh = not offline and self.stale(doc, int(version))
+        if parsed_f.exists() and not refresh:
             try:
                 cached = json.loads(lzma.decompress(parsed_f.read_bytes()))
                 if cached.get("parseVersion") == PARSE_VERSION:
@@ -453,7 +540,7 @@ class NjtStore:
                     return cached
             except (OSError, ValueError, lzma.LZMAError):
                 pass
-        got = self._page(doc, int(version), offline=offline)
+        got = self._page(doc, int(version), offline=offline, refresh=refresh)
         if got is None:
             return None
         page, blocks = got
@@ -468,44 +555,106 @@ class NjtStore:
             self._mem[key] = parsed
         return parsed
 
-    def _page(self, doc: str, version: int, *,
-              offline: bool = False) -> tuple[str, str] | None:
-        d = self._dir(doc)
-        page_f = d / f"v{version}.html.xz"
-        blocks_f = d / f"v{version}.blocks.html.xz"
-        if page_f.exists():
-            page = lzma.decompress(page_f.read_bytes()).decode("utf-8")
-        elif offline:
+    # -- a future state's freshness
+
+    def _listed(self, doc: str) -> list[dict]:
+        """The version list as last fetched — never a request."""
+        try:
+            return json.loads((self._dir(doc) / "versions.json")
+                              .read_text(encoding="utf-8"))["data"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return []
+
+    def _meta(self, doc: str, version: int) -> dict | None:
+        try:
+            return json.loads((self._dir(doc) / f"v{version}.meta.json")
+                              .read_text(encoding="utf-8"))
+        except (OSError, ValueError):
             return None
-        else:
-            page = ""
-            for attempt in range(2):
-                self.budget.spend()
-                page = self.http.get_text(f"{BASE}/jogszabaly/{doc}.{version}")
-                self.http.polite_sleep()
-                if 'class="jhId"' in page:
-                    break
-                if not attempt:
-                    logger.info("njt %s.%s came back without its text; retrying", doc, version)
-                    time.sleep(EMPTY_RETRY_WAIT)
-            else:
-                raise Unavailable(f"njt {doc}.{version}: no law text in the page")
-            d.mkdir(parents=True, exist_ok=True)
-            page_f.write_bytes(lzma.compress(page.encode("utf-8")))
-        wanted = deferred_blocks(page)
-        if not wanted:
-            return page, ""
-        if blocks_f.exists():
-            return page, lzma.decompress(blocks_f.read_bytes()).decode("utf-8")
-        if offline:
-            return None
+
+    def fetched_at(self, doc: str, version: int) -> str | None:
+        """When the cached page of a state was fetched (ISO), if it is cached."""
+        meta = self._meta(doc, version)
+        if meta:
+            return meta.get("fetchedAt")
+        page_f = self._dir(doc) / f"v{version}.html.xz"
+        return _iso(page_f.stat().st_mtime) if page_f.exists() else None
+
+    def stale(self, doc: str, version: int) -> bool:
+        """Whether a cached page may be out of date: its state was still to come
+        when it was fetched, and the law has gained a state since (njt then
+        regenerates the future ones in place). A page cached before this was
+        tracked is taken as stale once, if its state was to come then."""
+        fetched = self.fetched_at(doc, version)
+        if fetched is None:
+            return False
+        listed = self._listed(doc)
+        entry = next((v for v in listed if v.get("version") == version), None)
+        if entry is None or (entry.get("comingIntoForce") or "")[:10] <= fetched[:10]:
+            return False
+        meta = self._meta(doc, version)
+        if meta is None:
+            return True
+        return bool({v.get("version") for v in listed} - set(meta.get("knownVersions") or []))
+
+    # -- pages
+
+    def _fetch_page(self, doc: str, version: int) -> str:
+        for attempt in range(2):
+            self.budget.spend()
+            page = self.http.get_text(f"{BASE}/jogszabaly/{doc}.{version}")
+            self.http.polite_sleep()
+            if 'class="jhId"' in page:
+                return page
+            if not attempt:
+                logger.info("njt %s.%s came back without its text; retrying", doc, version)
+                time.sleep(EMPTY_RETRY_WAIT)
+        raise Unavailable(f"njt {doc}.{version}: no law text in the page")
+
+    def _fetch_blocks(self, doc: str, version: int, wanted: list[dict]) -> str:
         self.budget.spend()
         blocks = self.http.post_text(
             f"{BASE}/ajax/njtGetBlock.json",
             json_body={"documentId": f"{doc}.{version}", "data": wanted},
             headers={"X-Requested-With": "XMLHttpRequest"})
         self.http.polite_sleep()
-        blocks_f.write_bytes(lzma.compress(blocks.encode("utf-8")))
+        return blocks
+
+    def _page(self, doc: str, version: int, *, offline: bool = False,
+              refresh: bool = False) -> tuple[str, str] | None:
+        d = self._dir(doc)
+        page_f = d / f"v{version}.html.xz"
+        blocks_f = d / f"v{version}.blocks.html.xz"
+        if page_f.exists() and not refresh:
+            page = lzma.decompress(page_f.read_bytes()).decode("utf-8")
+            wanted = deferred_blocks(page)
+            if not wanted:
+                return page, ""
+            if blocks_f.exists():
+                return page, lzma.decompress(blocks_f.read_bytes()).decode("utf-8")
+            if offline:
+                return None
+            blocks = self._fetch_blocks(doc, version, wanted)
+            blocks_f.write_bytes(lzma.compress(blocks.encode("utf-8")))
+            return page, blocks
+        if offline:
+            return None
+        # A state read whole — its page and deferred blocks — is kept only
+        # once both are in hand, so a refreshed page never pairs with old blocks.
+        page = self._fetch_page(doc, version)
+        wanted = deferred_blocks(page)
+        blocks = self._fetch_blocks(doc, version, wanted) if wanted else ""
+        d.mkdir(parents=True, exist_ok=True)
+        page_f.write_bytes(lzma.compress(page.encode("utf-8")))
+        if wanted:
+            blocks_f.write_bytes(lzma.compress(blocks.encode("utf-8")))
+        elif blocks_f.exists():
+            blocks_f.unlink()
+        entry = next((v for v in self._listed(doc) if v.get("version") == version), {})
+        (d / f"v{version}.meta.json").write_text(json.dumps({
+            "fetchedAt": _iso(_now()), "comingIntoForce": entry.get("comingIntoForce"),
+            "knownVersions": sorted(v.get("version") for v in self._listed(doc)
+                                    if v.get("version") is not None)}), encoding="utf-8")
         return page, blocks
 
 

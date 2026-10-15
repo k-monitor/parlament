@@ -35,11 +35,13 @@ fetch or parse costs that bill's record, never the pass.
 
 from __future__ import annotations
 
+import difflib
 import gzip
 import hashlib
 import json
 import logging
 import lzma
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -69,7 +71,8 @@ _TEXT_LIMIT = 900
 # 2: each change carries its units as they would read (`afterUnits`) and, when
 #    new to the law, the unit of the current text it follows (`anchor`).
 # 3: no `afterUnits` for a unit rebuilt from the bill's wording (it is flat).
-RECORD_VERSION = 3
+# 4: the evolution pairs sections by content; a renumbered one says `from`.
+RECORD_VERSION = 4
 
 
 def _now_iso() -> str:
@@ -82,7 +85,7 @@ class DocCache:
     """Extracted documents, one xz JSON per URL and extraction kind.
 
     Published irományok are static, so an extraction is redone only when
-    :data:`.pdftext.EXTRACT_VERSION` moves."""
+    :data:`.pdftext.EXTRACT_VERSIONS` moves for its kind."""
 
     def __init__(self, http: HttpClient, root: Path, budget: njt.Budget, *,
                  force: bool = False):
@@ -100,7 +103,7 @@ class DocCache:
         if f.exists() and not self.force:
             try:
                 cached = json.loads(lzma.decompress(f.read_bytes()))
-                if cached.get("extractVersion") == pdftext.EXTRACT_VERSION \
+                if cached.get("extractVersion") == pdftext.EXTRACT_VERSIONS[kind] \
                         and cached.get("url") == url:
                     self.reused += 1
                     return cached
@@ -122,7 +125,7 @@ class DocCache:
             lines = [] if scan else (pdftext.lines(pdf) if kind == "lines"
                                      else pdftext.marked_lines(pdf))
             out = {"scan": scan, "lines": lines}
-        out.update(url=url, kind=kind, extractVersion=pdftext.EXTRACT_VERSION,
+        out.update(url=url, kind=kind, extractVersion=pdftext.EXTRACT_VERSIONS[kind],
                    fetchedAt=_now_iso())
         # Only a document actually read is kept: a 404 or an error page is asked
         # again on a later pass rather than remembered as the answer.
@@ -222,10 +225,14 @@ def _law_entry(doc: str, title: str | None, abbr: str | None, method: str,
     ver = (target or base or {}).get("version")
     base_jhs = {u["jh"] for u in base_units if u["jh"]}
     pos = {u["jh"]: i for i, u in enumerate(after_units) if u["jh"]}
+    # the page's own id of a unit whose id was made canonical (njt.canonical)
+    anchors = {u["jh"]: u["anchor"] for u in (*base_units, *after_units)
+               if u.get("anchor") and u["jh"]}
     return {"docId": doc, "title": title, "abbr": abbr, "url": njt.law_url(doc),
             "method": method, "base": base, "target": target,
             "changes": [{**_placed(c, base_jhs, after_units, pos),
-                         "url": njt.law_url(doc, ver, c["jh"])} for c in changes]}
+                         "url": njt.law_url(doc, ver, anchors.get(c["jh"], c["jh"]))}
+                        for c in changes]}
 
 
 def _plan(store: njt.NjtStore, parsed: dict, act: dict | None) -> list[dict]:
@@ -246,7 +253,10 @@ def _plan(store: njt.NjtStore, parsed: dict, act: dict | None) -> list[dict]:
             plan.append({"doc": doc, "missing": True})
             continue
         before = (njt.version_on(versions, act["date"]) or latest) if act else None
-        plan.append({"doc": doc, "latest": latest, "before": before})
+        # every state the law has: a new one (an amendment promulgated) can
+        # change the newest state in place, so it must redo the bill
+        ids = sorted(v["version"] for v in versions if v.get("version") is not None)
+        plan.append({"doc": doc, "latest": latest, "before": before, "ids": ids})
     return plan
 
 
@@ -327,19 +337,78 @@ def _provisions(lines: list[dict]) -> list[tuple[str, str]]:
     return out
 
 
+def _words(text: str) -> set[str]:
+    return set(re.findall(r"\w+", text.lower()))
+
+
+def _similar(a: str, b: str) -> float:
+    wa, wb = _words(a), _words(b)
+    return len(wa & wb) / len(wa | wb) if wa or wb else 1.0
+
+
+# How alike two sections must be to be read as one section reworded rather
+# than one dropped and another added.
+_SAME_SECTION = 0.35
+
+
+def _pair_up(a: list[tuple[str, str]], b: list[tuple[str, str]]) -> list[tuple[int | None, int | None]]:
+    """The two texts' sections paired, in order: ``(i, j)`` one section in both,
+    ``(i, None)`` dropped, ``(None, j)`` added.
+
+    Sections are matched by what they say, not by their number: a § the
+    egységes javaslat inserts or drops renumbers every one after it, and
+    comparing "78. §" with "78. §" would then set each against its neighbour.
+    Identical sections pair first, wherever they stand; between them the rest
+    pair in order by their words in common."""
+    sm = difflib.SequenceMatcher(None, [t for _, t in a], [t for _, t in b], autojunk=False)
+    out: list[tuple[int | None, int | None]] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            out += list(zip(range(i1, i2), range(j1, j2)))
+            continue
+        # in-order matching that keeps the most likeness (an LCS weighted by it)
+        n, m = i2 - i1, j2 - j1
+        # a section that keeps its number needs less in common to be the same
+        # one rewritten (rather than one dropped and another added under it)
+        sim = [[_similar(a[i1 + x][1], b[j1 + y][1]) + (0.25 if a[i1 + x][0] == b[j1 + y][0] else 0)
+                for y in range(m)] for x in range(n)]
+        best = [[0.0] * (m + 1) for _ in range(n + 1)]
+        for x in range(n - 1, -1, -1):
+            for y in range(m - 1, -1, -1):
+                take = sim[x][y] + best[x + 1][y + 1] if sim[x][y] >= _SAME_SECTION else -1
+                best[x][y] = max(take, best[x + 1][y], best[x][y + 1])
+        x = y = 0
+        while x < n or y < m:
+            if x < n and y < m and sim[x][y] >= _SAME_SECTION \
+                    and best[x][y] == sim[x][y] + best[x + 1][y + 1]:
+                out.append((i1 + x, j1 + y)); x += 1; y += 1
+            elif x < n and (y == m or best[x][y] == best[x + 1][y]):
+                out.append((i1 + x, None)); x += 1
+            else:
+                out.append((None, j1 + y)); y += 1
+    return out
+
+
 def _evolution(main: dict, egys: dict, rec: dict, egys_motion: dict) -> dict | None:
     a = _provisions(main["lines"])
     b = _provisions(egys["lines"])
     if len(a) < 2 or len(b) < 2:
         return None
-    da, db = dict(a), dict(b)
-    keys = list(dict.fromkeys([k for k, _ in a] + [k for k, _ in b]))
-    changed = [{"key": k, "before": da.get(k, ""), "after": db.get(k, "")}
-               for k in keys if da.get(k, "") != db.get(k, "")]
+    changed, unchanged = [], 0
+    for i, j in _pair_up(a, b):
+        ka, ta = a[i] if i is not None else (None, "")
+        kb, tb = b[j] if j is not None else (None, "")
+        if ta == tb:
+            unchanged += 1
+            continue
+        entry = {"key": kb or ka, "before": ta, "after": tb}
+        if ka and kb and ka != kb:
+            entry["from"] = ka       # renumbered: what it was in the bill as submitted
+        changed.append(entry)
     return {"from": {"number": rec.get("billNumber"), "url": rec.get("textUrl")},
             "to": {"number": egys_motion.get("billNumber"), "url": egys_motion.get("textUrl"),
                    "type": egys_motion.get("type")},
-            "provisions": changed, "unchanged": len(keys) - len(changed)}
+            "provisions": changed, "unchanged": unchanged}
 
 
 def build_record(rec: dict, docs: DocCache, store: njt.NjtStore, previous: dict | None,
@@ -351,7 +420,7 @@ def build_record(rec: dict, docs: DocCache, store: njt.NjtStore, previous: dict 
     amends = _amendments(rec)
     doc_key = [rec.get("textUrl"), egys_m and egys_m.get("textUrl"),
                [m["textUrl"] for m in amends], rec.get("status"), act]
-    versions = [novella.PARSER_VERSION, pdftext.EXTRACT_VERSION, njt.PARSE_VERSION,
+    versions = [novella.PARSER_VERSION, pdftext.EXTRACT_VERSIONS, njt.PARSE_VERSION,
                 RECORD_VERSION]
     # An adopted bill read off njt is final: same documents, same code → reuse.
     if not force and previous and previous.get("final") \
@@ -376,7 +445,7 @@ def build_record(rec: dict, docs: DocCache, store: njt.NjtStore, previous: dict 
     parsed = novella.parse_bill(src_doc["lines"]) if src_doc else None
     plan = _plan(store, parsed, act) if parsed else []
     used = [[p["doc"], p.get("before") and p["before"]["version"],
-             p.get("latest") and p["latest"]["version"]] for p in plan]
+             p.get("latest") and p["latest"]["version"], p.get("ids")] for p in plan]
     fingerprint = _fingerprint(doc_key, versions, used)
     if not force and previous and previous.get("fingerprint") == fingerprint:
         return previous
@@ -557,10 +626,12 @@ def save_law_texts(paths: Paths, cycle: int, registry: dict) -> bool:
     root = paths.njt_dir()
     # A state is on disk when its page is: the parse is redone from it if need be.
     cached = [(doc, ver) for doc, ver in wanted if (root / doc / f"v{ver}.html.xz").exists()]
-    fp = _fingerprint(cached, njt.PARSE_VERSION)
+    store = njt.NjtStore(None, root, budget=njt.Budget(None))
+    # a future state fetched again (njt regenerates them) is a new text
+    fp = _fingerprint([(doc, ver, store.fetched_at(doc, ver)) for doc, ver in cached],
+                      njt.PARSE_VERSION)
     if out.exists() and (_texts_meta(out) or {}).get("fingerprint") == fp:
         return False
-    store = njt.NjtStore(None, root, budget=njt.Budget(None))
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(out.suffix + ".tmp")
     n = 0

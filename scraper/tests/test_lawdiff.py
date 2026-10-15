@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from parlamonitor.lawdiff import motions, njt, novella
+from parlamonitor.lawdiff import motions, njt, novella, pdftext
 from parlamonitor.lawdiff import scrape as stage
 
 # --- njt markup -----------------------------------------------------------------
@@ -180,8 +180,10 @@ def test_apply_and_changes_against_njt_units():
     pred, log = novella.apply(units, parsed["instructions"], "2019-80-00-00")
     assert all(r["ok"] for r in log if r["ins"]["op"] != "none"), [r["why"] for r in log]
     by = {u["jh"]: u for u in pred}
-    # replace: the point is the quoted text now; the closing text is edited too
-    assert by["SZ26@BE4@POA"]["text"] == "a) részeként működő szakképző intézmények ellátásáért, valamint"
+    # replace: the point is the quoted text now, in its place and under its
+    # label; the closing text is edited too
+    assert by["SZ26@BE4@POA"]["label"] == "a)" and by["SZ26@BE4@POA"]["cls"] == "betusPontNyito"
+    assert by["SZ26@BE4@POA"]["text"] == "részeként működő szakképző intézmények ellátásáért, valamint"
     assert by["SZ26@BE4@ZARO"]["text"] == "felel 2027. december 31-éig."
     # insert of two paragraphs splits at each paragraph's own label — not at the
     # "(4b)" quoted inside the second one's text — and lands after (4)
@@ -424,9 +426,9 @@ def test_adopted_bill_is_read_off_njt_and_final():
 
 def test_changes_carry_what_the_full_law_view_needs():
     """Each change keeps its units as they would read — unless the applier
-    rebuilt them from the bill's wording, which is one flat run of text with
-    the labels inline — and a unit new to the law names the unit of the
-    current text it follows."""
+    rebuilt several of them from the bill's wording, which is one flat run of
+    text with the labels inline — and a unit new to the law names the unit of
+    the current text it follows."""
     units = njt.parse(PAGE)["units"]
     docs = _Docs({"https://x/00438.pdf": {"scan": False, "lines": BILL}})
     rec = stage.build_record(_registry_record(), docs, _Store(units, units), None)
@@ -435,8 +437,12 @@ def test_changes_carry_what_the_full_law_view_needs():
     (para,) = by["SZ26@BE3"]["afterUnits"]
     assert para[:3] == ["SZ26@BE3", "bekezdesNyito", "(3)"] and "szakmai főigazgató-" in para[3]
     assert "anchor" not in by["SZ26@BE3"]
-    # its point replaced with the bill's text: nothing structured to show
-    assert "afterUnits" not in by["SZ26@BE4"]
+    # its point replaced with the bill's text: one unit, still in its place
+    after = {u[0]: u for u in by["SZ26@BE4"]["afterUnits"]}
+    assert after["SZ26@BE4@POA"][2:] == ["a)", "részeként működő szakképző intézmények "
+                                         "ellátásáért, valamint"]
+    # new paragraphs are rebuilt from the bill's wording: nothing structured
+    assert "afterUnits" not in by["SZ26@BE4A"]
     # new paragraphs follow the last unit of the (4) they come after
     assert by["SZ26@BE4A"]["anchor"] == by["SZ26@BE4B"]["anchor"] == "SZ26@BE4@ZARO"
     # a repealed paragraph keeps its bare number
@@ -538,8 +544,15 @@ def test_a_new_subtitle_is_read_as_the_sections_it_brings():
     pred, log = novella.apply(njt.parse(PAGE)["units"], [ins], "2019-80-00-00")
     assert log[0]["ok"]
     by = {u["jh"]: u for u in pred}
-    assert by["SZ27A"]["text"].startswith("Átmeneti szabályok 27/A. §")
+    # the subtitle is a heading of its own (njt's unnumbered "tagoló"), not
+    # glued onto the first §
+    assert by["SZ27A"]["text"] == "27/A. § Az átmenet szabályai."
     assert by["SZ27B"]["text"] == "27/B. § A záró szabályok."
+    order = [u["jh"] for u in pred]
+    assert order.index("TA~27A") == order.index("SZ27A") - 1
+    assert by["TA~27A"]["cls"] == "tagoloCim" and by["TA~27A"]["text"] == "Átmeneti szabályok"
+    ref = {c["jh"]: c["ref"] for c in novella.changes(njt.parse(PAGE)["units"], pred, log)}
+    assert ref["TA~27A"] == "„Átmeneti szabályok” alcím"
 
 
 def test_an_annex_target_is_reported_as_an_annex():
@@ -640,3 +653,498 @@ def test_the_bills_own_annex_is_not_part_of_its_last_section():
     assert [(u["provision"], u["reason"]) for u in rec["unresolved"]] == [
         ("1. §", "hatálybalépés elmarad"), ("1. melléklet 1. pont", "melléklet"),
         ("1. melléklet 2. pont", "melléklet")]
+
+
+# --- found by checking the applier against njt's own states (2026-10-15) --------------
+
+def test_one_replacement_in_several_sections_reaches_every_one():
+    """T/666 14. § g): fifteen provisions in one list. Each § started the
+    reference over, so only the last one was kept (and the part of another)."""
+    refs = novella.parse_refs(
+        "348. § (3) bekezdésében, 350. § (4) bekezdésében, 356. § (1) bekezdés b) "
+        "pontjában, 357. § (5) és (6) bekezdésében, 384. § (3) bekezdés nyitó "
+        "szövegrészében és 419. § (3) bekezdésében")
+    assert refs == [("SZ348@BE3", None), ("SZ350@BE4", None), ("SZ356@BE1@POB", None),
+                    ("SZ357@BE5", None), ("SZ357@BE6", None), ("SZ384@BE3", "ny"),
+                    ("SZ419@BE3", None)]
+    # a later unit no deeper than the one before keeps what they share
+    assert novella.parse_refs("26. § (2) bekezdés a) pontja és (3) bekezdése") == [
+        ("SZ26@BE2@POA", None), ("SZ26@BE3", None)]
+    (ins,) = novella.parse_instruction(
+        "A Bv. tv. 26. § (3) bekezdésében és 27. § (1) bekezdésében az ⟦0⟧ szövegrész "
+        "helyébe az ⟦1⟧ szöveg lép.", ["a", "b"], {"Bv. tv.": "D"}, "1. §")
+    assert ins["refs"] == ["SZ26@BE3", "SZ27@BE1"] and "parts" not in ins
+
+
+def test_more_reference_shapes():
+    groups = novella.ref_groups
+    assert novella.parse_ref("41. és 42. alcíme")[0] == ["AC41", "AC42"]
+    assert novella.parse_ref("164. § (1) bekezdés zs) pont zsi) alpontjában")[0] == [
+        "SZ164@BE1@POZS@APZSI"]
+    assert novella.parse_ref("341. § (1) bekezdés 2. pont a) alpontjában")[0] == [
+        "SZ341@BE1@PO2@APA"]
+    assert novella.parse_ref("4. § 23/f. pontja")[0] == ["SZ4@PO23F"]
+    assert novella.parse_ref("6:105. § (1) bekezdés c) pontjában")[0] == ["SZ6:105@BE1@POC"]
+    assert novella.parse_ref("a következő 24–28. ponttal")[0] == [
+        "PO24", "PO25", "PO26", "PO27", "PO28"]
+    assert novella.parse_ref("(4a)–(4c) bekezdése")[0] == ["BE4A", "BE4B", "BE4C"]
+    assert novella.parse_ref("XIII. Fejezet 47. alcíme")[0] == ["AC47"]
+    assert novella.parse_ref("ÖTÖDIK Rész címében") == (["REÖTÖDIK"], "cim")
+    assert novella.parse_ref("40/H. alcím címében") == (["AC40H"], "cim")
+    assert novella.parse_ref("preambulumában")[0] == ["PR"]
+    # a range is marked as one, so the applier can read the law between its ends
+    (g,) = groups("7. § (26)–(29) bekezdése")
+    assert g["range"] and g["word"] == "bekezdése"
+    # a reference that only places another is not a target
+    loc, title = groups("a 394. §-át követő ⟦3⟧ alcíme")
+    assert loc["locator"] and not title["locator"] and title["refs"] == [("ACQ3", None)]
+    # an annex's insides stay in the annex — not a point of the § before it,
+    # nor the law's own chapter or preamble
+    assert novella.parse_refs("33. § (2) bekezdés 61. pontja, és b) melléklete XXII. "
+                              "fejezet 1. pontjának a) alpontja") == [
+        ("SZ33@BE2@PO61", None), ("MEL@PO1@APA", None)]
+    assert novella.parse_refs("3. melléklet I. Fejezet 4. pontjában") == [("MEL3@FEI@PO4", None)]
+    assert novella.parse_refs("2. melléklet és 5. §-a") == [("MEL2", None), ("SZ5", None)]
+    # words that name something else cut a list: no point of the wrong provision
+    assert novella.parse_refs("33. § (2) bekezdés 61. pontja, és a 2014. évi törvény "
+                              "1. pontja") == [("SZ33@BE2@PO61", None), ("PO1", None)]
+
+
+def test_a_repeal_list_tells_whole_units_from_fragments_by_case():
+    """T/359 2. §, T/123 4. §: a numbered list mixing whole units ("…
+    bekezdése") and fragments in units ("… bekezdésében az „X” szövegrész"),
+    items that only name a point of the provision the list hangs off, and two
+    fragments of one unit."""
+    tmpl = ("Hatályát veszti a Bt. 1. 5. § (1) bekezdés g) pontjában a ⟦0⟧ szövegrész, "
+            "2. 8. § (2) bekezdése, 3. 14. §-ában az ⟦1⟧ és a ⟦2⟧ szövegrész, "
+            "4. 22. § (6a)–(6c) bekezdése.")
+    ins = novella.parse_instruction(tmpl, ["x", "y", "z"], {"Bt.": "D"}, "2. §")
+    assert [(i["at"], i["op"], i["refs"], i.get("old")) for i in ins] == [
+        ("2. § 1.", "delete_text", ["SZ5@BE1@POG"], "x"),
+        ("2. § 2.", "repeal", ["SZ8@BE2"], None),
+        ("2. § 3.", "delete_text", ["SZ14"], "y"),
+        ("2. § 3.", "delete_text", ["SZ14"], "z"),
+        ("2. § 4.", "repeal", ["SZ22@BE6A", "SZ22@BE6B", "SZ22@BE6C"], None)]
+    tmpl = ("Hatályát veszti a Ksztv. 1. § (4) bekezdés a) f) pontjában az ⟦0⟧ szövegrész, "
+            "és b) g) pontja.")
+    a, b = novella.parse_instruction(tmpl, [", és"], {"Ksztv.": "D"}, "4. §")
+    assert (a["at"], a["op"], a["refs"]) == ("4. § a)", "delete_text", ["SZ1@BE4@POF"])
+    assert (b["at"], b["op"], b["refs"]) == ("4. § b)", "repeal", ["SZ1@BE4@POG"])
+    # a subtitle placed by the § it follows: the § itself is not repealed
+    (c,) = novella.parse_instruction(
+        "Hatályát veszti a Btk. 394. §-át követő ⟦0⟧ alcíme.", ["Kriptoeszközzel visszaélés"],
+        {"Btk.": "D"}, "1. §")
+    assert c["op"] == "repeal" and c["refs"] == ["AC=Kriptoeszközzel visszaélés"]
+
+
+def test_mistyped_quote_marks_do_not_swallow_the_rest_of_the_bill():
+    """T/359, T/173: a closing mark typed as an opening one („X„ szövegrész) or
+    as a straight one ("X" szöveg), and an opening one typed as two commas."""
+    lines = _lines(
+        ("2026. évi ..... törvény", 244),
+        ("1. §", 289),
+        ("Hatályát veszti a bányászatról szóló 1993. évi XLVIII. törvény (a továbbiakban: Bt.)", 57),
+        ("1. 14. §-ában a „– a munkaprogram alapján – „ szövegrész,", 58),
+        ("2. 15. § (2) bekezdésében a ,,, vagy a védőidom” szövegrész.", 57),
+        ("2. §", 289),
+        ("A Bt. 16. §-ában az „érvénytelenítésének lehetőségéről\" szöveg és az „x” szövegrész", 57),
+        ("helyébe az „y” szöveg lép.", 57),
+        ("3. §", 289),
+        ("Hatályát veszti a Bt. 17. §-a.", 57),
+    )
+    ins = novella.parse_bill(lines)["instructions"]
+    assert [(i["at"], i["op"], i.get("refs"), i.get("old")) for i in ins] == [
+        ("1. § 1.", "delete_text", ["SZ14"], "– a munkaprogram alapján –"),
+        ("1. § 2.", "delete_text", ["SZ15@BE2"], ", vagy a védőidom"),
+        ("2. §", "replace_text", ["SZ16"], "x"),
+        ("3. §", "repeal", ["SZ17"], None)]
+
+
+def test_a_long_subtitle_wrapped_over_several_lines_is_a_heading():
+    """T/341: "24. A bűnügyi nyilvántartási rendszerről, … törvény módosítása"
+    over three lines (one of them at the margin) was glued to the provision
+    before — which turned a whole-law repeal into an unreadable one."""
+    lines = _lines(
+        ("2026. évi ..... törvény", 244),
+        ("1. §", 289),
+        ("Hatályát veszti a Jövő Nemzedék Földje Alapítványról szóló 2021. évi XV. törvény.", 57),
+        ("35. A Magyar Kultúráért Alapítvány létrehozásáról, valamint a Magyar Kultúráért", 73),
+        ("Alapítvány részére történő vagyonjuttatásról szóló 2021. évi XVI. törvény", 58),
+        ("hatályon kívül helyezése", 236),
+        ("2. §", 283),
+        ("Hatályát veszti a Magyar Kultúráért Alapítvány létrehozásáról szóló 2021. évi XVI. törvény.", 57),
+    )
+    a, b = novella.parse_bill(lines)["instructions"]
+    assert (a["op"], a["doc"]) == ("repeal_law", "2021-15-00-00")
+    assert "Kultúráért" not in a["src"]
+    assert (b["op"], b["doc"]) == ("repeal_law", "2021-16-00-00")
+
+
+def test_replace_and_insert_in_one_sentence():
+    """T/173 4.–5. §: "… f) pontja helyébe a következő rendelkezés lép és e
+    bekezdés a következő g) ponttal egészül ki" — the g) was glued into f)."""
+    tmpl = ("A Tpt. 400. § (2) bekezdés f) pontja helyébe a következő rendelkezés lép és e "
+            "bekezdés a következő g) ponttal egészül ki: ⟦0⟧")
+    rep, ins = novella.parse_instruction(tmpl, ["f) új f.\ng) új g."], {"Tpt.": "D"}, "4. §")
+    assert (rep["op"], rep["refs"], rep["new"]) == ("replace", ["SZ400@BE2@POF"], "f) új f.\n")
+    assert (ins["op"], ins["parent"], ins["newrefs"], ins["new"]) == (
+        "insert", "SZ400@BE2", ["POG"], "g) új g.")
+
+
+def test_a_new_subtitle_brings_its_numbered_heading():
+    tmpl = "A Púétv. VII. Fejezete a következő alcímmel egészül ki: ⟦0⟧"
+    quote = "22/A. A még elégséges szolgáltatás\n154/A. § Első.\n154/B. § Második."
+    (ins,) = novella.parse_instruction(tmpl, [quote], {"Púétv.": "D"}, "16. §")
+    assert ins["newrefs"] == ["SZ154A", "SZ154B"]
+    assert ins["heading"] == [["AC22A", "alcim", "22/A.", "A még elégséges szolgáltatás"]]
+    units = _sec("154", "Régi.") + _sec("155", "Más.")
+    after, log = novella.apply(units, [ins], "D")
+    assert [u["jh"] for u in after if "@" not in u["jh"]] == [
+        "SZ154", "AC22A", "SZ154A", "SZ154B", "SZ155"]
+    by = {c["jh"]: c for c in novella.changes(units, after, log)}
+    assert by["SZ154A"]["after"] == "154/A. § Első."          # no heading glued on
+    assert by["AC22A"]["after"] == "22/A. A még elégséges szolgáltatás"
+
+
+def test_whole_subtitles_and_ranges_reach_what_the_law_has_between():
+    """T/341 80. § k): "43-48. alcíme" is every subtitle from 43 to 48 — 47/A
+    included — with every § under them; T/387: "(26)–(29) bekezdése" takes in
+    the (26a) inserted since."""
+    head = lambda jh, lab, t: {"jh": jh, "cls": "alcim", "label": lab, "text": t, "fn": []}  # noqa: E731
+    units = ([head("AC43", "43.", "Egy")] + _sec("100", "a") + [head("AC47A", "47/A.", "Köz")]
+             + _sec("101", "b") + [head("AC48", "48.", "Utolsó")] + _sec("102", "c")
+             + [head("AC49", "49.", "Marad")] + _sec("103", "d"))
+    (ins,) = novella.parse_instruction("Hatályát veszti az Ogytv. 43–48. alcíme.", [],
+                                       {"Ogytv.": "D"}, "80. §")
+    assert ins["ranges"] == [[0, 5]]
+    after, log = novella.apply(units, [ins], "D")
+    assert log[0]["ok"]
+    gone = {c["jh"] for c in novella.changes(units, after, log) if not c["after"]}
+    assert gone == {"AC43", "SZ100", "AC47A", "SZ101", "AC48", "SZ102"}
+    units = _sec("7") + [{"jh": f"SZ7@BE{k}", "cls": "bekezdesNyito", "label": f"({k.lower()})",
+                          "text": "x", "fn": []} for k in ("26", "26A", "27", "28", "29", "30")]
+    (ins,) = novella.parse_instruction("Hatályát veszti a Tao. 7. § (26)–(29) bekezdése.", [],
+                                       {"Tao.": "D"}, "13. §")
+    after, log = novella.apply(units, [ins], "D")
+    assert {c["jh"] for c in novella.changes(units, after, log)} == {
+        "SZ7@BE26", "SZ7@BE26A", "SZ7@BE27", "SZ7@BE28", "SZ7@BE29"}
+
+
+def test_titles_of_chapters_and_subtitles():
+    """"II. Fejezet címében …" is in the chapter's title (njt's next unit), not
+    a repeal of the chapter; a subtitle is found by its quoted title."""
+    units = [{"jh": "FEII", "cls": "fejezet", "label": "", "text": "II. Fejezet", "fn": []},
+             {"jh": "FEII@CIM", "cls": "fejezetCim", "label": "", "text": "A RENDŐRSÉG ÉS AZ ŐRSÉG",
+              "fn": []},
+             {"jh": "AC13", "cls": "alcim", "label": "13.", "text": "A terrorelhárítás", "fn": []}
+             ] + _sec("7/E", "Szöveg.")
+    a, = novella.parse_instruction("Hatályát veszti az Rtv. II. Fejezet címében az ⟦0⟧ szövegrész.",
+                                   [" ÉS AZ ŐRSÉG"], {"Rtv.": "D"}, "1. §")
+    b, = novella.parse_instruction("Hatályát veszti az Rtv. ⟦0⟧ alcíme.", ["A terrorelhárítás"],
+                                   {"Rtv.": "D"}, "2. §")
+    assert (a["op"], a["refs"], a["part"]) == ("delete_text", ["FEII"], "cim")
+    after, log = novella.apply(units, [a, b], "D")
+    assert [r["ok"] for r in log] == [True, True]
+    by = {u["jh"]: u for u in after}
+    assert by["FEII@CIM"]["text"] == "A RENDŐRSÉG" and by["FEII"]["text"] == "II. Fejezet"
+    assert by["AC13"]["text"] == "" and by["SZ7E@BE1"]["text"] == ""
+
+
+def test_a_unit_njt_files_under_another_id_is_found_by_its_label():
+    """njt's ids do not always follow the labels: "cb)" filed as APBB."""
+    units = _sec("97", "x") + [
+        {"jh": "SZ97@BE1@POC", "cls": "betusPontNyito", "label": "c)", "text": "pont", "fn": []},
+        {"jh": "SZ97@BE1@POC@APAA", "cls": "ketbetusAlPont", "label": "ca)", "text": "egy", "fn": []},
+        {"jh": "SZ97@BE1@POC@APBB", "cls": "ketbetusAlPont", "label": "cb)", "text": "kettő", "fn": []}]
+    assert novella.resolve(units, "SZ97@BE1@POC@APCB") == "SZ97@BE1@POC@APBB"
+    assert novella.resolve(units, "SZ97@BE1@POC@APCC") is None
+
+
+NJT_QUIRKS = """<html><body><main>
+<span class="jhId" id="FEI"></span><div id="sc1" class="fejezet">I. Fejezet</div>
+<div id="sc2" class="fejezetCim"><p>ÁLTALÁNOS RENDELKEZÉSEK</p></div>
+<span class="jhId" id="SZ1"></span><div id="sc3" class="szakasz"><p><span class="szakasz-jel">1. §</span></p></div>
+<span class="jhId" id="SZ1@PO1"></span><div id="sc4" class="szelet"><span class="jel">1.</span> Fogalom: egy.</div>
+<span class="jhId" id="SZ4"></span><div id="sc5" class="szakasz"><p><span class="szakasz-jel">4. §</span></p></div>
+<span class="jhId" id="47"></span><div id="sc6" class="bekezdesNyito"><p>E törvény alkalmazásában</p></div>
+<span class="jhId" id="SZ4@BE0@POF"></span><div id="sc7" class="betusPontNyito"><p><span class="jel">f)</span> közszolgáltatás:</p></div>
+<span class="jhId" id="SZ4@BE0@POF@APFA"></span><div id="sc8" class="ketbetusAlPont"><p><span class="jel">fa)</span> első,</p></div>
+<span class="jhId" id="SZ4@POF@APFB"></span><div id="sc9" class="ketbetusAlPont"><p><span class="jel">fb)</span> második.</p></div>
+<span class="jhId" id="SZ5@BE1@PO2"></span><div id="sc10" class="szamosPontNyito"><p><span class="jel">2.</span> megállapítsa</p></div>
+<span class="jhId" id="SZ5@BE1@PO2@APA"></span><div id="sc11" class="betusAlPont"><p><span class="jel">a)</span> a beosztásokat,</p></div>
+<span class="jhId" id="SZ5@BE1@PO2@APZSI)"></span><div id="sc12" class="betusAlPont"><p><span class="jel">zsi)</span> a többit.</p></div>
+<span class="jhId" id="TA"></span><div id="sc2000-1-00-00-14105" class="tagoloCim"><p><i>Etikai szabályok</i></p></div>
+<span class="jhId" id="RR12"></span><div id="sc13" class="szelet"><div>Melléklet sora</div></div>
+</main></body></html>"""
+
+
+def test_njt_markup_quirks():
+    """What njt does now and then: a § body with an internal number for an id,
+    the points of one § with and without ``@BE0``, sub-points of a numbered
+    point (``betusAlPont``), provisions set as ``szelet``, a chapter title with
+    no id, a stray bracket in an id."""
+    units = njt.parse(NJT_QUIRKS)["units"]
+    by = {u["jh"]: u for u in units}
+    assert by["FEI@CIM"]["text"] == "ÁLTALÁNOS RENDELKEZÉSEK"
+    assert by["SZ1@PO1"]["cls"] == "szamosPontNyito" and by["SZ1@PO1"]["text"] == "Fogalom: egy."
+    assert by["SZ4@BE0"]["text"] == "E törvény alkalmazásában" and by["SZ4@BE0"]["anchor"] == "47"
+    assert {"SZ4@POF", "SZ4@POF@APFA", "SZ4@POF@APFB"} <= set(by)
+    assert by["SZ4@POF"]["anchor"] == "SZ4@BE0@POF"
+    assert njt.flatten(units, "SZ4") == ("4. § E törvény alkalmazásában f) közszolgáltatás: "
+                                         "fa) első, fb) második.")
+    assert by["SZ5@BE1@PO2@APA"]["text"] == "a beosztásokat,"
+    assert "SZ5@BE1@PO2@APZSI" in by
+    # an unnumbered subtitle, and one njt left with a bare "TA" id
+    assert by["TA14105"]["cls"] == "tagoloCim" and by["TA14105"]["text"] == "Etikai szabályok"
+    assert not any("Melléklet" in u["text"] for u in units)
+    # the opening text of a § without paragraphs is its body, not its title
+    ins = {"at": "1. §", "op": "replace_text", "doc": "D", "refs": ["SZ4"], "part": "ny",
+           "old": "alkalmazásában", "new": "alkalmazásában:", "src": ""}
+    after, log = novella.apply(units, [ins], "D")
+    assert log[0]["ok"] and {u["jh"]: u for u in after}["SZ4@BE0"]["text"].endswith(":")
+
+
+def test_one_sentences_text_edits_are_made_at_once():
+    """T/405 153. § 20.: "főispán" → "kormánymegbízott", "főispánt" →
+    "kormánymegbízottat" — made one after the other, the first turned
+    "főispánt" into "kormánymegbízottt" and the second found nothing; T/571
+    16. § c) swaps two words, which made them one."""
+    units = _sec("89/A", "a főispán értesíti a főispánt és a főispánok döntenek")
+    tmpl = ("A Kit. 89/A. § (1) bekezdésében a ⟦0⟧ szövegrészek helyébe a ⟦1⟧ szöveg, a ⟦2⟧ "
+            "szövegrészek helyébe a ⟦3⟧ szöveg és a ⟦4⟧ szövegrész helyébe a ⟦5⟧ szöveg lép.")
+    quotes = ["főispán", "kormánymegbízott", "főispánt", "kormánymegbízottat",
+              "főispánok", "kormánymegbízottak"]
+    ins = novella.parse_instruction(tmpl, quotes, {"Kit.": "D"}, "153. §")
+    after, log = novella.apply(units, ins, "D")
+    assert all(r["ok"] for r in log)
+    assert {u["jh"]: u for u in after}["SZ89A@BE1"]["text"] == (
+        "a kormánymegbízott értesíti a kormánymegbízottat és a kormánymegbízottak döntenek")
+    units = _sec("2/A", "a vagyonkezelőnek vagy az építtetőnek")
+    tmpl = ("A Vtv. 2/A. § (1) bekezdésében a ⟦0⟧ szövegrész helyébe az ⟦1⟧ szöveg és az ⟦1⟧ "
+            "szövegrész helyébe a ⟦0⟧ szöveg lép.")
+    ins = novella.parse_instruction(tmpl, ["vagyonkezelőnek", "építtetőnek"], {"Vtv.": "D"}, "16. §")
+    after, _ = novella.apply(units, ins, "D")
+    assert {u["jh"]: u for u in after}["SZ2A@BE1"]["text"] == "a építtetőnek vagy az vagyonkezelőnek"
+
+
+def _evo_lines(*sections):
+    rows = [("2026. évi ..... törvény", 244)]
+    for n, text in sections:
+        rows += [(f"{n}. §", 289), (text, 57)]
+    return {"lines": _lines(*rows)}
+
+
+def test_the_bills_evolution_pairs_sections_by_what_they_say():
+    """A § the egységes javaslat inserts renumbers every one after it; by number,
+    each would be set against its neighbour (T/341: 172 "changed" of 174)."""
+    main = _evo_lines((1, "Az Szkt. 5. §-a hatályát veszti."),
+                      (2, "Az Szkt. 7. §-a hatályát veszti."),
+                      (3, "Ez a törvény a kihirdetését követő napon lép hatályba."))
+    egys = _evo_lines((1, "Az Szkt. 5. §-a hatályát veszti."),
+                      (2, "Az Szkt. 6. §-a helyébe a következő rendelkezés lép."),
+                      (3, "Az Szkt. 7. §-a és 8. §-a hatályát veszti."),
+                      (4, "Ez a törvény a kihirdetését követő napon lép hatályba."))
+    ev = stage._evolution(main, egys, {"billNumber": "T/1", "textUrl": "u"},
+                          {"billNumber": "T/1/9", "textUrl": "v", "type": "Egységes javaslat"})
+    assert ev["unchanged"] == 3     # the title, 1. § and the old 3. § (now 4. §)
+    assert [(p["key"], p.get("from"), bool(p["before"]), bool(p["after"]))
+            for p in ev["provisions"]] == [("2. §", None, False, True),
+                                           ("3. §", "2. §", True, True)]
+
+
+def test_a_tables_rules_are_not_underlines():
+    """A nyelvhelyességi módosítás is a table of corrections; its rules ran under
+    every cell, so every word read as inserted. A table's rules meet its
+    vertical ones; an insertion's underline stands alone."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    font = pymupdf.Font("tiro")
+
+    def write(x, y, text):
+        tw = pymupdf.TextWriter(page.rect)
+        tw.append((x, y), text, font=font, fontsize=12)
+        tw.write_text(page)
+        return x + font.text_length(text, fontsize=12)
+
+    write(57, 100, "Módosítópont sorszáma: 1.")
+    write(57, 116, "Módosítás jellege: nyelvhelyességi és szerkesztési módosítás")
+    for y0, cells in ((140, ("Sorszám", "Korrektúra")), (158, ("1.", "legalább "))):
+        for x0, x1, text in ((57, 114, cells[0]), (114, 538, cells[1])):
+            for a, b in (((x0, y0), (x1, y0)), ((x1, y0), (x1, y0 + 18)),
+                         ((x1, y0 + 18), (x0, y0 + 18)), ((x0, y0 + 18), (x0, y0))):
+                page.draw_line(a, b, width=0.75)
+            end = write(x0 + 3, y0 + 14, text)
+        if cells[0] == "1.":
+            x = write(end, y0 + 14, "10%-a")
+            page.draw_line((end, y0 + 16), (x, y0 + 16), width=0.7)   # a real insertion
+    data = doc.tobytes()
+    doc.close()
+    (point,) = motions.parse(pdftext.marked_lines(data))["points"]
+    assert [t for op, t in point["segments"] if op == "ins"] == ["10%-a"]
+
+
+def test_subtitles_between_the_sections_a_new_chapter_brings():
+    """T/503 7. §: a new chapter's second subtitle ("155/B. Különös szabályok")
+    stood at the end of the § before it; a wrapped line that starts with a
+    reference ("79. § rendelkezéseit …") is not a new §."""
+    tmpl = "A Pp. a következő XLV/A. Fejezettel egészül ki: ⟦0⟧"
+    quote = ("XLV/A. Fejezet\nKÜLFÖLDI ELEM\n603/A. § (1) Első szabály, amelyre a\n"
+             "79. § rendelkezéseit kell alkalmazni.\n155/B. Különös szabályok\n"
+             "603/B. § Második szabály.\nAz eljárás vége\n603/C. § Harmadik.")
+    (ins,) = novella.parse_instruction(tmpl, [quote], {"Pp.": "D"}, "7. §")
+    assert ins["newrefs"] == ["SZ603A", "SZ603B", "SZ603C"]
+    units = _sec("603", "Régi.") + _sec("604", "Más.")
+    after, log = novella.apply(units, [ins], "D")
+    assert [(u["jh"], u["cls"]) for u in after if "@" not in u["jh"] or "CIM" in u["jh"]][1:-1] == [
+        ("FEXLVA", "fejezet"), ("FEXLVA@CIM", "fejezetCim"), ("SZ603A", "new"),
+        ("AC155B", "alcim"), ("SZ603B", "new"), ("TA~603C", "tagoloCim"), ("SZ603C", "new")]
+    by = {u["jh"]: u for u in after}
+    assert by["SZ603A"]["text"].endswith("79. § rendelkezéseit kell alkalmazni.")
+    assert by["AC155B"]["text"] == "Különös szabályok" and by["TA~603C"]["text"] == "Az eljárás vége"
+
+
+def test_the_evaluation_compares_the_applier_with_what_njt_attributes():
+    """``evaluate.compare`` — the check behind the accuracy the docs quote: a
+    provision njt attributes to the act and the applier got right is exact; one
+    it attributes and the applier did not touch is missed."""
+    from parlamonitor.lawdiff import evaluate
+
+    after = njt.parse(PAGE)["units"]            # 26. § (3): footnote names 2026. évi LV.
+    before = [dict(u) for u in after]
+    for u in before:
+        if u["jh"] == "SZ26@BE3":
+            u["text"] = "A szakképzési centrumot a főigazgató vezeti."
+    truth = novella.attributed_changes(before, after, "2026-55-00-00")
+    assert [c["jh"] for c in truth] == ["SZ26@BE3"]
+    ins = {"at": "1. §", "op": "replace_text", "doc": "D", "refs": ["SZ26@BE3"], "part": None,
+           "old": "a főigazgató vezeti", "new": "a főigazgató és a kancellár önállóan vezeti",
+           "src": ""}
+    pred, log = novella.apply(before, [ins], "D")
+    rows = evaluate.compare(before, after, pred, novella.changes(before, pred, log), truth,
+                            "2026-55-00-00")
+    assert [(r["jh"], r["kind"]) for r in rows] == [("SZ26@BE3", "exact")]
+    rows = evaluate.compare(before, after, before, [], truth, "2026-55-00-00")
+    assert [(r["jh"], r["kind"]) for r in rows] == [("SZ26@BE3", "missed")]
+
+
+def test_each_fragment_after_a_provision_is_repealed():
+    """T/341 19. § 26.: "… h) pontjában az „X” szövegrész és az „Y” szövegrész" —
+    each fragment has its own "szövegrész"; the second was dropped silently."""
+    ins = novella.parse_instruction(
+        "Hatályát veszti az Rtv. 100. § (1) bekezdés h) pontjában az ⟦0⟧ szövegrész és az ⟦1⟧ "
+        "szövegrész, valamint 101. § (4) bekezdése.", ["X,", "és Y"], {"Rtv.": "D"}, "19. §")
+    assert [(i["op"], i["refs"], i.get("old")) for i in ins] == [
+        ("delete_text", ["SZ100@BE1@POH"], "X,"), ("delete_text", ["SZ100@BE1@POH"], "és Y"),
+        ("repeal", ["SZ101@BE4"], None)]
+
+
+def test_subtitles_named_without_quotes_or_by_place_and_quotes_without_article():
+    """T/387 13. § (1) 8.: "Növekedési adóhitel alcíme" (its title, unquoted);
+    28. § 4.: "42/B. §-t megelőző alcím címében" (no title at all); T/669 6. §
+    a): "h) alpontjában „X” szövegrész helyébe" (no article) — each was dropped."""
+    a, b, c = novella.parse_instruction(
+        "Hatályát veszti a Tao. 1. 6. § (13) bekezdésében az ⟦0⟧ szövegrész, 2. Növekedési "
+        "adóhitel alcíme, 3. 42/B. §-t megelőző alcím címében az ⟦1⟧ szövegrész.",
+        ["x", "és települési adók"], {"Tao.": "D"}, "13. §")
+    assert (b["op"], b["refs"]) == ("repeal", ["AC=Növekedési adóhitel"])
+    assert (c["op"], c["refs"], c["part"]) == ("delete_text", ["AC<SZ42B"], "cim")
+    head = lambda jh, t: {"jh": jh, "cls": "tagoloCim", "label": "", "text": t, "fn": []}  # noqa: E731
+    units = ([head("TA1", "Növekedési adóhitel")] + _sec("42/A", "a") + [head("TA2", "Helyi adók és települési adók")]
+             + _sec("42/B", "b"))
+    after, log = novella.apply(units, [b, c], "D")
+    assert [r["ok"] for r in log] == [True, True]
+    by = {u["jh"]: u for u in after}
+    assert by["TA1"]["text"] == "" and by["SZ42A@BE1"]["text"] == ""      # the subtitle and its §
+    assert by["TA2"]["text"] == "Helyi adók" and by["SZ42B@BE1"]["text"] == "b"
+    (d,) = novella.parse_instruction(
+        "Az Áht. 1. § 14. pont h) alpontjában ⟦0⟧ szövegrész helyébe az ⟦1⟧ szöveg lép.",
+        ["régi", "új"], {"Áht.": "D"}, "6. §")
+    assert (d["op"], d["refs"], d["old"]) == ("replace_text", ["SZ1@PO14@APH"], "régi")
+
+
+# --- njt regenerates future states in place -----------------------------------------
+
+def _state_page(text: str) -> str:
+    return ('<html><head><meta name="description" content="2000. évi I. törvény"/></head><body>'
+            '<span class="jhId" id="SZ1"></span><div id="sc1" class="szakasz"><p>'
+            '<span class="szakasz-jel">1. §</span></p></div>'
+            '<span class="jhId" id="SZ1@BE1"></span><div id="sc2" class="bekezdesNyito"><p>'
+            f'<span class="jel">(1)</span> {text}</p></div></body></html>')
+
+
+class _NjtHttp:
+    """njt as the store sees it: ``pages[(doc, version)]`` is what it serves now."""
+
+    def __init__(self):
+        self.pages: dict = {}
+        self.gets = 0
+
+    def get_text(self, url):
+        self.gets += 1
+        doc, ver = url.rsplit("/", 1)[1].rsplit(".", 1)
+        return self.pages[(doc, int(ver))]
+
+    def polite_sleep(self):
+        pass
+
+
+def _list_versions(root, doc, versions):
+    import json
+    import time
+    d = root / doc
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "versions.json").write_text(json.dumps({"fetchedAt": time.time(), "data": versions}))
+
+
+def test_a_future_state_is_fetched_again_once_the_law_gains_a_state(tmp_path):
+    doc = "2000-1-00-00"
+    now = {"version": 1, "comingIntoForce": "2020-01-01T00:00:00+01:00", "expiresOn": "2099-01-01"}
+    later = {"version": 2, "comingIntoForce": "2099-01-01T00:00:00+01:00", "expiresOn": None}
+    http = _NjtHttp()
+    http.pages = {(doc, 1): _state_page("Régi."), (doc, 2): _state_page("Jövőbeli.")}
+    _list_versions(tmp_path, doc, [now, later])
+    store = lambda: njt.NjtStore(http, tmp_path, budget=njt.Budget(None))  # noqa: E731
+    text = lambda law: {u["jh"]: u["text"] for u in law["units"]}["SZ1@BE1"]  # noqa: E731
+    assert text(store().law(doc, 1)) == "Régi." and text(store().law(doc, 2)) == "Jövőbeli."
+    assert http.gets == 2
+    # nothing new on njt: both come from the cache
+    store().law(doc, 1), store().law(doc, 2)
+    assert http.gets == 2
+    # an amendment is promulgated: a new state, and njt rewrites the future one
+    # under its old number — the state in force when fetched stays as it was
+    http.pages[(doc, 2)] = _state_page("Jövőbeli, módosítva.")
+    _list_versions(tmp_path, doc, [now, later, {"version": 3, "comingIntoForce": "2098-01-01",
+                                                "expiresOn": "2099-01-01"}])
+    assert store().stale(doc, 2) and not store().stale(doc, 1)
+    assert text(store().law(doc, 2)) == "Jövőbeli, módosítva."
+    assert text(store().law(doc, 1)) == "Régi." and http.gets == 3
+    assert not store().stale(doc, 2)
+    # offline (the law-texts export, the evaluation) never fetches
+    _list_versions(tmp_path, doc, [now, later, {"version": 4, "comingIntoForce": "2098-06-01"}])
+    assert text(store().law(doc, 2, offline=True)) == "Jövőbeli, módosítva." and http.gets == 3
+
+
+def test_a_future_state_cached_before_it_was_tracked_is_fetched_once(tmp_path):
+    import lzma
+    doc = "2000-1-00-00"
+    _list_versions(tmp_path, doc, [{"version": 2, "comingIntoForce": "2099-01-01T00:00:00+01:00"}])
+    (tmp_path / doc / "v2.html.xz").write_bytes(lzma.compress(_state_page("Régi.").encode()))
+    http = _NjtHttp()
+    http.pages = {(doc, 2): _state_page("Friss.")}
+    law = njt.NjtStore(http, tmp_path, budget=njt.Budget(None)).law(doc, 2)
+    assert {u["jh"]: u["text"] for u in law["units"]}["SZ1@BE1"] == "Friss." and http.gets == 1
+    njt.NjtStore(http, tmp_path, budget=njt.Budget(None)).law(doc, 2)
+    assert http.gets == 1
+
+
+def test_a_bills_fingerprint_moves_when_an_amended_law_gains_a_state(tmp_path):
+    doc = "2019-80-00-00"
+    _list_versions(tmp_path, doc, [{"version": 33, "comingIntoForce": "2026-01-01"}])
+    store = njt.NjtStore(None, tmp_path, budget=njt.Budget(None))
+    parsed = {"instructions": [{"doc": doc, "op": "replace_text"}]}
+    (p,) = stage._plan(store, parsed, None)
+    assert p["ids"] == [33]
+    _list_versions(tmp_path, doc, [{"version": 33, "comingIntoForce": "2026-01-01"},
+                                   {"version": 34, "comingIntoForce": "2027-01-01"}])
+    (p,) = stage._plan(store, parsed, None)
+    assert p["ids"] == [33, 34]

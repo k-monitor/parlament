@@ -3,6 +3,9 @@
 // submitted against the egységes javaslat — Parliament's own consolidation of
 // the bill with the Törvényalkotási Bizottság's összegző módosító javaslat —
 // one of the bill's own sections at a time. Only what differs is listed.
+// Sections are paired by what they say, not by number (the scraper's
+// `_pair_up`), so one renumbered by a § inserted before it is set against its
+// own earlier text and says what its number was.
 //
 // The first response carries only the first few sections (an omnibus bill's
 // consolidation differs in over a hundred, each a whole §); the rest are
@@ -25,6 +28,9 @@ const total = computed(() => props.evolution.total ?? (props.evolution.provision
 const provisions = computed(() => all.value || props.evolution.provisions || [])
 const shown = computed(() => (expanded.value ? provisions.value : provisions.value.slice(0, SHOWN)))
 const open = reactive({})
+// A section's number need not be unique in the list: one the egységes javaslat
+// dropped and another it put under the same number are two rows.
+const rowKey = (p, i) => `${i}:${p.provision}`
 
 async function toggle() {
   expanded.value = !expanded.value
@@ -55,14 +61,15 @@ async function toggle() {
     </p>
     <p v-if="!provisions.length" class="muted small">{{ $t('evolution.none') }}</p>
     <ol class="plain plist">
-      <li v-for="p in shown" :key="p.provision" class="prov">
-        <button type="button" class="phead" :aria-expanded="!!open[p.provision]"
-                @click="open[p.provision] = !open[p.provision]">
-          <span class="caret" aria-hidden="true">{{ open[p.provision] ? '▾' : '▸' }}</span>
+      <li v-for="(p, i) in shown" :key="rowKey(p, i)" class="prov">
+        <button type="button" class="phead" :aria-expanded="!!open[rowKey(p, i)]"
+                @click="open[rowKey(p, i)] = !open[rowKey(p, i)]">
+          <span class="caret" aria-hidden="true">{{ open[rowKey(p, i)] ? '▾' : '▸' }}</span>
           <strong>{{ p.provision === 'cím' ? $t('evolution.titlePart') : p.provision }}</strong>
-          <span v-if="p.kind !== 'modified'" class="kind" :class="p.kind">{{ $t('lawChanges.kind.' + p.kind) }}</span>
+          <span v-if="p.from" class="muted small">{{ $t('evolution.was', { n: p.from }) }}</span>
+          <span v-if="p.kind !== 'modified'" class="kind" :class="p.kind">{{ $t('evolution.kind.' + p.kind) }}</span>
         </button>
-        <div v-if="open[p.provision]" class="pbody">
+        <div v-if="open[rowKey(p, i)]" class="pbody">
           <DiffText :segments="p.diff" :context="200" />
         </div>
       </li>

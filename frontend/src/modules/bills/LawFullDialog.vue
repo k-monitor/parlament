@@ -349,15 +349,15 @@ onBeforeUnmount(() => {
 /* A number njt still lists with no text (a repealed provision) — not a §
    heading, which never has text of its own. */
 .u.empty:not(.u-szakasz) .lab { color: var(--ink-faint); font-weight: 400; }
-.u-resz, .u-reszcim, .u-fejezet, .u-fejezetCim {
+.u-konyv, .u-konyvcim, .u-resz, .u-reszcim, .u-fejezet, .u-fejezetCim, .u-focim, .u-focimCim {
   text-align: center; font-weight: 700; margin-top: 1.3rem;
 }
-.u-reszcim, .u-fejezetCim { margin-top: 0; }
-.u-alcim { text-align: center; font-style: italic; font-weight: 600; margin-top: 1rem; }
+.u-konyvcim, .u-reszcim, .u-fejezetCim, .u-focimCim { margin-top: 0; }
+.u-alcim, .u-tagoloCim, .u-tagolo { text-align: center; font-style: italic; font-weight: 600; margin-top: 1rem; }
 .u-szakasz { text-align: center; margin-top: 1rem; }
 .u-preambulum { font-style: italic; }
 .u-betusPontNyito, .u-szamosPontNyito, .u-pontZaro { padding-left: 1.6rem; }
-.u-ketbetusAlPont { padding-left: 3.2rem; }
+.u-ketbetusAlPont, .u-betusAlPont { padding-left: 3.2rem; }
 
 .fold {
   display: block; width: 100%; margin: .4rem 0 .8rem; padding: .35rem .8rem;

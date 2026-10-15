@@ -91,6 +91,13 @@ export function agendaLabel(type) {
   return translated === key ? type : translated
 }
 
+// Whether an iromány's status says it was withdrawn ("visszavonva"; matched on
+// the stem so a "visszavontnak tekintendő" status would count too). Its title is
+// then struck through in every list (`.withdrawn`, styles.css).
+export function isWithdrawn(status) {
+  return /^\s*visszavon/i.test(status || '')
+}
+
 // HH:MM:SS for a video offset, as a deep-link-friendly seconds string too.
 export function timeLabel(seconds) {
   return formatDuration(seconds)

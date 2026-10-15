@@ -11,7 +11,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, currentCycleLabel } from '../../store.js'
-import { formatDate } from '../../format.js'
+import { formatDate, isWithdrawn } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import SankeyDiagram from '../../components/SankeyDiagram.vue'
 import EmbedButton from '../../components/EmbedButton.vue'
@@ -314,7 +314,7 @@ watch(() => route.query.all, (v) => {
                   <span class="badge status" v-if="b.status">{{ b.status }}</span>
                   <span class="muted small" v-if="b.submitted_date">{{ formatDate(b.submitted_date) }}</span>
                 </div>
-                <router-link :to="{ name: 'document', params: { id: b.id } }" class="billtitle">{{ b.title }}</router-link>
+                <router-link :to="{ name: 'document', params: { id: b.id } }" :class="['billtitle', { withdrawn: isWithdrawn(b.status) }]">{{ b.title }}</router-link>
                 <div class="sponsors small" v-if="b.sponsors.length || b.responder">
                   <template v-for="(s, i) in b.sponsors" :key="i">
                     <router-link v-if="s.person_id" :to="{ name: 'profile', params: { id: s.person_id } }">{{ s.name }}</router-link>

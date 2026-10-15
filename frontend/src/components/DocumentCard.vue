@@ -8,7 +8,7 @@
 // lists hang their search-quality click on (SEA-12).
 import { computed } from 'vue'
 import { store } from '../store.js'
-import { formatDate } from '../format.js'
+import { formatDate, isWithdrawn } from '../format.js'
 import FactionBadge from './FactionBadge.vue'
 import TopicBadge from './TopicBadge.vue'
 
@@ -31,7 +31,7 @@ const showCommittees = computed(() => store.moduleEnabled('committees'))
            this is the list where the topic earns its place (TOPIC-8). -->
       <TopicBadge :topic="bill.topic" kind="bill" compact />
     </div>
-    <router-link :to="{ name: 'document', params: { id: bill.id } }" class="billtitle" @click="emit('open')">{{ bill.title }}</router-link>
+    <router-link :to="{ name: 'document', params: { id: bill.id } }" :class="['billtitle', { withdrawn: isWithdrawn(bill.status) }]" @click="emit('open')">{{ bill.title }}</router-link>
     <div class="sponsors small" v-if="bill.sponsors.length || bill.responder">
       <template v-for="(s, i) in bill.sponsors" :key="i">
         <router-link v-if="s.person_id" :to="{ name: 'profile', params: { id: s.person_id } }">{{ s.name }}</router-link>

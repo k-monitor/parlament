@@ -9,7 +9,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { api } from '../../api.js'
 import { store } from '../../store.js'
-import { formatDate, formatDateTime } from '../../format.js'
+import { formatDate, formatDateTime, isWithdrawn } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
@@ -218,7 +218,7 @@ watch(() => route.hash, () => revealMotion(true))
           <TopicBadge :topic="bill.topic" kind="bill" />
           <ShareButton :title="bill.title" align="right" style="margin-left:auto" />
         </div>
-        <h1>{{ bill.title }}</h1>
+        <h1 :class="{ withdrawn: isWithdrawn(bill.status) }">{{ bill.title }}</h1>
         <p class="muted small" v-if="bill.submitted_date">
           {{ $t('bills.submittedDate') }}: {{ formatDate(bill.submitted_date) }}
         </p>

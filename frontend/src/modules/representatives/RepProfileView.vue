@@ -6,7 +6,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta, cycleLabel, cyclesLabel } from '../../store.js'
-import { formatDate, formatDateLocal, formatLongDate, formatMonth, formatSpeakingTime, formatDuration, agendaLabel } from '../../format.js'
+import { formatDate, formatDateLocal, formatLongDate, formatMonth, formatSpeakingTime, formatDuration, agendaLabel, isWithdrawn } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import PieChart from '../../components/PieChart.vue'
@@ -995,7 +995,7 @@ watch(() => store.cycles.join(','), load)
                     <span class="bnum">{{ b.bill_number }}</span>
                     <span class="badge" v-if="b.status">{{ b.status }}</span>
                   </span>
-                  <span class="btitle">{{ b.title }}</span>
+                  <span :class="['btitle', { withdrawn: isWithdrawn(b.status) }]">{{ b.title }}</span>
                 </router-link>
               </li>
             </ul>

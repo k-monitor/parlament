@@ -23,7 +23,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { store, loadMeta } from '../../store.js'
-import { formatDate } from '../../format.js'
+import { formatDate, isWithdrawn } from '../../format.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -351,7 +351,7 @@ onUnmounted(() => clearTimeout(t))
             <span class="muted small" v-if="b.submitted_date">{{ formatDate(b.submitted_date) }}</span>
             <TopicBadge :topic="b.topic" kind="bill" compact />
           </div>
-          <router-link :to="{ name: 'document', params: { id: b.id } }" class="billtitle" @click="clicks.hit(i)">{{ b.title }}</router-link>
+          <router-link :to="{ name: 'document', params: { id: b.id } }" :class="['billtitle', { withdrawn: isWithdrawn(b.status) }]" @click="clicks.hit(i)">{{ b.title }}</router-link>
           <div class="sponsors small" v-if="b.sponsors.length || b.responder">
             <template v-for="(s, si) in b.sponsors" :key="si">
               <router-link v-if="s.person_id" :to="{ name: 'profile', params: { id: s.person_id } }">{{ s.name }}</router-link>

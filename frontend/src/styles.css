@@ -161,6 +161,12 @@ mark { background: var(--mark); color: var(--mark-ink); padding: 0 .1em; border-
 }
 .badge.warn { background: #fdf3e3; color: #8a5a00; cursor: help; }
 
+/* A withdrawn (visszavont) iromány's title, struck through wherever it is listed
+   — see `isWithdrawn` in format.js. The status badge beside it still says so in
+   words, so nothing hangs on the line for screen readers. */
+.withdrawn { text-decoration: line-through; text-decoration-thickness: 1px; }
+a.withdrawn:hover { text-decoration-line: line-through underline; }
+
 .grid { display: grid; gap: 1rem; }
 .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
 

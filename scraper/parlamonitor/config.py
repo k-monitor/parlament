@@ -11,11 +11,16 @@ reference pipeline so its outputs stay comparable:
         representatives-<cycle>.json              # the MP registry for a cycle
         advocates-<cycle>.json                    # the nationality-advocate registry
         committees-<cycle>.json                   # the committee registry for a cycle
+        law-changes-<cycle>.json                  # what each bill changes (BILL-14..16)
+        law-texts-<cycle>.jsonl.gz                # the laws those changes were read against
       documents/
         <cycle>/
           text/<docid>.txt.xz                     # extracted document text (DOC-1)
           pdf/<docid>.pdf                         # the source PDF, when retained
           index.json                              # per-document manifest
+      lawdiff/
+        <cycle>/docs/<docid>.<kind>.json.xz       # iromány PDF extractions (BILL-14)
+        njt/<law>/v<version>.*.xz                 # njt.hu time states read
       logs/
         ingest-<timestamp>.json                   # per-run ingestion log (SCR-3)
       parlamonitor.lock                               # concurrency lockfile (SCR-1)
@@ -215,6 +220,35 @@ def documents_per_sync() -> int:
         return max(0, int(raw)) if raw not in (None, "") else DEFAULT_DOCUMENTS_PER_SYNC
     except ValueError:
         return DEFAULT_DOCUMENTS_PER_SYNC
+
+
+# --- law changes (BILL-14..16) ---------------------------------------------
+# What each törvényjavaslat would change in the law it amends (read against
+# njt.hu), how the bill itself changed through the motions, and each amendment
+# as a diff. Unlike the document mirror above this is a feature the site shows,
+# so it is ON by default; its cost is bounded per sync pass instead.
+
+DEFAULT_LAW_CHANGES_PER_SYNC = 80
+
+
+def law_changes_enabled() -> bool:
+    """``PARLAMONITOR_LAW_CHANGES``: on unless set to off/0/false/no."""
+    raw = (os.environ.get("PARLAMONITOR_LAW_CHANGES") or "on").strip().lower()
+    return raw not in ("off", "0", "false", "no", "none")
+
+
+def law_changes_per_sync() -> int:
+    """How many requests (iromány PDFs + njt.hu pages) one **sync pass** may
+    spend on law changes (0 = no cap). A first pass over a cycle reads every
+    bill and every law it amends — several hundred requests for the omnibus
+    bills alone — so it is paced over passes; afterwards only new documents and
+    the daily njt version check cost anything. A hand-run ``law-changes`` is
+    not capped unless asked."""
+    raw = os.environ.get("PARLAMONITOR_LAW_CHANGES_PER_SYNC")
+    try:
+        return max(0, int(raw)) if raw not in (None, "") else DEFAULT_LAW_CHANGES_PER_SYNC
+    except ValueError:
+        return DEFAULT_LAW_CHANGES_PER_SYNC
 
 
 # --- Modal budget scope ----------------------------------------------------
@@ -433,6 +467,28 @@ class Paths:
 
     def document_pdf_dir(self, cycle: int) -> Path:
         return self.documents_dir(cycle) / "pdf"
+
+    # --- law changes (BILL-14..16) -------------------------------------------
+    # The per-bill result goes under ``processed/`` with the registries; the
+    # caches it is computed from — each iromány PDF's extraction (the PDF itself
+    # is not kept) and each njt.hu time state it read — live in a tree of their
+    # own that can be deleted at the cost of fetching them again.
+
+    def law_changes_file(self, cycle: int) -> Path:
+        return self.processed / f"law-changes-{int(cycle)}.json"
+
+    def law_texts_file(self, cycle: int) -> Path:
+        """The njt states those changes were read against, whole (gzip JSON
+        lines: the full-law view of a diff)."""
+        return self.processed / f"law-texts-{int(cycle)}.jsonl.gz"
+
+    def lawdiff_docs_dir(self, cycle: int) -> Path:
+        return self.data / "lawdiff" / str(int(cycle)) / "docs"
+
+    def njt_dir(self) -> Path:
+        """njt.hu time states, by law: cycle-less, since one law is amended by
+        bills of many cycles and a state, once published, never changes."""
+        return self.data / "lawdiff" / "njt"
 
     # --- committee minutes (jegyzőkönyvek, BIZ-15) --------------------------
     # The parsed record goes under ``processed/`` with every other registry the

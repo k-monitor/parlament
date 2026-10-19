@@ -10,6 +10,7 @@ import { formatDateTime } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import { clipTitle, titleDate, usePageTitle } from '../../lib/pageTitle.js'
+import { motionLocation } from '../../lib/motionLink.js'
 
 const props = defineProps({ id: String })
 
@@ -117,6 +118,10 @@ watch(() => props.id, load)
           <span v-for="(s, i) in vote.subjects" :key="i" class="vbill">
             <router-link v-if="s.bill_id" :to="{ name: 'bill', params: { id: s.bill_id } }">
               <strong>{{ s.bill_number }}</strong> — {{ s.title }}
+            </router-link>
+            <!-- A motion links to its entry on its bill's page (its text is there). -->
+            <router-link v-else-if="s.motion" :to="motionLocation(s.motion.bill_id, s.bill_number)">
+              <strong>{{ s.bill_number }}</strong> {{ s.motion.type }} — {{ s.title }}
             </router-link>
             <span v-else><strong>{{ s.bill_number }}</strong> — {{ s.title }}</span>
           </span>

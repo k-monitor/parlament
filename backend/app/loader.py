@@ -36,6 +36,7 @@ import os
 import re
 import sqlite3
 import unicodedata
+import zlib
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -706,6 +707,10 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
     if period is not None:
         conn.execute("INSERT INTO electoral_period(number) VALUES (?) "
                      "ON CONFLICT(number) DO NOTHING", (period,))
+    # A pre-existing DB predates the motion-number index the vote subjects resolve
+    # through (schema.sql); it lands with the next bills load, no rebuild needed.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bill_motion_number "
+                 "ON bill_motion(bill_number)")
 
     # Replace this cycle's bills (delete children first for the FK). Every
     # per-bill child table is cleared so a re-ingest is fully idempotent.
@@ -724,7 +729,15 @@ def load_bills(conn: sqlite3.Connection, registry: dict) -> int:
     # is derived from the printed iromány number, so it is re-resolved below
     # rather than being something this delete may not step on.
     _unlink_agenda_bills(conn, period)
-    child_tables = ("bill_sponsor", "bill_event", "bill_committee_event",
+    # The iromány topic labels (TOPIC-8) key on these bills as well. They are
+    # derived too: an update that reloads a cycle's bills re-runs
+    # rebuild_bill_topics for exactly that cycle right after, so clear them here
+    # rather than let them block the delete. A DB from before TOPIC-8 has none.
+    if _table_exists(conn, "bill_topic"):
+        conn.execute(
+            "DELETE FROM bill_topic WHERE bill_id IN "
+            "(SELECT id FROM bill WHERE period_number IS ?)", (period,))
+    child_tables =("bill_sponsor", "bill_event", "bill_committee_event",
                     "bill_vote", "bill_deadline", "bill_committee",
                     "bill_document", "bill_motion_summary", "bill_motion")
     for tbl in child_tables:
@@ -893,6 +906,157 @@ def _load_bill_detail(conn: sqlite3.Connection, bill_id: str, detail: dict,
                 "label, ord) VALUES (?,?,?,?,?)",
                 (motion_id, resolve_person(sp.get("personID")),
                  _faction(sp.get("factionId")), sp.get("label"), j))
+
+
+# ---------------------------------------------------------------------------
+# What a bill changes (BILL-14..16)
+# ---------------------------------------------------------------------------
+
+_LAW_CHANGE_TABLES = ("amendment_point", "amendment_doc", "bill_evolution",
+                      "law_change_unresolved", "law_change", "law_change_law",
+                      "law_change_bill")
+
+
+# Columns added to a law-change table after it first shipped: a DB that has the
+# table from before gets them in place.
+_LAW_CHANGE_ADDED_COLUMNS = (("law_change", "after_units", "TEXT"),
+                             ("law_change", "anchor", "TEXT"),
+                             ("bill_evolution", "provision_from", "TEXT"))
+
+
+def _ensure_law_change_tables(conn: sqlite3.Connection) -> None:
+    """Create the law-change tables in place if missing, so the feature also
+    lands through the incremental ``--update`` path (which snapshots the live DB
+    instead of re-running schema.sql). The DDL is read out of schema.sql's own
+    law-change block rather than copied here, so the two cannot drift."""
+    if not _table_exists(conn, "law_text"):
+        schema = SCHEMA_PATH.read_text(encoding="utf-8")
+        start = schema.index("CREATE TABLE law_change_bill")
+        end = schema.index("-- Votes module (szavazások)")
+        block = schema[start:end].rsplit("-- ----", 1)[0]
+        conn.executescript(block.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")
+                           .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS "))
+    for table, column, decl in _LAW_CHANGE_ADDED_COLUMNS:
+        if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+def load_law_changes(conn: sqlite3.Connection, registry: dict) -> int:
+    """Load one cycle's law changes (``processed/law-changes-<cycle>.json``),
+    replacing that cycle's rows. Bills are referenced by id only (no foreign
+    key, see schema.sql), so this neither needs the bills loaded first nor is
+    disturbed by their reload."""
+    _ensure_law_change_tables(conn)
+    period = (registry.get("meta") or {}).get("cycle")
+    conn.execute("DELETE FROM amendment_point WHERE amendment_id IN "
+                 "(SELECT id FROM amendment_doc WHERE period_number IS ?)", (period,))
+    conn.execute("DELETE FROM law_change WHERE period_number IS ?", (period,))
+    for tbl in ("amendment_doc", "bill_evolution", "law_change_unresolved",
+                "law_change_law", "law_change_bill"):
+        conn.execute(f"DELETE FROM {tbl} WHERE period_number IS ?", (period,))
+
+    n = 0
+    for rec in registry.get("data") or []:
+        bid = rec.get("billId")
+        if not bid:
+            continue
+        n += 1
+        src = rec.get("source") or {}
+        act = rec.get("act") or {}
+        ev = rec.get("evolution") or {}
+        conn.execute(
+            """INSERT OR REPLACE INTO law_change_bill(bill_id, period_number,
+                   source_number, source_url, source_kind, scan, act_label, act_doc,
+                   act_url, final, computed_at, stats_json, evolution_from,
+                   evolution_from_url, evolution_to, evolution_to_url,
+                   evolution_unchanged)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (bid, period, src.get("number"), src.get("url"), src.get("kind"),
+             1 if rec.get("scan") else 0, act.get("label"), act.get("docId"),
+             act.get("url"), 1 if rec.get("final") else 0, rec.get("computedAt"),
+             _json_or_none(rec.get("stats")),
+             (ev.get("from") or {}).get("number"), (ev.get("from") or {}).get("url"),
+             (ev.get("to") or {}).get("number"), (ev.get("to") or {}).get("url"),
+             ev.get("unchanged")))
+        for i, law in enumerate(rec.get("laws") or []):
+            base, target = law.get("base") or {}, law.get("target") or {}
+            cur = conn.execute(
+                """INSERT INTO law_change_law(bill_id, period_number, ord, doc_id,
+                       title, abbr, url, method, base_version, base_from, base_to,
+                       target_version, target_from, target_to)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (bid, period, i, law.get("docId"), law.get("title"), law.get("abbr"),
+                 law.get("url"), law.get("method"), base.get("version"),
+                 base.get("from"), base.get("to"), target.get("version"),
+                 target.get("from"), target.get("to")))
+            law_id = cur.lastrowid
+            conn.executemany(
+                """INSERT INTO law_change(law_id, bill_id, period_number, ord, jh, ref,
+                       ops, provisions, before_text, after_text, url, after_units,
+                       anchor)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                [(law_id, bid, period, j, c.get("jh"), c.get("ref"),
+                  ",".join(c.get("ops") or []),
+                  json.dumps(c.get("provisions") or [], ensure_ascii=False),
+                  c.get("before"), c.get("after"), c.get("url"),
+                  # [] is an answer (the unit is gone), not a missing one
+                  json.dumps(c["afterUnits"], ensure_ascii=False)
+                  if c.get("afterUnits") is not None else None, c.get("anchor"))
+                 for j, c in enumerate(law.get("changes") or [])])
+        conn.executemany(
+            """INSERT INTO law_change_unresolved(bill_id, period_number, ord, provision,
+                   doc_id, reason, text) VALUES (?,?,?,?,?,?,?)""",
+            [(bid, period, i, u.get("provision"), u.get("docId"), u.get("reason"),
+              u.get("text")) for i, u in enumerate(rec.get("unresolved") or [])])
+        conn.executemany(
+            """INSERT INTO bill_evolution(bill_id, period_number, ord, provision,
+                   provision_from, before_text, after_text) VALUES (?,?,?,?,?,?,?)""",
+            [(bid, period, i, p.get("key"), p.get("from"), p.get("before"), p.get("after"))
+             for i, p in enumerate(ev.get("provisions") or [])])
+        for i, a in enumerate(rec.get("amendments") or []):
+            cur = conn.execute(
+                """INSERT INTO amendment_doc(bill_id, period_number, ord, motion_number,
+                       type, url, scan, marked, error) VALUES (?,?,?,?,?,?,?,?,?)""",
+                (bid, period, i, a.get("number"), a.get("type"), a.get("url"),
+                 1 if a.get("scan") else 0, 1 if a.get("marked") else 0, a.get("error")))
+            conn.executemany(
+                """INSERT INTO amendment_point(amendment_id, ord, point, target, kind,
+                       segments_json) VALUES (?,?,?,?,?,?)""",
+                [(cur.lastrowid, j, p.get("n"), p.get("target"), p.get("kind"),
+                  json.dumps(p.get("segments") or [], ensure_ascii=False))
+                 for j, p in enumerate(a.get("points") or [])])
+    conn.commit()
+    logger.info("Loaded law changes for %d bills (cycle %s)", n, period)
+    return n
+
+
+def load_law_texts(conn: sqlite3.Connection, path: Path) -> int:
+    """Load one cycle's law texts (``processed/law-texts-<cycle>.jsonl.gz``):
+    the njt states its law diffs were read against, whole, for the full-law
+    view. Read a line — one law — at a time, since the file holds a hundred-odd
+    megabytes of text; each state is stored zlib-compressed (a fifth of its
+    size), as it is only ever served whole."""
+    _ensure_law_change_tables(conn)
+    n = 0
+    period = None
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        for i, line in enumerate(fh):
+            row = json.loads(line)
+            if i == 0:
+                period = (row.get("meta") or {}).get("cycle")
+                conn.execute("DELETE FROM law_text WHERE period_number IS ?", (period,))
+                continue
+            units = json.dumps(row.get("units") or [], ensure_ascii=False,
+                               separators=(",", ":"))
+            conn.execute(
+                "INSERT OR REPLACE INTO law_text(period_number, doc_id, version, title, units) "
+                "VALUES (?,?,?,?,?)",
+                (period, row["docId"], row["version"], row.get("title"),
+                 zlib.compress(units.encode("utf-8"), 6)))
+            n += 1
+    conn.commit()
+    logger.info("Loaded %d law text(s) (cycle %s)", n, period)
+    return n
 
 
 # ---------------------------------------------------------------------------
@@ -1405,6 +1569,48 @@ def _ensure_committee_minutes_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_committee_video_date
             ON committee_video(held_on);
     """)
+    _ensure_committee_speech_fts(conn)
+
+
+def _ensure_committee_speech_fts(conn: sqlite3.Connection) -> None:
+    """The committee full-text index (SEA-14) and the triggers that keep it in
+    step with ``committee_speech``. Mirrors schema.sql.
+
+    A DB whose minutes were loaded before the index existed gets it the next
+    time any minutes file is loaded, and that first pass **backfills** it from
+    the rows already there: the triggers only see writes made after they exist,
+    and an update reloads one cycle's minutes, not all of them, so without the
+    rebuild every other cycle would stay unsearchable until it happened to be
+    re-scraped. One pass over the content table, once."""
+    fresh = not _table_exists(conn, "committee_speech_fts")
+    conn.executescript("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS committee_speech_fts USING fts5(
+            text, content = 'committee_speech', content_rowid = 'id',
+            tokenize = "unicode61 remove_diacritics 2");
+        CREATE TRIGGER IF NOT EXISTS committee_speech_ai
+            AFTER INSERT ON committee_speech BEGIN
+            INSERT INTO committee_speech_fts(rowid, text)
+                VALUES (new.id, new.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS committee_speech_ad
+            AFTER DELETE ON committee_speech BEGIN
+            INSERT INTO committee_speech_fts(committee_speech_fts, rowid, text)
+                VALUES('delete', old.id, old.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS committee_speech_au
+            AFTER UPDATE ON committee_speech BEGIN
+            INSERT INTO committee_speech_fts(committee_speech_fts, rowid, text)
+                VALUES('delete', old.id, old.text);
+            INSERT INTO committee_speech_fts(rowid, text)
+                VALUES (new.id, new.text);
+        END;
+    """)
+    if fresh and conn.execute(
+            "SELECT 1 FROM committee_speech LIMIT 1").fetchone():
+        logger.info("Building the committee full-text index over the "
+                    "minutes already loaded")
+        conn.execute("INSERT INTO committee_speech_fts(committee_speech_fts) "
+                     "VALUES('rebuild')")
 
 
 def _minutes_person_index(conn: sqlite3.Connection):
@@ -5572,6 +5778,13 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
         for bp in sorted((data_dir / "processed").glob("bills-*.json")):
             load_bills(conn, json.loads(bp.read_text()))
 
+        # What each bill changes (BILL-14..16). Keyed by bill id only, so its
+        # place in the order is a matter of reading order, not of links.
+        for lp in sorted((data_dir / "processed").glob("law-changes-*.json")):
+            load_law_changes(conn, json.loads(lp.read_text()))
+        for lp in sorted((data_dir / "processed").glob("law-texts-*.jsonl.gz")):
+            load_law_texts(conn, lp)
+
         # Votes load after bills so a vote's subject links to a held bill and its
         # roll call / faction breakdown to loaded persons/factions (EXT-2).
         for vp in sorted((data_dir / "processed").glob("votes-*.json")):
@@ -5690,7 +5903,8 @@ def _build_database(data_dir: str | Path, db_path: str | Path, *,
 # load_state yet), which is exactly how a new domain lands on an already-built
 # deployment through the incremental path alone.
 _PROCESSED_GLOBS = ("representatives-*.json", "advocates-*.json", "bills-*.json",
-                    "votes-*.json", "committees-*.json",
+                    "law-changes-*.json", "law-texts-*.jsonl.gz", "votes-*.json",
+                    "committees-*.json",
                     "committee-minutes-*.json", "committee-videos.json",
                     "committee-timing.json", "*-session.json", "officeholders.json", "aktualis.json",
                     "asset-declarations.json")
@@ -5902,6 +6116,12 @@ def _update_database(data_dir: str | Path, db_path: str | Path, *,
             cycle = (registry.get("meta") or {}).get("cycle")
             if cycle is not None:
                 reloaded_bill_periods.add(int(cycle))
+        # Its own file, its own schedule: a bills reload leaves these rows alone
+        # (no foreign key), so only a change to the file itself reloads them.
+        for p in changed["law-changes-*.json"]:
+            load_law_changes(conn, json.loads(p.read_text()))
+        for p in changed["law-texts-*.jsonl.gz"]:
+            load_law_texts(conn, p)
         for p in changed["votes-*.json"]:
             load_votes(conn, json.loads(p.read_text()))
         reloaded_committee_periods: set[int] = set()

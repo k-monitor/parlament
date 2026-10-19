@@ -114,15 +114,16 @@ _SHARED_FIELDS = ("date_from", "date_to", "period", "person_id", "faction_id",
 # `test_analytics.py` asserts these against the endpoint signatures so the two
 # cannot drift apart.
 SOURCES: dict[str, dict[str, str]] = {
-    # The transcript full-text search (§5.1) — all its filters are shared ones.
-    "proceedings": {"sort": "relevance"},
+    # The transcript full-text search (§5.1) — all its filters are shared ones
+    # but the policy topic, which only it and the iromány list carry.
+    "proceedings": {"sort": "relevance", "topic": ""},
     # The iromány list (§6): the bills page (main_type=T), the kérdések page
     # (main_type_in=A,I,K) and the all-irományok page (no fotipus scope at all)
     # are one endpoint under three filter sets — the `filters` string tells them
     # apart.
     "bills": {"sort": "number", "main_type": "", "main_type_not": "",
               "main_type_in": "", "main_type_not_in": "", "type": "",
-              "status": "", "sponsor": "", "portfolio": "",
+              "status": "", "topic": "", "sponsor": "", "portfolio": "",
               "portfolio_role": "any", "portfolio_period": "",
               "answer_verdict": "", "answer_state": ""},
     # The representative list (REP-1) — `role` picks the MP / advocate / other
@@ -149,8 +150,15 @@ SOURCES: dict[str, dict[str, str]] = {
     # The committee-sittings list (BIZ-24) — the committee half of the sittings
     # page. A separate box from "committees" above: that one searches for a
     # *body*, this one for a *sitting*, and folding them together would make
-    # both unreadable. `readable` follows the boolean convention above.
-    "committee-meetings": {"committee": "", "readable": "False"},
+    # both unreadable. `readable` and `available` follow the boolean
+    # convention above.
+    "committee-meetings": {"committee": "", "readable": "False",
+                           "available": "False"},
+    # The committee scope of the site search (SEA-14): full text over what was
+    # said in committee sittings. Its own source, not "proceedings" — the two
+    # scopes rank different corpora, and a regression in one must not hide in
+    # the other's click-through rate.
+    "committee-minutes": {"sort": "relevance", "committee": ""},
 }
 
 # Parameter names a caller may pass that are NOT filters — they are either the

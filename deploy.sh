@@ -250,6 +250,10 @@ color_env=(
 # container, so forward them here.
 [ -n "${PARLAMONITOR_PARLACAP_THRESHOLD:-}" ] && color_env+=(-e "PARLAMONITOR_PARLACAP_THRESHOLD=${PARLAMONITOR_PARLACAP_THRESHOLD}")
 [ -n "${PARLAMONITOR_BILL_TOPICS:-}" ]        && color_env+=(-e "PARLAMONITOR_BILL_TOPICS=${PARLAMONITOR_BILL_TOPICS}")
+# What a bill changes (BILL-14..16) is still under development: the sync collects
+# it, but the site shows it only with PARLAMONITOR_LAW_CHANGES_UI=1 in .env. A
+# read-side switch like the two above, so it takes effect on the next swap.
+[ -n "${PARLAMONITOR_LAW_CHANGES_UI:-}" ]     && color_env+=(-e "PARLAMONITOR_LAW_CHANGES_UI=${PARLAMONITOR_LAW_CHANGES_UI}")
 
 # --- start the idle color from the new image --------------------------------
 echo "==> starting $TARGET_CTR"

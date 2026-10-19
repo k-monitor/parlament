@@ -146,6 +146,10 @@ export const api = {
   // page's second tab lists.
   committeeMeetingsAll: (params) => get('/committees/meetings', params),
   committeeMinutes: (meetingId) => get(`/committees/meetings/${meetingId}/minutes`),
+  // Full text over what was said in committee sittings — the committee scope
+  // of the site search (SEA-14). One hit per speech, opened at its anchor in
+  // the minutes above.
+  committeeSearch: (params) => get('/committees/search', params),
   // Just the agenda headings of one sitting (BIZ-4b), for the hover preview on
   // the meeting lists — `committeeMinutes` above would pull the whole
   // transcript to show five titles.
@@ -155,6 +159,12 @@ export const api = {
   committeeVideos: (id, params) => get(`/committees/${id}/videos`, params),
   // One person's seats, for the block on their profile (BIZ-7).
   repCommittees: (id, period) => get(`/committees/representative/${id}`, { period }),
+  // The committee sittings they spoke at (BIZ-35), and — on expand — what they
+  // said at one of them, as the plenary speech days above are loaded.
+  repCommitteeSittings: (id, period) =>
+    get(`/committees/representative/${id}/speech-sittings`, { period }),
+  repCommitteeSpeeches: (id, meeting) =>
+    get(`/committees/representative/${id}/speeches`, { meeting }),
   // "Who represents me?" (REP-10). Not period-scoped: constituency boundaries are
   // redrawn between elections, so the answer belongs to the cycle the boundary data
   // elects, which the response names.
@@ -184,11 +194,19 @@ export const api = {
   // bills
   bills: (params) => get('/bills', params),
   bill: (id) => get(`/bills/${id}`),
+  // What a bill changes (BILL-14..16): the law diff, the bill's evolution and
+  // its amendments; `law` narrows it to one amended law's provisions.
+  billChanges: (id, law) => get(`/bills/${id}/changes`, { law }),
+  billEvolution: (id) => get(`/bills/${id}/changes`, { part: 'evolution' }),
+  billLawFull: (id, law) => get(`/bills/${id}/changes/full`, { law }),
+  billAmendment: (id, number) => get(`/bills/${id}/amendments`, { number }),
   billFacets: (params) => get('/bills/facets', params),
   billTopicMix: (period) => get('/bills/topics', { period }),
   // What the House decided between two dates — the week digest's list (HOME-4).
   billDecisions: (dateFrom, dateTo) =>
     get('/bills/decisions', { date_from: dateFrom, date_to: dateTo }),
+  // The irományok the coming sitting will vote on or debate (HOME-5).
+  upcomingBills: () => get('/bills/upcoming'),
   questionsSankey: (period, includeType = true, expandOther = false) =>
     get('/bills/questions/sankey',
         { period, include_type: includeType, expand_other: expandOther }),

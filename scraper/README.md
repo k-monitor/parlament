@@ -426,6 +426,75 @@ skipped, and a repeat pass over cycle 43 costs no requests at all. A 404 or an
 over-cap document is *settled* and not asked about again; only a genuine fetch
 error is retried next run. `--force` re-fetches everything.
 
+### What a bill changes (`law-changes`, BILL-14..16)
+
+For every törvényjavaslat of a cycle: what it changes in each law it amends, how
+the bill itself changed through its motions, and each amendment as a diff.
+
+```bash
+python -m parlamonitor law-changes --cycle 43 ./data
+python -m parlamonitor law-changes --cycle 43 --bill T/438 ./data   # one bill
+```
+
+It writes `processed/law-changes-<cycle>.json` from three sources:
+
+* **The law diff** compares each amended law's text on **njt.hu**, unit by unit
+  (njt addresses every §, paragraph and point: `SZ26@BE4@POA`). For a bill that
+  became law it is njt's own work: the time state in force on the promulgation
+  day against the newest one, keeping exactly the units whose njt footnote names
+  the new act (`method: njt` — exact, and final once read). For a bill still in
+  Parliament, its amending instructions — `… helyébe a következő rendelkezés lép`,
+  `… a következő (4a) bekezdéssel egészül ki`, `… az „X” szövegrész helyébe az
+  „Y” szöveg lép`, `Hatályát veszti …` — are parsed and applied to njt's newest
+  state (`method: computed`). Checked against njt on cycle 43's adopted bills
+  (`python -m parlamonitor.lawdiff.evaluate ./data --cycle 43`, cache only — run
+  it before and after a parser change): of the 3,445 amending instructions of
+  the 35 bills whose text read is the one adopted, 87% are applied exactly as
+  njt has them, 7% are known failures listed as such (mostly annexes, which njt
+  keeps as tables), 0.3% come out different without saying so, and the rest
+  cannot be judged (another act changed the same provision, or the law is not
+  cached). What cannot be applied is listed in the bill's own words.
+* **The bill's evolution** diffs the bill as submitted against the latest
+  *egységes javaslat* — Parliament's own consolidation of the bill with the
+  adopted összegző módosító javaslat — section by section, pairing sections by
+  what they say (a § inserted early renumbers every one after it; a
+  renumbered section says its old number).
+* **Each amendment** (módosító javaslat, részletes vitát lezáró bizottsági /
+  összegző módosító javaslat) is read point by point. The Parlex template
+  reprints the affected provision with deletions in **bold [brackets]** and
+  insertions **underlined** — a drawn line, invisible to `pdftotext` — so the
+  PDFs are read with PyMuPDF (`pymupdf`), which sees both. A table's rules (a
+  *nyelvhelyességi módosítás* is a table of corrections) meet its vertical
+  rules and are not taken for underlines.
+
+**Caches.** Each PDF is downloaded once; its extraction is kept in
+`lawdiff/<cycle>/docs/` (the PDF is not), so a parser change re-runs from disk.
+njt.hu states are kept in `lawdiff/njt/<law>/`; the version list is re-checked
+daily. A state already in force when fetched never changes, but njt regenerates
+a *future* state in place, under the same number, when a later act amends the
+law — so each page keeps the version ids listed when it was fetched
+(`v<n>.meta.json`), and a future state's page is fetched again once the law
+gains a state. Each bill's record is fingerprinted by everything it was
+computed from (the amended laws' version lists included), so an unchanged bill
+costs nothing on the next run. For cycle 43 that is ~90 MB, almost all of it the njt states of the 327
+laws its bills amend (the pages and their parses, xz-compressed); the PDF
+extractions are ~3 MB.
+
+**Pacing.** The hand-run command is uncapped unless `--limit` is given; `sync`
+runs the stage after `bills`, spending at most `PARLAMONITOR_LAW_CHANGES_PER_SYNC`
+requests per pass (default 80, `0` = no cap; `--law-changes-per-pass`), bills
+still in Parliament first. `PARLAMONITOR_LAW_CHANGES=off` (or
+`--skip-law-changes`) turns it off. A first pass over a cycle reads several
+hundred njt pages — the omnibus bills amend over a hundred laws each — so it
+drains over a few hours of polls.
+
+**What it cannot read.** About one legislative document in seven is a paper
+filing scanned to PDF (the first weeks of a new Parliament, table-heavy budget
+bills, some committee texts of urgent bills): no markup survives and the text is
+OCR quality, so it is recorded as `scan` and not parsed. njt.hu now and then
+serves a page without its text; the stage retries once and otherwise leaves the
+bill for the next pass, never caching the empty page.
+
 ### Committees (§6F)
 
 The committee registry is nine Felicitas queries behind five portal pages
@@ -562,7 +631,7 @@ the recording is up the same day and the meeting listing follows weeks later.
 
 **Two sources, because the cheap one is a window, not an archive.** The RSS feed
 (`/feeds/videos.xml?channel_id=…`) is one unauthenticated request and carries
-only the **15 newest** videos; `--backfill` walks the whole upload history,
+only the **15 newest** videos; `--backfill` (and the sync, once a day) walks the whole upload history,
 preferring `yt-dlp` (no key, no quota) and falling back to the YouTube Data API
 v3 when `PARLAMONITOR_YOUTUBE_API_KEY` is set. With neither available the
 backfill says so rather than quietly doing nothing (SCR-6).
@@ -646,7 +715,14 @@ cache changes — which gives three ways to get a walled host's sittings timed:
    the container, `PARLAMONITOR_YOUTUBE_COOKIES_FILE` in `.env` mounts it
    read-only). yt-dlp gets a private copy, since it writes the jar back. Use a
    throwaway account — YouTube can and does lock accounts used this way, and
-   the cookies expire.
+   the cookies expire. **This did not work on the production server**
+   (2026-10-13). With the cookies, YouTube answered every video with *"The page
+   needs to be reloaded"*, even on the newest yt-dlp (2026.08.19). That message
+   now counts as a wall too, so it stops the pass. What did work there is
+   route 2, `PARLAMONITOR_YOUTUBE_PROXY=ssh` through the scraper's existing SSH
+   host. Its first pass transcribed 4 recordings unattended. An occasional
+   `HTTP Error 403` on the media download still happens, and the next pass
+   retries it.
 
 `--force` ignores a recorded block.
 
@@ -875,10 +951,14 @@ python -m parlamonitor sync --cycle 43 ./data      # pin a cycle
   after the sitting and in ones and twos, so the cap only ever binds on the
   first pass after a cycle is added.
 - **Committee recordings:** one request (the RSS feed), rewritten only when the
-  channel's video list changed. The **backfill is not run here** — it walks the
-  whole upload history and belongs in the explicit `committee-videos --backfill`
-  command. If the 15-video feed window is ever overrun, that command closes the
-  gap rather than every sync pass paying for it.
+  channel's video list changed. The **whole upload history is walked too**: on
+  the first pass and then once every `VIDEO_BACKFILL_MAX_AGE` (a day). The walk
+  is one `yt-dlp --flat-playlist` call, about 2 s. It used to be left to the
+  manual `committee-videos --backfill`, which production never ran, so its
+  registry held only what the 15-video feed had shown since the first poll. The
+  cadence lives in the sync state, so a walk that finds nothing new rewrites
+  nothing, and a failed walk (no yt-dlp, bot wall) waits a day like a
+  successful one.
 - **Committee timing:** last of the committee stages, since it needs both of
   their records. Skipped outright while the recordings registry and the minutes
   files are unchanged (file stats, so an idle pass opens nothing). Transcribing
@@ -952,6 +1032,13 @@ parlamonitor/
   documents/
     scrape.py          the iromány document FILES + extracted text
                        → documents/<cycle>/ (optional; off by default)
+  lawdiff/
+    njt.py             njt.hu time states, read as addressable units
+    pdftext.py         iromány PDFs with layout + insert/delete markup (PyMuPDF)
+    novella.py         amending instructions: parsed, applied to a law
+    motions.py         a módosító javaslat's points as diffs of the bill
+    scrape.py          per bill → law-changes-<cycle>.json
+    evaluate.py        the applier checked against njt for adopted bills (cache only)
   aktualis/
     page.py            the Aktuális portal page: its documents + the House
                        Committee's next meeting
@@ -971,6 +1058,8 @@ tests/
   test_officeholders.py offline tests: office-term grouping + open-ended terms
   test_documents.py    offline tests: the document mirror — retention, the
                        incremental index, graceful degradation
+  test_lawdiff.py      offline tests: njt markup, instruction parsing/applying,
+                       njt attribution, amendment markup, the per-bill stage
 ```
 
 ## Tests

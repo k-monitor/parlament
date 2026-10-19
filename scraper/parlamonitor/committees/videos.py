@@ -21,10 +21,12 @@ loader's, not this module's (it is the side that holds both).
 
 * The **RSS feed** (``/feeds/videos.xml?channel_id=…``) is one unauthenticated
   request and needs no API key, but YouTube serves only the **15 newest**
-  videos in it. For a daily poll that is ample — the House streams a handful of
-  things a week — and it is what a sync pass uses.
+  videos in it. That is enough to notice a new stream, and every sync pass reads
+  it, but it is not enough on its own: a video that left the window before a
+  poll saw it would never be seen.
 * **Backfill** walks the channel's whole upload history, which the feed cannot
-  reach. It prefers ``yt-dlp`` (present on the box, no key, no quota) and falls
+  reach. The sync runs it once a day; ``committee-videos --backfill`` runs it on
+  demand. It prefers ``yt-dlp`` (present on the box, no key, no quota) and falls
   back to the **YouTube Data API v3** when a key is configured. Measured on
   2026-09-21 the channel holds **166 videos** in total, back to 2024-02-26 —
   and that is genuinely all of it, not a paging limit: the uploads playlist is

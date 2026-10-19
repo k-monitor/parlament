@@ -36,5 +36,12 @@ faster-whisper>=1.1,<2
 # returning nothing (SCR-6).
 yt-dlp
 
+# What a bill changes (BILL-14..16, parlamonitor/lawdiff): reads the iromány
+# PDFs with their layout and their insert/delete markup — the underline that
+# marks an amendment's insertions is a drawn line, which pdftotext cannot see.
+# AGPL, like this project. Imported lazily: without it the law-changes stage
+# keeps its previous output and does nothing else (SCR-6).
+pymupdf>=1.24
+
 # Test-only:
 #   pytest>=8

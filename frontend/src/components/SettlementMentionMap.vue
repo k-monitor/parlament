@@ -69,6 +69,12 @@ const props = defineProps({
   // figure the reader is scrolling past, so the wheel (and, on a touch screen, one
   // finger) scrolls the page rather than the map: zoom is on the buttons.
   compact: { type: Boolean, default: false },
+  // The embedded map (§4C): it takes the height its container leaves it — the
+  // iframe's, whatever the host page made it — rather than a height of its own.
+  // An embed is also scrolled past, inside somebody else's article, so it hands
+  // the wheel and a one-finger swipe to the page exactly as the card does; its
+  // legend keeps the scale sentence, since no page around it explains the scale.
+  fill: { type: Boolean, default: false },
 })
 const emit = defineEmits(['select'])
 
@@ -327,11 +333,12 @@ async function build() {
   }
   if (!host.value) return
   leaflet.value = L
+  const passive = props.compact || props.fill
   const map = L.map(host.value, {
-    scrollWheelZoom: !props.compact,
+    scrollWheelZoom: !passive,
     // A pinch still zooms (and moves) the card's map; a single-finger swipe is left
     // to the page. A mouse drag has nothing to steal, so it still pans.
-    dragging: !(props.compact && coarsePointer()),
+    dragging: !(passive && coarsePointer()),
     zoomControl: true,
   })
   mapInstance.value = map
@@ -353,7 +360,15 @@ async function build() {
     map.setView([47.16, 19.5], 7)
   }
   draw()
+  // Leaflet re-measures itself on a window resize only. A filling map's box can also
+  // change without one — the legend re-wrapping once the web font lands — and a map
+  // that missed it draws its tiles for the old box, leaving a grey band.
+  if (props.fill && typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => mapInstance.value?.invalidateSize())
+    resizeObserver.observe(host.value)
+  }
 }
+let resizeObserver = null
 
 // The view keeps its place when the binning or the reading changes: switching to
 // segments re-styles what is on screen, it does not re-frame the country, so a reader
@@ -362,13 +377,14 @@ watch(() => [props.mode, props.bins, props.points, props.segments, props.max],
       draw, { deep: false })
 onMounted(build)
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
   if (mapInstance.value) mapInstance.value.remove()
   mapInstance.value = null
 })
 </script>
 
 <template>
-  <figure class="mapfig" :class="{ compact }">
+  <figure class="mapfig" :class="{ compact, fill }">
     <p v-if="failed" class="state" role="alert">{{ $t('settlements.mapFailed') }}</p>
     <div
       v-else ref="host" class="mentionmap" role="application"
@@ -454,6 +470,10 @@ onBeforeUnmount(() => {
 .swatch.empty { background: var(--surface); box-shadow: inset 0 0 0 1px #b9bdc4; }
 .swatch.blind { background: #ffffff; border-color: #8a857b; }
 .lscale { flex: 1 1 100%; }
+/* The map is the flexible part: the legend keeps the height its wrapped lines need,
+   and a floor stops a short iframe from squeezing the country to a strip. */
+.mapfig.fill { margin: 0; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.mapfig.fill .mentionmap { flex: 1; height: auto; min-height: 180px; }
 .mapfig.compact { margin: 0; }
 .mapfig.compact .legend { gap: .2rem .7rem; margin-top: .4rem; font-size: .75rem; }
 .mapfig.compact .lscale { display: none; }

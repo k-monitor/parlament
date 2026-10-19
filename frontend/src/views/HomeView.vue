@@ -5,8 +5,9 @@
 //     one example search at a time with its popularity histogram (§SEA-8);
 //  2. two panels taking turns: a number from Parliament in a sentence, and one of
 //     the site's interactive figures — both about the cycles in scope (§4A);
-//  3. what the House has just done (last week's sittings) and what it is about
-//     to do (the order paper, NR-5);
+//  3. what the House has just done (last week's sittings), then what it is
+//     about to do: the bills it will vote on or debate (HOME-5), a compact
+//     digest, and the order paper day by day (NR-5);
 //  4. the donation card.
 //
 // The rotating panels and the week digest each fetch their own data, gated on
@@ -16,13 +17,19 @@ import { useRouter } from 'vue-router'
 import { store, loadMeta } from '../store.js'
 import DonateCard from '../components/DonateCard.vue'
 import UpcomingSitting from '../components/UpcomingSitting.vue'
+import UpcomingBills from '../components/UpcomingBills.vue'
 import HomeTrendCard from '../components/HomeTrendCard.vue'
 import HomeFactsCard from '../components/HomeFactsCard.vue'
 import HomeFigureCard from '../components/HomeFigureCard.vue'
 import LastWeekPanel from '../components/LastWeekPanel.vue'
+import SearchScopeSelect from '../components/SearchScopeSelect.vue'
+import { scopeTarget } from '../lib/searchScopes.js'
 
 const router = useRouter()
 const q = ref('')
+// What the box searches in (SEA-14) — one scope or several; the plenary by
+// default, as it always was.
+const scopes = ref(['plenary'])
 const counts = computed(() => (store.meta && store.meta.counts) || {})
 function fmt(n) { return (n ?? 0).toLocaleString('hu-HU') }
 
@@ -39,7 +46,7 @@ const startYear = computed(() => {
   return years.length ? Math.min(...years) : null
 })
 function go() {
-  if (q.value.trim()) router.push({ name: 'search', query: { q: q.value.trim() } })
+  if (q.value.trim()) router.push(scopeTarget(scopes.value, q.value))
 }
 const showProceedings = computed(() => store.moduleEnabled('proceedings'))
 // The coming sitting's order paper (NR-5). On only where the scrape has
@@ -47,6 +54,10 @@ const showProceedings = computed(() => store.moduleEnabled('proceedings'))
 // nothing rather than an empty promise.
 const showUpcoming = computed(() =>
   showProceedings.value && store.featureEnabled('upcoming_agenda'))
+// The same order paper turned round to the bills (HOME-5): it reads the bill
+// registry, so it goes with the bills module (EXT-6).
+const showUpcomingBills = computed(() =>
+  showUpcoming.value && store.moduleEnabled('bills'))
 
 onMounted(() => { loadMeta().catch(() => {}) })
 </script>
@@ -56,7 +67,10 @@ onMounted(() => { loadMeta().catch(() => {}) })
     <section class="card pad home-search">
       <h1 class="home-title">{{ $t('app.tagline') }}</h1>
       <form v-if="showProceedings" class="searchbar" role="search" @submit.prevent="go">
-        <label for="home-q" class="searchbar__label">{{ $t('home.searchLabel') }}</label>
+        <!-- The scope dropdown says what the box searches, so the label that
+             used to say it ("in the speeches") is for assistive tech only. -->
+        <label for="home-q" class="visually-hidden">{{ $t('home.searchLabel') }}</label>
+        <SearchScopeSelect v-model="scopes" />
         <input
           id="home-q" v-model="q" type="search"
           :placeholder="$t('home.searchPlaceholder')" autofocus
@@ -78,8 +92,10 @@ onMounted(() => { loadMeta().catch(() => {}) })
     <HomeFigureCard />
   </div>
 
-  <!-- What the House has just done, then what it is about to do. -->
+  <!-- What the House has just done, then what it is about to do: the bills
+       first, then the coming sitting day by day. -->
   <LastWeekPanel v-if="showProceedings" class="home-block" />
+  <UpcomingBills v-if="showUpcomingBills" class="home-block" />
   <UpcomingSitting v-if="showUpcoming" class="home-block" />
 
   <DonateCard class="home-block" />
@@ -95,7 +111,6 @@ onMounted(() => { loadMeta().catch(() => {}) })
 .home-title { margin: 0 0 .7rem; font-size: 1.35rem; line-height: 1.25; }
 
 .searchbar { display: flex; align-items: center; gap: .6rem; }
-.searchbar__label { flex: none; margin: 0; font-size: .85rem; color: var(--ink); }
 .searchbar input { flex: 1; min-width: 0; font-size: 1rem; padding: .55rem .75rem; }
 .searchbar .btn { flex: none; }
 
@@ -118,6 +133,8 @@ onMounted(() => { loadMeta().catch(() => {}) })
 }
 @media (max-width: 560px) {
   .searchbar { flex-wrap: wrap; }
-  .searchbar__label { flex-basis: 100%; }
+  /* The scope takes the first row so the box keeps a usable width beside the
+     button on a phone. */
+  .searchbar .scope-select { flex-basis: 100%; }
 }
 </style>

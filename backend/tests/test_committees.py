@@ -690,6 +690,35 @@ def test_meetings_list_filters(client):
     assert client.get(base, params={"q": "nincs ilyen"}).json()["total"] == 0
 
 
+def test_meetings_list_available_keeps_any_record_or_recording(client, conn):
+    """The sittings page's "only with video or minutes" toggle: anything that
+    gives the card somewhere to go counts, not just a record we have read."""
+    base = "/api/v1/committees/meetings"
+
+    def ids():
+        return [m["id"] for m in
+                client.get(base, params={"available": True}).json()["meetings"]]
+
+    # `ules-2` left nothing behind, so it is the one card hidden.
+    assert ids() == ["ules-1"]
+    # A blank URL is no record — the card treats it as none too.
+    conn.execute("UPDATE committee_meeting SET minutes_url = '' WHERE id = 'ules-2'")
+    conn.commit()
+    assert ids() == ["ules-1"]
+    # A published PDF nobody has read yet is kept…
+    conn.execute("UPDATE committee_meeting SET minutes_url = 'https://x/2.pdf' "
+                 "WHERE id = 'ules-2'")
+    conn.commit()
+    assert ids() == ["ules-1", "ules-2"]
+    # …though `readable` still asks the narrower question.
+    assert client.get(base, params={"readable": True}).json()["total"] == 1
+    # And so is a sitting we only hold a recording of.
+    conn.execute("UPDATE committee_meeting SET minutes_url = NULL WHERE id = 'ules-2'")
+    conn.commit()
+    _record_a_video(conn)
+    assert ids() == ["ules-1", "ules-2"]
+
+
 def test_meetings_list_is_not_shadowed_by_the_committee_sheet(client):
     """`/committees/meetings` and `/committees/{id}` are both two segments, so
     only the registration order keeps "meetings" from being read as an id."""
@@ -783,3 +812,189 @@ def test_a_recording_only_sitting_has_no_timing(client, conn):
     m = client.get("/api/v1/committees/meetings/ules-2/minutes").json()
     assert m["timing"] is None
 
+
+
+# --- Full-text search over the minutes (SEA-14) -----------------------------
+
+SEARCH = "/api/v1/committees/search"
+
+
+def test_search_finds_a_committee_speech_and_says_where_it_was_said(client):
+    res = client.get(SEARCH, params={"q": "elnok"}).json()
+    assert res["tablesReady"] is True
+    assert res["total"] == 1
+    hit = res["results"][0]
+    # Accent-folded like the plenary: "elnok" finds "elnök".
+    assert "<mark>elnök</mark>" in hit["excerpt"]
+    # Enough to open the speech's anchor in the jegyzőkönyv (`#sp-<ord>`).
+    assert (hit["meetingId"], hit["ord"]) == ("ules-1", 2)
+    assert hit["committeeName"] == "Költségvetési Bizottság"
+    assert hit["heldOn"] == "2026-06-10"
+    assert hit["section"] == "A költségvetésről szóló T/100. számú törvényjavaslat"
+    # Not in the roster: named as the minutes print it, linked nowhere.
+    assert (hit["name"], hit["personId"]) == ("Vendég Viktor", None)
+    assert hit["org"] == "Pénzügyminisztérium"
+
+
+def test_search_prefix_matches_a_suffixed_word(client):
+    """The plenary's query rules: a bare word is a prefix term, so "köszön"
+    reaches both "Köszöntöm" and "Köszönöm"."""
+    res = client.get(SEARCH, params={"q": "köszön"}).json()
+    assert sorted(h["ord"] for h in res["results"]) == [0, 2]
+
+
+def test_search_lists_a_speakers_committee_speeches_without_a_term(client):
+    res = client.get(SEARCH, params={"person_id": "k001"}).json()
+    assert res["query"] == ""
+    # Nothing to rank without a term, so the list is dated instead.
+    assert res["sort"] == "date_desc"
+    assert [h["ord"] for h in res["results"]] == [0, 1]
+    # Shown by its opening, unhighlighted — there is no match to mark.
+    assert res["results"][0]["excerpt"] == "Köszöntöm a bizottság tagjait."
+    assert res["results"][0]["name"] == "Kovács Béla"
+
+
+def test_search_without_a_term_or_a_speaker_is_refused(client):
+    assert client.get(SEARCH, params={"q": "  "}).status_code == 400
+    assert client.get(SEARCH, params={"committee": "biz-1"}).status_code == 400
+
+
+def test_search_filters_combine(client):
+    def total(**params):
+        return client.get(SEARCH, params={"q": "köszön", **params}).json()["total"]
+    assert total(period=43) == 2
+    assert total(period=42) == 0
+    assert total(date_from="2026-06-10", date_to="2026-06-10") == 2
+    assert total(date_to="2026-06-09") == 0
+    assert total(committee="biz-1") == 2
+    assert total(committee="biz-1a") == 0     # its subcommittee
+    assert total(person_id="k001") == 1
+
+
+def test_search_is_not_shadowed_by_the_committee_sheet(client):
+    """`/committees/search` is two segments like `/committees/{id}`; only the
+    registration order keeps "search" from being read as a committee id."""
+    assert "results" in client.get(SEARCH, params={"q": "elnok"}).json()
+
+
+def test_search_excerpt_is_escaped_and_follows_an_edit(conn, client):
+    """The excerpt goes into `v-html`: markup in the minutes renders as text.
+    The edit reaches the index through the update trigger, not a rebuild."""
+    conn.execute("UPDATE committee_speech SET text = 'A <b>zárszámadás</b> "
+                 "kész.' WHERE meeting_id = 'ules-1' AND ord = 2")
+    conn.commit()
+    hit = client.get(SEARCH, params={"q": "zarszamadas"}).json()["results"][0]
+    assert "&lt;b&gt;<mark>zárszámadás</mark>&lt;/b&gt;" in hit["excerpt"]
+    assert client.get(SEARCH, params={"q": "elnok"}).json()["total"] == 0
+
+
+def test_reloading_a_cycles_minutes_keeps_the_index_in_step(conn, data_dir):
+    """A reload deletes the cycle's speeches and inserts them again; the
+    triggers carry both into the index, so no hit is doubled or orphaned."""
+    import json
+    from app import loader
+    registry = json.loads(
+        (data_dir / "processed" / "committee-minutes-43.json").read_text())
+    loader.load_committee_minutes(conn, registry)
+    hits = conn.execute("SELECT rowid FROM committee_speech_fts "
+                        "WHERE committee_speech_fts MATCH 'koszon*'").fetchall()
+    ids = {r[0] for r in conn.execute("SELECT id FROM committee_speech")}
+    assert len(hits) == 2 and {r[0] for r in hits} <= ids
+
+
+def test_an_index_missing_from_an_older_db_is_built_from_its_rows(conn):
+    """A DB loaded before the index existed: the next minutes load creates it
+    and backfills it from the speeches already there (the triggers alone would
+    only index what is written afterwards)."""
+    from app import loader
+    conn.executescript("""
+        DROP TRIGGER committee_speech_ai; DROP TRIGGER committee_speech_ad;
+        DROP TRIGGER committee_speech_au; DROP TABLE committee_speech_fts;""")
+    loader._ensure_committee_minutes_tables(conn)
+    assert conn.execute("SELECT COUNT(*) FROM committee_speech_fts "
+                        "WHERE committee_speech_fts MATCH 'elnok*'"
+                        ).fetchone()[0] == 1
+
+
+def test_search_on_a_db_without_the_index_is_empty_not_an_error(conn, client):
+    conn.execute("DROP TABLE committee_speech_fts")
+    conn.commit()
+    res = client.get(SEARCH, params={"q": "elnok"}).json()
+    assert (res["tablesReady"], res["total"], res["results"]) == (False, 0, [])
+
+
+# --- A person's committee speeches, for their profile (BIZ-35) ---------------
+
+def _sittings(client, pid, **params):
+    return client.get(f"/api/v1/committees/representative/{pid}/speech-sittings",
+                      params=params).json()
+
+
+def test_profile_lists_the_sittings_a_person_spoke_at(client):
+    res = _sittings(client, "k001", period=43)
+    assert res["tablesReady"] is True
+    assert [(s["meetingId"], s["committeeName"], s["heldOn"])
+            for s in res["sittings"]] == [
+        ("ules-1", "Költségvetési Bizottság", "2026-06-10")]
+    sitting = res["sittings"][0]
+    # Both of Kovács's turns were taken from the chair: counted, and said so.
+    assert (sitting["count"], sitting["chairCount"]) == (2, 2)
+    # Words, the minutes' own measure: "Köszöntöm a bizottság tagjait." (4) +
+    # "Soron következik az 1. napirendi pont." (6).
+    assert sitting["words"] == 10
+    assert (res["total"], res["chairTotal"], res["words"]) == (2, 2, 10)
+    # The minutes were read for cycle 43, which is the whole of this scope.
+    assert res["coverage"] == [43]
+    assert res["coversScope"] is True
+
+
+def test_profile_committee_sittings_follow_the_cycle_scope(client):
+    res = _sittings(client, "k001", period=42)
+    assert (res["total"], res["sittings"]) == (0, [])
+    # Cycle 42's minutes were never read: an empty list there is not a finding.
+    assert res["coversScope"] is False
+
+
+def test_profile_committee_sittings_count_only_resolved_speakers(conn, client):
+    """A speech links to a profile only through its resolved person; the
+    guest's unresolved speech belongs to nobody's list."""
+    assert _sittings(client, "n002")["total"] == 0
+    conn.execute("UPDATE committee_speech SET person_id = 'n002' "
+                 "WHERE meeting_id = 'ules-1' AND ord = 2")
+    conn.commit()
+    sitting = _sittings(client, "n002")["sittings"][0]
+    assert (sitting["count"], sitting["chairCount"]) == (1, 0)
+
+
+def test_profile_opens_a_sitting_to_the_persons_own_speeches(conn, client):
+    res = client.get("/api/v1/committees/representative/k001/speeches",
+                     params={"meeting": "ules-1"}).json()
+    speeches = res["speeches"]
+    # Their speeches only, in sitting order, each addressable as `#sp-<ord>`.
+    assert [s["ord"] for s in speeches] == [0, 1]
+    assert [s["section"] for s in speeches] == [
+        "Az ülés megnyitása",
+        "A költségvetésről szóló T/100. számú törvényjavaslat"]
+    assert [(s["chair"], s["continued"]) for s in speeches] == [
+        (True, False), (True, True)]
+    assert [s["words"] for s in speeches] == [4, 6]
+    assert speeches[0]["excerpt"] == "Köszöntöm a bizottság tagjait."
+    # Plain text, not markup: the profile prints it as text, so an escaped
+    # entity would show up literally.
+    conn.execute("UPDATE committee_speech SET text = 'A <b>zárszámadás</b>.' "
+                 "WHERE meeting_id = 'ules-1' AND ord = 0")
+    conn.commit()
+    first = client.get("/api/v1/committees/representative/k001/speeches",
+                       params={"meeting": "ules-1"}).json()["speeches"][0]
+    assert first["excerpt"] == "A <b>zárszámadás</b>."
+    assert client.get("/api/v1/committees/representative/k001/speeches"
+                      ).status_code == 422
+
+
+def test_profile_committee_speeches_on_a_db_without_minutes(conn, client):
+    conn.executescript("DROP TABLE committee_speech_fts; "
+                       "DROP TABLE committee_speech;")
+    res = _sittings(client, "k001")
+    assert (res["tablesReady"], res["total"], res["sittings"]) == (False, 0, [])
+    assert client.get("/api/v1/committees/representative/k001/speeches",
+                      params={"meeting": "ules-1"}).json()["speeches"] == []

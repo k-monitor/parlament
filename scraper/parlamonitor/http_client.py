@@ -215,6 +215,24 @@ class HttpClient:
         r.encoding = "utf-8"
         return r.text
 
+    def post_text(self, url: str, *, data=None, json_body=None,
+                  headers: dict | None = None) -> str:
+        """POST a form (``data``) or a JSON body and return the response text.
+
+        For endpoints that answer a POST with something other than Felicitas
+        JSON — njt.hu's version list (a form POST answered with JSON) and its
+        lazily loaded law blocks (a JSON POST answered with HTML), §6A BILL-14."""
+        h = dict(headers or {})
+        kw = {"headers": h}
+        if json_body is not None:
+            h.setdefault("Content-Type", "application/json; charset=utf-8")
+            kw["data"] = json.dumps(json_body).encode("utf-8")
+        elif data is not None:
+            kw["data"] = data
+        r = self._request("POST", url, **kw)
+        r.encoding = "utf-8"
+        return r.text
+
     def get_bytes(self, url: str, **kw) -> bytes | None:
         """Fetch a binary resource (e.g. an MP photo). ``None`` on 404."""
         r = self._request("GET", url, **kw)

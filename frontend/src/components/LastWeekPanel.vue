@@ -166,7 +166,9 @@ const splitGroups = computed(() => {
     const s = (v.subjects && v.subjects[0]) || {}
     const key = s.title || v.subject || v.id
     let g = out.find((x) => x.key === key)
-    if (!g) out.push(g = { key, title: s.title || v.subject, bill_id: s.bill_id, votes: [] })
+    // A vote on a motion (an amendment) carries its bill's title, so the title
+    // links to that bill.
+    if (!g) out.push(g = { key, title: s.title || v.subject, bill_id: s.bill_id || s.motion?.bill_id, votes: [] })
     g.votes.push(v)
   }
   return out

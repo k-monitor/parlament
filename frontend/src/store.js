@@ -106,12 +106,39 @@ export function cycleLabel(number) {
 }
 
 // Human label for the current scope — the selected cycles newest-first, comma
-// separated ("2026–, 2018–2024") — or null when scope is "all cycles" (the
+// separated ("2026–, 2010–2014") — or null when scope is "all cycles" (the
 // caller supplies its own "all" wording). Used to make the active scope explicit
 // on period-aware pages.
+//
+// Every cycle ticked one by one is the same scope as "all cycles", so it says so;
+// and back-to-back cycles read as the one span they cover ("2018–2022, 2022–2026,
+// 2026–" → "2018–"), so a wide scope stays one short line instead of a list.
 export function currentCycleLabel() {
   if (!store.cycles.length) return null
-  return [...store.cycles].sort((a, b) => b - a).map(cycleLabel).join(', ')
+  const periods = (store.meta && store.meta.periods) || []
+  if (periods.length && periods.every((p) => store.cycles.includes(p.number))) return null
+  return cyclesLabel(store.cycles)
+}
+
+// Any set of cycles as that same short label — back-to-back cycles merged into
+// the span they cover, newest first.
+export function cyclesLabel(numbers) {
+  const periods = (store.meta && store.meta.periods) || []
+  const runs = []
+  for (const n of [...numbers].sort((a, b) => a - b)) {
+    const p = periods.find((x) => x.number === n) || { number: n }
+    const last = runs[runs.length - 1]
+    if (last && last.to.number === n - 1 && touches(last.to, p)) last.to = p
+    else runs.push({ from: p, to: p })
+  }
+  return runs.reverse().map(({ from, to }) => (from === to ? cycleLabel(from.number)
+    : periodLabel({ ...to, date_start: from.date_start }))).join(', ')
+}
+
+// One cycle ends the year the next one begins (an election year).
+function touches(older, newer) {
+  return !!(older.date_end && newer.date_start
+    && String(older.date_end).slice(0, 4) === String(newer.date_start).slice(0, 4))
 }
 
 // Set the global cycle scope (an array of period numbers, empty = all) and

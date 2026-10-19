@@ -15,6 +15,7 @@ import { api } from '../../api.js'
 import InterjectionGraph from '../../components/InterjectionGraph.vue'
 import StateBlock from '../../components/StateBlock.vue'
 import Pagination from '../../components/Pagination.vue'
+import EmbedButton from '../../components/EmbedButton.vue'
 
 const props = defineProps({
   sessionId: { type: String, required: true },
@@ -146,8 +147,11 @@ function onBackdropClick(e) {
 // the figure falls back to (iOS) does not, so this listens in the capture phase,
 // ahead of the figure's own handler, and checks before that handler collapses it.
 const dialogRef = ref(null)
+// Likewise while the embed popover is open: Escape closes the popover, which is
+// teleported out of the dialog and so cannot stop this capture-phase listener.
 function onKeydown(e) {
   if (e.key !== 'Escape' || dialogRef.value?.querySelector('.igraph.expanded')) return
+  if (document.querySelector('.embed-menu')) return
   emit('close')
 }
 
@@ -209,12 +213,22 @@ onBeforeUnmount(() => {
             @select="onSelect" @select-node="onSelectNode"
           />
         </div>
-        <p class="muted small ijd-hint">
-          {{ $t('interjections.dayClickHint') }}
-          <template v-if="shownShare !== null">
-            {{ $t('interjections.dayShownShare', { n: graph.nodes.length, share: shownShare }) }}
-          </template>
-        </p>
+        <div class="fig-foot ijd-foot-row">
+          <p class="muted small ijd-hint">
+            {{ $t('interjections.dayClickHint') }}
+            <template v-if="shownShare !== null">
+              {{ $t('interjections.dayShownShare', { n: graph.nodes.length, share: shownShare }) }}
+            </template>
+          </p>
+          <!-- The day's figure on its own (§4C), scoped by the day rather than by
+               the reader's cycle. It fills whatever frame it is given, so the
+               height here is only the default shape. -->
+          <EmbedButton
+            kind="day-interjections" :params="{ session: sessionId }"
+            :title="dateLabel ? `${$t('interjections.dayTitle')} · ${dateLabel}` : $t('interjections.dayTitle')"
+            :scope="dateLabel || sessionId" :height="640" :max-width="800"
+          />
+        </div>
 
         <section ref="listRef" class="ijd-list">
           <div ref="listHeadRef" class="ijd-listhead">
@@ -322,7 +336,8 @@ onBeforeUnmount(() => {
   color: var(--muted); padding: .3rem .45rem; border-radius: 8px; line-height: 1;
 }
 .ijd-x:hover { background: var(--line); }
-.ijd-hint { margin: .4rem 0 0; }
+.ijd-foot-row { justify-content: space-between; flex-wrap: nowrap; align-items: flex-start; margin-top: .4rem; }
+.ijd-hint { margin: 0; min-width: 0; }
 
 .ijd-list { margin-top: 1.1rem; scroll-margin-top: .5rem; }
 .ijd-listhead { display: flex; align-items: center; justify-content: space-between; gap: .8rem; flex-wrap: wrap; }

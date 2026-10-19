@@ -90,6 +90,59 @@ def test_list_votes(client):
     assert v1["subjects"][0]["bill_id"] == "bill-uuid-1"
 
 
+def _add_motion_vote(db_path):
+    """A vote on a motion, as upstream sends it: no iromanyId, only the motion's
+    bare number ("100/4"), which T/100's motion list numbers the same way. A
+    cycle-42 bill with a motion of the same number is inserted first, so it is the
+    one a lookup ignoring the vote's cycle would pick."""
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    c.execute("INSERT INTO electoral_period(number) VALUES (42) ON CONFLICT DO NOTHING")
+    c.execute("INSERT INTO bill (id, bill_number, period_number, title, main_type) "
+              "VALUES ('old-bill', 'T/100', 42, 'Egy régi törvényjavaslat', 'T')")
+    c.execute("INSERT INTO bill_motion (bill_id, ord, bill_number, type) "
+              "VALUES ('old-bill', 0, '100/4', 'Módosító javaslat')")
+    c.execute("INSERT INTO bill_motion (bill_id, ord, bill_number, type) "
+              "VALUES ('bill-uuid-1', 9, '100/4', 'Összegző módosító javaslat')")
+    c.execute("INSERT INTO vote (id, period_number, vote_datetime, subject, result, "
+              "yes, no, abstain) VALUES ('v-m', 43, '2026-05-28T10:00:00Z', "
+              "'összegző módosító javaslat elfogadva', 'Elfogadva', 120, 40, 5)")
+    c.execute("INSERT INTO vote_subject (vote_id, ord, iromany_id, bill_number, title) "
+              "VALUES ('v-m', 0, '', '100/4', 'A költségvetésről szóló törvényjavaslat')")
+    c.execute("INSERT INTO bill_vote (bill_id, ord, vote_id, vote_date, subject, yes, "
+              "no, abstain, result) VALUES ('bill-uuid-1', 9, 'v-m', "
+              "'2026-05-28T10:00:00Z', 'összegző módosító javaslat elfogadva', "
+              "120, 40, 5, 'Elfogadva')")
+    c.commit(); c.close()
+
+
+def test_motion_subject_resolves_to_its_bill(client, db_path):
+    """A subject that is a motion links to the motion in its own cycle — the bill
+    it belongs to and its type — so the card can open what was voted on; a held
+    bill and a non-held iromány name no motion."""
+    _add_motion_vote(db_path)
+    want = {"bill_id": "bill-uuid-1", "type": "Összegző módosító javaslat"}
+    votes = {v["id"]: v for v in client.get("/api/v1/votes").json()["votes"]}
+    s = votes["v-m"]["subjects"][0]
+    assert s["bill_id"] is None and s["bill_number"] == "100/4"
+    assert s["motion"] == want
+    assert votes["v-1"]["subjects"][0]["motion"] is None    # T/100 itself
+    assert votes["v-2"]["subjects"][0]["motion"] is None    # H/9, not held
+    # the vote's own page resolves it the same way
+    assert client.get("/api/v1/votes/v-m").json()["subjects"][0]["motion"] == want
+
+
+def test_bill_vote_names_the_motion_it_decided(client, db_path):
+    """The bill page's tally says which of the bill's motions a vote decided, so
+    the reader can jump to it; a vote on the bill itself names none."""
+    _add_motion_vote(db_path)
+    votes = {v["vote_ref"]: v for v in
+             client.get("/api/v1/bills/bill-uuid-1").json()["votes"]}
+    assert votes["v-m"]["motions"] == [
+        {"bill_number": "100/4", "type": "Összegző módosító javaslat"}]
+    assert votes["v-1"]["motions"] == []
+
+
 def test_list_votes_filters(client):
     assert client.get("/api/v1/votes", params={"result": "Elfogadva"}).json()["total"] == 1
     assert client.get("/api/v1/votes", params={"q": "T/100"}).json()["total"] == 1

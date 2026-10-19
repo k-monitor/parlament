@@ -238,7 +238,13 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
                      # when the scrape has actually produced one, so a
                      # deployment that does not run the stage shows nothing
                      # rather than an empty promise.
-                     "upcoming_agenda": _has_upcoming_agenda(db)},
+                     "upcoming_agenda": _has_upcoming_agenda(db),
+                     # What a bill changes (BILL-14..16): on once the scraper's
+                     # law-changes stage has produced anything — and only where
+                     # the operator has switched the UI on (it is still under
+                     # development, PARLAMONITOR_LAW_CHANGES_UI).
+                     "law_changes": (settings.law_changes_ui
+                                     and _has_law_changes(db))},
         # How the per-speech readability / lexical-diversity annotations were
         # measured (READ-7). Every derived number on the site has to be able to
         # say what produced it (TRUST-1 / REP-5), and these two carry parameters
@@ -257,6 +263,13 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
                         **bill_topic_coverage},
         "timing_disclaimer": TIMING_DISCLAIMER,  # VIE-6 / TIM-3
     }
+
+
+def _has_law_changes(db) -> bool:
+    try:
+        return bool(db.execute("SELECT 1 FROM law_change_bill LIMIT 1").fetchone())
+    except sqlite3.OperationalError:
+        return False
 
 
 def _has_upcoming_agenda(db) -> bool:

@@ -4,20 +4,26 @@
 // full detail sheet from parlament.hu: event history, votes, committee events,
 // negotiating committees, deadlines, justification/background documents and the
 // non-self-standing motion summary. Links to the official text (LEGAL-1).
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { api } from '../../api.js'
-import { store } from '../../store.js'
-import { formatDate, formatDateTime } from '../../format.js'
+import { store, loadMeta } from '../../store.js'
+import { formatDate, formatDateTime, isWithdrawn } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
 import SpeakerLink from '../../components/SpeakerLink.vue'
 import HlsPlayer from '../../components/HlsPlayer.vue'
 import ShareButton from '../../components/ShareButton.vue'
 import TopicBadge from '../../components/TopicBadge.vue'
+import LawChanges from './LawChanges.vue'
+import BillEvolution from './BillEvolution.vue'
+import AmendmentPoints from './AmendmentPoints.vue'
 import { usePageTitle } from '../../lib/pageTitle.js'
+import { motionAnchor, motionLocation } from '../../lib/motionLink.js'
 
 const props = defineProps({ id: String })
+const route = useRoute()
 
 const bill = ref(null)
 const { t } = useI18n()
@@ -42,6 +48,25 @@ const docRevealed = ref(false)
 // main bill: a motion's <iframe> only exists once its toggle is clicked.
 const motionOpen = reactive({})
 function toggleMotion(i) { motionOpen[i] = !motionOpen[i] }
+// A módosító javaslat's points as a diff of the bill (BILL-16), per motion,
+// fetched when opened — a separate toggle from the PDF beside it.
+const amendOpen = reactive({})
+function toggleAmend(i) { amendOpen[i] = !amendOpen[i] }
+
+// What the bill changes (BILL-14/15). The bill carries only the counts
+// (`law_changes`); the diffs come from their own request once the bill is in,
+// so the rest of the page never waits for them.
+//
+// Still under development, so the server decides whether it is shown at all
+// (PARLAMONITOR_LAW_CHANGES_UI) and this asks /meta *strictly* — not the
+// optimistic `featureEnabled`, which reads "on" until /meta lands and would let
+// a hidden feature flash onto the page of a reader who arrived on a bill.
+const changes = ref(null)
+const showChanges = computed(() => store.meta?.features?.law_changes === true)
+const hasLawChanges = computed(() => {
+  const c = changes.value
+  return !!(c && c.available && (c.laws?.length || c.unresolved?.length))
+})
 
 // Long lists (a debate's speeches, the non-self-standing motions) are collapsed
 // to a preview so the page stays scannable; a toggle reveals the rest.
@@ -132,7 +157,9 @@ let loadSeq = 0
 async function load() {
   const seq = ++loadSeq
   loading.value = true; error.value = false; bill.value = null; docRevealed.value = false
+  changes.value = null
   Object.keys(motionOpen).forEach((k) => delete motionOpen[k])
+  Object.keys(amendOpen).forEach((k) => delete amendOpen[k])
   Object.keys(debateOpen).forEach((k) => delete debateOpen[k])
   motionsExpanded.value = false
   try {
@@ -143,9 +170,43 @@ async function load() {
   } finally {
     if (seq === loadSeq) loading.value = false
   }
+  if (seq === loadSeq) nextTick(() => revealMotion(false))
+  if (seq === loadSeq && bill.value?.law_changes) await loadMeta().catch(() => {})
+  if (seq === loadSeq && bill.value?.law_changes && showChanges.value) {
+    try {
+      const res = await api.billChanges(props.id)
+      if (seq === loadSeq) changes.value = res
+    } catch { /* the sections simply stay away; the page is complete without them */ }
+  }
 }
 onMounted(load)
 watch(() => props.id, load)
+
+// --- a motion's own address ------------------------------------------------
+// A vote on a motion links to it as `#iromany-779-4` — from the vote cards, and
+// from this page's own tally. The router leaves a hash target's scrolling to the
+// page (router.js scrollBehavior), so the page brings the motion into view
+// itself: past the collapsed preview if need be, its document already open (the
+// reader came to see what was voted on), and marked while the address names it.
+const targetMotion = computed(() => {
+  const h = (route.hash || '').slice(1)
+  return h && (bill.value?.motions || []).find((m) => motionAnchor(m.bill_number) === h)
+})
+const motionTo = (number) => motionLocation(props.id, number, route.query)
+function revealMotion(smooth) {
+  const m = targetMotion.value
+  if (!m) return
+  const i = bill.value.motions.indexOf(m)
+  if (i >= COLLAPSE_LIMIT) motionsExpanded.value = true
+  if (m.text_url) motionOpen[i] = true
+  nextTick(() => {
+    const el = document.getElementById(motionAnchor(m.bill_number))
+    if (!el) return
+    const motion = smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ behavior: motion ? 'smooth' : 'auto', block: 'start' })
+  })
+}
+watch(() => route.hash, () => revealMotion(true))
 </script>
 
 <template>
@@ -163,7 +224,7 @@ watch(() => props.id, load)
           <TopicBadge :topic="bill.topic" kind="bill" />
           <ShareButton :title="bill.title" align="right" style="margin-left:auto" />
         </div>
-        <h1>{{ bill.title }}</h1>
+        <h1 :class="{ withdrawn: isWithdrawn(bill.status) }">{{ bill.title }}</h1>
         <p class="muted small" v-if="bill.submitted_date">
           {{ $t('bills.submittedDate') }}: {{ formatDate(bill.submitted_date) }}
         </p>
@@ -215,6 +276,11 @@ watch(() => props.id, load)
         </ol>
       </section>
 
+      <!-- What the bill changes in the law, and how it changed itself on the way
+           (BILL-14/15) — the reason most readers open a bill at all. -->
+      <LawChanges v-if="showChanges && hasLawChanges" :bill-id="bill.id" :changes="changes" />
+      <BillEvolution v-if="showChanges && changes?.evolution" :bill-id="bill.id" :evolution="changes.evolution" />
+
       <section class="card pad">
         <h2>{{ $t('bills.submitters') }}</h2>
         <ul class="plain">
@@ -250,7 +316,18 @@ watch(() => props.id, load)
               <span class="badge" :class="{ ok: v.result === 'Elfogadva' }">{{ v.result }}</span>
               <router-link v-if="v.vote_ref" :to="{ name: 'vote', params: { id: v.vote_ref } }" class="echip link rollcall">{{ $t('bills.viewRollCall') }}</router-link>
             </div>
-            <p class="muted small vdate" v-if="v.vote_date">{{ formatDateTime(v.vote_date) }}</p>
+            <p class="muted small vdate" v-if="v.vote_date || v.motions?.length">
+              {{ formatDateTime(v.vote_date) }}
+              <!-- The motion the vote decided (an amendment, the consolidated
+                   text): the tally only names its kind, so the motion's own
+                   entry below — with its text — is one click away. -->
+              <template v-for="(m, j) in v.motions || []" :key="m.bill_number">
+                <template v-if="v.vote_date || j"> · </template>
+                <router-link :to="motionTo(m.bill_number)" class="vmotion">
+                  <strong>{{ m.bill_number }}</strong> {{ m.type }}
+                </router-link>
+              </template>
+            </p>
             <div class="vbar" role="img"
                  :aria-label="`${$t('bills.yes')} ${v.yes ?? 0}, ${$t('bills.no')} ${v.no ?? 0}, ${$t('bills.abstain')} ${v.abstain ?? 0}`">
               <span class="seg yes" :style="{ width: voteParts(v).yes + '%' }"></span>
@@ -426,7 +503,8 @@ watch(() => props.id, load)
       <section v-if="bill.motions && bill.motions.length" class="card pad">
         <h2>{{ $t('bills.motions') }}</h2>
         <ul class="plain motions">
-          <li v-for="(m, i) in shown(bill.motions, motionsExpanded)" :key="i" class="motion">
+          <li v-for="(m, i) in shown(bill.motions, motionsExpanded)" :key="i" class="motion"
+              :id="motionAnchor(m.bill_number)" :class="{ targeted: targetMotion === m }">
             <div class="motion-head">
               <span class="mnum">{{ m.bill_number }}</span>
               <span class="mtype">{{ m.type }}</span>
@@ -440,12 +518,19 @@ watch(() => props.id, load)
               </span>
             </div>
             <div v-if="m.text_url" class="docbar">
-              <button type="button" class="btn small" :aria-expanded="!!motionOpen[i]" @click="toggleMotion(i)">
+              <button v-if="m.amendment?.points && showChanges" type="button" class="btn small"
+                      :aria-expanded="!!amendOpen[i]" @click="toggleAmend(i)">
+                {{ amendOpen[i] ? $t('amendment.hide') : $t('amendment.show', { n: m.amendment.points }) }}
+              </button>
+              <button type="button" class="btn small"
+                      :class="{ secondary: m.amendment?.points && showChanges }"
+                      :aria-expanded="!!motionOpen[i]" @click="toggleMotion(i)">
                 {{ motionOpen[i] ? $t('bills.hideDocument') : $t('bills.showDocument') }}
               </button>
               <a :href="m.text_url" target="_blank" rel="noopener" class="small">↗ {{ $t('bills.openInNewTab') }}</a>
             </div>
             <p v-else class="muted small">{{ $t('bills.noText') }}</p>
+            <AmendmentPoints v-if="amendOpen[i]" :bill-id="bill.id" :number="m.bill_number" />
             <!-- iframe (and thus the PDF fetch) only exists once revealed -->
             <div v-if="motionOpen[i] && m.text_url" class="docframe">
               <iframe :src="m.text_url" :title="m.text_caption || m.bill_number" loading="lazy"></iframe>
@@ -575,6 +660,7 @@ watch(() => props.id, load)
 .vsubject.link { color: var(--accent); }
 .echip.rollcall { background: var(--accent-soft); color: var(--accent); }
 .vdate { margin: .15rem 0 .45rem; }
+.vdate .vmotion strong { font-variant-numeric: tabular-nums; }
 .badge.ok { background: #eef6ee; color: #2e7d32; }
 .vbar { display: flex; height: .8rem; border-radius: 999px; overflow: hidden; margin: 0 0 .45rem; background: var(--line); box-shadow: inset 0 0 0 1px rgba(0,0,0,.04); }
 .vbar .seg { transition: width .3s ease; }
@@ -687,8 +773,11 @@ watch(() => props.id, load)
 
 /* Non-self-standing motions */
 .motions { display: flex; flex-direction: column; gap: .9rem; }
-.motion { padding-bottom: .9rem; border-bottom: 1px solid var(--line); }
+.motion { padding-bottom: .9rem; border-bottom: 1px solid var(--line); scroll-margin-top: 5rem; }
 .motion:last-child { padding-bottom: 0; border-bottom: 0; }
+/* the motion a vote link pointed at (#iromany-…), marked while the address names it */
+.motion.targeted { margin: 0 -.6rem; padding: .6rem .6rem .9rem; border-radius: 8px;
+  background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent); }
 .motion-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
 .motion-head .mnum { font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 .motion-head .mtype { font-weight: 600; }

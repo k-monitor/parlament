@@ -9,7 +9,7 @@ committees, …) can be added as self-contained modules.
 This document specifies **what** the system must do and the constraints it must
 respect. Concrete technology choices are recommended where useful but are not
 binding unless marked **MUST**.
-
+`
 ---
 
 ## 1. Goals & Non-Goals
@@ -578,7 +578,9 @@ snippet — a site-wide capability, not a per-module feature.
   analysis** — party cohesion / co-voting (VOTE-8), the **faction speaking-time**
   chart (REP-4), the **Kérdések questions Sankey** (BILL-11), and a
   **representative's vote-participation** breakdown (REP-3). A future chart opts
-  into the same affordance rather than reinventing it.
+  into the same affordance rather than reinventing it (since added: the
+  interjection network, cycle-wide and per sitting day, §6E; the topic mixes,
+  TOPIC-9/10; the settlement map, §6D).
 - **EMBED-2 (MUST).** An embed renders **chrome-free**: the `<iframe>` points at a
   dedicated embed view (`/embed/<figure>`) that shows **only** the figure — its
   title, the active electoral-cycle scope, and a compact attribution line — with
@@ -590,7 +592,9 @@ snippet — a site-wide capability, not a per-module feature.
   to, and MUST NOT depend on, the visitor's preference. The URL likewise carries
   the figure's active parameters (e.g. the search query + filters, or the
   representative id) so the embed reproduces exactly what the sharer saw, and the
-  active language (`?lang=`).
+  active language (`?lang=`). A figure scoped by something narrower than a cycle — one
+  sitting day — carries **that** scope instead (`?session=`) and no cycle at all,
+  since the reader's cycle choice has no bearing on it.
 - **EMBED-4.** The embed view is **self-contained and deep-linkable**: it reads
   everything it needs from its own URL and calls the same public read-only API as
   the site, so the link works both standing alone (shareable / citable) and inside
@@ -739,7 +743,8 @@ section — **Elemzések** — with its own entry in the top bar.
 The home page draws on every module and owns none, so it is specified here rather
 than under any one of them. It answers three questions in order: *where do I
 start* (the search), *what is in here* (a number and a figure about the cycles in
-scope), and *what is the House doing* (last week, then the coming sitting).
+scope), and *what is the House doing* (last week, then the bills it is about
+to decide and the coming sitting).
 
 - **HOME-1 (SHOULD).** The **search** leads the page but stays **compact**: one
   row of label, box and button under a one-line welcome, with the corpus size
@@ -799,7 +804,7 @@ scope), and *what is the House doing* (last week, then the coming sitting).
   held on Monday would be nowhere on the home page until the week was over.
 
 > **✅ realized.** `views/HomeView.vue` composes `HomeTrendCard`, `HomeFactsCard`,
-> `HomeFigureCard`, `LastWeekPanel` and `UpcomingSitting`; the three feature cards
+> `HomeFigureCard`, `UpcomingBills` (HOME-5), `LastWeekPanel` and `UpcomingSitting`; the three feature cards
 > and the example-search grid are gone. Rotation is `lib/rotation.js` (hold vs.
 > stop, resume-where-it-paused so the progress bar and the timer agree) with
 > `RotationControls.vue`. The figures reuse the site's components as they are,
@@ -823,6 +828,42 @@ scope), and *what is the House doing* (last week, then the coming sitting).
 > outcome is its `result`. The split votes are `/votes?sort=crossvoting_desc`
 > over the week, votes module only. The day cards are `WeekDayCards.vue`.
 
+- **HOME-5 (SHOULD).** The **irományok the House is about to vote on or debate**
+  are highlighted, each with **where it stands**. The order paper (NR-5) answers
+  "what happens on which day"; a reader following a bill asks the other way
+  round, so the same napirend is turned to the bills: **one entry per iromány**
+  we hold, under *"Szavazásra kerül"* when a vote on it is still ahead and
+  *"Vitára kerül"* otherwise. A procedural decision (urgency, exceptional
+  procedure, a late addition to the agenda) is listed but never puts a bill under
+  the votes on its own — it decides how the bill is handled, not the bill — and
+  it is counted to the bill its motion belongs to (`T/816/2` is T/816's).
+  It is a **digest** and stays **compact** — two lines a bill, a few bills a
+  group with a "+N" control — because the week digest and the order paper
+  below it matter as much: the number and title, then the steps that put the
+  bill in its group (each with its day, a final vote marked as such) beside its
+  standing on the upstream **stage diagram** (BILL-4), one segment per stage in
+  its own state (an exceptional procedure skips stages, so it is not a bar
+  filled up to the current one). parlament.hu's own **status** line and the
+  stage as the napirend prints it are in the tooltips; a bill with no diagram
+  (a personnel motion) shows its status instead. Submitters, flags and topics
+  are left to the bill page and the order paper's card. It is still a **plan**,
+  so it carries the same provenance line as NR-5, drops the days behind it by
+  the same rule, and renders nothing once nothing is ahead. It stands **between**
+  the week digest and the order paper it summarises.
+
+> **✅ realized.** `GET /bills/upcoming` (bills module) reads the current
+> `agenda_doc` and returns the irományok in order of their first step, each with
+> `steps` (`date`, `kind` = `vote` / `debate` / `procedure` / `other`, `final`,
+> `label`, `code`), `status`, `stages`, `topic`, `sponsors` and `flags`, plus the
+> `agenda` it was read off (`topic`, `sponsors` and `flags` are served but not
+> shown). The step kind is `_agenda_step_kind` over the printed stage, falling
+> back to the section heading; an unlinked item resolves through
+> its motion's parent number, or a number left at the head of its title
+> (`T/668/10 A köztársasági elnök által …`). It serves the whole document so it
+> caches across midnight; `UpcomingBills.vue` on `HomeView` drops the past days,
+> groups, and shows four per group (three on a phone; a group one over the limit
+> is shown whole). Gated on the bills module and `features.upcoming_agenda`.
+
 ---
 
 ## 5. Functional Requirements — Module: Proceedings Search & Viewer
@@ -835,15 +876,31 @@ scope), and *what is the House doing* (last week, then the coming sitting).
   handles Hungarian morphology at least via prefix/stemming-friendly tokenization;
   exact-phrase ("…") supported.
 - **SEA-3.** Filters: by **date range**, **speaker**, **faction**,
-  **agenda-item type**. Filters are combinable. The **electoral period** is set
-  by the global cycle selector (§4A), not a per-search filter. The **speaker**
-  filter can also stand on its own: with no search term the page lists that
-  speaker's speeches — one result per **speech**, shown by its opening rather
-  than by a matched sentence, newest first (there is no relevance to rank by) —
-  so "everything they said" is reachable from the search page itself, still
-  combinable with the date/faction/agenda filters and the cycle scope. No other
-  filter searches without a term: a bare faction or agenda-type filter is a read
-  of the whole corpus, and is refused.
+  **agenda-item type** and **policy topic** (TOPIC-1). Filters are combinable.
+  The **electoral period** is set by the global cycle selector (§4A), not a
+  per-search filter. The **speaker** filter can also stand on its own: with no
+  search term the page lists that speaker's speeches — one result per
+  **speech**, shown by its opening rather than by a matched sentence, newest
+  first (there is no relevance to rank by) — so "everything they said" is
+  reachable from the search page itself, still combinable with the
+  date/faction/agenda filters and the cycle scope. The **topic** filter stands
+  on its own the same way — "every speech on this topic" — and with the speaker
+  it is one member's speeches on it. No other filter searches without a term: a
+  bare faction or agenda-type filter is a read of the whole corpus, and is
+  refused, where a speaker or a topic is a bounded set of speeches.
+  - The topic filter keeps the iromány filter's promise (TOPIC-8): it matches a
+    speech's **dominant** topic — the one its chip shows, by the same rule at the
+    same read-time threshold — never a topic the speech merely touches, and a
+    filter the deployment cannot honour returns **nothing**, never the
+    unfiltered list. Several topics can be picked at once (`topic` repeated in
+    the URL, SEA-6), and every hit carries its speech's chip, so a filtered list
+    shows what it was filtered on. The popularity chart (SEA-8) and the
+    breakdown (SEA-9) honour it like every other filter.
+  - Unlike the iromány lists' picker, it offers **every policy topic, without
+    counts**: here a topic narrows a search, as the faction does, and a count per
+    topic for every term would be a breakdown-sized aggregate per search. "Other"
+    is never offered — it is never a subject (TOPIC-4) — and where nothing was
+    classified the control is absent rather than dead.
 - **SEA-4.** Each result shows: matched sentence with **highlighted** terms,
   **surrounding transcript context** — a few sentences immediately before and
   after the match so the moment reads in context without opening the viewer,
@@ -905,8 +962,10 @@ scope), and *what is the House doing* (last week, then the coming sitting).
 - **SEA-11.** Each executed search (the canonical `/search` request) is counted
   into the **anonymous, aggregated search analytics** — keyword + active filters,
   no personal data — see **PRIV-2** (§8.4). The site's **other search boxes**
-  (irományok, képviselők, tisztségviselők, szavazások, tárcák) are counted the
-  same way, each under its own source.
+  (irományok, képviselők, tisztségviselők, szavazások, tárcák, and the committee
+  scope of SEA-14) are counted the same way, each under its own source — and so
+  is each scope of a site search (SEA-14): a search in several scopes is one
+  counted search per scope, under that scope's source.
 - **SEA-12.** The analytics also record **whether the search worked**: how many
   hits it found, whether the reader had to page past the first page, and the
   **position of the first result they opened** (1 = the top hit). Together these
@@ -928,6 +987,57 @@ scope), and *what is the House doing* (last week, then the coming sitting).
   enters the accessibility tree (A11Y-1), and **not summoned at all** under
   `prefers-reduced-motion: reduce` or on a coarse pointer. It leaves on the next
   search that isn't about cats, and when the search page is left.
+- **SEA-14 (SHOULD).** The search box — on the search page and on the home page
+  (HOME-1) — carries a **scope picker** saying what it searches in:
+  **Plenáris ülések** (the default, everything above), **Bizottsági ülések**,
+  **Irományok**, **Szavazások** and **Személyek**. **Several scopes can be picked
+  at once**, and **Mindenhol** picks every one. A scope is offered only while its
+  module is mounted (EXT-6). Every scope is searched **on the search page
+  itself**.
+  - The scopes travel in the URL as repeated `in` params (`in=all` for every
+    scope; SEA-6). A plain `/search?q=` link names none and keeps meaning the
+    plenary alone, and `in=committee` keeps its first meaning.
+  - **One scope** is a full result list, paged. **Several** are a **section
+    each**, in the picker's order, every one holding that scope's first few hits
+    (five; six people), its hit count, and an **all results** link that narrows
+    the search to that scope. A summary line names each scope with its count and
+    jumps to its section; a scope that found nothing keeps its place, its
+    heading saying so. Each section loads on its own, so a slow scope never holds
+    the others back.
+  - The **committee** scope is a full-text search over the committee minutes
+    (BIZ-15) with the plenary's own query rules and tokenizer (SEA-2), so a term
+    folds and prefix-matches alike in both. A hit is **one speech**, not a
+    sentence — the minutes are not sentence-segmented — shown with its
+    highlighted snippet, speaker, committee, date and agenda heading, and opens
+    the jegyzőkönyv at that speech (`#sp-<ord>`, BIZ-29).
+  - The three **record** scopes are answered by the endpoints behind their list
+    pages — every iromány (BILL-9) by title and number, the votes by subject and
+    decided iromány, the speaker register (REP-1, every role) by name — and their
+    hits are drawn with those pages' own cards. Under a single record scope the
+    list ends with a link to its list page, where the filters, facets and
+    orderings that belong to it live.
+  - The page's filters reach each scope that can apply them. The **speaker**
+    filter is the speaker in the two text scopes, the **submitter** of an iromány
+    and the **voter** in the votes (the roll calls they took part in, each card
+    showing how they voted); the **dates** bound the sitting, the submission and
+    the vote; the **faction** narrows the plenary and the people (that
+    faction's MPs); the **agenda type** is the plenary's alone; the **topic** is
+    the speech's own in the plenary and the iromány's own among the irományok —
+    each the label its chip shows — and reaches a scope only where that scope's
+    texts were classified (TOPIC-7/8). A topic alone runs those two scopes; the
+    committee minutes and the votes, which carry no topic, ask for a term or a
+    speaker, as the people scope asks for a name. The panel offers
+    a filter only while a picked scope takes it, and a section whose scope
+    cannot apply an active filter **says so** above its results rather than
+    silently dropping it. Without a term the people scope has nothing to search
+    by and asks for a name.
+  - The ordering (SEA-10) applies to every scope that can be reordered:
+    relevance where there is a term to rank by (plenary, committee, irományok —
+    whose relevance puts an exactly typed number first), newest or oldest first
+    everywhere; people are always listed by time on the floor. The two plenary
+    aggregates (SEA-8/9) are drawn for a plenary-only search.
+  - Choosing scopes with a term in the box searches at once, as picking a filter
+    does; with an empty box it waits for the term.
 
 ### 5.2 Proceedings viewer (sentence ↔ video sync)
 
@@ -1440,11 +1550,18 @@ scope), and *what is the House doing* (last week, then the coming sitting).
   left to the threshold. The parameters are **configurable, not hard-coded**
   (OPS-4) and **published in the site manifest**, the threshold in force included,
   so every label can state how it was produced (TRUST-1 / REP-5).
-  > **Not yet built (§10):** topic facets in search. The stored unit is
-  > deliberately the block, and the label is indexed, so it is a query against
-  > what already exists rather than a reclassification — which is how the other
-  > two arrived: the **per-representative topic profile** is now TOPIC-10 below,
-  > and topic classification of **irományok** is TOPIC-8.
+  > **✅ realized (topic filter in search, SEA-3).** The stored unit is
+  > deliberately the block, and the label is indexed, so it was a query against
+  > what already existed rather than a reclassification — as were the other two:
+  > the **per-representative topic profile** (TOPIC-10) and topic classification
+  > of **irományok** (TOPIC-8). `/proceedings/search` (+ `/trend`, `/breakdown`)
+  > takes `?topic=` (repeatable) and resolves it through
+  > `parlacap.dominant_topic_sql` with the threshold in the cache key; the scan is
+  > pruned to the speeches that have a block of a wanted label at all (the label
+  > index) and to the cycle, dates and speaker, none of which can change a
+  > winner. Each hit carries `topic`, drawn by the shared `TopicBadge.vue`. On a
+  > synthetic classification of all ten cycles (1.7M blocks): 0.1–0.9 s within
+  > one cycle, 0.4–2.6 s across all of them, uncached.
 - **TOPIC-8 (SHOULD).** The same labels are carried by **irományok**, wherever one
   appears as an item the reader can act on: the bills list, the *Kérdések* list
   (BILL-13), the *Minden iromány* list (BILL-9), the iromány detail view and the
@@ -1550,11 +1667,10 @@ scope), and *what is the House doing* (last week, then the coming sitting).
   > (`speech_topics` in `/meta`), which the router honours as a 404 — the first
   > analysis whose data can be missing while its module is mounted.
   >
-  > **Still not built (§10):** a topic filter in the proceedings search. The page
-  > links out to the iromány list (which does filter by topic) and to a speaker's
-  > profile — which now answers the mirror-image question itself (TOPIC-10) — but
-  > there is still no "every speech on this topic" list to link to, so none is
-  > offered.
+  > The "every speech on this topic" list now exists — the search with a topic
+  > and no term (SEA-3, `/search?topic=<label>`) — but the page does **not yet
+  > link to it**: it links out to the iromány list and to a speaker's profile
+  > (TOPIC-10) only.
 
 - **TOPIC-10 (SHOULD).** The same mix is read **one member at a time**, as a
   figure on their representative profile: how their own speeches divide between
@@ -1581,8 +1697,9 @@ scope), and *what is the House doing* (last week, then the coming sitting).
     rest stays under the threshold. The ranked list shows its head and opens to
     all of it — "the topics they speak about" and "their eight commonest" are
     different claims, and the shorter one is never made silently.
-  - Rows are **not controls**. There is no per-member topic list to open them into
-    (§10), so the way on is the Témák analysis, linked from the panel. The figure
+  - Rows are **not controls**. The way on is the Témák analysis, linked from the
+    panel. (The per-member topic list they could open into now exists — the
+    search by speaker and topic, SEA-3 — but the rows do not link to it yet.) The figure
     is **embeddable** (§4C), and on a deployment that classified nothing the panel
     is **absent rather than empty** — gated on the same capability flag as the
     analysis, not on a module switch.
@@ -2462,6 +2579,105 @@ iromány type together**, those two included, is browsable on a third page
     (BILL-5): it disappears with the module (EXT-6), and its tárca filter
     disappears with the §6C module on its own.
 
+### What a bill changes (BILL-14..16)
+
+A bill's title says which law it amends ("A szakképzésről szóló 2019. évi LXXX.
+törvény módosításáról"), never what it does to it, and its text is a list of
+instructions ("a 26. § (4) bekezdése helyébe a következő rendelkezés lép…") that
+cannot be read without the law beside it. These three answer the questions a
+reader actually brings to a bill page.
+
+- **BILL-14 (SHOULD).** A törvényjavaslat's detail view shows **what it changes
+  in the law**: each law it amends, and each changed provision as it reads
+  against how it would read, as a word diff (insertions and deletions marked, a
+  long unchanged stretch folded), each provision linking to its place on
+  **njt.hu** (the Nemzeti Jogszabálytár, the official consolidated law) and
+  naming the provision of the bill that changes it.
+  - **Where the new text comes from MUST be said, and it differs by stage**
+    (TRUST-1). For a bill that **became law**, it is njt's own: the law's time
+    state in force on the promulgation day against its newest one, keeping the
+    provisions whose njt footnote names the new act — official, and exact by
+    construction. For a bill **still in Parliament** no such state exists, so
+    the bill's amending instructions are applied by machine to njt's newest
+    state — from the egységes javaslat once there is one (it is what the House
+    votes on), from the bill as submitted before that — and the view says that
+    this is a projection that may be wrong and that the bill may still change.
+    Between promulgation and njt publishing the amended text (it has three
+    working days) an adopted bill is computed the same way, and says so.
+  - **Nothing is dropped silently.** An instruction that cannot be applied — an
+    annex replaced wholesale, a decree repealed, a target the law does not have —
+    is listed in the bill's own words with the reason, rather than leaving the
+    diff to look complete.
+  - A bill filed **on paper** (a scan) is not parsed (its text is OCR quality)
+    and the view says why there is no diff.
+  - **The full law (MAY).** Each amended law, and each changed provision, can
+    be opened **whole in a dialog** with the bill's changes standing in place in
+    the law's own layout (chapters, §, paragraphs, points), so a reader sees what
+    a new paragraph sits between and what the rest of the § says. The dialog
+    opens at the change it was opened from, steps from change to change, and can
+    fold the text away from the changes (each fold opening on click). The text
+    is the njt state the changes were read against. A provision the machine
+    rebuilt from a pending bill's own wording whole (a § or a paragraph with
+    points of its own) has no layout to show, so it reads as one run of text
+    and says so (TRUST-1); a single paragraph, point or title reworded keeps
+    its place and label.
+- **BILL-15 (SHOULD).** The detail view shows **how the bill changed on its way
+  through the House**: the text as submitted against the latest egységes
+  javaslat — Parliament's own consolidation of the bill with the adopted
+  összegző módosító javaslat — section by section, listing only what differs
+  and how many sections did not. Sections are matched by content, not by
+  number: one the consolidation renumbered is set against its own earlier text
+  and shows its number in the bill as submitted. It is a diff of two official texts, so it
+  needs no amendment to be applied by machine.
+- **BILL-16 (SHOULD).** Each **módosító javaslat** of a bill (an MP's, a
+  committee's részletes vitát lezáró, the TAB's összegző) can be opened in the
+  motion list **as a diff of the bill**: point by point, the provision it names
+  with the proposed insertions and deletions. These are read off the document's
+  own markup (the Parlex template prints deletions in bold inside brackets and
+  insertions underlined), so what is shown is what the submitter marked; a
+  scanned paper filing has lost that markup and says so.
+- The work is a scraper stage like any other (SCR-2/SCR-4/SCR-5): incremental
+  (each document read once, each njt state fetched once, each bill's result
+  fingerprinted by its inputs), paced per sync pass, and degrading — no PDF
+  library, no njt page, a scan — to keeping what it had.
+  > **✅ realized.** Scraper `parlamonitor/lawdiff/` (`njt.py` time states as
+  > units — incl. the truncated-page `njtGetBlock` fetch and the footnote
+  > provenance; `pdftext.py` PyMuPDF layout + markup; `novella.py` instructions
+  > parsed and applied, and njt attribution; `motions.py` amendment points;
+  > `scrape.py` the per-bill stage) → `processed/law-changes-<cycle>.json`;
+  > `python -m parlamonitor law-changes --cycle N [--bill T/438]`, and a
+  > `_sync_law_changes` pass after bills (`PARLAMONITOR_LAW_CHANGES`,
+  > `…_PER_SYNC` default 80 requests, `--skip-law-changes`). Loader
+  > `load_law_changes` → `law_change_bill/law/law_change/law_change_unresolved/
+  > bill_evolution/amendment_doc/amendment_point` (no foreign key to `bill`, so
+  > a bills reload does not cascade). API `GET /bills/{id}/changes[?law=]`,
+  > `GET /bills/{id}/amendments?number=`, a `law_changes` summary on the bill
+  > detail and an `amendment` flag on each motion; word diffs made when served
+  > (`app/textdiff.py`); `features.law_changes` on /meta. UI `LawChanges.vue`,
+  > `BillEvolution.vue`, `AmendmentPoints.vue`, `DiffText.vue`. Validated over
+  > the 41 born-digital cycle-43 bills that became law: 98% of instructions
+  > parse; 90% of the changed provisions come out exactly as njt has them when
+  > computed from the egységes javaslat.
+  >
+  > **Hidden on the site while under development (2026-10-19).** The UI is shown
+  > only where `PARLAMONITOR_LAW_CHANGES_UI=1` (default off): `/meta`'s
+  > `features.law_changes` is that switch *and* the data being there, and the bill
+  > page reads it strictly (not optimistically before /meta lands), so nothing
+  > flashes. Collection and the API are unaffected.
+  >
+  > **The full law ✅ realized 2026-10-15.** Each change now carries its units as
+  > they would read (`afterUnits`, omitted for an applier-built flat unit) and, if
+  > new to the law, the base unit it follows (`anchor`); `scrape.RECORD_VERSION`
+  > redoes every record once. `save_law_texts` writes the base njt states, whole,
+  > from the njt cache only (no request) to `processed/law-texts-<cycle>.jsonl.gz`
+  > (one state per line; rewritten only when the set of states changes; 470
+  > states = 27 MB for cycle 43). Loader `load_law_texts` → `law_text` (zlib
+  > blobs), plus `law_change.after_units/anchor` added in place on an existing DB.
+  > API `GET /bills/{id}/changes/full?law=` (merge in `app/lawtext.py`) and a
+  > `full_text` flag per law on `/changes`; UI `LawFullDialog.vue`. Checked
+  > over all 656 cycle-43 law entries: every change placed once, the base text
+  > covered once, and every structured block flattens back to the stored diff.
+
 ---
 
 ## 6B. Functional Requirements — Module: Votes (Szavazások)
@@ -3119,11 +3335,17 @@ places in it.
   re-scrape**: the matcher, the derived tables, the API, the three pages and the
   profile panel all read rows the loader already writes. Two things are deliberately
   **deferred, and named here rather than implied**:
-  - **The map is not yet an embeddable figure** (§4C EMBED-1). It is a strong
-    candidate — a map of who gets talked about is exactly what an article wants — but
-    the embed view is a per-figure registration, and the map is the one figure here
-    whose payload is large enough to want its own thought about caching in a
-    third-party page.
+  - *(Done 2026-10-19.)* **The map is an embeddable figure** (§4C EMBED-1), as
+    `settlement-map`, carrying the reading and the binning (`?mode=blind`,
+    `?bins=oevk|h3`). The payload concern that held it back answered itself: the
+    embed reads the same CDN-cacheable `/settlements/map` (≈57 KB gzipped,
+    `s-maxage=300`) as the page, behind a `loading="lazy"` iframe, and Leaflet
+    still loads on demand. The map **fills its frame** (the iframe's height, not a
+    fixed 520 px), hands the wheel and a one-finger swipe to the host page, and
+    takes the page's caveat with it (TEL-7/TEL-12) — plus, for constituencies, the
+    capital-in-no-cell note (TEL-16); the area distortion and the shared cities
+    are already stated by the legend and on the cells. A binning the deployment
+    cannot build falls back to points, as the page does.
   - **The TEL-9 table is built but not yet linked.** *Saját körzet* — the
     per-representative focus/coverage ranking — is complete and its route is live, but
     no tab advertises it for now: it is the most easily misread page in the module (a
@@ -3403,7 +3625,12 @@ down far more than they shout), and how much of both crosses the aisle.
 > either end of the arrow absent meaning *anyone*), so a claim about two members is
 > citable and `back` walks the arrows a reader opened; all of them are absent at
 > their defaults, keeping the canonical address parameter-free (§SEO-2).
-> The chart is embeddable as `interjection-graph` (§4C).
+> The chart is embeddable as `interjection-graph` (§4C), and one sitting day's
+> figure (the day page's dialog) as `day-interjections` (`?session=`): scoped by
+> the day rather than by a cycle, so its URL carries no `cycle`, its scope badge
+> names the day, and its link back opens the day page. `/graph?session=` names
+> its day (`session: {id, period, sitting, date}`) so the embed does not have to
+> fetch the transcript to title itself.
 >
 > Two things this cost elsewhere, both additive: `_delete_session` clears the
 > sitting's interjections before its sentences (guarded on the table existing, so a
@@ -3652,6 +3879,22 @@ this bill" is a question the corpus cannot answer at all.
   the clerk continued past an agenda heading without reprinting the name is
   marked *folytatás*, so its bubble does not read as the speaker taking the
   floor again.
+- **BIZ-35.** A person's **profile lists their committee speeches**, in a
+  section of its own beside the plenary one: the sittings they spoke at, newest
+  first, each naming its body and opening — lazily, as the plenary days do — to
+  their speeches there, every one linking to its anchor in the minutes
+  (BIZ-29) under the agenda heading it was made under. It is a separate list
+  and never part of the plenary figures (BIZ-17), and it is measured in
+  **words**, the minutes carrying no timings (BIZ-25); with it on the page the
+  plenary list is headed *Plenáris felszólalások*, so neither reads as all of
+  them. **Turns taken from the chair are listed and marked, not dropped**: a
+  committee chair speaks to the substance as well as running the sitting, so
+  leaving them out would hide most of a chair's committee work, while counting
+  them unmarked would pass forty procedural turns off as forty contributions —
+  the header gives how many there were. The minutes are read per cycle, so
+  where the scope reaches past them (an "all cycles" profile, typically) the
+  section **says which cycles it covers** rather than presenting a list that
+  merely looks complete.
 
 ### Recordings (BIZ-16)
 
@@ -3677,7 +3920,12 @@ this bill" is a question the corpus cannot answer at all.
   whichever of them sorted first.
 - **BIZ-23.** The RSS feed carries only the **15 newest** videos, which is ample
   for a daily poll and useless as an archive, so the history is fetched by a
-  separate **backfill** that walks the whole channel. **Its ceiling is the
+  separate **backfill** that walks the whole channel. **The sync runs that walk
+  itself**, on its first pass and then once a day, and does not leave it to an
+  operator: a registry fed only by the feed holds just what the feed showed
+  after its first poll, which is how production went without every committee
+  recording from before 2026-09-09 (the 2026-08-25 Igazságügyi sitting among
+  them) while all of them were still on the channel. **Its ceiling is the
   channel, not the method**: measured on 2026-09-21 the channel holds 166 videos
   in total, back to 2024-02-26, and that is genuinely all of it (the uploads
   playlist is exactly the union of the *videos* and *streams* tabs). So cycles 40

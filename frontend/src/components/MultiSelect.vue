@@ -22,6 +22,9 @@ const props = defineProps({
   label: { type: String, default: '' },
   // What the trigger reads when nothing is ticked; defaults to the shared "Mind".
   allLabel: { type: String, default: '' },
+  // Spoken before the trigger's value when no visible <label> names the control
+  // (the site search's scope picker, which sits in the search bar on its own).
+  triggerLabel: { type: String, default: '' },
   id: { type: String, default: undefined },
 })
 const emit = defineEmits(['update:modelValue', 'change'])
@@ -106,7 +109,7 @@ onUnmounted(() => {
       :aria-expanded="open ? 'true' : 'false'" aria-haspopup="true"
       @click="open = !open"
     >
-      <span class="mstext">{{ triggerText }}</span>
+      <span class="mstext"><span v-if="triggerLabel" class="visually-hidden">{{ triggerLabel }}: </span>{{ triggerText }}</span>
       <svg class="mschevron" viewBox="0 0 24 24" width="12" height="12" fill="none"
            stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
            aria-hidden="true" focusable="false">

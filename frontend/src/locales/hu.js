@@ -75,6 +75,7 @@ export default {
     label: 'Beágyazás',
     title: 'Ábra beágyazása',
     cycleNote: 'A beágyazott kód a(z) {cycle} adatait mutatja.',
+    scopeNote: 'A beágyazott kód a(z) {scope} adatait mutatja.',
     copy: 'Kód másolása',
     copied: 'Másolva!',
     preview: 'Előnézet ↗',
@@ -90,7 +91,8 @@ export default {
     scopeAll: 'Összes ciklus adatai',
   },
   home: {
-    searchLabel: 'Keress a felszólalásokban',
+    // Csak a felolvasó olvassa: hogy miben keres, azt a mellette álló választó mondja.
+    searchLabel: 'Keresőszó',
     searchPlaceholder: 'pl. lakhatás, Paks, költségvetés…',
     searchButton: 'Keresés',
     since: '{year} óta:',
@@ -224,8 +226,13 @@ export default {
     speakerSuggest: 'Szűrés felszólalóra:',
     // Keresőszó nélkül, csak felszólalóra szűrve a találatok a felszólalásai.
     trendCaptionSpeaker: '{name} felszólalásai az időben',
+    // Keresőszó nélkül, témára (és esetleg felszólalóra) szűrve.
+    trendCaptionTopic: '{topics} témájú felszólalások az időben',
+    trendCaptionSpeakerTopic: '{name} {topics} témájú felszólalásai az időben',
     faction: 'Frakció',
     agendaType: 'Napirend típusa',
+    // A felszólalás vagy az irományok közpolitikai témája (CAP) szerinti szűrő.
+    topic: 'Téma',
     all: 'Mind',
     // Több értéket is felvevő szűrő (MultiSelect): a gomb felirata és a panel súgója.
     selectedCount: '{n} kiválasztva',
@@ -243,6 +250,39 @@ export default {
     breakdownSpeakers: 'A(z) „{q}” találatok felszólalónként',
     cycleScope: 'A keresés a(z) {cycle} felszólalásaira szűkül.',
     cycleScopeAll: 'váltás minden ciklusra',
+    // Miben keres a kereső (SEA-14): egy vagy több helyen egyszerre, mindegyikben
+    // ezen az oldalon.
+    scope: 'Miben keresel?',
+    scopeAll: 'Mindenhol',
+    scopes: {
+      plenary: 'Plenáris ülések',
+      committee: 'Bizottsági ülések',
+      documents: 'Irományok',
+      votes: 'Szavazások',
+      people: 'Személyek',
+    },
+    // Az oldal címe, ha nem csak felszólalásokban keres, és a ciklusjelzés.
+    titleAny: 'Keresés',
+    cycleScopeAny: 'A keresés a(z) {cycle} adataira szűkül.',
+    // Több helyen keresve: az összesítő sor és a szakaszok „összes találat” linkje.
+    byScope: 'Találatok helyenként',
+    showAll: 'Összes találat ({n})',
+    // Amivel együtt kell olvasni egy hely találatait.
+    notApplied: 'Itt nem érvényes: {filters}.',
+    filterNames: {
+      dates: 'időszak', speaker: 'felszólaló', faction: 'frakció', agenda: 'napirend típusa',
+      topic: 'téma',
+    },
+    asSponsor: 'Csak {name} által benyújtott irományok.',
+    asVoter: 'Névsoros szavazások, {name} szavazatával.',
+    peopleNeedTerm: 'Személyek kereséséhez írj be egy nevet.',
+    // Ahol a téma önmagában nem keresés (bizottsági ülések, szavazások).
+    needsTerm: 'Itt kereséshez írj be egy kifejezést, vagy válassz felszólalót.',
+    // Egy rekordtípus saját listaoldala, a további szűrőkért és rendezésekért.
+    moreFilters: 'További szűrők és rendezések: {page} →',
+    listPages: { documents: 'Irományok', votes: 'Szavazások', people: 'Felszólalók' },
+    openMinutes: 'Megnyitás a jegyzőkönyvben',
+    committeeUnavailable: 'A bizottsági jegyzőkönyvekben ezen a kiszolgálón még nem lehet keresni.',
   },
   viewer: {
     transcript: 'Jegyzőkönyv',
@@ -486,6 +526,8 @@ export default {
     tabPlenary: 'Plenáris ülésnapok',
     tabCommittees: 'Bizottsági ülések',
     noCommitteeMeetings: 'Ebben a ciklusban nincs rögzített bizottsági ülés.',
+    onlyAvailable: 'Csak videóval vagy jegyzőkönyvvel',
+    noAvailableCommitteeMeetings: 'Ebben a ciklusban nincs videóval vagy jegyzőkönyvvel rendelkező bizottsági ülés.',
     speechesCount: '{count} felszólalás',
     minutesNotRead: 'Jegyzőkönyv (PDF)',
     committeeSitting: 'bizottsági ülés',
@@ -1070,6 +1112,28 @@ export default {
     // Kilépő link a keresőbe, erre a képviselőre szűrve: a napok szerinti lista
     // böngészhető, de szövegre keresni csak a keresőben lehet.
     searchSpeeches: 'Keresés a felszólalásaiban',
+    // A bizottsági felszólalások szakasza (BIZ-35). Ha megjelenik, a plenáris
+    // lista címe „Plenáris felszólalások” lesz, hogy ne tűnjön az összesnek.
+    plenarySpeeches: 'Plenáris felszólalások',
+    committeeSpeeches: 'Bizottsági felszólalások',
+    committeeSpeechesNote: 'A bizottsági ülések jegyzőkönyveiből kiolvasott '
+      + 'felszólalások, ülésenként. A jegyzőkönyvek nem tartalmaznak időadatot, '
+      + 'ezért itt beszédidő helyett a leírt szöveg hossza (szószám) szerepel, és '
+      + 'ezek a felszólalások a plenáris statisztikákba nem számítanak bele. A '
+      + 'felszólalót a jegyzőkönyvben szereplő név alapján azonosítjuk, így egy-egy '
+      + 'hozzászólás hiányozhat; a jegyzőkönyvek pedig hetekkel az ülés után '
+      + 'jelennek meg, ezért a legutóbbi ülések még nem szerepelhetnek.',
+    committeeSpeechesChairNote: 'Az ülést levezető elnökként tett hozzászólások '
+      + 'is szerepelnek, megjelölve: a bizottsági ülésen az elnök érdemben is '
+      + 'hozzászól, nem csak levezet.',
+    committeeSummary: '{sittings} bizottsági ülésen, összesen {words} szó',
+    committeeChairTotal: 'ebből {n} felszólalás levezető elnökként',
+    committeeChairing: 'levezető elnök',
+    committeeCoverage: 'Bizottsági jegyzőkönyveket csak ebből az időszakból '
+      + 'dolgoztunk fel: {cycles}. A kiválasztott időszak többi ülése ezért nem '
+      + 'szerepel a listában.',
+    committeeOpenMinutes: 'Az ülés teljes jegyzőkönyve',
+    searchCommitteeSpeeches: 'Keresés a bizottsági felszólalásaiban',
     viewSpeech: 'Megtekintés',
     showMore: 'Továbbiak megjelenítése',
     showLess: 'Kevesebb megjelenítése',
@@ -1289,6 +1353,78 @@ export default {
     },
     kozlonyLink: 'Megtekintés a Magyar Közlönyben',
     docKind: { justification: 'Indokolás', background: 'Háttéranyag' },
+  },
+  // Mit változtat egy törvényjavaslat (BILL-14..16): a törvények szövegén, a
+  // tárgyalás során önmagán, és módosító javaslatonként.
+  lawChanges: {
+    title: 'Mit változtatna a törvényeken?',
+    titleAdopted: 'Mit változtatott a törvényeken?',
+    methodNjt: 'A Nemzeti Jogszabálytár hivatalos szövegei alapján: minden módosított törvény a(z) {act} kihirdetésének napján hatályos szövege, összevetve a módosítás utáni szöveggel.',
+    methodComputed: 'Gépi összevetés: a(z) {source} módosító rendelkezéseit alkalmaztuk a törvények Nemzeti Jogszabálytárban közzétett legújabb szövegére. Tájékoztató jellegű: a javaslat még változhat, és a gépi feldolgozás tévedhet. A hiteles szöveg maga az iromány.',
+    methodComputedAdopted: 'Gépi összevetés: a(z) {source} szövegét alkalmaztuk a törvények kihirdetéskor hatályos szövegére (a Nemzeti Jogszabálytár a kihirdetést követő három munkanapon belül közli a módosított szöveget). Tájékoztató jellegű.',
+    methodMixed: 'A Nemzeti Jogszabálytár hivatalos szövegei alapján ({act}); a „gépi” jelölésű törvényeknél — ahol a jogszabálytár nem rendeli a változást ehhez a törvényhez, például mert a törvény egészét helyezi hatályon kívül — a javaslat szövegét alkalmaztuk gépileg.',
+    computedBadge: 'gépi',
+    computedBadgeTitle: 'Gépi összevetés: a javaslat szövegét alkalmaztuk a törvényre. Tájékoztató jellegű.',
+    sourceConsolidated: '{number} egységes javaslat',
+    sourceBill: '{number} törvényjavaslat',
+    summary: '{laws} törvény, összesen {changes} rendelkezés',
+    count: '{n} rendelkezés',
+    statesNjt: 'Összevetve: a {from} napjától és a {to} napjától hatályos szöveg.',
+    stateComputed: 'Összevetve a {from} napjától hatályos szöveggel.',
+    openNjt: 'A törvény a Nemzeti Jogszabálytárban',
+    openUnit: 'A rendelkezés a Nemzeti Jogszabálytárban',
+    byAct: 'módosította: {act} {provisions}',
+    byBill: 'a javaslat {provisions}',
+    kind: { new: 'új', modified: 'módosul', repealed: 'hatályát veszti' },
+    loading: 'Betöltés…',
+    loadFailed: 'Nem sikerült betölteni.',
+    scan: 'A javaslat szkennelt, papíralapú benyújtás, ezért a változtatásai gépileg nem olvashatók ki.',
+    unresolvedShow: 'Gépileg nem alkalmazott módosítások ({n})',
+    unresolvedHide: 'Elrejtés',
+    unresolvedNote: 'Ezeket a módosításokat nem sikerült automatikusan a törvény szövegére vezetni, ezért a javaslat saját szövegét idézzük.',
+  },
+  lawFull: {
+    open: 'Teljes törvényszöveg',
+    openAt: 'a törvény szövegében',
+    openAtTitle: 'A változás megtekintése a törvény teljes szövegében',
+    close: 'Bezárás',
+    modeLabel: 'Megjelenítés',
+    modeFull: 'Teljes szöveg',
+    modeContext: 'Csak a változások környezete',
+    prev: 'Előző változás',
+    next: 'Következő változás',
+    position: '{i} / {n}',
+    positionLabel: 'A(z) {i}. változás, összesen {n}',
+    fold: '{n} változatlan sor megjelenítése',
+    flat: 'gépileg, a javaslat szövegéből, tagolás nélkül',
+    unavailable: 'A törvény teljes szövege nem érhető el.',
+  },
+  evolution: {
+    title: 'Hogyan változott a javaslat a tárgyalás során?',
+    note: 'A benyújtott szöveg ({from}) és az egységes javaslat ({to}) eltérései. Az egységes javaslat a törvényjavaslat és a Törvényalkotási Bizottság összegző módosító javaslatának egybeszerkesztett szövege — erről szavaz az Országgyűlés.',
+    unchanged: '{n} szakasz változatlan.',
+    none: 'Az egységes javaslat szövege megegyezik a benyújtott szöveggel.',
+    showAll: 'Mind a(z) {n} változás megjelenítése',
+    titlePart: 'Cím és bevezető',
+    was: '(a benyújtott szövegben: {n})',
+    // a section of the bill itself: added by the consolidation, or left out of it
+    kind: { new: 'új', repealed: 'kimaradt' },
+  },
+  amendment: {
+    show: 'Változtatások ({n} pont)',
+    hide: 'Változtatások elrejtése',
+    point: '{n}. módosítópont',
+    scan: 'Papíralapú (szkennelt) benyújtás — a javasolt változtatások gépileg nem olvashatók ki; a dokumentum megnyitható.',
+    noPoints: 'Ebből a dokumentumból nem sikerült módosítópontokat kiolvasni.',
+    unmarked: 'a dokumentum nem jelöli külön a törölt és a beszúrt szöveget',
+  },
+  diff: {
+    inserted: 'beszúrva:',
+    deleted: 'törölve:',
+    legendIns: 'új szöveg',
+    legendDel: 'törölt szöveg',
+    expand: 'A teljes szöveg megjelenítése',
+    collapse: 'kevesebb',
   },
   documents: {
     title: 'Minden iromány',
@@ -1556,6 +1692,9 @@ export default {
   // Települések (§6D) — mely helységeket említi a Parlament, és melyeket soha.
   settlements: {
     title: 'Települések',
+    // A beágyazott térkép címe (§4C), a két olvasat szerint.
+    embedTitle: 'Melyik településről esett szó a parlamentben?',
+    embedTitleBlind: 'Települések, amelyekről egyszer sem esett szó',
     intro: 'A parlament országos, de amiről vitázik, az szinte mindig helyi. '
       + 'Itt az látszik, mely magyar településeket említik a plenáris ülésen, '
       + 'milyen gyakran és kik — és mely településekről nem esett szó soha.',
@@ -1844,6 +1983,25 @@ export default {
       quorum: 'határozatképesség szükséges',
       secret_vote: 'titkos szavazás',
     },
+  },
+  // A következő ülés napirendjén lévő irományok, irományonként (HOME-5): amiről
+  // szavaz vagy vitázik a Ház, és hogy hol tart most. Terv, mint a napirend.
+  upcomingBills: {
+    title: 'Napirenden lévő javaslatok',
+    groups: { vote: 'Szavazásra kerül', debate: 'Vitára kerül' },
+    kinds: {
+      vote: 'Szavazás',
+      finalVote: 'Zárószavazás',
+      debate: 'Vita',
+      procedure: 'Eljárási döntés',
+      other: 'Tárgyalás',
+    },
+    today: 'ma',
+    tomorrow: 'holnap',
+    stageAria: 'Jogalkotási szakasz ({n}/{total}): {label}',
+    showMore: '+{n} további',
+    showLess: 'Kevesebb',
+    statusTip: 'Állapota a parlament.hu adatlapja szerint: {status}',
   },
   agendaTypes: {
     opening: 'Ülésnap megnyitása',

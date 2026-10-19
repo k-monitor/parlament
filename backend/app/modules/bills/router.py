@@ -10,20 +10,23 @@ back to its parlament.hu source text (LEGAL-1).
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+import zlib
 from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ... import parlacap
+from ... import lawtext, parlacap
 from ... import portfolios as portfolio_map
 from ...analytics import search_analytics
-from ...db import (get_db, like_contains, period_and, period_in_scope,
-                   period_key, period_list, period_sql)
+from ...db import (get_db, like_contains, local_instant, period_and,
+                   period_in_scope, period_key, period_list, period_sql)
 from ...media import per_speech_clip
 from ...parlament_links import bill_page_url
 from ...query_cache import cached_aggregate
+from ...textdiff import word_diff
 from ...vote_stats import (NO_ATTENDANCE, NO_CROSSVOTING, attendance_for,
                            crossvoting_for)
 
@@ -365,7 +368,11 @@ def list_bills(
         None, pattern="^(answered|unanswered|oral|written)$",
         description="Question-type irományok by whether and how they were "
                     "answered: at all, not at all, from the floor, or in writing"),
-    sort: str = Query("number", pattern="^(number|date)$"),
+    date_from: Optional[str] = Query(
+        None, description="Submitted on or after this local date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(
+        None, description="Submitted on or before this local date (YYYY-MM-DD)"),
+    sort: str = Query("number", pattern="^(number|date|date_asc)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: sqlite3.Connection = Depends(get_db),
@@ -373,6 +380,19 @@ def list_bills(
     """Browsable, filterable bill list. Filters combine."""
     where = ["1=1"]
     params: dict = {}
+    # The submission date range — the site search's date filter applied to its
+    # documents scope (SEA-14). `submitted_date` is the UTC instant of a Budapest
+    # midnight ("2026-05-09" arrives as "2026-05-08T22:00:00Z"), so the bounds are
+    # compared as instants: a date prefix would file every iromány a day early.
+    try:
+        if date_from:
+            where.append("b.submitted_date >= :df")
+            params["df"] = local_instant(date_from)
+        if date_to:
+            where.append("b.submitted_date <= :dt")
+            params["dt"] = local_instant(date_to, end_of_day=True)
+    except ValueError:
+        raise HTTPException(422, "Invalid date")
     if q:
         # Readers look an iromány up by its number ("T/438") as often as by
         # title, so the free-text filter matches both (BILL-1) — as the votes
@@ -451,7 +471,9 @@ def list_bills(
     # unscoped list pages through the previous cycle's high numbers before any
     # current-cycle bill appears.
     order = {"number": "b.period_number DESC, b.number_sort DESC",
-             "date": "b.submitted_date DESC"}[sort]
+             "date": "b.submitted_date DESC",
+             # SQLite sorts NULL first ascending; an undated iromány is not the oldest.
+             "date_asc": "b.submitted_date IS NULL, b.submitted_date ASC"}[sort]
     if q:
         # A reader who typed a whole iromány number wants *that* iromány first,
         # not the longer numbers it is a prefix of ("T/438" before "T/4388").
@@ -468,7 +490,7 @@ def list_bills(
     # key, so the two stay distinguishable in the aggregates.
     search_analytics.record(
         source="bills", query=q, period=period_list(period), sort=sort,
-        main_type=main_type, main_type_not=main_type_not,
+        date_from=date_from, date_to=date_to, main_type=main_type, main_type_not=main_type_not,
         main_type_in=main_type_in, main_type_not_in=main_type_not_in,
         type=type, status=status, topic=topic, sponsor=sponsor,
         portfolio=portfolio, portfolio_role=portfolio_role,
@@ -1125,6 +1147,165 @@ def bill_decisions(
     return cached_aggregate("bill_decisions", (date_from, date_to), compute)
 
 
+# ---------------------------------------------------------------------------
+# What the House is about to vote on and debate: the home page's bills (HOME-5)
+# ---------------------------------------------------------------------------
+
+# A motion is numbered after its iromány ("T/816/2" is the urgency motion on
+# T/816). The order paper's procedural decisions name the motion; the reader wants
+# the bill it is about.
+_MOTION_CODE_RE = re.compile(r"^([A-ZÁÉÍÓÖŐÚÜŰ]/\d+)/\d+$")
+# Now and then the number stays at the head of an item's title instead of in the
+# gutter it is printed in ("T/668/10 A köztársasági elnök által …").
+_TITLE_CODE_RE = re.compile(r"^([A-ZÁÉÍÓÖŐÚÜŰ]/\d+)(?:/\d+)?\.?\s")
+_DEBATE_RE = re.compile(r"\bvit[aá]")
+# The order paper's flags that say how the *iromány* is handled, in the order a
+# reader weighs them. The rest describe the item's slot on the day ("quorum
+# needed", "nationality agenda item") and stay on the order paper's own card.
+_BILL_FLAGS = ("exceptional", "urgent", "derogation", "two_thirds", "four_fifths",
+               "cardinal", "secret_vote")
+
+
+def _agenda_step_kind(stage: Optional[str], section: Optional[str]) -> tuple[str, bool]:
+    """What an order-paper item will do to its iromány: ``vote``, ``debate``,
+    ``procedure`` (a decision on how it is handled — urgency, exceptional
+    procedure, a late addition to the agenda) or ``other``; and whether the vote
+    is the final one.
+
+    Read off the stage line the napirend prints ("Általános vita a lezárásig",
+    "Döntés az összegző módosító javaslatról és a zárószavazás"), or, where it
+    prints none, off the heading the item stands under."""
+    s = (stage or "").strip().lower()
+    sec = (section or "").strip().lower()
+    if "zárószavazás" in s:
+        return "vote", True
+    if s.startswith(("döntés", "határozathozatal", "a határozathozatal",
+                     "tárgyalás és döntés")):
+        return "vote", False
+    if _DEBATE_RE.search(s):
+        return "debate", False
+    if not s:
+        if sec.startswith("döntések"):      # "Döntések, határozathozatalok"
+            return "vote", False
+        if sec.startswith("döntés"):        # "Döntés sürgős tárgyalásról", …
+            return "procedure", False
+        if _DEBATE_RE.search(sec):          # "Az általános viták a lezárásig"
+            return "debate", False
+    return "other", False
+
+
+@router.get("/upcoming")
+def upcoming_bills(db: sqlite3.Connection = Depends(get_db)):
+    """The irományok the coming sitting's order paper will vote on or debate, one
+    entry per iromány, each with where it stands — the home page's highlight of
+    what the House is about to decide (HOME-5).
+
+    The order paper (NR-5) lists *items* per day; this turns them round to the
+    bills: every item that names an iromány we hold becomes a ``step`` of that
+    iromány (its date, what it will do — ``vote`` / ``debate`` / ``procedure`` /
+    ``other`` — and the stage as the napirend prints it), and the iromány brings
+    its upstream status and stage diagram (BILL-4). A procedural decision names
+    the motion it is taken on (``T/816/2``), so it is counted to the bill that
+    motion belongs to.
+
+    Like the order paper this is a **plan**, so the response carries the document
+    and the moment it was issued. It serves the whole document: the caller drops
+    the days already behind it, on its own calendar, as the order paper's card
+    does — which keeps this cacheable across midnight."""
+    empty = {"agenda": None, "bills": []}
+
+    def compute():
+        try:
+            agenda = db.execute(
+                """SELECT slug, url, label, status_label, status_at, first_date,
+                          last_date
+                     FROM agenda_doc WHERE kind = 'agenda'
+                    ORDER BY ord LIMIT 1""").fetchone()
+        except sqlite3.OperationalError:     # a DB built before the order paper
+            return empty
+        if not agenda:
+            return empty
+        items = db.execute(
+            """SELECT i.id, i.day_ord, i.ordinal, i.bill_code, i.bill_id,
+                      i.section, i.title, i.stage, i.flags,
+                      COALESCE(d.date, i.date) AS date, d.weekday
+                 FROM agenda_doc_item i
+                 LEFT JOIN agenda_doc_day d
+                   ON d.doc_slug = i.doc_slug AND d.ord = i.day_ord
+                WHERE i.doc_slug = ?
+                ORDER BY i.day_ord, i.id""", (agenda["slug"],)).fetchall()
+
+        # The number each unlinked item is really about: its motion's bill, or a
+        # number its title starts with. Resolved like the loader resolves the
+        # linked ones — the latest cycle holding that number.
+        def wanted(r) -> Optional[str]:
+            if r["bill_id"]:
+                return None
+            code = (r["bill_code"] or "").strip()
+            m = _MOTION_CODE_RE.match(code) if code else _TITLE_CODE_RE.match(r["title"] or "")
+            return m.group(1) if m else None
+
+        codes = {c for r in items if (c := wanted(r))}
+        by_code: dict[str, str] = {}
+        if codes:
+            ph = ",".join("?" * len(codes))
+            for r in db.execute(
+                    f"""SELECT bill_number, id FROM bill WHERE bill_number IN ({ph})
+                         ORDER BY period_number""", sorted(codes)):
+                by_code[r["bill_number"]] = r["id"]     # the latest cycle wins
+
+        steps_by_bill: dict[str, list] = {}
+        flags_by_bill: dict[str, set] = {}
+        for r in items:
+            bill_id = r["bill_id"] or by_code.get(wanted(r) or "")
+            if not bill_id:
+                continue
+            kind, final = _agenda_step_kind(r["stage"], r["section"])
+            label = ((r["stage"] or "").strip() if kind in ("vote", "debate")
+                     else (r["section"] or "").strip() if kind == "procedure"
+                     else "") or None
+            steps = steps_by_bill.setdefault(bill_id, [])
+            step = {"date": r["date"], "weekday": r["weekday"],
+                    "ordinal": r["ordinal"], "kind": kind, "final": final,
+                    "label": label, "code": r["bill_code"]}
+            # One item continued under a second heading is still one step.
+            if not any((s["date"], s["kind"], s["label"])
+                       == (step["date"], kind, label) for s in steps):
+                steps.append(step)
+            flags_by_bill.setdefault(bill_id, set()).update(
+                f for f in (r["flags"] or "").split(",") if f)
+
+        ids = list(steps_by_bill)               # in order of their first step
+        if not ids:
+            return {"agenda": _agenda_ref(agenda), "bills": []}
+        ph = ",".join("?" * len(ids))
+        rows = {r["id"]: r for r in db.execute(
+            f"""SELECT id, bill_number, title, type, main_type, status,
+                       stages_json
+                  FROM bill WHERE id IN ({ph})""", ids)}
+        sponsors = _sponsors_for(db, ids)
+        topics = _topics_for(db, ids)
+        bills = [{
+            "bill_id": bid, "bill_number": r["bill_number"], "title": r["title"],
+            "type": r["type"], "main_type": r["main_type"],
+            "category": _decision_category(r["main_type"], r["type"]),
+            "status": r["status"], "stages": _stages(r["stages_json"]),
+            "topic": topics.get(bid), "sponsors": sponsors.get(bid, []),
+            "flags": [f for f in _BILL_FLAGS if f in flags_by_bill.get(bid, ())],
+            "steps": steps_by_bill[bid],
+        } for bid in ids if (r := rows.get(bid))]
+        return {"agenda": _agenda_ref(agenda), "bills": bills}
+
+    return cached_aggregate("bills_upcoming", (), compute)
+
+
+def _agenda_ref(agenda: sqlite3.Row) -> dict:
+    """The order paper a claim about the coming sitting was read off (TRUST-1)."""
+    return {"slug": agenda["slug"], "url": agenda["url"], "label": agenda["label"],
+            "status_label": agenda["status_label"], "status_at": agenda["status_at"],
+            "first_date": agenda["first_date"], "last_date": agenda["last_date"]}
+
+
 def _rows(db: sqlite3.Connection, sql: str, bill_id: str) -> list[dict]:
     return [dict(r) for r in db.execute(sql, (bill_id,)).fetchall()]
 
@@ -1161,9 +1342,46 @@ def _motions_for(db: sqlite3.Connection, bill_id: str) -> list[dict]:
             "faction": {"id": r["faction_id"], "label": r["faction_label"],
                         "color": r["faction_color"]} if r["faction_label"] else None,
         })
+    # Which motions can be shown as a diff of the bill (BILL-16).
+    try:
+        amend = {r["motion_number"]: r for r in db.execute(
+            """SELECT ad.motion_number, ad.scan,
+                      (SELECT COUNT(*) FROM amendment_point ap
+                       WHERE ap.amendment_id = ad.id) AS points
+               FROM amendment_doc ad WHERE ad.bill_id = ?""", (bill_id,))}
+    except sqlite3.OperationalError:
+        amend = {}
     for m in motions:
         m.pop("id", None)
+        a = amend.get(m["bill_number"])
+        m["amendment"] = ({"points": a["points"], "scan": bool(a["scan"])}
+                          if a else None)
     return motions
+
+
+def _vote_motions(db: sqlite3.Connection, bill_id: str,
+                  vote_ids: list[str]) -> dict[str, list]:
+    """Which of the bill's own motions each of its votes decided, by vote id.
+
+    The bill's vote tally only says "összegző módosító javaslat elfogadva"; the
+    vote's subjects (Votes module) name the motion — by number alone ("779/4"), as
+    the bill's motion list numbers it. Matching within this bill's motions keeps
+    the lookup on idx_bill_motion_bill. A vote the Votes module hasn't ingested
+    has no subjects, so it simply names no motion."""
+    if not vote_ids:
+        return {}
+    ph = ",".join("?" * len(vote_ids))
+    rows = db.execute(
+        f"""SELECT vs.vote_id, bm.bill_number, bm.type
+            FROM vote_subject vs
+            JOIN bill_motion bm ON bm.bill_id = ? AND bm.bill_number = vs.bill_number
+            WHERE vs.vote_id IN ({ph})
+            ORDER BY vs.vote_id, vs.ord""", [bill_id, *vote_ids]).fetchall()
+    out: dict[str, list] = {}
+    for r in rows:
+        out.setdefault(r["vote_id"], []).append(
+            {"bill_number": r["bill_number"], "type": r["type"]})
+    return out
 
 
 def _debate_speeches(db: sqlite3.Connection, start: sqlite3.Row,
@@ -1309,6 +1527,271 @@ def _video_answer(db: sqlite3.Connection, bill_id: str) -> Optional[dict]:
     }
 
 
+# ---------------------------------------------------------------------------
+# What a bill changes (BILL-14..16)
+# ---------------------------------------------------------------------------
+
+# How many changed provisions one /changes response carries with their diffs.
+# An omnibus bill (a renaming across 176 laws) runs to well over a thousand; the
+# laws past this budget come back as counts, and the page fetches each one's
+# provisions (`?law=`) when the reader opens it.
+_CHANGE_BUDGET = 120
+# How many of the bill's changed sections (BILL-15) the first response carries;
+# the rest come with `?part=evolution` when the reader asks for all of them.
+# An omnibus bill's consolidated text differs from the bill in well over a
+# hundred sections, each of them a whole § on both sides.
+_EVOLUTION_HEAD = 8
+
+
+def _law_change_head(db: sqlite3.Connection, bill_id: str) -> Optional[sqlite3.Row]:
+    try:
+        return db.execute("SELECT * FROM law_change_bill WHERE bill_id = ?",
+                          (bill_id,)).fetchone()
+    except sqlite3.OperationalError:     # a DB built before the feature
+        return None
+
+
+def _law_change_summary(db: sqlite3.Connection, bill_id: str) -> Optional[dict]:
+    """The counts the bill page needs to decide which sections to show, or None
+    when there is nothing to show at all."""
+    head = _law_change_head(db, bill_id)
+    if not head:
+        return None
+    one = lambda sql: db.execute(sql, (bill_id,)).fetchone()[0]  # noqa: E731
+    laws = one("SELECT COUNT(*) FROM law_change_law WHERE bill_id = ?")
+    changes = one("SELECT COUNT(*) FROM law_change WHERE bill_id = ?")
+    unresolved = one("SELECT COUNT(*) FROM law_change_unresolved WHERE bill_id = ?")
+    evolution = one("SELECT COUNT(*) FROM bill_evolution WHERE bill_id = ?")
+    points = one("SELECT COUNT(*) FROM amendment_point ap JOIN amendment_doc ad "
+                 "ON ad.id = ap.amendment_id WHERE ad.bill_id = ?")
+    if not (laws or unresolved or evolution or points):
+        return None
+    methods = [r[0] for r in db.execute(
+        "SELECT DISTINCT method FROM law_change_law WHERE bill_id = ?", (bill_id,))]
+    return {"laws": laws, "changes": changes, "unresolved": unresolved,
+            "evolution": evolution, "amendment_points": points,
+            "method": methods[0] if len(methods) == 1 else ("mixed" if methods else None),
+            "act": head["act_label"], "scan": bool(head["scan"])}
+
+
+def _change_kind(before: Optional[str], after: Optional[str]) -> str:
+    if not before:
+        return "new"
+    if not after:
+        return "repealed"
+    return "modified"
+
+
+def _law_rows(db: sqlite3.Connection, bill_id: str, law: Optional[str]) -> list[dict]:
+    sql = "SELECT * FROM law_change_law WHERE bill_id = ?"
+    args: list = [bill_id]
+    if law:
+        sql += " AND doc_id = ?"
+        args.append(law)
+    laws = []
+    for r in db.execute(sql + " ORDER BY ord", args):
+        laws.append({
+            "id": r["id"], "doc_id": r["doc_id"], "title": r["title"], "abbr": r["abbr"],
+            "url": r["url"], "method": r["method"],
+            "base": {"version": r["base_version"], "from": r["base_from"],
+                     "to": r["base_to"]} if r["base_version"] is not None else None,
+            "target": {"version": r["target_version"], "from": r["target_from"],
+                       "to": r["target_to"]} if r["target_version"] is not None else None,
+        })
+    return laws
+
+
+def _law_text_row(db: sqlite3.Connection, doc_id: str,
+                  version: Optional[int]) -> Optional[sqlite3.Row]:
+    """The njt state a law's changes were read against, whole — when the
+    loader has it (a DB built before the full-law view has no table)."""
+    if version is None:
+        return None
+    try:
+        return db.execute("SELECT title, units FROM law_text WHERE doc_id = ? AND version = ? "
+                          "ORDER BY period_number DESC LIMIT 1", (doc_id, version)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+
+
+def _with_full_text(db: sqlite3.Connection, laws: list[dict]) -> None:
+    """Mark the laws whose whole text can be shown with the changes in place."""
+    try:
+        have = {(r[0], r[1]) for r in db.execute(
+            "SELECT doc_id, version FROM law_text WHERE doc_id IN (%s)"
+            % ",".join("?" * len(laws)), [l["doc_id"] for l in laws])} if laws else set()
+    except sqlite3.OperationalError:
+        have = set()
+    for item in laws:
+        item["full_text"] = (item["doc_id"], (item["base"] or {}).get("version")) in have
+
+
+def _changes_of(db: sqlite3.Connection, law_id: int) -> list[dict]:
+    out = []
+    for c in db.execute("SELECT * FROM law_change WHERE law_id = ? ORDER BY ord", (law_id,)):
+        out.append({"jh": c["jh"], "ref": c["ref"],
+                    "ops": [o for o in (c["ops"] or "").split(",") if o],
+                    "provisions": json.loads(c["provisions"] or "[]"),
+                    "kind": _change_kind(c["before_text"], c["after_text"]),
+                    "url": c["url"], "diff": word_diff(c["before_text"], c["after_text"])})
+    return out
+
+
+def _evolution(db: sqlite3.Connection, head: sqlite3.Row, bill_id: str,
+               limit: Optional[int]) -> Optional[dict]:
+    if not head["evolution_to"]:
+        return None
+    total = db.execute("SELECT COUNT(*) FROM bill_evolution WHERE bill_id = ?",
+                       (bill_id,)).fetchone()[0]
+    sql = ("SELECT provision, provision_from, before_text, after_text FROM bill_evolution "
+           "WHERE bill_id = ? ORDER BY ord")
+    rows = db.execute(sql + (f" LIMIT {int(limit)}" if limit else ""), (bill_id,)).fetchall()
+    return {
+        "from": {"number": head["evolution_from"], "url": head["evolution_from_url"]},
+        "to": {"number": head["evolution_to"], "url": head["evolution_to_url"]},
+        "unchanged": head["evolution_unchanged"], "total": total,
+        "provisions": [{"provision": r["provision"], "from": r["provision_from"],
+                        "kind": _change_kind(r["before_text"], r["after_text"]),
+                        "diff": word_diff(r["before_text"], r["after_text"])}
+                       for r in rows]}
+
+
+@router.get("/{bill_id}/changes")
+def bill_changes(bill_id: str, law: Optional[str] = Query(
+                     None, description="one amended law (njt id) — its provisions only"),
+                 part: Optional[str] = Query(
+                     None, description="`evolution`: every changed section of the bill"),
+                 db: sqlite3.Connection = Depends(get_db)):
+    """What a bill changes (BILL-14..16).
+
+    * `laws` — each law the bill amends, with every changed provision as a word
+      diff. `method` says where the new text comes from: `njt` (the bill became
+      law and njt.hu's own time states are compared, exact) or `computed` (the
+      bill's amending instructions applied to njt's newest state). Past
+      `_CHANGE_BUDGET` provisions, a law comes back with `changes: null` and
+      `truncated: true`; ask for it with `?law=<doc_id>`.
+    * `unresolved` — instructions that could not be applied, in the bill's words.
+    * `evolution` — the bill as submitted against its egységes javaslat: the
+      first `_EVOLUTION_HEAD` changed sections and their `total`; all of them
+      with `?part=evolution`.
+    * `amendments` — the bill's módosító javaslatok and how many points each has
+      (the points themselves: `/amendments?number=`)."""
+    b = db.execute("SELECT id, period_number FROM bill WHERE id = ?", (bill_id,)).fetchone()
+    if not b or not period_in_scope(b["period_number"]):
+        raise HTTPException(404, "Bill not found")
+    head = _law_change_head(db, bill_id)
+    if not head:
+        return {"available": False}
+    if part == "evolution":
+        return {"available": True, "evolution": _evolution(db, head, bill_id, None)}
+    laws = _law_rows(db, bill_id, law)
+    counts = {r[0]: r[1] for r in db.execute(
+        "SELECT law_id, COUNT(*) FROM law_change WHERE bill_id = ? GROUP BY law_id",
+        (bill_id,))}
+    spent = 0
+    for item in laws:
+        n = counts.get(item["id"], 0)
+        item["count"] = n
+        if law or spent + n <= _CHANGE_BUDGET or spent == 0:
+            item["changes"] = _changes_of(db, item["id"])
+            item["truncated"] = False
+            spent += n
+        else:
+            item["changes"] = None
+            item["truncated"] = True
+        item.pop("id")
+    _with_full_text(db, laws)
+    if law:
+        return {"available": True, "laws": laws}
+
+    unresolved = [dict(r) for r in db.execute(
+        """SELECT provision, doc_id, reason, text FROM law_change_unresolved
+           WHERE bill_id = ? ORDER BY ord""", (bill_id,))]
+    evolution = _evolution(db, head, bill_id, _EVOLUTION_HEAD)
+    amendments = [dict(r) | {"scan": bool(r["scan"]), "marked": bool(r["marked"])}
+                  for r in db.execute(
+        """SELECT ad.motion_number AS number, ad.type, ad.url, ad.scan, ad.marked,
+                  ad.error, (SELECT COUNT(*) FROM amendment_point ap
+                             WHERE ap.amendment_id = ad.id) AS points
+           FROM amendment_doc ad WHERE ad.bill_id = ? ORDER BY ad.ord""", (bill_id,))]
+    stats = json.loads(head["stats_json"]) if head["stats_json"] else {}
+    return {
+        "available": True,
+        "source": {"number": head["source_number"], "url": head["source_url"],
+                   "kind": head["source_kind"]} if head["source_number"] else None,
+        "scan": bool(head["scan"]),
+        "act": {"label": head["act_label"], "doc_id": head["act_doc"],
+                "url": head["act_url"]} if head["act_label"] else None,
+        "computed_at": head["computed_at"], "stats": stats,
+        "laws": laws, "unresolved": unresolved, "evolution": evolution,
+        "amendments": amendments,
+    }
+
+
+@router.get("/{bill_id}/changes/full")
+def bill_law_full(bill_id: str,
+                  law: str = Query(..., description="the amended law (njt id)"),
+                  db: sqlite3.Connection = Depends(get_db)):
+    """One law a bill amends, whole, with the bill's changes in place (BILL-14).
+
+    `blocks` is the law in reading order: `{unit}` for text the bill leaves
+    alone (`jh`, `cls`, `label`, `text`), `{change, units}` for the bill's
+    `change`-th change of this law (as `changes` lists them, each as in
+    `/changes`), its units each `eq` / `mod` / `ins` / `del` with its text as
+    diff segments. The text is the njt state the changes were read against
+    (`law.base`); `available: false` when the site does not hold it."""
+    b = db.execute("SELECT id, period_number FROM bill WHERE id = ?", (bill_id,)).fetchone()
+    if not b or not period_in_scope(b["period_number"]):
+        raise HTTPException(404, "Bill not found")
+    if not _law_change_head(db, bill_id):
+        raise HTTPException(404, "Law not found")
+    laws = _law_rows(db, bill_id, law)
+    if not laws:
+        raise HTTPException(404, "Law not found")
+    item = laws[0]
+    text = _law_text_row(db, item["doc_id"], (item["base"] or {}).get("version"))
+    rows = db.execute("SELECT * FROM law_change WHERE law_id = ? ORDER BY ord",
+                      (item.pop("id"),)).fetchall()
+    if not text:
+        return {"available": False, "law": item}
+    changes = [{"jh": r["jh"], "before_text": r["before_text"], "after_text": r["after_text"],
+                "after_units": json.loads(r["after_units"]) if r["after_units"] else None,
+                "anchor": r["anchor"]} for r in rows]
+    blocks = lawtext.merge(json.loads(zlib.decompress(text["units"])), changes)
+    return {"available": True, "law": item,
+            "changes": [{"jh": r["jh"], "ref": r["ref"],
+                         "ops": [o for o in (r["ops"] or "").split(",") if o],
+                         "provisions": json.loads(r["provisions"] or "[]"),
+                         "kind": _change_kind(r["before_text"], r["after_text"]),
+                         "url": r["url"]} for r in rows],
+            "blocks": blocks}
+
+
+@router.get("/{bill_id}/amendments")
+def bill_amendment(bill_id: str,
+                   number: str = Query(..., description='the motion number, e.g. "438/2"'),
+                   db: sqlite3.Connection = Depends(get_db)):
+    """One módosító javaslat of a bill, point by point, each point the bill
+    provision it changes with its insertions and deletions (BILL-16)."""
+    b = db.execute("SELECT id, period_number FROM bill WHERE id = ?", (bill_id,)).fetchone()
+    if not b or not period_in_scope(b["period_number"]):
+        raise HTTPException(404, "Bill not found")
+    try:
+        doc = db.execute("SELECT * FROM amendment_doc WHERE bill_id = ? AND motion_number = ?",
+                         (bill_id, number)).fetchone()
+    except sqlite3.OperationalError:
+        doc = None
+    if not doc:
+        raise HTTPException(404, "Amendment not found")
+    points = [{"point": p["point"], "target": p["target"], "kind": p["kind"],
+               "segments": json.loads(p["segments_json"] or "[]")}
+              for p in db.execute("SELECT * FROM amendment_point WHERE amendment_id = ? "
+                                  "ORDER BY ord", (doc["id"],))]
+    return {"number": doc["motion_number"], "type": doc["type"], "url": doc["url"],
+            "scan": bool(doc["scan"]), "marked": bool(doc["marked"]),
+            "error": doc["error"], "points": points}
+
+
 @router.get("/{bill_id}")
 def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     """A single bill with its full sponsor list and detail sections (events,
@@ -1317,7 +1800,7 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     Each vote carries the same derived figures the Votes list shows on its cards:
     attendance (`present` / `seats` / `attendance`) and cross-voting (`defectors`,
     `defector_share`, `defector_factions`), for the votes the Votes module has
-    ingested (`vote_ref`)."""
+    ingested (`vote_ref`), and the bill's own motions it decided (`motions`)."""
     b = db.execute("SELECT * FROM bill WHERE id = ?", (bill_id,)).fetchone()
     # An iromány of a cycle this deployment does not serve (CYC-7) is not found here.
     if not b or not period_in_scope(b["period_number"]):
@@ -1360,9 +1843,11 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
     _ingested = [v["vote_ref"] for v in votes if v["vote_ref"]]
     _attendance = attendance_for(db, _ingested)
     _crossvoting = crossvoting_for(db, _ingested)
+    _motions = _vote_motions(db, bill_id, _ingested)
     for v in votes:
         v.update(_attendance.get(v["vote_ref"], NO_ATTENDANCE))
         v.update(_crossvoting.get(v["vote_ref"], NO_CROSSVOTING))
+        v["motions"] = _motions.get(v["vote_ref"], [])
     deadlines = _rows(db,
         "SELECT name, deadline, reference, remark FROM bill_deadline "
         "WHERE bill_id = ? ORDER BY ord", bill_id)
@@ -1403,4 +1888,6 @@ def get_bill(bill_id: str, db: sqlite3.Connection = Depends(get_db)):
         "deadlines": deadlines, "committees": committees, "documents": documents,
         "motion_summary": motion_summary, "motions": motions,
         "debates": debates, "video_answer": video_answer,
+        # What it changes (BILL-14..16): counts only; the diffs are /changes.
+        "law_changes": _law_change_summary(db, bill_id),
     }

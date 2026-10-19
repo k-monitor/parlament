@@ -90,13 +90,29 @@ _MIN_FACTION_SIZE = 2
 
 
 def _subjects_for(db: sqlite3.Connection, vote_ids: list[str]) -> dict[str, list]:
-    """Vote subjects (the bills/motions decided) grouped by vote id."""
+    """Vote subjects (the bills/motions decided) grouped by vote id.
+
+    A subject that is a held bill links to it (`bill_id`). One that is a motion on
+    a held bill — an amendment, the consolidated text — comes with no iromanyId,
+    only its number ("779/4"), which is unique within a cycle; it is resolved to
+    that motion of the vote's own cycle and carries `motion` (the bill it belongs
+    to and the motion's type), so the reader can open what was actually voted on.
+    The lookup only runs for a subject no bill matched (the CASE), and rides
+    idx_bill_motion_number."""
     if not vote_ids:
         return {}
     ph = ",".join("?" * len(vote_ids))
     rows = db.execute(
-        f"""SELECT vs.vote_id, b.id AS bill_id, vs.bill_number, vs.title
-            FROM vote_subject vs LEFT JOIN bill b ON b.id = vs.iromany_id
+        f"""SELECT vs.vote_id, b.id AS bill_id, vs.bill_number, vs.title,
+                   bm.bill_id AS motion_bill_id, bm.type AS motion_type
+            FROM vote_subject vs
+            JOIN vote v ON v.id = vs.vote_id
+            LEFT JOIN bill b ON b.id = vs.iromany_id
+            LEFT JOIN bill_motion bm ON bm.id = CASE WHEN b.id IS NULL THEN (
+                SELECT m.id FROM bill_motion m JOIN bill pb ON pb.id = m.bill_id
+                WHERE m.bill_number = vs.bill_number
+                  AND pb.period_number = v.period_number
+                ORDER BY m.id LIMIT 1) END
             WHERE vs.vote_id IN ({ph})
             ORDER BY vs.vote_id, vs.ord""", vote_ids).fetchall()
     out: dict[str, list] = {}
@@ -104,6 +120,8 @@ def _subjects_for(db: sqlite3.Connection, vote_ids: list[str]) -> dict[str, list
         out.setdefault(r["vote_id"], []).append({
             "bill_id": r["bill_id"], "bill_number": r["bill_number"],
             "title": r["title"],
+            "motion": ({"bill_id": r["motion_bill_id"], "type": r["motion_type"]}
+                       if r["motion_bill_id"] else None),
         })
     return out
 

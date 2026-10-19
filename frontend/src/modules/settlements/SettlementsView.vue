@@ -15,6 +15,7 @@ import { useI18n } from 'vue-i18n'
 import { api } from '../../api.js'
 import { currentCycleLabel, loadMeta, store } from '../../store.js'
 import { createSearchClicks } from '../../lib/searchClicks.js'
+import EmbedButton from '../../components/EmbedButton.vue'
 import Pagination from '../../components/Pagination.vue'
 import SettlementMentionMap from '../../components/SettlementMentionMap.vue'
 import StateBlock from '../../components/StateBlock.vue'
@@ -104,6 +105,17 @@ const oevkNotes = computed(() => {
     unattributed: unattributed && unattributed.mentions ? unattributed : null,
   }
 })
+
+// The embed (§4C) carries the reading and the binning on screen, as the page's own
+// URL does, and fills whatever frame it is given. The default frame fits a map of
+// the country at full width; the constituency binning brings a second note (the
+// capital in no cell), and a few lines more room for it.
+const EMBED_WIDTH = 820
+const embedHeight = computed(() => (f.bins === 'oevk' ? 790 : 740))
+const embedParams = computed(() => ({
+  mode: f.mode === 'blind' ? 'blind' : undefined,
+  bins: f.bins === 'points' ? undefined : f.bins,
+}))
 
 const clicks = createSearchClicks('settlements')
 
@@ -295,6 +307,13 @@ onUnmounted(() => clearTimeout(searchTimer))
     @select="openSettlement"
   />
   <p v-else-if="mapData" class="state">{{ $t('settlements.noGeometry') }}</p>
+  <div v-if="mapData && mapData.points.length && !segmentsError" class="fig-foot">
+    <EmbedButton
+      kind="settlement-map" :params="embedParams"
+      :title="$t(f.mode === 'blind' ? 'settlements.embedTitleBlind' : 'settlements.embedTitle')"
+      :height="embedHeight" :max-width="EMBED_WIDTH"
+    />
+  </div>
 
   <!-- The map's own caveat, next to the map: it measures plenary mentions and
        nothing wider, and it answers for the selected cycles only (TEL-7/TEL-12). -->

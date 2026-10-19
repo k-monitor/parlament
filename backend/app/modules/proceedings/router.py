@@ -6,7 +6,6 @@ proceedings tables plus the shared core entities (person, faction, session).
 
 from __future__ import annotations
 
-import html
 import json
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -28,7 +27,7 @@ from ...parlament_links import sitting_day_page_url, speech_page_url
 from ...publication import processing_state
 from ...query_cache import cached_aggregate
 from ... import parlacap, readability
-from ...search import build_match
+from ...search import build_match, mark_html as _mark_html
 from ...wordfreq import count_words, tfidf_scores
 
 router = APIRouter(prefix="/proceedings", tags=["proceedings"])
@@ -47,18 +46,6 @@ def _is_estimated(align_method: str | None) -> bool:
 # ---------------------------------------------------------------------------
 # Search (SEA-*)
 # ---------------------------------------------------------------------------
-
-def _mark_html(s: str | None) -> str | None:
-    """Make FTS5 highlight/snippet output safe for the SPA's ``v-html``: the
-    match markers are emitted as control-char sentinels (which cannot occur in
-    transcript text), the sentence text is HTML-escaped, and only then do the
-    sentinels become ``<mark>`` tags — so a transcript containing ``<`` or
-    scraped markup renders literally instead of as HTML (stored-XSS surface)."""
-    if s is None:
-        return None
-    return (html.escape(s, quote=False)
-            .replace("\x02", "<mark>").replace("\x03", "</mark>"))
-
 
 # How many transcript sentences of surrounding context to attach to each search
 # hit on either side (SEA-4). Kept small so the result list stays scannable and
@@ -126,7 +113,7 @@ def _context_side(db, session_id, speech_index, ord, direction, spill=True):
 
 
 def _search_where(db, q, date_from, date_to, period, person_id, faction_id,
-                  agenda_type):
+                  agenda_type, topic=None):
     """Build the shared FTS-match + filter clause for the search endpoints.
 
     `/search`, `/search/trend` (SEA-8) and `/search/breakdown` (SEA-9) all
@@ -137,29 +124,32 @@ def _search_where(db, q, date_from, date_to, period, person_id, faction_id,
     agenda-type filter) so a caller can assemble a minimal FROM.
 
     With **no searchable term** the search is filter-only: a speaker's speeches,
-    listed without a keyword (SEA-3). There is then no doclist to match, so the
-    unit of a result changes from the matched sentence to the **speech**, stood
-    for by its first sentence (``se.ord = 0``) — "everything they said" is a list
-    of speeches, not one card per sentence inside them. Only a **speaker** may
-    stand alone like that: it is the one filter narrow enough to bound the scan
-    (even the most prolific MP has a few thousand speeches), where a bare faction
-    or agenda-type filter would be a read of the whole corpus. Callers tell the
-    two modes apart by whether ``params`` carries a ``match``. Raises 400 when
-    neither a usable term nor a speaker is given."""
+    or the speeches on a policy topic, listed without a keyword (SEA-3). There is
+    then no doclist to match, so the unit of a result changes from the matched
+    sentence to the **speech**, stood for by its first sentence (``se.ord = 0``) —
+    "everything they said" is a list of speeches, not one card per sentence
+    inside them. Only a **speaker** or a **topic** may stand alone like that: each
+    is bounded by a set of speeches rather than by the corpus (even the most
+    prolific MP has a few thousand; a topic is the speeches whose chip carries
+    it), where a bare faction or agenda-type filter would be a read of the whole
+    corpus. Callers tell the two modes apart by whether ``params`` carries a
+    ``match``. Raises 400 when neither a usable term, a speaker nor a topic is
+    given."""
     match = build_match(q) if q else None
+    topics = _wanted_topics(topic)
     where: list[str] = []
     params: dict = {}
     needs: set[str] = set()
     if match:
         where.append("sentence_fts MATCH :match")
         params["match"] = match
-    elif person_id:
+    elif person_id or topics:
         where.append("se.ord = 0")   # one row per speech, not per sentence
         needs.add("speech")
     else:
         raise HTTPException(
             400, "Query contains no searchable terms — give a term, or pick a "
-                 "speaker to list their speeches")
+                 "speaker or a topic to list their speeches")
     if date_from:
         where.append("ss.date >= :date_from"); params["date_from"] = date_from; needs.add("session")
     if date_to:
@@ -183,7 +173,87 @@ def _search_where(db, q, date_from, date_to, period, person_id, faction_id,
         where.append("sp.faction_id = :faction_id"); params["faction_id"] = faction_id; needs.add("speech")
     if agenda_type:
         where.append("ai.type = :agenda_type"); params["agenda_type"] = agenda_type; needs.add("agenda")
+    if topics:
+        where.append(_topic_where(db, topics, params, period, date_from, date_to,
+                                  person_id, drives=not match))
+        needs.add("speech")
     return " AND ".join(where), params, needs
+
+
+def _wanted_topics(topic) -> tuple[str, ...]:
+    """The topic filter as a canonical, hashable tuple — blanks dropped, repeats
+    collapsed, sorted — so it can sit in a cache key and two orderings of the
+    same selection share one entry."""
+    return tuple(sorted({t for t in (topic or []) if t}))
+
+
+def _topic_key(topic) -> tuple:
+    """The topic filter's share of a search cache key. The confidence threshold
+    rides along whatever the filter: it decides which speeches a topic selects
+    *and* the chip on every hit, and it is a read-time policy an operator can
+    retune (TOPIC-6) — a cached page that outlived the change would show chips the
+    rest of the site no longer agrees with."""
+    return _wanted_topics(topic), parlacap.topic_params()["topic_threshold"]
+
+
+def _topic_where(db, topics, params, period, date_from, date_to, person_id,
+                 *, drives: bool) -> str:
+    """The search's topic filter (SEA-3): speeches whose **dominant** topic is one
+    of ``topics`` — the label their chip shows, resolved by the very rule and
+    read-time threshold that produce the chip (``parlacap.dominant_topic_sql``),
+    never "has a block labelled X". A filter sitting next to a visible label must
+    select exactly the speeches carrying it (TOPIC-8), and retuning the threshold
+    must move the two together (TOPIC-6).
+
+    The dominant-topic rule is a window query over the block table, so the cost is
+    its scan, not the match set it filters — and every statement a search runs
+    (count, page, trend) pays it again. So the scan is bounded by everything that
+    selects *whole speeches*, which can drop a speech from it but never change the
+    winner of one that stays: the cycle and the dates (as the sittings they name),
+    the speaker, and — the one that does most of the work — the speeches that
+    have a block of a wanted label at all, since nothing else can have one as its
+    winner. That last one is a covering read of the label index. The outer
+    predicates still apply; these only make the scan smaller.
+
+    ``drives`` says whether the topic set may lead the join. Without a term it
+    should: the speeches on a topic are the list. Under a term it must not —
+    SQLite otherwise carries the ``IN`` across the join onto ``sentence``'s
+    speech index and probes it once per (match, speech) pair, which is quadratic
+    (measured: 0.9 s for a common term over a single cycle's 400 speeches). The
+    unary ``+`` leaves the doclist driving and makes the set a membership test.
+
+    Measured against a synthetic classification of every speech in all ten
+    cycles (1.7M blocks, ~3× what is classified today, labels shuffled across a
+    speech's blocks so the label pruning is at its weakest), query cache off:
+    0.1–0.9 s for a search within one cycle, 0.4–2.6 s across all of them —
+    against 0.2–0.6 s for the same searches unfiltered.
+
+    On a DB with no topic table the filter cannot be honoured, and it answers
+    nothing rather than everything: silently dropping it would show the reader
+    every speech under one label."""
+    if not _has_speech_topics(db):
+        return "0=1"
+    keys = [f"topic{i}" for i in range(len(topics))]
+    wanted = ",".join(":" + k for k in keys)
+    params.update(parlacap.topic_params())
+    params.update(zip(keys, topics))
+    scope = f" AND speech_id IN (SELECT speech_id FROM speech_topic WHERE label IN ({wanted}))"
+    sittings = []
+    per = period_sql(period, "period_number")
+    if per:
+        sittings.append(per)
+    if date_from:
+        sittings.append("date >= :date_from")
+    if date_to:
+        sittings.append("date <= :date_to")
+    if sittings:
+        scope += " AND session_id IN (SELECT id FROM session WHERE " \
+                 + " AND ".join(sittings) + ")"
+    if person_id:
+        scope += " AND speech_id IN (SELECT uid FROM speech WHERE person_id = :person_id)"
+    return (("sp.uid" if drives else "+sp.uid") + " IN (SELECT speech_id FROM ("
+            + parlacap.dominant_topic_sql(scope, "speech")
+            + f") WHERE label IN ({wanted}))")
 
 
 def _budgeted(db, run):
@@ -271,6 +341,10 @@ def search(
     person_id: Optional[str] = None,
     faction_id: Optional[int] = None,
     agenda_type: Optional[str] = None,
+    topic: Optional[List[str]] = Query(
+        None, description="CAP major topic name (the model's English label, e.g. "
+                          "`Health`); repeat to match any of several. Matches a "
+                          "speech's *dominant* topic — the one its chip shows"),
     sort: str = Query("relevance", description="relevance | date_desc | date_asc"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -288,7 +362,8 @@ def search(
     one row per speech, shown by its opening (SEA-3)."""
     q = (q or "").strip()
     where_sql, params, needs = _search_where(db, q, date_from, date_to, period,
-                                              person_id, faction_id, agenda_type)
+                                              person_id, faction_id, agenda_type,
+                                              topic)
     sort_name = sort if sort in _SEARCH_SORTS else "relevance"
 
     # The result list is the most-requested and most expensive thing the API
@@ -302,7 +377,7 @@ def search(
     # one — so a busy deployment may want a larger PARLAMONITOR_QUERY_CACHE_SIZE
     # than the aggregates need.
     key = (q, date_from, date_to, period_key(period), person_id, faction_id,
-           agenda_type, sort_name, limit, offset)
+           agenda_type, _topic_key(topic), sort_name, limit, offset)
     payload = cached_aggregate("search", key, lambda: _budgeted(
         db, lambda: _search_compute(
             db, q, where_sql, params, needs, sort_name, limit, offset)))
@@ -330,7 +405,8 @@ def search(
         # selection always aggregates onto the same row.
         period=period_list(period),
         person_id=person_id, faction_id=faction_id, agenda_type=agenda_type,
-        sort=sort_name, results=payload["total"], offset=offset)
+        topic=list(_wanted_topics(topic)), sort=sort_name,
+        results=payload["total"], offset=offset)
     return payload
 
 
@@ -413,6 +489,11 @@ def _search_compute(db, q, where_sql, params, needs, sort_name, limit, offset):
         ORDER BY {outer_order}
         """,
         {**params, "limit": limit, "offset": offset}).fetchall()
+    # Each hit's speech topic (TOPIC-1), for the chip on its card: the label a
+    # topic filter selects by, so a filtered list shows the reader what it was
+    # filtered on. One indexed query over the page's speeches; a hit with no
+    # confident topic simply carries none.
+    topics = _topics_for(db, [r["speech_uid"] for r in rows])
 
     return {
         # A filter-only search has no keyword to echo, and the UI reads this to
@@ -456,6 +537,7 @@ def _search_compute(db, q, where_sql, params, needs, sort_name, limit, offset):
                 },
                 "faction": {"label": r["faction_label"], "color": r["faction_color"]}
                            if r["faction_label"] else None,
+                "topic": topics.get(r["speech_uid"]),
                 "timing": {  # VIE-6 / TRUST-1: disclose estimated precision
                     "confidence": r["confidence"],
                     "align_method": r["align_method"],
@@ -505,6 +587,10 @@ def search_trend(
     person_id: Optional[str] = None,
     faction_id: Optional[int] = None,
     agenda_type: Optional[str] = None,
+    topic: Optional[List[str]] = Query(
+        None, description="CAP major topic name (the model's English label, e.g. "
+                          "`Health`); repeat to match any of several. Matches a "
+                          "speech's *dominant* topic — the one its chip shows"),
     db: sqlite3.Connection = Depends(get_db),
 ):
     """Popularity of a query over time (SEA-8): matching-sentence counts bucketed
@@ -518,7 +604,8 @@ def search_trend(
     is continuous and honest."""
     q = (q or "").strip()
     where_sql, params, _needs = _search_where(db, q, date_from, date_to, period,
-                                               person_id, faction_id, agenda_type)
+                                               person_id, faction_id, agenda_type,
+                                               topic)
 
     # This aggregate re-scans the whole match set on every call and the SPA fires
     # it alongside every search (identical across pagination), so memoize the
@@ -527,7 +614,7 @@ def search_trend(
     # is part of the key — the axis is never stale by more than a day (and TTL
     # keeps it far fresher). The 400 for an empty query is raised above the cache.
     key = (q, date_from, date_to, period_key(period), person_id, faction_id,
-           agenda_type, date.today().isoformat())
+           agenda_type, _topic_key(topic), date.today().isoformat())
     return cached_aggregate("search_trend", key, lambda: _budgeted(
         db, lambda: _search_trend_compute(
             db, q, where_sql, params, date_from, date_to, period)))
@@ -619,6 +706,10 @@ def search_breakdown(
     person_id: Optional[str] = None,
     faction_id: Optional[int] = None,
     agenda_type: Optional[str] = None,
+    topic: Optional[List[str]] = Query(
+        None, description="CAP major topic name (the model's English label, e.g. "
+                          "`Health`); repeat to match any of several. Matches a "
+                          "speech's *dominant* topic — the one its chip shows"),
     limit: int = Query(12, ge=1, le=50, description="Top-N rows per group"),
     db: sqlite3.Connection = Depends(get_db),
 ):
@@ -634,13 +725,14 @@ def search_breakdown(
     those with no faction are not attributed to a faction row."""
     q = (q or "").strip()
     where_sql, params, _needs = _search_where(db, q, date_from, date_to, period,
-                                               person_id, faction_id, agenda_type)
+                                               person_id, faction_id, agenda_type,
+                                               topic)
 
     # Two grouped top-N over the whole match set, fired alongside every search and
     # identical across pagination — memoize per (query+filters+limit), invalidated
     # on DB swap. The 400 for an empty query is raised above, before the cache.
     key = (q, date_from, date_to, period_key(period), person_id, faction_id,
-           agenda_type, limit)
+           agenda_type, _topic_key(topic), limit)
     return cached_aggregate("search_breakdown", key, lambda: _budgeted(
         db, lambda: _search_breakdown_compute(db, q, where_sql, params, limit)))
 

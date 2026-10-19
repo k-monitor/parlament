@@ -67,6 +67,9 @@ from .config import documents_max_mb as _documents_max_mb
 from .config import documents_per_sync as _documents_per_sync
 from .config import documents_retention, whisper_language, whisper_model
 from .documents.scrape import fetch_documents, load_registry
+from .config import law_changes_enabled, law_changes_per_sync
+from .lawdiff.scrape import (content_fingerprint as law_changes_fingerprint,
+                             fetch_law_changes, save_law_changes, save_law_texts)
 from .felicitas import FelicitasClient
 from .officeholders.scrape import fetch_office_holders, save_office_holders
 from .proceedings.scrape import (_write_json, bill_titles, cycle_days,
@@ -110,6 +113,13 @@ MEDIA_CHASE_DAYS = 30
 # home-page check more often than this finds the same file. A run that still has
 # declaration pages to read ignores the cadence until it has read them.
 DECLARATIONS_MAX_AGE = 3 * 3600
+
+# How often the sync re-walks the YouTube channel's whole upload history rather
+# than only its 15-video RSS window (BIZ-16). A listing is one `yt-dlp
+# --flat-playlist` call (~2 s for the channel's ~180 videos), so a daily walk is
+# cheap, and it is what keeps a recording that left the feed's window before a
+# poll saw it from being missed for good.
+VIDEO_BACKFILL_MAX_AGE = 24 * 3600
 # How many declaration pages (each one PDF link) one sync pass may read. The
 # first pass after the cycle's declarations are filed meets a few hundred; this
 # spreads them over a few passes instead of spending one pass's politeness budget
@@ -490,6 +500,34 @@ def _sync_documents(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
                            max_mb=max_mb, limit=limit or None, force=force)
 
 
+def _sync_law_changes(http, paths: Paths, cycle: int, state: dict, *,
+                      force: bool, limit: int) -> dict | bool:
+    """What each bill changes in the law, and in itself (BILL-14..16).
+
+    Right after the bills, whose registry names the documents. Each bill's
+    record is fingerprinted by everything it was computed from, so an idle pass
+    re-reads only caches; what costs requests is a new document, the daily
+    version check of the laws a pending bill amends, and the backlog of a first
+    run — which ``limit`` paces over several passes (SCR-4). The file is
+    rewritten only when a record changed; the laws' own text beside it only
+    when the states the records were read against did."""
+    if not law_changes_enabled():
+        return False
+    registry = load_registry(paths, cycle)
+    result = fetch_law_changes(http, paths, cycle, registry, limit=limit or None,
+                               force=force)
+    texts = save_law_texts(paths, cycle, result)
+    fp = law_changes_fingerprint(result)
+    if not force and paths.law_changes_file(cycle).exists() \
+            and (state.get("lawChanges") or {}).get("fp") == fp:
+        return {"lawTexts": True} if texts else False
+    save_law_changes(paths, cycle, result)
+    counts = result["meta"].get("counts") or {}
+    state["lawChanges"] = {"fp": fp, "at": _now(), "bills": counts.get("bills")}
+    return {k: counts.get(k) for k in ("bills", "computed", "pending", "changes",
+                                       "requests")}
+
+
 def _sync_votes(felicitas: FelicitasClient, paths: Paths, cycle: int, state: dict,
                 *, force: bool, with_detail: bool) -> bool:
     start, end = _cycle_range(felicitas, cycle)
@@ -589,22 +627,35 @@ def _sync_committee_videos(http, paths: Paths, state: dict, *,
                            force: bool) -> object:
     """Re-read the House's YouTube channel (BIZ-16).
 
-    One request in the normal case: the RSS feed carries the newest 15, which is
-    weeks of a channel that posts a handful a week. The backfill is **not** run
-    here — it walks the whole upload history and belongs in the explicit
-    `committee-videos --backfill` command, which is a one-off. If the feed's
-    window is ever overrun (more than 15 posted since the last pass), the gap is
-    closed by running that command, not by making every sync pass expensive.
+    One request in the normal case: the RSS feed carries the newest 15. The
+    whole upload history is walked as well on the first pass and then once every
+    `VIDEO_BACKFILL_MAX_AGE`. Leaving that walk to a manual
+    `committee-videos --backfill` meant a deployment where nobody ran it held
+    only what the feed had shown since its first poll: every recording that
+    had already left the 15-video window was never seen. Production's registry
+    started on 2026-09-22 and was missing every committee recording from before
+    09-09, though all of them were still on the channel and matched a sitting.
+
+    The walk's cadence is kept in the sync state, not in the registry, so a walk
+    that finds nothing new leaves the file (and the stages keyed on it) alone.
+    A failed walk counts as one: it is retried a day later, not on every pass.
     """
-    registry = fetch_videos(http, previous=load_videos_file(paths))
+    prev = state.get("committeeVideos") or {}
+    backfill = force or (
+        _now_ts() - float(prev.get("backfillTs") or 0) >= VIDEO_BACKFILL_MAX_AGE)
+    registry = fetch_videos(http, previous=load_videos_file(paths),
+                            backfill=backfill)
+    walked = ({"backfillTs": _now_ts(), "backfillAt": _now()} if backfill else
+              {k: prev[k] for k in ("backfillTs", "backfillAt") if k in prev})
     fp = hashlib.sha256(json.dumps(
         [v["videoId"] for v in registry["data"]],
         sort_keys=True).encode("utf-8")).hexdigest()[:16]
-    if not force and (state.get("committeeVideos") or {}).get("fp") == fp:
+    if not force and prev.get("fp") == fp:
+        state["committeeVideos"] = {**prev, **walked}
         return False
     save_videos(paths, registry)
     state["committeeVideos"] = {"fp": fp, "count": registry["meta"]["count"],
-                                "at": _now()}
+                                "at": _now(), **walked}
     return {k: registry["meta"]["counts"].get(k)
             for k in ("videos", "committee", "plenary")}
 
@@ -838,7 +889,9 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
              documents_compression: str | None = None,
              documents_max_mb: float | None = None,
              documents_limit: int | None = None,
-             minutes_limit: int = DEFAULT_MINUTES_LIMIT) -> dict:
+             minutes_limit: int = DEFAULT_MINUTES_LIMIT,
+             skip_law_changes: bool = False,
+             law_changes_limit: int | None = None) -> dict:
     """One cheap sync pass over ``cycle``. Each domain is isolated so one failing
     query never aborts the others (SCR-5). Returns a summary of what changed."""
     paths.ensure()
@@ -850,7 +903,7 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
                "committeeMinutes": False, "committeeVideos": False,
                "committeeTiming": False, "representatives": False, "advocates": False,
                "officeHolders": False, "documents": False, "aktualis": False,
-               "assetDeclarations": False, "errors": []}
+               "assetDeclarations": False, "lawChanges": False, "errors": []}
 
     try:
         summary["sessions"], summary["removedSessions"] = _sync_proceedings(
@@ -884,6 +937,17 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
         except Exception as e:
             logger.exception("Document mirror sync failed")
             summary["errors"].append(f"documents: {e}")
+
+    # After bills: it reads the documents that registry links to (BILL-14..16).
+    if not skip_bills and not skip_law_changes:
+        try:
+            summary["lawChanges"] = _sync_law_changes(
+                felicitas.http, paths, cycle, state, force=force,
+                limit=(law_changes_limit if law_changes_limit is not None
+                       else law_changes_per_sync()))
+        except Exception as e:
+            logger.exception("Law changes sync failed")
+            summary["errors"].append(f"law-changes: {e}")
 
     if not skip_votes:
         try:
@@ -992,5 +1056,6 @@ def run_sync(felicitas: FelicitasClient, paths: Paths, cycle: int, *,
                               or summary["representatives"]
                               or summary["advocates"]
                               or summary["aktualis"]
-                              or summary["assetDeclarations"])
+                              or summary["assetDeclarations"]
+                              or summary["lawChanges"])
     return summary

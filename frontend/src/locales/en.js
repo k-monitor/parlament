@@ -34,6 +34,7 @@ export default {
     label: 'Embed',
     title: 'Embed this figure',
     cycleNote: 'The embed code shows data for {cycle}.',
+    scopeNote: 'The embed code shows data for {scope}.',
     copy: 'Copy code',
     copied: 'Copied!',
     preview: 'Preview ↗',
@@ -44,7 +45,8 @@ export default {
            multiHint: 'You can select several cycles.',
            scope: '{cycle} data', scopeAll: 'All-cycles data' },
   home: {
-    searchLabel: 'Search the speeches',
+    // Screen readers only: the scope dropdown beside the box says what it searches.
+    searchLabel: 'Search term',
     searchPlaceholder: 'e.g. housing, Paks, budget…',
     searchButton: 'Search',
     since: 'Since {year}:',
@@ -158,6 +160,8 @@ export default {
     hint: 'Tip: use quotes for an exact phrase, e.g. "tisztelt ház".',
     filters: 'Filters', clearFilters: 'Clear filters', period: 'Term', dateFrom: 'From', dateTo: 'To',
     speaker: 'Speaker', faction: 'Faction', agendaType: 'Agenda type', all: 'All', watch: 'Watch', on: '·',
+    // The policy topic (CAP) of a speech or a document.
+    topic: 'Topic',
     // The speaker filter (SEA-3) and the suggestions that feed it (SEA-7).
     speakerPlaceholder: 'Name…',
     speakerHint: 'Start typing a name.',
@@ -167,6 +171,9 @@ export default {
     speakerSuggest: 'Filter to a speaker:',
     // With no term and only a speaker filter, the results are their speeches.
     trendCaptionSpeaker: '{name}: speeches over time',
+    // With no term and a topic filter (and perhaps a speaker).
+    trendCaptionTopic: 'Speeches on {topics} over time',
+    trendCaptionSpeakerTopic: '{name}: speeches on {topics} over time',
     // Multi-value filter (MultiSelect): the trigger's label and the panel's hint.
     selectedCount: '{n} selected', multiHint: 'You can pick several values.',
     sort: 'Sort:', sortRelevance: 'Relevance', sortNewest: 'Newest first', sortOldest: 'Oldest first',
@@ -177,6 +184,40 @@ export default {
     breakdownSpeakers: 'Matches for “{q}” by representative',
     cycleScope: 'Search is limited to speeches from {cycle}.',
     cycleScopeAll: 'switch to all cycles',
+    // What the search box searches in (SEA-14): one scope or several, every one
+    // of them searched on this page.
+    scope: 'Search in',
+    scopeAll: 'Everywhere',
+    scopes: {
+      plenary: 'Plenary sittings',
+      committee: 'Committee meetings',
+      documents: 'Documents',
+      votes: 'Votes',
+      people: 'People',
+    },
+    // The page title once the scopes go beyond the speeches, and the cycle note.
+    titleAny: 'Search',
+    cycleScopeAny: 'Search is limited to {cycle}.',
+    // A search across several scopes: the summary line and each section's way
+    // to all of its results.
+    byScope: 'Results by scope',
+    showAll: 'All results ({n})',
+    // What a scope's results must be read with.
+    notApplied: 'Not applied here: {filters}.',
+    filterNames: {
+      dates: 'date range', speaker: 'speaker', faction: 'faction', agenda: 'agenda type',
+      topic: 'topic',
+    },
+    asSponsor: 'Only documents submitted by {name}.',
+    asVoter: 'Roll-call votes, with how {name} voted.',
+    peopleNeedTerm: 'Type a name to search for people.',
+    // Where a topic alone is not a search (committee meetings, votes).
+    needsTerm: 'Type a term or pick a speaker to search here.',
+    // A record scope's own list page, for the filters this page does not carry.
+    moreFilters: 'More filters and orderings on the {page} page →',
+    listPages: { documents: 'Documents', votes: 'Votes', people: 'Speakers' },
+    openMinutes: 'Open in the minutes',
+    committeeUnavailable: 'Committee minutes cannot be searched on this server yet.',
   },
   viewer: {
     transcript: 'Transcript', noTranscript: 'No transcript text is available for this speech.',
@@ -409,6 +450,8 @@ export default {
     tabPlenary: 'Plenary sitting days',
     tabCommittees: 'Committee sittings',
     noCommitteeMeetings: 'No committee sitting recorded for this cycle.',
+    onlyAvailable: 'Only with video or minutes',
+    noAvailableCommitteeMeetings: 'No committee sitting with a video or minutes in this cycle.',
     speechesCount: '{count} contributions',
     minutesNotRead: 'Minutes (PDF)',
     committeeSitting: 'committee sitting',
@@ -964,6 +1007,27 @@ export default {
     sessionsCovered: 'sittings covered', noSpeeches: 'No speeches on record.', viewSpeech: 'View',
     speechesDayCount: 'speeches', speechesLoadError: 'Could not load speeches.',
     searchSpeeches: 'Search their speeches',
+    // The committee speeches section (BIZ-35).
+    plenarySpeeches: 'Plenary speeches',
+    committeeSpeeches: 'Committee speeches',
+    committeeSpeechesNote: 'Speeches read out of the committee sittings\' '
+      + 'minutes, by sitting. The minutes record no timings, so the length of '
+      + 'what was said is given in words rather than speaking time, and none of '
+      + 'these speeches count towards the plenary statistics. Speakers are '
+      + 'identified by the name the minutes print, so the odd contribution may '
+      + 'be missing; and minutes are published weeks after a sitting, so the most '
+      + 'recent sittings may not be listed yet.',
+    committeeSpeechesChairNote: 'Turns taken while chairing the sitting are '
+      + 'included, and marked: a committee chair speaks to the substance too, not '
+      + 'only runs the sitting.',
+    committeeSummary: 'at {sittings} committee sittings, {words} words in all',
+    committeeChairTotal: '{n} of these speeches while chairing',
+    committeeChairing: 'chairing',
+    committeeCoverage: 'Committee minutes have only been read for this period: '
+      + '{cycles}. Sittings from the rest of the selected period are therefore '
+      + 'not listed here.',
+    committeeOpenMinutes: 'The full minutes of the sitting',
+    searchCommitteeSpeeches: 'Search their committee speeches',
     showMore: 'Show more', showLess: 'Show less',
     showingFirst: 'Showing the first {n} items.',
     present: 'present',
@@ -1149,6 +1213,77 @@ export default {
     },
     kozlonyLink: 'View in the Magyar Közlöny',
     docKind: { justification: 'Justification', background: 'Background' },
+  },
+  // What a bill changes (BILL-14..16).
+  lawChanges: {
+    title: 'What would it change in the law?',
+    titleAdopted: 'What did it change in the law?',
+    methodNjt: 'From the official texts of the National Legislation Database (njt.hu): each law as in force on the day {act} was promulgated, against its amended text.',
+    methodComputed: 'Machine comparison: the amending provisions of {source} applied to the newest text of each law in the National Legislation Database. For information only — the bill may still change and the processing can be wrong; the authoritative text is the document itself.',
+    methodComputedAdopted: 'Machine comparison: {source} applied to each law as in force on promulgation (the National Legislation Database publishes the amended text within three working days of promulgation). For information only.',
+    methodMixed: 'From the official texts of the National Legislation Database ({act}); for the laws marked “machine” — where the database does not attribute the change to this act, e.g. because the act repeals the whole law — the bill\'s text was applied by machine.',
+    computedBadge: 'machine',
+    computedBadgeTitle: 'Machine comparison: the bill\'s text applied to the law. For information only.',
+    sourceConsolidated: 'the consolidated text {number}',
+    sourceBill: 'bill {number}',
+    summary: '{laws} law(s), {changes} provision(s) in total',
+    count: '{n} provision(s)',
+    statesNjt: 'Compared: the text in force from {from} and from {to}.',
+    stateComputed: 'Compared with the text in force from {from}.',
+    openNjt: 'The law on njt.hu',
+    openUnit: 'This provision on njt.hu',
+    byAct: 'amended by {act} {provisions}',
+    byBill: 'bill {provisions}',
+    kind: { new: 'new', modified: 'amended', repealed: 'repealed' },
+    loading: 'Loading…',
+    loadFailed: 'Could not be loaded.',
+    scan: 'The bill was filed on paper (a scan), so its changes cannot be read by machine.',
+    unresolvedShow: 'Amendments not applied by machine ({n})',
+    unresolvedHide: 'Hide',
+    unresolvedNote: 'These amendments could not be applied to the law automatically, so the bill\'s own wording is quoted.',
+  },
+  lawFull: {
+    open: 'Full text of the law',
+    openAt: 'in the law\'s text',
+    openAtTitle: 'Show this change in the full text of the law',
+    close: 'Close',
+    modeLabel: 'Show',
+    modeFull: 'Full text',
+    modeContext: 'Around the changes only',
+    prev: 'Previous change',
+    next: 'Next change',
+    position: '{i} / {n}',
+    positionLabel: 'Change {i} of {n}',
+    fold: 'Show {n} unchanged lines',
+    flat: 'by machine, from the bill\'s text, without its layout',
+    unavailable: 'The full text of this law is not available.',
+  },
+  evolution: {
+    title: 'How did the bill change during the debate?',
+    note: 'Differences between the text as submitted ({from}) and the consolidated text ({to}) — the bill merged with the Legislative Committee\'s summary amendment, which is what the House votes on.',
+    unchanged: '{n} section(s) unchanged.',
+    none: 'The consolidated text is the same as the bill as submitted.',
+    showAll: 'Show all {n} changes',
+    titlePart: 'Title and preamble',
+    was: '({n} in the bill as submitted)',
+    // a section of the bill itself: added by the consolidation, or left out of it
+    kind: { new: 'new', repealed: 'dropped' },
+  },
+  amendment: {
+    show: 'Changes ({n} points)',
+    hide: 'Hide changes',
+    point: 'Point {n}',
+    scan: 'Filed on paper (a scan) — the proposed changes cannot be read by machine; the document can be opened.',
+    noPoints: 'No amendment points could be read from this document.',
+    unmarked: 'the document does not mark deleted and inserted text',
+  },
+  diff: {
+    inserted: 'inserted:',
+    deleted: 'deleted:',
+    legendIns: 'new text',
+    legendDel: 'deleted text',
+    expand: 'Show the full text',
+    collapse: 'less',
   },
   documents: {
     title: 'All documents',
@@ -1407,6 +1542,9 @@ export default {
   // Settlements (§6D) — which places the House names, and which it never does.
   settlements: {
     title: 'Settlements',
+    // The embedded map's title (§4C), per reading.
+    embedTitle: 'Which places come up in Parliament?',
+    embedTitleBlind: 'Settlements never mentioned in Parliament',
     intro: 'Parliament is national, but almost everything it argues about is local. '
       + 'This is which Hungarian settlements are named in plenary, how often and by '
       + 'whom — and which have never been mentioned at all.',
@@ -1672,6 +1810,24 @@ export default {
       quorum: 'quorum required',
       secret_vote: 'secret ballot',
     },
+  },
+  // The irományok on the coming sitting's order paper, one per iromány (HOME-5).
+  upcomingBills: {
+    title: 'Bills on the agenda',
+    groups: { vote: 'Up for a vote', debate: 'Up for debate' },
+    kinds: {
+      vote: 'Vote',
+      finalVote: 'Final vote',
+      debate: 'Debate',
+      procedure: 'Procedural decision',
+      other: 'Consideration',
+    },
+    today: 'today',
+    tomorrow: 'tomorrow',
+    stageAria: 'Legislative stage {n} of {total}: {label}',
+    showMore: '+{n} more',
+    showLess: 'Show less',
+    statusTip: 'Status on its parlament.hu record: {status}',
   },
   agendaTypes: {
     opening: 'Opening', procedural: 'Procedural', regular: 'Debate', oath: 'Oath', voting: 'Voting',

@@ -732,16 +732,32 @@ def test_minutes_sync_caps_how_much_one_pass_fetches(tmp_path, monkeypatch):
     assert http.calls["pdf"] == 2
 
 
-def test_video_sync_is_one_request_and_rewrites_only_on_a_change(tmp_path):
+_VIDEO_FEED = (
+    "<?xml version='1.0' encoding='UTF-8'?>"
+    "<feed xmlns='http://www.w3.org/2005/Atom' "
+    "xmlns:yt='http://www.youtube.com/xml/schemas/2015'>"
+    "<entry><yt:videoId>aaa</yt:videoId>"
+    "<title>2026. június 10. - A Költségvetési Bizottság ülése</title>"
+    "<published>2026-06-10T09:00:00+00:00</published></entry></feed>")
+
+
+def _stub_channel_walk(monkeypatch, rows):
+    """Stand in for `yt-dlp --flat-playlist`; returns the call log."""
+    from parlamonitor.committees import videos
+    calls = []
+    monkeypatch.delenv("PARLAMONITOR_YOUTUBE_API_KEY", raising=False)
+    monkeypatch.setattr(videos, "yt_dlp_available", lambda: True)
+    monkeypatch.setattr(videos, "backfill_yt_dlp",
+                        lambda channel: calls.append(channel) or list(rows))
+    return calls
+
+
+def test_video_sync_is_one_request_and_rewrites_only_on_a_change(
+        tmp_path, monkeypatch):
     paths = Paths(tmp_path)
     paths.ensure()
-    feed = ("<?xml version='1.0' encoding='UTF-8'?>"
-            "<feed xmlns='http://www.w3.org/2005/Atom' "
-            "xmlns:yt='http://www.youtube.com/xml/schemas/2015'>"
-            "<entry><yt:videoId>aaa</yt:videoId>"
-            "<title>2026. június 10. - A Költségvetési Bizottság ülése</title>"
-            "<published>2026-06-10T09:00:00+00:00</published></entry></feed>")
-    http = _FakeSyncHttp(feed=feed)
+    _stub_channel_walk(monkeypatch, [])
+    http = _FakeSyncHttp(feed=_VIDEO_FEED)
     state = {}
     out = sync._sync_committee_videos(http, paths, state, force=False)
     assert out["committee"] == 1
@@ -752,6 +768,62 @@ def test_video_sync_is_one_request_and_rewrites_only_on_a_change(tmp_path):
     assert sync._sync_committee_videos(http, paths, state, force=False) is False
     assert paths.committee_videos_file().stat().st_mtime_ns == mtime
     assert http.calls["feed"] == 2
+
+
+def test_video_sync_walks_the_whole_channel_first_and_then_daily(
+        tmp_path, monkeypatch):
+    """The feed shows only the newest 15. A registry that was only ever fed by
+    it missed every recording that left that window before the first poll.
+    Production missed the 2026-08-25 Igazságügyi sitting this way though the
+    video was still on the channel. So the sync walks the whole history
+    itself: on its first pass, then once a day."""
+    from parlamonitor.committees.videos import parse_title
+    paths = Paths(tmp_path)
+    paths.ensure()
+    old = {"videoId": "old", "url": "https://www.youtube.com/watch?v=old",
+           **parse_title("2026. augusztus 25. - Az Igazságügyi és "
+                         "Alkotmányügyi Bizottság ülése -")}
+    walks = _stub_channel_walk(monkeypatch, [old])
+    http = _FakeSyncHttp(feed=_VIDEO_FEED)
+    state = {}
+
+    out = sync._sync_committee_videos(http, paths, state, force=False)
+    assert len(walks) == 1
+    assert out["committee"] == 2
+    held = json.loads(paths.committee_videos_file().read_text(encoding="utf-8"))
+    assert {v["videoId"] for v in held["data"]} == {"aaa", "old"}
+    assert held["meta"]["backfilled"] is True
+
+    # Within the day: the feed only. The walked history is kept.
+    assert sync._sync_committee_videos(http, paths, state, force=False) is False
+    assert len(walks) == 1
+
+    # A day on: walked again. Finding nothing new rewrites nothing, but the
+    # walk is recorded, so the next pass does not repeat it.
+    state["committeeVideos"]["backfillTs"] -= sync.VIDEO_BACKFILL_MAX_AGE
+    mtime = paths.committee_videos_file().stat().st_mtime_ns
+    assert sync._sync_committee_videos(http, paths, state, force=False) is False
+    assert len(walks) == 2
+    assert paths.committee_videos_file().stat().st_mtime_ns == mtime
+    assert sync._sync_committee_videos(http, paths, state, force=False) is False
+    assert len(walks) == 2
+
+
+def test_a_failed_channel_walk_waits_a_day_before_trying_again(
+        tmp_path, monkeypatch):
+    """A host where yt-dlp gets nothing (no binary, bot wall) must not walk
+    again on every pass. It keeps the feed and tries again the next day."""
+    paths = Paths(tmp_path)
+    paths.ensure()
+    walks = _stub_channel_walk(monkeypatch, [])
+    http = _FakeSyncHttp(feed=_VIDEO_FEED)
+    state = {}
+    out = sync._sync_committee_videos(http, paths, state, force=False)
+    assert out["committee"] == 1
+    held = json.loads(paths.committee_videos_file().read_text(encoding="utf-8"))
+    assert held["meta"]["errors"] == ["yt-dlp: returned nothing"]
+    assert sync._sync_committee_videos(http, paths, state, force=False) is False
+    assert len(walks) == 1
 
 
 def test_reps_refresh_fetches_the_portrait_of_a_newly_seated_mp(tmp_path, monkeypatch):

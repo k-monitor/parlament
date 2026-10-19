@@ -37,9 +37,9 @@ const route = useRoute()
 const router = useRouter()
 
 const PAGE = 25
-// The figure keeps a fixed aspect whatever N is (the settled layout is scaled to
-// fit a fixed box), so the iframe height the snippet bakes in is that aspect plus
-// the embed frame's own title and footer rows.
+// The embed pins the network to whatever room the iframe leaves it (EmbedView's
+// FILL_KINDS), so this height is only the default shape: at full width it gives
+// the figure about 900×620, the proportions the layout's forces are tuned for.
 const EMBED_WIDTH = 900
 const EMBED_HEIGHT = 730
 const MIN_TOP = 2

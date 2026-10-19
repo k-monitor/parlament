@@ -16,7 +16,8 @@ import { store, currentCycleLabel, serializeCycles } from '../store.js'
 const props = defineProps({
   // Which embed view to point at: 'search-trend' | 'faction-speaking' |
   // 'questions-sankey' | 'faction-cohesion' | 'vote-participation' |
-  // 'interjection-graph' | 'topic-mix' | 'rep-topics'.
+  // 'interjection-graph' | 'topic-mix' | 'rep-topics' | 'settlement-map' |
+  // 'day-interjections'.
   kind: { type: String, required: true },
   // Chart-specific query params (q, id, filters). Empty/nullish values dropped.
   params: { type: Object, default: () => ({}) },
@@ -26,6 +27,11 @@ const props = defineProps({
   height: { type: Number, default: 420 },
   // Sensible max width for the responsive iframe (wide diagrams pass more).
   maxWidth: { type: Number, default: 680 },
+  // A figure whose scope is not the cycle — one sitting day — names that scope here
+  // instead ("2026-10-14 · 52. ülésnap"). The embed then carries no `cycle` at all:
+  // its own params already say exactly what it shows, and the reader's cycle
+  // choice has no bearing on it.
+  scope: { type: String, default: '' },
 })
 
 const { t, locale } = useI18n()
@@ -43,10 +49,16 @@ const cycleLabel = computed(() => currentCycleLabel() || t('cycle.all'))
 // the active language, so an English page embeds the English chart).
 const embedUrl = computed(() => {
   const url = new URL(`/embed/${props.kind}`, location.origin)
-  url.searchParams.set('cycle', cycleValue.value)
+  if (!props.scope) url.searchParams.set('cycle', cycleValue.value)
   for (const [k, v] of Object.entries(props.params || {})) {
     if (v === undefined || v === null || v === '') continue
-    url.searchParams.set(k, v)
+    // A list-valued filter (the search's topics) travels as repeated params,
+    // as it does in the page's own URL.
+    if (Array.isArray(v)) {
+      for (const item of v) if (item != null && item !== '') url.searchParams.append(k, item)
+    } else {
+      url.searchParams.set(k, v)
+    }
   }
   if (locale.value && locale.value !== 'hu') url.searchParams.set('lang', locale.value)
   return url.toString()
@@ -153,7 +165,8 @@ async function copyCode() {
       <div v-if="open" ref="menuRef" class="embed-menu" :style="menuStyle"
            role="dialog" :aria-label="$t('embed.title')" @keydown.esc="close">
         <p class="embed-h">{{ $t('embed.title') }}</p>
-        <p class="embed-note">{{ $t('embed.cycleNote', { cycle: cycleLabel }) }}</p>
+        <p class="embed-note">{{ scope
+          ? $t('embed.scopeNote', { scope }) : $t('embed.cycleNote', { cycle: cycleLabel }) }}</p>
         <textarea class="embed-code" readonly rows="4" :value="snippet"
                   @focus="$event.target.select()"></textarea>
         <div class="embed-actions">

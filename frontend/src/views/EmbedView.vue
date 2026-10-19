@@ -7,7 +7,7 @@
 // embed is fully self-contained and reproduces exactly what the sharer saw.
 // It deliberately ignores the visitor's saved global scope (store.cycles): an
 // embed shows the cycles baked into its URL, not the reader's local preference.
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../api.js'
@@ -20,10 +20,14 @@ import InterjectionGraph from '../components/InterjectionGraph.vue'
 import PieChart from '../components/PieChart.vue'
 import CohesionPanel from '../modules/votes/CohesionPanel.vue'
 import TopicMixChart from '../components/TopicMixChart.vue'
+import SettlementMentionMap from '../components/SettlementMentionMap.vue'
+import { topicName } from '../lib/topics.js'
+import { formatDate } from '../format.js'
+import { queryList } from '../lib/searchScopes.js'
 
 const props = defineProps({ kind: String })
 const route = useRoute()
-const { t } = useI18n()
+const { t, te, n: fmtNumber } = useI18n()
 
 // The cycle scope carried in the URL: `all` (or absent) → [] (all cycles), else
 // the comma-separated electoral-period numbers. This — not store.cycles — scopes
@@ -44,7 +48,13 @@ const error = ref(false)
 
 // Newest cycle first, matching how the site itself names a multi-cycle scope
 // (store.currentCycleLabel) — the scope is `period`, which is sorted ascending.
+// A sitting day's figure is scoped by the day instead, and is named as the day
+// page names itself (its share title); empty until the payload has said which.
 const scopeLabel = computed(() => {
+  if (props.kind === 'day-interjections') {
+    const s = data.value?.session
+    return s ? `${formatDate(s.date)} · ${s.sitting}. ${t('sessions.sitting').toLowerCase()}` : ''
+  }
   if (!period.value.length) return t('cycle.all')
   return [...period.value].sort((a, b) => b - a).map((n) => {
     const p = (store.meta?.periods || []).find((x) => x.number === n)
@@ -74,7 +84,7 @@ function fetchForKind() {
       const trend = api.searchTrend({
         q: q.q, period: period.value, date_from: q.date_from,
         date_to: q.date_to, person_id: q.person_id, faction_id: q.faction_id,
-        agenda_type: q.agenda_type,
+        agenda_type: q.agenda_type, topic: queryList(q.topic),
       })
       // A query-less trend is one speaker's speeches over time (SEA-3), and the
       // chart is titled by their name — which only the id in the URL identifies,
@@ -93,6 +103,22 @@ function fetchForKind() {
     case 'interjection-graph':
       return api.interjectionGraph(
         period.value, Number(route.query.top) || undefined, route.query.rank || undefined)
+    // One sitting day's (§6E): the day page's own request, top included, so the
+    // embed and the dialog share one cached payload — and one picture.
+    case 'day-interjections':
+      if (!q.session) return Promise.reject(new Error('no sitting day'))
+      return api.interjectionGraph(undefined, DAY_INTERJECTION_TOP, undefined, String(q.session))
+    // The settlement map (§6D). A binning this deployment cannot build — a link
+    // from an instance with h3 — is drawn as points, as the page itself falls back,
+    // rather than failing the whole figure over the shape it is drawn in.
+    case 'settlement-map':
+      return api.settlementMap(period.value).then(async (map) => {
+        const seg = map.segments
+        const offered = seg && seg.available ? seg.bins || [] : []
+        if (!offered.includes(mapBins.value)) return { map, bins: 'points', segments: null }
+        const segments = await api.settlementSegments(mapBins.value, period.value).catch(() => null)
+        return { map, bins: segments ? mapBins.value : 'points', segments }
+      })
     // The two agendas (TOPIC-9). Both halves are fetched, and the document one is
     // allowed to fail: a deployment can carry speech topics and no iromány ones,
     // and the figure is still the figure with one series.
@@ -121,7 +147,62 @@ function fetchForKind() {
 
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
 
+// ---- figures that fill the frame ------------------------------------------
+// Most figures have a height of their own, and the snippet's iframe height is
+// chosen to fit it. The interjection network has none: its frame follows the
+// settled layout (InterjectionGraph's BOX_ASPECT), so in an iframe of fixed
+// height a wide cloud left a band of blank under it and a tall one ran past the
+// footer. It is pinned to the room instead — the body between the title and the
+// footer, at whatever width the host page gave the iframe — and fills it.
+// The map is the same case by another route: a fixed 520px would overflow a
+// short iframe or leave a tall one half empty, so it takes the room too.
+const FILL_KINDS = new Set(['interjection-graph', 'day-interjections', 'settlement-map'])
+const fills = computed(() => FILL_KINDS.has(props.kind))
+const bodyRef = ref(null)
+const bodyW = ref(0)
+const bodyH = ref(0)
+let bodyObserver = null
+onMounted(() => {
+  if (!fills.value || typeof ResizeObserver === 'undefined' || !bodyRef.value) return
+  bodyObserver = new ResizeObserver(([entry]) => {
+    bodyW.value = entry.contentRect.width
+    bodyH.value = entry.contentRect.height
+  })
+  bodyObserver.observe(bodyRef.value)
+})
+onBeforeUnmount(() => bodyObserver?.disconnect())
+// A pixel short of the room, so rounding the frame's height can never push the
+// footer down and give the iframe a scrollbar. 0 (not measured yet) = follow
+// the layout, as on the page.
+const fillAspect = computed(() => (bodyW.value && bodyH.value
+  ? Math.max(0.3, (bodyH.value - 1) / bodyW.value) : 0))
+
+// ---- day-interjections ----------------------------------------------------
+// The day page's cap (SessionView's DAY_INTERJECTION_TOP): everyone on all but the
+// rowdiest days.
+const DAY_INTERJECTION_TOP = 40
+
+// ---- settlement-map -------------------------------------------------------
+// The reading and the binning, as the page's own URL carries them (`mode`, `bins`).
+const mapMode = computed(() => (route.query.mode === 'blind' ? 'blind' : 'mentions'))
+const mapBins = computed(() =>
+  (['oevk', 'h3'].includes(route.query.bins) ? route.query.bins : 'points'))
+// The caveat the page sets beside its map travels with the embed: an article is
+// exactly where "mentions on the floor" gets read as "attention paid". Of the
+// constituency binning's disclosures only the capital's goes with it — the area
+// distortion is in the legend and a shared city is named on its own cell, but a
+// Budapest missing from every cell is visible nowhere else.
+const mapUnattributed = computed(() => {
+  const u = data.value?.bins === 'oevk' ? data.value.segments?.unattributed : null
+  return u && u.mentions
+    ? t('settlements.oevkUnattributed', { names: u.names.join(', '), mentions: fmtNumber(u.mentions) })
+    : ''
+})
+
 // ---- search-trend ---------------------------------------------------------
+// The topics a query-less trend is drawn for, by name (the caption below).
+const embedTopics = computed(() =>
+  queryList(route.query.topic).map((l) => topicName(l, t, te)).join(', '))
 // Whenever the axis spans more than one cycle, mark each cycle's start/end
 // (mirrors the search page). Empty for a single cycle — the axis is then just
 // that cycle.
@@ -203,12 +284,22 @@ const title = computed(() => {
   switch (props.kind) {
     case 'search-trend':
       if (data.value?.query) return t('search.trendCaption', { q: data.value.query })
+      // A query-less trend is a speaker's speeches, the speeches on a topic, or
+      // both — titled as the search page titles it.
+      if (embedTopics.value) {
+        return data.value?.speaker
+          ? t('search.trendCaptionSpeakerTopic', { name: data.value.speaker, topics: embedTopics.value })
+          : t('search.trendCaptionTopic', { topics: embedTopics.value })
+      }
       return data.value?.speaker
         ? t('search.trendCaptionSpeaker', { name: data.value.speaker })
         : t('nav.search')
     case 'faction-speaking': return t('factions.speakingTime')
     case 'questions-sankey': return t('questions.title')
     case 'interjection-graph': return t('interjections.title')
+    case 'day-interjections': return t('interjections.dayTitle')
+    case 'settlement-map':
+      return mapMode.value === 'blind' ? t('settlements.embedTitleBlind') : t('settlements.embedTitle')
     case 'topic-mix': return t('topics.page.title')
     case 'faction-cohesion': return t('votes.cohesion.title')
     case 'vote-participation':
@@ -229,7 +320,9 @@ const isEmpty = computed(() => {
     case 'search-trend': return !(data.value.buckets && data.value.buckets.length)
     case 'faction-speaking': return factionBars.value.length === 0
     case 'questions-sankey': return !(data.value.total > 0)
-    case 'interjection-graph': return !(data.value.links && data.value.links.length)
+    case 'interjection-graph':
+    case 'day-interjections': return !(data.value.links && data.value.links.length)
+    case 'settlement-map': return !(data.value.map.points || []).length
     case 'topic-mix': return !(data.value.speech?.topics || []).length
                              && !(data.value.bill?.topics || []).length
     // Frakcióelemzés is a single-cycle analysis (analyses/registry.js): a
@@ -265,6 +358,17 @@ const siteHref = computed(() => {
       if (q.top) usp.set('top', q.top)
       if (q.rank) usp.set('rank', q.rank)
       break
+    // The day page, where the figure's button is. A day is its own scope, so the
+    // link carries no cycle: the page finds its day without one.
+    case 'day-interjections':
+      path = q.session ? `/sessions/${encodeURIComponent(q.session)}` : '/sessions'
+      usp.delete('cycle')
+      break
+    case 'settlement-map':
+      path = '/analyses/settlements'
+      if (mapMode.value === 'blind') usp.set('mode', 'blind')
+      if (mapBins.value !== 'points') usp.set('bins', mapBins.value)
+      break
     case 'faction-cohesion':
       path = '/analyses/faction-cohesion'
       if (q.tab) usp.set('tab', q.tab)
@@ -276,18 +380,19 @@ const siteHref = computed(() => {
     case 'vote-participation': path = q.id ? `/representatives/${q.id}` : '/representatives'; break
     case 'rep-topics': path = q.id ? `/representatives/${q.id}` : '/representatives'; break
   }
-  return `${location.origin}${path}?${usp.toString()}`
+  const qs = usp.toString()
+  return `${location.origin}${path}${qs ? '?' + qs : ''}`
 })
 </script>
 
 <template>
-  <div class="embed">
+  <div class="embed" :class="{ 'embed-fill': fills }">
     <header class="embed-head">
       <h1 class="embed-title">{{ title }}</h1>
-      <span class="embed-scope">{{ scopeLabel }}</span>
+      <span v-if="scopeLabel" class="embed-scope">{{ scopeLabel }}</span>
     </header>
 
-    <div class="embed-body">
+    <div ref="bodyRef" class="embed-body" :class="{ 'embed-stack': kind === 'settlement-map' }">
       <StateBlock
         :loading="loading" :error="error"
         :empty="isEmpty" :empty-text="$t('embed.noData')"
@@ -318,12 +423,14 @@ const siteHref = computed(() => {
             :column-headings="sankeyHeadings"
           />
 
-          <!-- Interjection network (§6E/INT-5). Not clickable in an embed: the
-               drill-down list is the page's, and a click inside an iframe cannot
+          <!-- Interjection network (§6E/INT-5), for the cycle scope or for one
+               sitting day. Not clickable in an embed: the drill-down list is the
+               page's (or the day dialog's), and a click inside an iframe cannot
                go anywhere useful. -->
           <InterjectionGraph
-            v-else-if="kind === 'interjection-graph'"
+            v-else-if="kind === 'interjection-graph' || kind === 'day-interjections'"
             :nodes="data.nodes" :links="data.links" :metric="data.rank"
+            :aspect="fillAspect"
             :caption="$t('interjections.chartCaption')" :show-caption="false"
             :labels="{ zoomIn: $t('interjections.zoomIn'),
                        zoomOut: $t('interjections.zoomOut'),
@@ -333,6 +440,18 @@ const siteHref = computed(() => {
                        made: $t('interjections.made'),
                        received: $t('interjections.received') }"
           />
+
+          <!-- Settlement mentions (§6D TEL-6/TEL-7), in the reading and binning
+               the sharer had open. A point opens nothing here — the settlement's
+               page is the site's — but a cell still zooms into itself. -->
+          <template v-else-if="kind === 'settlement-map'">
+            <SettlementMentionMap
+              :points="data.map.points" :map="data.map.map" :max="data.map.max"
+              :mode="mapMode" :bins="data.bins" :segments="data.segments" fill
+            />
+            <p class="embed-caveat">{{ $t('settlements.mapCaveat') }}</p>
+            <p v-if="mapUnattributed" class="embed-caveat">{{ mapUnattributed }}</p>
+          </template>
 
           <!-- The two agendas (TOPIC-9). Rows are not clickable here: what a
                click opens is the page's detail panel, which an iframe has
@@ -400,6 +519,15 @@ const siteHref = computed(() => {
   background: var(--accent-soft); border-radius: 999px; padding: .18rem .6rem;
 }
 .embed-body { flex: 1; min-width: 0; }
+/* Exactly the iframe's height, and a body that takes what is left of it rather
+   than what its content asks for — the figure is then sized from the body, and
+   the body never from the figure. */
+.embed-fill { height: 100vh; }
+.embed-fill .embed-body { min-height: 0; }
+/* A figure with notes under it (the map): the figure flexes, the notes keep the
+   lines they need. */
+.embed-stack { display: flex; flex-direction: column; gap: .45rem; }
+.embed-caveat { margin: 0; font-size: .74rem; line-height: 1.4; color: var(--ink-soft); }
 
 .embed-foot {
   display: flex; align-items: center; justify-content: space-between; gap: .8rem;

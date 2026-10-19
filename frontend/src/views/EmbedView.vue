@@ -7,7 +7,7 @@
 // embed is fully self-contained and reproduces exactly what the sharer saw.
 // It deliberately ignores the visitor's saved global scope (store.cycles): an
 // embed shows the cycles baked into its URL, not the reader's local preference.
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../api.js'
@@ -122,6 +122,34 @@ function fetchForKind() {
 }
 
 onMounted(() => { loadMeta().catch(() => {}).finally(load) })
+
+// ---- figures that fill the frame ------------------------------------------
+// Most figures have a height of their own, and the snippet's iframe height is
+// chosen to fit it. The interjection network has none: its frame follows the
+// settled layout (InterjectionGraph's BOX_ASPECT), so in an iframe of fixed
+// height a wide cloud left a band of blank under it and a tall one ran past the
+// footer. It is pinned to the room instead — the body between the title and the
+// footer, at whatever width the host page gave the iframe — and fills it.
+const FILL_KINDS = new Set(['interjection-graph'])
+const fills = computed(() => FILL_KINDS.has(props.kind))
+const bodyRef = ref(null)
+const bodyW = ref(0)
+const bodyH = ref(0)
+let bodyObserver = null
+onMounted(() => {
+  if (!fills.value || typeof ResizeObserver === 'undefined' || !bodyRef.value) return
+  bodyObserver = new ResizeObserver(([entry]) => {
+    bodyW.value = entry.contentRect.width
+    bodyH.value = entry.contentRect.height
+  })
+  bodyObserver.observe(bodyRef.value)
+})
+onBeforeUnmount(() => bodyObserver?.disconnect())
+// A pixel short of the room, so rounding the frame's height can never push the
+// footer down and give the iframe a scrollbar. 0 (not measured yet) = follow
+// the layout, as on the page.
+const fillAspect = computed(() => (bodyW.value && bodyH.value
+  ? Math.max(0.3, (bodyH.value - 1) / bodyW.value) : 0))
 
 // ---- search-trend ---------------------------------------------------------
 // The topics a query-less trend is drawn for, by name (the caption below).
@@ -293,13 +321,13 @@ const siteHref = computed(() => {
 </script>
 
 <template>
-  <div class="embed">
+  <div class="embed" :class="{ 'embed-fill': fills }">
     <header class="embed-head">
       <h1 class="embed-title">{{ title }}</h1>
       <span class="embed-scope">{{ scopeLabel }}</span>
     </header>
 
-    <div class="embed-body">
+    <div ref="bodyRef" class="embed-body">
       <StateBlock
         :loading="loading" :error="error"
         :empty="isEmpty" :empty-text="$t('embed.noData')"
@@ -336,6 +364,7 @@ const siteHref = computed(() => {
           <InterjectionGraph
             v-else-if="kind === 'interjection-graph'"
             :nodes="data.nodes" :links="data.links" :metric="data.rank"
+            :aspect="fillAspect"
             :caption="$t('interjections.chartCaption')" :show-caption="false"
             :labels="{ zoomIn: $t('interjections.zoomIn'),
                        zoomOut: $t('interjections.zoomOut'),
@@ -412,6 +441,11 @@ const siteHref = computed(() => {
   background: var(--accent-soft); border-radius: 999px; padding: .18rem .6rem;
 }
 .embed-body { flex: 1; min-width: 0; }
+/* Exactly the iframe's height, and a body that takes what is left of it rather
+   than what its content asks for — the figure is then sized from the body, and
+   the body never from the figure. */
+.embed-fill { height: 100vh; }
+.embed-fill .embed-body { min-height: 0; }
 
 .embed-foot {
   display: flex; align-items: center; justify-content: space-between; gap: .8rem;

@@ -55,6 +55,22 @@ def _bill_fingerprint(rec: dict) -> tuple:
     )
 
 
+def _motions_belong(detail: dict, number: str | None) -> bool:
+    """Do the cached ``detail``'s dependent irományok all belong to the bill
+    numbered ``number``? A dependent iromány is numbered ``<bill's number>/<n>``
+    ("T/816" → "816/1", "816/2"…; no exception across cycles 34–43).
+
+    False for a detail fetched in October 2026, when parlament.hu ignored the
+    bill filter: its motions are every dependent iromány on record (~205k) and
+    its other sub-tables came back empty, so it must be refetched, not reused —
+    its list row has not changed, so the fingerprint alone would keep it."""
+    if not number or "/" not in number:
+        return True
+    prefix = number.split("/", 1)[1] + "/"
+    return all(not m.get("billNumber") or m["billNumber"].startswith(prefix)
+               for m in detail.get("motions") or [])
+
+
 def fetch_bills(felicitas: FelicitasClient, cycle: int, *,
                 main_types: tuple[str, ...] | None = DEFAULT_MAIN_TYPES,
                 with_detail: bool = True, cache_path=None,
@@ -86,6 +102,14 @@ def fetch_bills(felicitas: FelicitasClient, cycle: int, *,
     fetched = reused = 0
     if with_detail:
         cache = load_cache(cache_path, "billId", _bill_fingerprint) if cache_path else {}
+        numbers = {r.get("billId"): r.get("billNumber") for r in records}
+        foreign = [k for k, (detail, _fp) in cache.items()
+                   if not _motions_belong(detail, numbers.get(k))]
+        if foreign:
+            logger.warning("Refetching %d cached bill detail(s) whose motions "
+                           "belong to other bills", len(foreign))
+            for k in foreign:
+                del cache[k]
         fetched, reused = fill_details(
             records, key="billId", fingerprint=_bill_fingerprint,
             fetch=felicitas.bill_detail, cache=cache, force=force, label="Bill")

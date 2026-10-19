@@ -8,7 +8,7 @@ import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { api } from '../../api.js'
-import { store } from '../../store.js'
+import { store, loadMeta } from '../../store.js'
 import { formatDate, formatDateTime, isWithdrawn } from '../../format.js'
 import StateBlock from '../../components/StateBlock.vue'
 import FactionBadge from '../../components/FactionBadge.vue'
@@ -56,8 +56,13 @@ function toggleAmend(i) { amendOpen[i] = !amendOpen[i] }
 // What the bill changes (BILL-14/15). The bill carries only the counts
 // (`law_changes`); the diffs come from their own request once the bill is in,
 // so the rest of the page never waits for them.
+//
+// Still under development, so the server decides whether it is shown at all
+// (PARLAMONITOR_LAW_CHANGES_UI) and this asks /meta *strictly* — not the
+// optimistic `featureEnabled`, which reads "on" until /meta lands and would let
+// a hidden feature flash onto the page of a reader who arrived on a bill.
 const changes = ref(null)
-const showChanges = computed(() => store.featureEnabled('law_changes'))
+const showChanges = computed(() => store.meta?.features?.law_changes === true)
 const hasLawChanges = computed(() => {
   const c = changes.value
   return !!(c && c.available && (c.laws?.length || c.unresolved?.length))
@@ -166,6 +171,7 @@ async function load() {
     if (seq === loadSeq) loading.value = false
   }
   if (seq === loadSeq) nextTick(() => revealMotion(false))
+  if (seq === loadSeq && bill.value?.law_changes) await loadMeta().catch(() => {})
   if (seq === loadSeq && bill.value?.law_changes && showChanges.value) {
     try {
       const res = await api.billChanges(props.id)
@@ -272,8 +278,8 @@ watch(() => route.hash, () => revealMotion(true))
 
       <!-- What the bill changes in the law, and how it changed itself on the way
            (BILL-14/15) — the reason most readers open a bill at all. -->
-      <LawChanges v-if="hasLawChanges" :bill-id="bill.id" :changes="changes" />
-      <BillEvolution v-if="changes?.evolution" :bill-id="bill.id" :evolution="changes.evolution" />
+      <LawChanges v-if="showChanges && hasLawChanges" :bill-id="bill.id" :changes="changes" />
+      <BillEvolution v-if="showChanges && changes?.evolution" :bill-id="bill.id" :evolution="changes.evolution" />
 
       <section class="card pad">
         <h2>{{ $t('bills.submitters') }}</h2>

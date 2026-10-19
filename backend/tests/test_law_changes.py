@@ -258,12 +258,33 @@ def test_amendment_endpoint(lc_client):
                          params={"number": "T/100/99"}).status_code == 404
 
 
-def test_meta_feature_flag(lc_client):
+def test_meta_feature_flag(lc_client, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "law_changes_ui", True)
     assert lc_client.get("/api/v1/meta").json()["features"]["law_changes"] is True
 
 
-def test_meta_feature_flag_off_without_data(client):
+def test_meta_feature_flag_off_without_data(client, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "law_changes_ui", True)
     assert client.get("/api/v1/meta").json()["features"]["law_changes"] is False
+
+
+def test_meta_feature_flag_off_until_the_ui_is_switched_on(lc_client, monkeypatch):
+    """Under development: the data is there and served, but the SPA is told to
+    hide it unless PARLAMONITOR_LAW_CHANGES_UI asks for it."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "law_changes_ui", False)
+    assert lc_client.get("/api/v1/meta").json()["features"]["law_changes"] is False
+    assert lc_client.get("/api/v1/bills/bill-uuid-1/changes").status_code == 200
+
+
+def test_the_ui_switch_is_off_by_default(monkeypatch):
+    from app.config import Settings
+    monkeypatch.delenv("PARLAMONITOR_LAW_CHANGES_UI", raising=False)
+    assert Settings().law_changes_ui is False
+    monkeypatch.setenv("PARLAMONITOR_LAW_CHANGES_UI", "1")
+    assert Settings().law_changes_ui is True
 
 
 # --- the diff ------------------------------------------------------------------------

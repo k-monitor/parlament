@@ -438,6 +438,15 @@ class Settings:
     # mirror leaves this unset and simply finds nothing, which is the normal case.
     documents_dir: str | None = field(default_factory=lambda:
         os.environ.get("PARLAMONITOR_DOCUMENTS_DIR") or None)
+    # Whether the SPA shows what a bill changes (BILL-14..16): the law diff, the
+    # bill's evolution, each amendment as a diff and the full-law dialog. Still
+    # under development, so OFF unless asked for (PARLAMONITOR_LAW_CHANGES_UI=1) —
+    # a serving-time switch only: the scraper's law-changes pass
+    # (PARLAMONITOR_LAW_CHANGES) and the loader keep collecting the data, and the
+    # API keeps serving it, so turning it on is a restart, never a re-scrape.
+    law_changes_ui: bool = field(default_factory=lambda:
+        (os.environ.get("PARLAMONITOR_LAW_CHANGES_UI", "0").strip().lower()
+         not in ("0", "false", "no", "off", "")))
     # Shared lemma cache (app/lemma_cache.py). The word cloud and the lexical
     # diversity metric both need HuSpaCy lemmas for the *same* sentences, so the
     # cloud's pass emits them once and they are kept on disk, keyed by sentence id,

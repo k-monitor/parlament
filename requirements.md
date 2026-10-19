@@ -2659,6 +2659,12 @@ reader actually brings to a bill page.
   > parse; 90% of the changed provisions come out exactly as njt has them when
   > computed from the egységes javaslat.
   >
+  > **Hidden on the site while under development (2026-10-19).** The UI is shown
+  > only where `PARLAMONITOR_LAW_CHANGES_UI=1` (default off): `/meta`'s
+  > `features.law_changes` is that switch *and* the data being there, and the bill
+  > page reads it strictly (not optimistically before /meta lands), so nothing
+  > flashes. Collection and the API are unaffected.
+  >
   > **The full law ✅ realized 2026-10-15.** Each change now carries its units as
   > they would read (`afterUnits`, omitted for an applier-built flat unit) and, if
   > new to the law, the base unit it follows (`anchor`); `scrape.RECORD_VERSION`

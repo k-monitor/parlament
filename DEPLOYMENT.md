@@ -356,7 +356,16 @@ Unlike the document mirror it is **on by default**, and it needs no setting:
 ```ini
 # PARLAMONITOR_LAW_CHANGES=off            # keep the last output, fetch nothing
 # PARLAMONITOR_LAW_CHANGES_PER_SYNC=80    # requests one pass may spend (0 = no cap)
+# PARLAMONITOR_LAW_CHANGES_UI=1           # show it on the site (off by default)
 ```
+
+**The site does not show it yet unless asked to.** The feature is still under
+development, so the bill page's law diff, evolution, amendment diffs and full-law
+dialog stay hidden until `PARLAMONITOR_LAW_CHANGES_UI=1` is set in `.env` (read by
+the serving color, so the next `./deploy.sh` swap applies it — no rebuild, no
+re-scrape). The pass above keeps collecting either way and the
+`/api/v1/bills/{id}/changes` endpoints keep answering; the switch only tells the
+SPA (through `/meta`'s `features.law_changes`) whether to offer it.
 
 It reads the iromány PDFs (with PyMuPDF, a `scraper/requirements.txt`
 dependency) and the amended laws' time states from **njt.hu** — a second host,
@@ -1119,6 +1128,7 @@ PARLAMONITOR_SYNC_INTERVAL=1800       # continuous-sync poll interval (seconds)
 | `PARLAMONITOR_PARLACAP_DEVICE` | _(auto)_ | `cuda`/`cpu`/`cuda:1`; blank picks CUDA when present |
 | `PARLAMONITOR_PARLACAP_FP16` | `1` | half precision on CUDA — halves time and memory; the softmax stays fp32 |
 | `PARLAMONITOR_BILL_TOPICS` | `1` | also classify **irományok** from their document text (TOPIC-8); `0` leaves speech topics untouched and hides the chip on bill pages |
+| `PARLAMONITOR_LAW_CHANGES_UI` | `0` | show what a bill changes (BILL-14..16: law diff, evolution, amendment diffs, full-law dialog) on the bill page. **Off while the feature is under development**; serving-time only — the sync's `PARLAMONITOR_LAW_CHANGES` pass and the API work either way ([details](#what-a-bill-changes-parlamonitor_law_changes)) |
 | `PARLAMONITOR_DOCUMENTS_DIR` | _(data dir)_ | where the scraper's mirrored document text lives; unset → `documents/` under the loader's data directory. A server that has no mirror needs nothing here — it replays the cache |
 | **Bluesky announcements** (§8.7) | | posted by the `sync` pass; see [Announcing on Bluesky](#announcing-on-bluesky) |
 | `PARLAMONITOR_BLUESKY_AUTH` | — | `handle:app-password` — the credential **and** the on switch; unset = the bot never runs. Use an [app password](https://bsky.app/settings/app-passwords), never the account password |

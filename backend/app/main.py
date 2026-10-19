@@ -240,8 +240,11 @@ def meta(db: sqlite3.Connection = Depends(get_db)):
                      # rather than an empty promise.
                      "upcoming_agenda": _has_upcoming_agenda(db),
                      # What a bill changes (BILL-14..16): on once the scraper's
-                     # law-changes stage has produced anything.
-                     "law_changes": _has_law_changes(db)},
+                     # law-changes stage has produced anything — and only where
+                     # the operator has switched the UI on (it is still under
+                     # development, PARLAMONITOR_LAW_CHANGES_UI).
+                     "law_changes": (settings.law_changes_ui
+                                     and _has_law_changes(db))},
         # How the per-speech readability / lexical-diversity annotations were
         # measured (READ-7). Every derived number on the site has to be able to
         # say what produced it (TRUST-1 / REP-5), and these two carry parameters

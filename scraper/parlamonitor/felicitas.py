@@ -127,9 +127,17 @@ IROMANY_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
                    "iromanyadatok-iromany-registry/iromanyok-query-provider")
 # Per-bill detail page. The "adatlap" sub-tables (events, votes, committees,
 # deadlines, documents, …) are served by this provider; every sub-query takes
-# ``{"pOnalId": <iromanyId>}``.
+# ``{"pId": <iromanyId>}`` (the page's ``onallo-iromany-id-parameter``). Until
+# mid-October 2026 they took ``pOnalId``, which they now ignore — and answer
+# with zero rows, not an error. The dependent irományok moved to a page of
+# their own, ``exported-nem-onallo-iromany-lista-page``, whose list query does
+# still take ``pOnalId`` (see :meth:`FelicitasClient.bill_detail`).
 IROMANY_ADATLAP_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
                    "iromanyexportok-registry/iromany-adatlap-query-provider")
+# A bill's dependent irományok (amendments, reports, …) on the same provider;
+# takes ``{"pOnalId": <iromanyId>}``, unlike the adatlap sub-queries above.
+NEM_ONALLO_LIST_QUERY = "nem-onallo-iromany-lista-query"
+_NEM_ONALLO_PAGE_SIZE = 1000
 # The bill's own header sheet (extra fields not in the list query — subtype,
 # character, promulgation, …); takes ``{"pId": <iromanyId>}``.
 IROMANY_INTRA_PROVIDER = (f"{BASE}/web/guest/felicitas/api/query/select/"
@@ -874,10 +882,10 @@ class FelicitasClient:
         with its own number, type, submitters and PDF — plus their per-type
         summary counts), and a handful of extra header
         fields (subtype, character, promulgation). Everything is keyed by the
-        bill's own ``iromanyId`` (``pOnalId``/``pId``) — no extra ids needed.
+        bill's own ``iromanyId`` (``pId``/``pOnalId``) — no extra ids needed.
 
         ~9 small requests per bill, all politely throttled (SCR-4)."""
-        oid = {"pOnalId": bill_id}
+        oid = {"pId": bill_id}
         P = IROMANY_ADATLAP_PROVIDER
 
         events = [{
@@ -959,11 +967,27 @@ class FelicitasClient:
         # its own iromány with a number, type, submitter(s) and a downloadable
         # PDF/text, attached to this bill (amendments, committee reports, urgency
         # motions, …). ``nemonallo-inditvany-osszesito-lista-query`` above is only
-        # the per-type *count*; this query lists the individual documents.
-        # (A ``…-biz-query`` committee variant exists but is a strict subset, so
-        # the main query alone covers every motion.)
+        # the per-type *count*; this query lists the individual documents. It is
+        # the list behind the portal's own "nem önálló irományok" page, filtered
+        # to this bill. Its predecessor, ``nem-onallo-iromany-for-onallo-iromany-
+        # query``, started ignoring the bill in October 2026 and answered every
+        # call with all ~205k dependent irományok since 1990 in one 350 MB page —
+        # stored on each bill it was asked for, which is what ran the sync out of
+        # memory. So every row must name THIS bill as its parent: a list that
+        # does not is refused whole (detail ``None``, refetched next pass), never
+        # stored.
         motions = []
-        for m in self.select_all(P, "nem-onallo-iromany-for-onallo-iromany-query", oid):
+        rows = self.select_all(P, NEM_ONALLO_LIST_QUERY, {"pOnalId": bill_id},
+                               size=_NEM_ONALLO_PAGE_SIZE)
+        for m in rows:
+            parent = (_first_subrow(m.get("onalloIromany")) or {}).get("iromanyId")
+            if parent and parent != bill_id:
+                raise HttpError(
+                    f"{NEM_ONALLO_LIST_QUERY} ignored the bill filter for "
+                    f"{bill_id}: {len(rows)} rows, one of {parent}")
+        # Oldest first, as the old query listed them (the loader keeps the
+        # order as ``bill_motion.ord``); the new one lists newest first.
+        for m in sorted(rows, key=lambda m: m.get("iromanyszamSorrendhez") or 0):
             text = _first_subrow(m.get("iromanyszoveg"))
             link = (text or {}).get("iromanyszovegLink")
             motions.append({

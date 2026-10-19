@@ -578,7 +578,9 @@ snippet — a site-wide capability, not a per-module feature.
   analysis** — party cohesion / co-voting (VOTE-8), the **faction speaking-time**
   chart (REP-4), the **Kérdések questions Sankey** (BILL-11), and a
   **representative's vote-participation** breakdown (REP-3). A future chart opts
-  into the same affordance rather than reinventing it.
+  into the same affordance rather than reinventing it (since added: the
+  interjection network, cycle-wide and per sitting day, §6E; the topic mixes,
+  TOPIC-9/10; the settlement map, §6D).
 - **EMBED-2 (MUST).** An embed renders **chrome-free**: the `<iframe>` points at a
   dedicated embed view (`/embed/<figure>`) that shows **only** the figure — its
   title, the active electoral-cycle scope, and a compact attribution line — with
@@ -590,7 +592,9 @@ snippet — a site-wide capability, not a per-module feature.
   to, and MUST NOT depend on, the visitor's preference. The URL likewise carries
   the figure's active parameters (e.g. the search query + filters, or the
   representative id) so the embed reproduces exactly what the sharer saw, and the
-  active language (`?lang=`).
+  active language (`?lang=`). A figure scoped by something narrower than a cycle — one
+  sitting day — carries **that** scope instead (`?session=`) and no cycle at all,
+  since the reader's cycle choice has no bearing on it.
 - **EMBED-4.** The embed view is **self-contained and deep-linkable**: it reads
   everything it needs from its own URL and calls the same public read-only API as
   the site, so the link works both standing alone (shareable / citable) and inside
@@ -3325,11 +3329,17 @@ places in it.
   re-scrape**: the matcher, the derived tables, the API, the three pages and the
   profile panel all read rows the loader already writes. Two things are deliberately
   **deferred, and named here rather than implied**:
-  - **The map is not yet an embeddable figure** (§4C EMBED-1). It is a strong
-    candidate — a map of who gets talked about is exactly what an article wants — but
-    the embed view is a per-figure registration, and the map is the one figure here
-    whose payload is large enough to want its own thought about caching in a
-    third-party page.
+  - *(Done 2026-10-19.)* **The map is an embeddable figure** (§4C EMBED-1), as
+    `settlement-map`, carrying the reading and the binning (`?mode=blind`,
+    `?bins=oevk|h3`). The payload concern that held it back answered itself: the
+    embed reads the same CDN-cacheable `/settlements/map` (≈57 KB gzipped,
+    `s-maxage=300`) as the page, behind a `loading="lazy"` iframe, and Leaflet
+    still loads on demand. The map **fills its frame** (the iframe's height, not a
+    fixed 520 px), hands the wheel and a one-finger swipe to the host page, and
+    takes the page's caveat with it (TEL-7/TEL-12) — plus, for constituencies, the
+    capital-in-no-cell note (TEL-16); the area distortion and the shared cities
+    are already stated by the legend and on the cells. A binning the deployment
+    cannot build falls back to points, as the page does.
   - **The TEL-9 table is built but not yet linked.** *Saját körzet* — the
     per-representative focus/coverage ranking — is complete and its route is live, but
     no tab advertises it for now: it is the most easily misread page in the module (a
@@ -3609,7 +3619,12 @@ down far more than they shout), and how much of both crosses the aisle.
 > either end of the arrow absent meaning *anyone*), so a claim about two members is
 > citable and `back` walks the arrows a reader opened; all of them are absent at
 > their defaults, keeping the canonical address parameter-free (§SEO-2).
-> The chart is embeddable as `interjection-graph` (§4C).
+> The chart is embeddable as `interjection-graph` (§4C), and one sitting day's
+> figure (the day page's dialog) as `day-interjections` (`?session=`): scoped by
+> the day rather than by a cycle, so its URL carries no `cycle`, its scope badge
+> names the day, and its link back opens the day page. `/graph?session=` names
+> its day (`session: {id, period, sitting, date}`) so the embed does not have to
+> fetch the transcript to title itself.
 >
 > Two things this cost elsewhere, both additive: `_delete_session` clears the
 > sitting's interjections before its sentences (guarded on the table existing, so a

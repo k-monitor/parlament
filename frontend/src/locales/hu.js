@@ -75,6 +75,7 @@ export default {
     label: 'Beágyazás',
     title: 'Ábra beágyazása',
     cycleNote: 'A beágyazott kód a(z) {cycle} adatait mutatja.',
+    scopeNote: 'A beágyazott kód a(z) {scope} adatait mutatja.',
     copy: 'Kód másolása',
     copied: 'Másolva!',
     preview: 'Előnézet ↗',
@@ -1691,6 +1692,9 @@ export default {
   // Települések (§6D) — mely helységeket említi a Parlament, és melyeket soha.
   settlements: {
     title: 'Települések',
+    // A beágyazott térkép címe (§4C), a két olvasat szerint.
+    embedTitle: 'Melyik településről esett szó a parlamentben?',
+    embedTitleBlind: 'Települések, amelyekről egyszer sem esett szó',
     intro: 'A parlament országos, de amiről vitázik, az szinte mindig helyi. '
       + 'Itt az látszik, mely magyar településeket említik a plenáris ülésen, '
       + 'milyen gyakran és kik — és mely településekről nem esett szó soha.',

@@ -34,6 +34,7 @@ export default {
     label: 'Embed',
     title: 'Embed this figure',
     cycleNote: 'The embed code shows data for {cycle}.',
+    scopeNote: 'The embed code shows data for {scope}.',
     copy: 'Copy code',
     copied: 'Copied!',
     preview: 'Preview ↗',
@@ -1541,6 +1542,9 @@ export default {
   // Settlements (§6D) — which places the House names, and which it never does.
   settlements: {
     title: 'Settlements',
+    // The embedded map's title (§4C), per reading.
+    embedTitle: 'Which places come up in Parliament?',
+    embedTitleBlind: 'Settlements never mentioned in Parliament',
     intro: 'Parliament is national, but almost everything it argues about is local. '
       + 'This is which Hungarian settlements are named in plenary, how often and by '
       + 'whom — and which have never been mentioned at all.',

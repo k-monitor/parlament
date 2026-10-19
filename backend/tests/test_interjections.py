@@ -445,6 +445,11 @@ def test_the_graph_draws_one_sitting_day(heckled_client, heckled_conn):
     # The faction is the one held in the day's own cycle, not the `period` passed.
     kovacs = next(n for n in data["nodes"] if n["person_id"] == "k001")
     assert kovacs["faction"]["label"] == "Fidesz"
+    # The day names itself, for the embed's heading; a cycle-wide graph does not.
+    assert data["session"]["id"] == "43002"
+    assert data["session"]["period"] == 43
+    assert data["session"]["sitting"] == 2
+    assert "session" not in whole
 
 
 def test_a_day_lists_its_interjections_in_the_order_they_were_shouted(

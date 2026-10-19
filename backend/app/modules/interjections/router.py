@@ -222,7 +222,7 @@ def interjection_graph(
         links.sort(key=lambda l: -l["count"])
 
         total = sum(n for _s, _t, n in pairs)
-        return {
+        payload = {
             "top": top,
             "rank": rank,
             "nodes": nodes,
@@ -234,6 +234,14 @@ def interjection_graph(
             "shown": sum(link["count"] for link in links),
             "coverage": _coverage(db, where_scope, scope_params),
         }
+        # A day's figure names its day: the embed (§4C) is read away from the day
+        # page, and fetching the whole transcript for a date would be absurd.
+        if session:
+            row = db.execute("SELECT id, period_number, sitting, date FROM session "
+                             "WHERE id = ?", (session,)).fetchone()
+            payload["session"] = {"id": row["id"], "period": row["period_number"],
+                                  "sitting": row["sitting"], "date": row["date"]}
+        return payload
 
     return cached_aggregate(
         "interjection_graph",
